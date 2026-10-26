@@ -282,3 +282,5 @@ Python `NativeTurnPlanner.choose` 保留为串行参考。符文圆顶与未完�
 无需等整局结束即可上报。对应 `*_window` 分子/分母也写入日志；没有分母时
 不报告0概率。普通resume与其他滚动指标相同，显示窗口重新累计，已打开待领
 宝箱的归属由环境journal重放恢复；这些计数不改变奖励、观测或训练目标。
+
+`distributed_sb3 --continuous` supports fixed-learning-rate, frozen-upper inner-only NOSL with full recovery saves and coordinated `--stop-file`. It has no update or wall-time target; do not combine it with `--total-steps` or a finite `--updates` target. Resident deployment uses `continuous: true` with null round/time limits. Finite experiments retain their explicit budgets.

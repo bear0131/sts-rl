@@ -79,8 +79,11 @@ class QuickBackend(SimGameEnv):
 
 
 @pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.FINITE_OBJECTIVE,
-                                     'combat-outcome-quantiles-v1', 'combat-outcome-means-v1'])
+                                     'combat-outcome-quantiles-v1', 'combat-outcome-means-v1',
+                                     'combat-outcome-means-v1-continuous'])
 def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_bank, tmp_path, monkeypatch, capsys, objective):
+    continuous = objective.endswith('-continuous')
+    objective = objective.removesuffix('-continuous')
     control = objective not in outer.SCALAR_OBJECTIVES
     finite = objective == outer.FINITE_OBJECTIVE
     means = objective == 'combat-outcome-means-v1'
@@ -116,10 +119,17 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     teacher = model.policy.core.teacher.assert_integrity()
     env.close()
     payloads = []
+    stop_file = tmp_path/'STOP'
+    def collect_payload(payload):
+        payloads.append(json.loads(json.dumps(payload, allow_nan=False)))
+        # The first payload must not stop the continuous loop at its default one update.
+        # STOP is consumed at the following complete update and save boundary.
+        if continuous and len(payloads) == 1:
+            stop_file.touch()
     monkeypatch.setitem(sys.modules, 'wandb', SimpleNamespace(
         init=lambda **kw: SimpleNamespace(finish=lambda **kw: None),
         config=SimpleNamespace(update=lambda *a, **kw: None), define_metric=lambda *a, **kw: None,
-        log=lambda payload: payloads.append(json.loads(json.dumps(payload, allow_nan=False)))))
+        log=collect_payload))
     monkeypatch.setattr(distributed_sb3, 'make_env', make_env)
     output = tmp_path / 'trained.zip'
     argv = ['distributed_sb3', '--rank', '0', '--world-size', '1', '--checkpoint', str(initial),
@@ -130,6 +140,9 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
         '--run-id', 'ci-outer', '--wandb', '--wandb-id', 'ci-outer',
         '--training-state-dir', str(tmp_path/'state'), '--save-every-updates', '1', '--max-checkpoints', '2',
         '--rollout-resource-interval', '0.1']
+    if continuous:
+        argv[argv.index('--updates') + 1] = '1'
+        argv += ['--continuous', '--learning-rate', '0.00005', '--stop-file', str(stop_file)]
     monkeypatch.setattr(sys, 'argv', argv)
     distributed_sb3.main()
     assert len(payloads) == 2
@@ -193,6 +206,10 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     restored_env.close()
     argv[argv.index('--checkpoint') + 1] = str(bundle/'model.zip')
     argv[argv.index('--updates') + 1] = '1'
+    if continuous:
+        argv.remove('--continuous')
+        assert stop_file.exists()
+        stop_file.unlink()
     argv += ['--resume-state', str(bundle)]
     monkeypatch.setattr(sys, 'argv', argv)
     distributed_sb3.main()

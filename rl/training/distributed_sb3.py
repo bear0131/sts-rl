@@ -28,6 +28,7 @@ import random
 import shlex
 import subprocess
 import time
+from itertools import count
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -376,6 +377,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--updates", type=int, default=1)
+    parser.add_argument("--continuous", action="store_true",
+                        help="Keep training until coordinated STOP; requires fixed-rate inner-only NOSL and full recovery saves.")
     parser.add_argument(
         "--total-steps",
         type=int,
@@ -2121,6 +2124,13 @@ def main() -> None:
         args.fork_source_wandb_id = manifest['wandb_id']
         args.fork_source_global_step = manifest['global_step']
         args.checkpoint = args.fork_state / 'model.zip'
+    if args.continuous:
+        if args.total_steps is not None or args.updates != 1:
+            raise ValueError('--continuous cannot have --total-steps or a finite --updates target')
+        if args.stop_file is None or args.training_state_dir is None:
+            raise ValueError('--continuous requires --stop-file and --training-state-dir')
+        if args.learning_rate is None or args.learning_rate <= 0:
+            raise ValueError('--continuous requires an explicit positive fixed learning rate')
     if args.stop_file is not None and args.stop_file.exists():
         raise ValueError('remove the previous stop request before resuming')
     if args.training_state_dir is not None and (args.save_every_updates < 1 or args.max_checkpoints < 2):
@@ -2580,6 +2590,13 @@ def main() -> None:
         args.nosl_is_az_update_schedule or getattr(model, 'nosl_is_az_update_schedule', None))
     update_schedule.validate_model(model)
     args.nosl_is_az_update_schedule = model.nosl_is_az_update_schedule = update_schedule.config()
+    if args.continuous and not (
+        getattr(model, 'nosl_is_az', False)
+        and getattr(model, 'nosl_is_az_inner_only', False)
+        and not joint_upper(model)
+        and args.reasoning_updates == 0
+    ):
+        raise ValueError('--continuous currently supports frozen-upper inner-only NOSL without reasoning updates')
     model.nosl_is_az_replay_enabled = bool(args.nosl_is_az_replay_enabled)
     print(
         f"[rank {args.rank}] NOSL-IS-AZ replay enabled: "
@@ -2936,7 +2953,9 @@ def main() -> None:
     if args.rollout_resource_interval:
         callback.callbacks.append(RolloutProgressCallback(args.rank, args.n_steps))
     total_timesteps, callback = model._setup_learn(
-        total_timesteps=args.updates * rollout_size,
+        # SB3 setup initializes callbacks; the iterator below owns termination.
+        # Continuous NOSL uses an explicit fixed rate, not a finite-horizon schedule.
+        total_timesteps=(rollout_size if args.continuous else args.updates * rollout_size),
         callback=callback,
         reset_num_timesteps=False,
         tb_log_name=f"dist_sb3_rank{args.rank}",
@@ -2994,12 +3013,14 @@ def main() -> None:
     startup_occupancy = {}
     callback.on_training_start(locals(), globals())
 
-    records = []
+    completed_updates = 0
+    timing_sums = dict.fromkeys(('total_sec_rank', 'rollout_sec', 'backward_sec',
+                                'sync_sec', 'optimizer_step_sec'), 0.)
     last_bundle_step = None
     training_failed = False
     resource_stack = ExitStack()
     try:
-        for update in range(args.updates):
+        for update in (count() if args.continuous else range(args.updates)):
             if model.device.type == "cuda":
                 th.cuda.synchronize(model.device)
             started = time.perf_counter()
@@ -3579,7 +3600,9 @@ def main() -> None:
                 resource_stack.close()
                 record['iteration_resources'] = monitor.summary
             record['iteration_wall_sec'] = time.perf_counter() - started
-            records.append(record)
+            completed_updates += 1
+            for key in timing_sums:
+                timing_sums[key] += record[key]
             print(json.dumps(record, sort_keys=True), flush=True)
             if wandb_run is not None:
                 import wandb
@@ -3757,7 +3780,7 @@ def main() -> None:
             prune_bundles(args.training_state_dir, rank=args.rank, keep=args.max_checkpoints)
         if args.rank == 0 and args.checkpoint_dir is not None and args.training_state_dir is None:
             args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-            final_step = start_timesteps + len(records) * global_rollout_size
+            final_step = start_timesteps + completed_updates * global_rollout_size
             model.num_timesteps = final_step
             path = (
                 args.checkpoint_dir
@@ -3786,13 +3809,11 @@ def main() -> None:
     summary = {
         "rank": args.rank,
         "world_size": args.world_size,
-        "updates": len(records),
-        "updates_requested": args.updates,
-        "mean_total_sec_rank": float(np.mean([r["total_sec_rank"] for r in records])),
-        "mean_rollout_sec": float(np.mean([r["rollout_sec"] for r in records])),
-        "mean_backward_sec": float(np.mean([r["backward_sec"] for r in records])),
-        "mean_sync_sec": float(np.mean([r["sync_sec"] for r in records])),
-        "mean_optimizer_step_sec": float(np.mean([r["optimizer_step_sec"] for r in records])),
+        "updates": completed_updates,
+        "updates_requested": None if args.continuous else args.updates,
+        "continuous": args.continuous,
+        **{'mean_' + key: value / max(completed_updates, 1)
+           for key, value in timing_sums.items()},
     }
     print("SUMMARY " + json.dumps(summary, sort_keys=True), flush=True)
 
