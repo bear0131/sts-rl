@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| COMBAT15-ROLLOUT | 用户授权暂停生产，继续并行优化 | 2026-10-26新授权以四台旧5090做有预算测试；4090由用户关机，不再使用。先协调完整保存并保全model/Adam/replay/RNG/384环境，保持外层876及观测、目标与搜索统计语义；同机完整轨迹等价与端到端性能通过后选择版本。证据管理COMBAT15/parallel-optimization，详见worklog/2026-10-26.md。 |
+| COMBAT15-ROLLOUT | 并行候选等价通过、性能未通过，不部署 | 分支codex/combat15-rollout-parallel保留e921e6d4实验；完整384×512同机对照仅并行打包慢0.58%，加并行decode两机慢2.79%/2.93%。64线程单对快0.70%但CPU多35.92%，保留原32线程。生产继续选2a2f0817/native3fb，管理树负责第40完整状态恢复验收。后续候选优先真实环境观测/元数据批处理及跨组CPU/GPU流水线，必须完整等价和端到端对照，4090不再使用。证据管理COMBAT15/parallel-optimization/comparison.json、grouped-probe-r1-g48.log，详见worklog/2026-10-26.md。 |
 | COMBAT14 | 用户要求停止69，完整状态保全 | 为新COMBAT15让出物理2/3；正常exit0非hardtimeout且退出，最后68/69两代逐文件SHA和压缩读回verified，原root及依赖保留。禁止自动恢复；证据管理树COMBAT15 previous-experiments-preserved.json。 |
 | COMBAT13 | 用户要求停止159，完整状态保全 | 为新COMBAT15让出物理0/1；正常exit0非hardtimeout且退出，最后158/159两代逐文件SHA和压缩读回verified，原root及依赖保留。禁止自动恢复；证据管理树COMBAT15 previous-experiments-preserved.json。 |
 | COMBAT12 | 原尺度六曲线已启动，Linux/GPU及首完整生产周期通过 | env/core/finite_curves.py 与 configs/train/combat12_six_curves_raw_876_2x5090.json；生产cf2c5a5，仅取消full08倍率，同241tensor/空Adam-replay，独立bank/payoff。物理0+1替换11，人工组持续。两机CPU各157pass/1deselected、GPU各17pass/9deselected，首49152完整采样/U40/全状态保存及下轮128、组内SHA/96环境独立重放/W&B通过；真实12段末续接尚待验证。唯一运行入口和持续TODO在管理树runs/local/combat01-worktree。 |
