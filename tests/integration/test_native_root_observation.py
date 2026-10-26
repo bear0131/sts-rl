@@ -64,6 +64,24 @@ def test_root_batch_pending_selection_and_nonhand_handles(combat_factory):
     assert_roots(encoder,envs)
 
 
+@pytest.mark.parametrize('hp', [0, 25])
+def test_exploder_public_intent_hides_explosion_without_changing_native_damage(combat_factory, hp):
+    env = combat_factory(['DEFEND_RED']*10, encounter='Three Shapes', seed=4,
+                         combat_action_contract='autoregressive-v2', card_language=True)
+    monsters = env.thick.bc.to_dict()['monsters']
+    slot = next(i for i, m in enumerate(monsters) if m['id'] == 'EXPLODER')
+    patches = [{} for _ in monsters]
+    patches[slot] = {'hp': hp, 'move': 'EXPLODER_EXPLODE'}
+    env.thick.bc.apply_custom_state({'monsters': patches})
+    env._invalidate_backend_cache()
+    before = env.thick.bc.to_dict()
+    assert before['monsters'][slot]['base_damage'] == 30
+    batch = assert_roots(NativeRootObservationBatch(env), [env])
+    assert batch['monster_intent_cat'][0, slot] == 0
+    np.testing.assert_array_equal(batch['monster_scalars'][0, slot, 4:6], [0, 0])
+    assert env.thick.bc.to_dict() == before
+
+
 def test_root_batch_full_run_observations_and_public_context():
     envs=[SlayTheSpireEnv(combat_action_contract='autoregressive-v2',
              card_language=True, global_map_view=True, deck_size_observation=True,

@@ -74,6 +74,12 @@ class NativeRootObservationBatch:
             if env.outer_return_context:
                 fields['outer_deck_misc'][:] = permanent_misc(env.thick.gc, env.thick.bc)
         result = self.decoder.decode(payload, globals)
+        # The public canonical schema hides Exploder's explosion damage, as
+        # CommunicationMod does. Keep search leaves' existing projection and
+        # actual simulator damage unchanged, including on dead retained slots.
+        explosions = result['monster_move'] == encode.V.MOVE_VOCAB_INDEX['EXPLODER_EXPLODE']
+        result['monster_intent_cat'][explosions] = 0
+        result['monster_scalars'][explosions, 4:6] = 0
         # The full Gym codec projects the native curse sentinel -3 to the
         # public unplayable sentinel -2. Search leaves retain their existing
         # transport convention; this root-only adapter must preserve Gym bytes.
