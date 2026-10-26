@@ -3068,6 +3068,30 @@ PYBIND11_MODULE(slaythespire, m) {
     }, "printed card-instance traits used to validate real snapshot representability; never a current-state fallback");
     m.def("boss_opening_route_version", []() { return 1; });
     bindNeuralObservation(m);
+    m.def("pack_neural_roots", [](const std::vector<const BattleContext *> &battles,
+                                  const std::vector<int> &prefixes,
+                                  pybind11::object language_card_index) {
+        if (battles.size() != prefixes.size())
+            throw std::invalid_argument("root states and selection prefixes disagree");
+        std::vector<search::NoslNeuralSearchSession::LeafRequest> requests(battles.size());
+        for (std::size_t row = 0; row < battles.size(); ++row) {
+            if (!battles[row] || prefixes[row] < 0 || prefixes[row] >= (1 << 10))
+                throw std::invalid_argument("invalid root state or selection prefix");
+            // Borrow only for this synchronous call. Packing neither clones
+            // nor advances the actual environments and reuses the leaf codec.
+            requests[row].state = battles[row];
+            requests[row].selectionPrefix = prefixes[row];
+            requests[row].autoregressivePolicy = true;
+        }
+        auto out = packedNeuralLeaves(requests, true, language_card_index);
+        pybind11::array_t<std::int64_t> owners(battles.size());
+        for (std::size_t row = 0; row < battles.size(); ++row)
+            owners.mutable_data()[row] = static_cast<std::int64_t>(row);
+        out["owners"] = owners;
+        return out;
+    }, pybind11::arg("battles"), pybind11::arg("selection_prefixes"),
+       pybind11::arg("language_card_index") = pybind11::none(),
+       "pack current combat observations without copying or advancing environments");
     pybind11::class_<sts::search::NeuralSearchBatch>(m, "NeuralSearchBatch")
         .def(pybind11::init<int>(), pybind11::arg("threads") = 1)
         .def("rule_turn_plan", [](sts::search::NeuralSearchBatch &batch,

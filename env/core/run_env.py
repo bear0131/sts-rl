@@ -337,6 +337,10 @@ class SlayTheSpireEnv(gym.Env):
                  nosl_is_az_boss_transition_target=False, outer_return_context=False,
                  combat_value_objective=None):
         super().__init__()
+        # Owned only by NativeSearchVecEnv during one synchronous step_wait.
+        # Ordinary Gym/evaluation calls always construct their observation here.
+        self._defer_combat_observation = False
+        self._combat_observation_pending = False
         self.outer_return_context = bool(outer_return_context)
         from .outer_return import OBJECTIVE, SCALAR_OBJECTIVES, FINITE_OBJECTIVE
         if self.outer_return_context and combat_value_objective not in (None, *SCALAR_OBJECTIVES, 'combat-outcome-quantiles-v1', 'combat-outcome-means-v1'):
@@ -1131,6 +1135,12 @@ class SlayTheSpireEnv(gym.Env):
             )
         if 'nosl_value_terminal_outcome' in (transition_info or {}):
             info['nosl_value_terminal_outcome'] = transition_info['nosl_value_terminal_outcome']
+        if (self._defer_combat_observation and not terminated
+                and self.thick.bc is not None and self._phase() == 'combat'):
+            self._combat_observation_pending = True
+            # The native vector owner fills this before returning to callers.
+            # Allowed wrappers only pass/project observations during step.
+            return {}, reward, terminated, False, info
         return self._obs(), reward, terminated, False, info
 
     def _step_impl(self, action_id):

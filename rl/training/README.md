@@ -115,3 +115,6 @@ learner/environment 使用 pickle protocol 5 保存 NumPy buffer，保持 bundle
 `--stop-file PATH` 在下一次更新/跨 rank 同步后触发保存并协同结束；多机要求 ssh-ring。
 正常维护创建所有 rank 的 stop 文件并等待全部退出、核对同一恢复代数，再删除这些
 请求文件并恢复。不要在训练中直接 kill 后声称最后一轮已保存。
+
+
+`NativeSearchVecEnv` 在原生扩展提供 `pack_neural_roots` 时，可批量构造 AR 战斗的完整根观测；搜索叶与真实根复用同一原生 pack/decoder。仅已知训练包装栈（TrainingState、CheckpointObservationCompat、ShapedReward、TimeLimit）允许在单次同步 `step_wait` 内延后非终局观测，返回前全部补齐。非战斗、真实终局及外层 TimeLimit 截断保留完整观测与原 autoreset；未知 wrapper、旧扩展或其他观测合同沿用串行路径。此优化没有改变观测版本、搜索目标或保存状态格式。回归入口：`tests/integration/test_native_root_observation.py`，必须指定候选扩展构建。
