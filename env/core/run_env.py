@@ -91,6 +91,8 @@ _NOSL_COMPACT_LAYOUT = _UNCACHED
 _NOSL_COMPACT_LUT = _UNCACHED
 _NOSL_COMPACT_EMPTY = _UNCACHED
 _NOSL_CARD_STATS = _UNCACHED
+_NOSL_ROOT_GLOBAL_FIELDS = ('arg_step', 'ascension', 'character', 'gold',
+                            'combat_is_boss', 'run_keys', 'relics', 'relic_counters')
 
 
 def _nosl_compact_layout():
@@ -670,6 +672,7 @@ class SlayTheSpireEnv(gym.Env):
         self._cached_action_mask = None
 
     def _invalidate_backend_cache(self):
+        self._nosl_current_context = None
         self._cached_phase = _UNCACHED
         self._cached_legal = _UNCACHED
         self._cached_multi_desc = _UNCACHED
@@ -789,9 +792,19 @@ class SlayTheSpireEnv(gym.Env):
                 return ga.combat(native_id)
         raise ValueError(f"illegal combat search action: {aid}")
 
+    def _capture_nosl_context(self):
+        # The collector has already observed this state. Keep only the owned
+        # public context needed for pre-settlement labels, rather than encoding
+        # the entire current combat a second time immediately before acting.
+        context = getattr(self, '_nosl_current_context', None)
+        if context is None:
+            self._obs()
+            context = self._nosl_current_context
+        self._nosl_context_before = context
+
     def _backend_step(self, semantic):
         if self.outer_return_context and not self.outer_return_objective:
-            self._nosl_context_before = self._obs()
+            self._capture_nosl_context()
         before = (self.thick.gc.act, self.thick.gc.floor_num) if self.outer_return_context else None
         capture_nosl_value = self._nosl_value_capture_pending
         self._nosl_value_capture_pending = False
@@ -817,7 +830,7 @@ class SlayTheSpireEnv(gym.Env):
 
     def _backend_step_native_combat(self, action_bits):
         if self.outer_return_context and not self.outer_return_objective:
-            self._nosl_context_before = self._obs()
+            self._capture_nosl_context()
         before = (self.thick.gc.act, self.thick.gc.floor_num) if self.outer_return_context else None
         self._nosl_value_capture_pending = False
         step_native = getattr(self.thick, "step_native_combat", None)
@@ -1592,9 +1605,7 @@ class SlayTheSpireEnv(gym.Env):
                 "global": global_state or normalize_sim_global(self.thick.gc, combat=True),
             })
             cached = (global_state, {
-                key: template[key] for key in (
-                    "arg_step", "ascension", "character", "gold", "combat_is_boss",
-                    "run_keys", "relics", "relic_counters")
+                key: template[key] for key in _NOSL_ROOT_GLOBAL_FIELDS
             })
             if global_state is not None:
                 self._nosl_cpp_encoded_global_template = cached
@@ -2015,6 +2026,7 @@ class SlayTheSpireEnv(gym.Env):
         merge_equivalent_actions: bool = True,
         boss_win_weight: float = 0.0,
         outer_return: bool = False,
+        _root_global_fields=None,
     ):
         """Start the batched neural C++ NOSL AlphaZero session."""
         from env.core.boss_value import is_boss_room
@@ -2197,9 +2209,21 @@ class SlayTheSpireEnv(gym.Env):
         # Relics/deck/map metadata is invariant across hypothetical combat
         # branches.  Compute it once per root; only branch HP/potions are
         # overlaid in _native_leaf_observation().
-        self._nosl_cpp_global_template = normalize_sim_global(
-            self.thick.gc, combat=True, for_encoding=True)
-        self._nosl_cpp_encoded_global_template = None
+        if _root_global_fields is None:
+            self._nosl_cpp_global_template = normalize_sim_global(
+                self.thick.gc, combat=True, for_encoding=True)
+            self._nosl_cpp_encoded_global_template = None
+        else:
+            # The native batch already has the collector's current encoded
+            # root. Own only its shared fields, rather than serializing and
+            # encoding the GameContext again for every search.
+            fields = {key: _root_global_fields[key].copy()
+                      for key in _NOSL_ROOT_GLOBAL_FIELDS}
+            # Search leaves represent complete actions even if a legacy thin
+            # root happens to be on a selection sub-step.
+            fields['arg_step'].fill(encode.V.ARG_STEP_VOCAB_INDEX['root'])
+            self._nosl_cpp_global_template = None
+            self._nosl_cpp_encoded_global_template = (None, fields)
         begin_seconds = time.perf_counter() - begin_started
         if _defer_leaf_selection:
             # A native cross-tree batch owns select/backup until completion.
@@ -2674,8 +2698,11 @@ class SlayTheSpireEnv(gym.Env):
         if self._joint_actions and not upper_value_only:
             obs['combat_legal'] = self.action_masks()[self._policy_offset:]
         if self.outer_return_context and not upper_value_only:
-            from .outer_return import permanent_misc
+            from .outer_return import CONTEXT_KEYS, permanent_misc
             obs['outer_deck_misc'] = permanent_misc(self.thick.gc, self.thick.bc)
+            # A vector environment may reuse or mutate its observation storage.
+            # These small arrays must survive that and the upcoming transition.
+            self._nosl_current_context = {key: obs[key].copy() for key in CONTEXT_KEYS}
         return obs
 
     def equivalent_action_groups(self):

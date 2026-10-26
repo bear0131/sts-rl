@@ -239,6 +239,8 @@ private:
         // NOSL samples can reach the same action prefix with different public
         // observations. Keep one child node per public-state key instead of
         // merging all hidden-world outcomes into a single node.
+        // Fixed-worldline sessions instead have exactly one successor per
+        // action history, stored under private key zero without state hashing.
         std::unordered_map<std::uint64_t, std::unique_ptr<Node>> children;
         int visits = 0;
         int valueVisits = 0;

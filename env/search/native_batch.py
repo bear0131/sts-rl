@@ -4,7 +4,10 @@ import slaythespire as sts
 import time
 
 from env.core import encode
-from env.core.run_env import _nosl_compact_lut, _nosl_compact_empty, _nosl_card_stats
+from env.core.run_env import (
+    _nosl_compact_lut, _nosl_compact_empty, _nosl_card_stats,
+    _NOSL_ROOT_GLOBAL_FIELDS,
+)
 
 
 class NativeSearchBatch:
@@ -61,12 +64,15 @@ class NativeSearchBatch:
         if not calls:
             raise ValueError('native search requires at least one tree')
         context_keys = ()
+        global_keys = ()
         if root_observations is not None:
             from env.core.outer_return import CONTEXT_KEYS
             if not self.public_context:
                 raise ValueError('root context transport requires the outer-return objective')
             context_keys = CONTEXT_KEYS
-            for key in context_keys:
+            if all(key in root_observations for key in _NOSL_ROOT_GLOBAL_FIELDS):
+                global_keys = _NOSL_ROOT_GLOBAL_FIELDS
+            for key in set(context_keys).union(global_keys):
                 space = self.envs[0].observation_space[key]
                 value = root_observations.get(key)
                 if (not isinstance(value, np.ndarray) or
@@ -85,8 +91,10 @@ class NativeSearchBatch:
                 if kwargs.get('leaf_batch_size', 1) != 1 or not kwargs.get('compact_observation'):
                     raise ValueError('native cross-tree batching requires compact observations and one leaf per tree')
                 env = self.envs[index]
+                globals = ({key: root_observations[key][index] for key in global_keys}
+                           if global_keys else None)
                 sessions.append(env.nosl_is_az_cpp_begin(*args, **kwargs,
-                                                        _defer_leaf_selection=True))
+                    _defer_leaf_selection=True, _root_global_fields=globals))
                 # Collector already encoded these exact current roots. Read
                 # the supplied arrays only during this call; stack below owns
                 # the search copy before the next environment transition.

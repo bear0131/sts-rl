@@ -2357,20 +2357,34 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
                 break;
             }
 
-            auto childKey = publicStateKey(state, &stateKeyScratch_, config_.mergeEquivalentActions);
-            if (config_.autoregressivePolicy &&
-                (!config_.mergeEquivalentActions || state.inputState == InputState::CARD_SELECT)) {
-                hashValue(childKey, pending.selectionPrefix);
-                // Prefix IDs refer to visible hand slots, so keep their order.
-                for (int i = 0; i < state.cards.cardsInHand; ++i)
-                    hashActionCard(childKey, state.cards.hand[i], true);
+            if (config_.fixedWorldline) {
+                // This is a tree, not a transposition table: an edge owns one
+                // action history. Fixed mode copies the same root RNG and
+                // hidden piles on every simulation, so replaying that history
+                // reaches the same successor. The key is private to this edge
+                // and never compared with another path; zero names its sole
+                // child, including for tree snapshots. No state hash is needed.
+                // The action above still executes; values are never cached.
+                if (edge->children.empty()) {
+                    edge->children.emplace(0, std::make_unique<Node>());
+                }
+                node = edge->children.begin()->second.get();
+            } else {
+                auto childKey = publicStateKey(state, &stateKeyScratch_, config_.mergeEquivalentActions);
+                if (config_.autoregressivePolicy &&
+                    (!config_.mergeEquivalentActions || state.inputState == InputState::CARD_SELECT)) {
+                    hashValue(childKey, pending.selectionPrefix);
+                    // Prefix IDs refer to visible hand slots, so keep their order.
+                    for (int i = 0; i < state.cards.cardsInHand; ++i)
+                        hashActionCard(childKey, state.cards.hand[i], true);
+                }
+                auto childIt = edge->children.find(childKey);
+                if (childIt == edge->children.end()) {
+                    childIt = edge->children.emplace(
+                        childKey, std::make_unique<Node>()).first;
+                }
+                node = childIt->second.get();
             }
-            auto childIt = edge->children.find(childKey);
-            if (childIt == edge->children.end()) {
-                childIt = edge->children.emplace(
-                    childKey, std::make_unique<Node>()).first;
-            }
-            node = childIt->second.get();
             node->virtualVisits++;
             pending.nodes.push_back(node);
         }
