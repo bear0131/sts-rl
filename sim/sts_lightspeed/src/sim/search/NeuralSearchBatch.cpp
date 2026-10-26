@@ -85,6 +85,19 @@ void NeuralSearchBatch::runIndependent(std::size_t count, std::function<void(std
     parallel(count, std::move(work));
 }
 
+void NeuralSearchBatch::encodeRows(std::size_t count, std::function<void(std::size_t)> encode) {
+    // Small waves cost less to encode directly than to wake every worker.
+    if (count < 64) {
+        for (std::size_t row = 0; row < count; ++row) encode(row);
+        return;
+    }
+    constexpr std::size_t chunk = 8;
+    parallel((count + chunk - 1) / chunk, [&](std::size_t job) {
+        for (auto row = job * chunk; row < std::min(count, (job + 1) * chunk); ++row)
+            encode(row);
+    });
+}
+
 void NeuralSearchBatch::begin(std::vector<std::shared_ptr<NoslNeuralSearchSession>> sessions) {
     if (!requests_.empty()) throw std::logic_error("finish or clear the previous search batch");
     std::unordered_set<const NoslNeuralSearchSession *> distinct;

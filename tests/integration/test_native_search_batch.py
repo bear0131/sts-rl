@@ -234,8 +234,12 @@ def test_native_large_batch_conversion_matches_serial_and_recovers(combat_factor
                     if field == 'owners': value[-1] = 65
                     else: value[-1, 31] = -1
                     invalid[field] = value
-                    with pytest.raises(ValueError, match=message):
-                        pool.decoder.decode(invalid, pool.global_fields)
+                    for workers in (None, pool.pool):
+                        with pytest.raises(ValueError, match=message):
+                            pool.decoder.decode(invalid, pool.global_fields, pool=workers)
+                serial_decoded = pool.decoder.decode(pool._decoder_payload(), pool.global_fields)
+                for key, value in observed.items():
+                    assert value.tobytes() == serial_decoded[key].tobytes(), key
                 target = {key: np.full((67, *value.shape[1:]), 1, dtype=value.dtype)
                           for key, value in observed.items()}
             padding = {key: value[len(owners):].tobytes() for key, value in target.items()}
@@ -255,7 +259,14 @@ def test_native_large_batch_conversion_matches_serial_and_recovers(combat_factor
                 responses[owner] = serial[owner].nosl_is_az_cpp_backprop_and_leaf_batch(
                     [(leaf['request_id'], float(values[row]), logits[row] if leaf['needs_policy'] else np.empty(0))],
                     max_leaves=1)
+            retained = {key: value for key, value in pool.payload.items()
+                        if isinstance(value, np.ndarray)}
+            retained_bytes = {key: value.tobytes() for key, value in retained.items()}
             pool.advance(logits, values)
+            # A later conversion must not reuse storage that a consumer still
+            # owns, including when the number of pending leaves shrinks.
+            for key, value in retained.items():
+                assert value.tobytes() == retained_bytes[key], key
         results = pool.results()
         for owner in calls:
             for key in ('action', 'native_action_bits', 'root_value', 'simulations',

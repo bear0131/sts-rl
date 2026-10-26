@@ -132,7 +132,7 @@ class NativeSearchBatch:
                         'legal_policy_ids', 'language_ids', 'language_features'):
                 if key in payload:
                     payload[key] = np.asarray(payload[key])[rows]
-        result = self.decoder.decode(payload, self._decoder_globals, destination)
+        result = self.decoder.decode(payload, self._decoder_globals, destination, self.pool)
         if self.public_context:
             from env.core.outer_return import MISC_SCALE
             if self.payload.get('outer_return_schema') != 1:

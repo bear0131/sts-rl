@@ -2886,7 +2886,8 @@ pybind11::dict permanentCardMisc(const BattleContext &bc) {
 
 pybind11::dict packedNeuralLeaves(
     const std::vector<sts::search::NoslNeuralSearchSession::LeafRequest> &requests,
-    bool done, pybind11::object language_card_index) {
+    bool done, pybind11::object language_card_index,
+    sts::search::NeuralSearchBatch *pool = nullptr) {
     // Keep the simulator-to-Python boundary to contiguous numeric
     // arrays. Do not call rawCombatState() here: that
     // recursively allocates Python dicts/lists for every leaf.
@@ -2948,7 +2949,13 @@ pybind11::dict packedNeuralLeaves(
     pybind11::list selection_prefix;
     pybind11::dict combat_exits;
     pybind11::dict permanent_misc;
-    for (pybind11::ssize_t row = 0; row < count; ++row) {
+    // Resolve Python-owned storage while holding the GIL. Workers only read
+    // immutable leaves and write nonoverlapping numeric rows; Python metadata
+    // is emitted in request order after every worker has joined the barrier.
+    auto *languageIds = language ? language_ids.mutable_data() : nullptr;
+    auto *languageFeatures = language ? language_features.mutable_data() : nullptr;
+    const auto *languageIndex = language ? language_index.data() : nullptr;
+    const auto encode = [&](std::size_t row) {
         const auto &request = requests[static_cast<std::size_t>(row)];
         const auto packed = compact_leaf::pack(*request.state);
         for (int col = 0; col < compact_leaf::kCatSize; ++col) {
@@ -2958,17 +2965,16 @@ pybind11::dict packedNeuralLeaves(
             scalar(row, col) = packed.scalars[static_cast<std::size_t>(col)];
         }
         if (language) {
-            auto *ids = language_ids.mutable_data() +
+            auto *ids = languageIds +
                 row * 2 * compact_leaf::kLanguageSlots;
-            auto *features = language_features.mutable_data() +
+            auto *features = languageFeatures +
                 row * 2 * compact_leaf::kLanguageSlots * 3;
             compact_leaf::packLanguagePile(request.state->cards.drawPile,
-                language_index.data(), ids, features);
+                languageIndex, ids, features);
             compact_leaf::packLanguagePile(request.state->cards.discardPile,
-                language_index.data(), ids + compact_leaf::kLanguageSlots,
+                languageIndex, ids + compact_leaf::kLanguageSlots,
                 features + compact_leaf::kLanguageSlots * 3);
         }
-        request_ids.append(request.requestId);
         const auto nLegal = request.legalActions.size();
         legal_count(row) = static_cast<std::uint32_t>(nLegal);
         for (std::size_t col = 0; col < nLegal; ++col) {
@@ -2978,6 +2984,16 @@ pybind11::dict packedNeuralLeaves(
                 sts::search::jointActionId(request.legalActions[col], *request.state)
                     - (request.autoregressivePolicy ? sts::search::kJointEnd : 0);
         }
+    };
+    if (pool) {
+        pybind11::gil_scoped_release release;
+        pool->encodeRows(requests.size(), encode);
+    } else {
+        for (pybind11::ssize_t row = 0; row < count; ++row) encode(row);
+    }
+    for (pybind11::ssize_t row = 0; row < count; ++row) {
+        const auto &request = requests[static_cast<std::size_t>(row)];
+        request_ids.append(request.requestId);
         needs_policy.append(request.needsPolicy);
         selection_prefix.append(request.selectionPrefix);
         if (request.combatExit)
@@ -3122,7 +3138,7 @@ PYBIND11_MODULE(slaythespire, m) {
                 batch.begin(std::move(sessions));
             }
             const auto selected = std::chrono::steady_clock::now();
-            auto result = packedNeuralLeaves(batch.requests(), batch.requests().empty(), language_card_index);
+            auto result = packedNeuralLeaves(batch.requests(), batch.requests().empty(), language_card_index, &batch);
             result["owners"] = batch.owners();
             result["native_seconds"] = std::chrono::duration<double>(selected-started).count();
             result["pack_seconds"] = std::chrono::duration<double>(std::chrono::steady_clock::now()-selected).count();
@@ -3145,7 +3161,7 @@ PYBIND11_MODULE(slaythespire, m) {
                 batch.advance(v, l, rows, width);
             }
             const auto selected = std::chrono::steady_clock::now();
-            auto result = packedNeuralLeaves(batch.requests(), batch.requests().empty(), language_card_index);
+            auto result = packedNeuralLeaves(batch.requests(), batch.requests().empty(), language_card_index, &batch);
             result["owners"] = batch.owners();
             result["native_seconds"] = std::chrono::duration<double>(selected-started).count();
             result["pack_seconds"] = std::chrono::duration<double>(std::chrono::steady_clock::now()-selected).count();

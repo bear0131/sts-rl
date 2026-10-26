@@ -35,6 +35,9 @@ public:
     // Reuse the same resident workers for model-free independent root jobs.
     // Caller owns acquire() across this call and result encoding.
     void runIndependent(std::size_t count, std::function<void(std::size_t)> work);
+    // Read-only conversion of numeric rows into disjoint caller-owned
+    // rows. The binding retains acquire() and all buffers until this returns.
+    void encodeRows(std::size_t count, std::function<void(std::size_t)> encode);
 
 private:
     void parallel(std::size_t count, std::function<void(std::size_t)> work);

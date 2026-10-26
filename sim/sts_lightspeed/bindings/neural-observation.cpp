@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <map>
+#include "sim/search/NeuralSearchBatch.h"
 
 namespace py = pybind11;
 namespace {
@@ -24,7 +25,11 @@ public:
 
     void setCardStats(py::dict stats) { stats_ = std::move(stats); }
 
-    py::dict decode(py::dict packed, py::dict globals, py::object destination) const {
+    py::dict decode(py::dict packed, py::dict globals, py::object destination,
+                    sts::search::NeuralSearchBatch *pool) const {
+        // Own the pool through validation, GIL release and the worker barrier.
+        // All Python objects remain local owners of the numeric buffers.
+        auto lock = pool ? pool->acquire() : std::unique_lock<std::mutex>();
         Array<std::int32_t> cat(packed["categorical"]), prefix(packed["selection_prefix"]), legal(packed["legal_policy_ids"]);
         Array<float> scalar(packed["scalars"]);
         Array<std::int64_t> owners(packed["owners"]);
@@ -163,7 +168,7 @@ public:
             }
             return encoded;
         };
-        for (py::ssize_t r=0; r<n; ++r) {
+        const auto decodeRow = [&](py::ssize_t r) {
             const auto *c=cat.data()+r*cat.shape(1); const auto *s=scalar.data()+r*scalar.shape(1);
             if (!std::isfinite(s[5]) || s[5]<0 || s[5]>32767 || s[5]!=std::nearbyint(s[5]))
                 throw std::invalid_argument("native packed gold is outside the explicit integer domain 0..32767");
@@ -294,6 +299,12 @@ public:
                     throw std::invalid_argument("native policy id outside observation mask");
                 mask[r*width_+id]=true;
             }
+        };
+        if (pool) {
+            py::gil_scoped_release release;
+            pool->encodeRows(n, decodeRow);
+        } else {
+            for (py::ssize_t r=0; r<n; ++r) decodeRow(r);
         }
         return out;
     }
@@ -305,5 +316,5 @@ void bindNeuralObservation(py::module_ &module) {
         .def(py::init<py::dict,py::dict,py::dict,py::dict,py::dict,int,int,bool>())
         .def("set_card_stats", &NeuralObservationDecoder::setCardStats)
         .def("decode",&NeuralObservationDecoder::decode, py::arg("packed"),
-             py::arg("globals"), py::arg("destination")=py::none());
+             py::arg("globals"), py::arg("destination")=py::none(), py::arg("pool")=nullptr);
 }
