@@ -144,7 +144,7 @@ def assert_nested_equal(left, right):
         assert left == right
 
 
-def test_vector_wrappers_autoreset_labels_journals_and_restore():
+def test_vector_wrappers_autoreset_labels_journals_and_restore(monkeypatch):
     import gymnasium as gym
     from stable_baselines3.common.vec_env import DummyVecEnv
     from rl.training.native_vec_env import NativeSearchVecEnv
@@ -168,6 +168,13 @@ def test_vector_wrappers_autoreset_labels_journals_and_restore():
     rng = np.random.default_rng(9001000)
     try:
         assert candidate.native_root_observations is not None
+        pending_batches = []
+        indices = {id(env.unwrapped): index for index, env in enumerate(candidate.envs)}
+        encode = candidate.native_root_observations.encode
+        def record_pending(envs):
+            pending_batches.append(tuple(indices[id(env)] for env in envs))
+            return encode(envs)
+        monkeypatch.setattr(candidate.native_root_observations, 'encode', record_pending)
         for vec in (reference, candidate):
             vec.seed(9001000)
         assert_nested_equal(reference.reset(), candidate.reset())
@@ -185,6 +192,8 @@ def test_vector_wrappers_autoreset_labels_journals_and_restore():
                     env.restore_training_state(state)
         assert_nested_equal(reference.env_method('export_training_state'), candidate.env_method('export_training_state'))
         assert all(not env.unwrapped._defer_combat_observation for env in candidate.envs)
+        assert any(len(rows) < len(factories) and any(b-a > 1 for a,b in zip(rows, rows[1:]))
+                   for rows in pending_batches), 'fixture must mix noncontiguous combat rows with other phases/reset'
     finally:
         reference.close(); candidate.close()
 

@@ -72,8 +72,11 @@ class NativeSearchVecEnv(DummyVecEnv):
             self._save_obs(index, obs)
         if pending:
             observations = self.native_root_observations.encode([self.envs[i].unwrapped for i in pending])
-            for row, index in enumerate(pending):
-                self._save_obs(index, {key: value[row] for key, value in observations.items()})
+            indices = np.asarray(pending, dtype=np.intp)
+            # Respect the checkpoint's visible keys and leave reset/overworld
+            # rows intact. The codec already returned one array per field.
+            for key in self.keys:
+                self.buf_obs[key][indices] = observations[key]
         return (self._obs_from_buf(), np.copy(self.buf_rews), np.copy(self.buf_dones), deepcopy(self.buf_infos))
 
     def close(self):
