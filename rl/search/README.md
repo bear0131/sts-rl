@@ -45,6 +45,18 @@ and steady collection time separately. Dynamic batch/relic dimensions reuse a
 compiled program where supported, but dimension-one specialization can still
 require another compile. Replacing the backend resets its callable as well.
 
+Inductor's disk cache also records compiled kernels and autotuned launch choices;
+it is separate from the in-process CUDA graph LRU. A fresh compile can choose
+different configurations and produce different floating-point outputs even with
+the same checkpoint, input, GPU model and dependency versions. For a strict
+before/after comparison, preserve each rank's compiler cache together with its
+environment identity, compare fixed leaf inputs first, then validate a complete
+collection after warmup, full-state restore and graph-memory release. Matching
+fixed inputs alone does not establish identical search trajectories. Clearing
+the cache is not an accuracy fix, and copying it across dependency/device changes
+does not establish compatibility. Cache artifacts belong in ignored run storage,
+not policy checkpoints or Git.
+
 `--leaf-graph-profile-interval N` samples CUDA stream H2D/replay/D2H intervals;
 zero disables event sampling. Capture/copy/output wall times and cache counts
 are recorded per collection under `nosl_is_az/leaf_graph_*`. Stream event times
