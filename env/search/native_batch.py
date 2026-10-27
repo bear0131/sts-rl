@@ -122,7 +122,7 @@ class NativeSearchBatch:
 
     def _decode_observations(self, destination=None, rows=None):
         started = time.perf_counter()
-        self._ensure_card_stats()
+        self._ensure_card_stats(validate_all=rows is not None)
         payload = self.payload
         if rows is not None:
             # Select the few packed arrays before decoding, not every expanded
@@ -177,7 +177,7 @@ class NativeSearchBatch:
         owners = self.payload['owners']
         if rows is not None:
             owners = [owners[i] for i in rows]
-        return int(max(self._relic_widths[owner] for owner in owners))
+        return int(self._relic_widths[owners].max())
 
     def observation_layout(self, rows=None):
         """Shape/dtype views only; their contents are not model observations."""
@@ -191,7 +191,7 @@ class NativeSearchBatch:
         """Fill caller-owned contiguous arrays before their next device upload."""
         self._decode_observations(destination, rows)
 
-    def _ensure_card_stats(self):
+    def _ensure_card_stats(self, *, validate_all=False):
         layout = _nosl_compact_lut()['layout']
         hand_start = (6 + int(layout['player_status_count'])
                       + encode.COMBAT_COUNTERS + 1 + 30
@@ -200,13 +200,22 @@ class NativeSearchBatch:
         if scalars.ndim != 2 or scalars.shape[1] < hand_start + 20:
             raise ValueError('native observation layout omits hand upgrade data')
         upgrades = scalars[:, hand_start:hand_start+20:2]
-        if (not np.all(np.isfinite(upgrades)) or np.any(upgrades < 0)
+        # A subset decoder will not see the omitted rows. Keep the original
+        # whole-packet validation in that path, including empty selections.
+        if validate_all and (not np.all(np.isfinite(upgrades)) or np.any(upgrades < 0)
                 or np.any(upgrades != np.rint(upgrades))):
             raise ValueError('native hand upgrade count is invalid')
-        needed = int(upgrades.max(initial=0)) + 1
-        if needed > self._card_stats['damage'].shape[1]:
-            self._card_stats = _nosl_card_stats(needed)
-            self.decoder.set_card_stats(self._card_stats)
+        highest = float(upgrades.max(initial=0))
+        # The native decoder checks every hand entry for finite, nonnegative
+        # integer upgrades, including entries below this maximum. Here we only
+        # need to grow the printed-card table before decoding, not duplicate
+        # those checks with temporary arrays on every search wave.
+        if highest < self._card_stats['damage'].shape[1]:
+            return
+        if not np.isfinite(highest) or highest != int(highest):
+            raise ValueError('native hand upgrade count is invalid')
+        self._card_stats = _nosl_card_stats(int(highest) + 1)
+        self.decoder.set_card_stats(self._card_stats)
 
     def advance(self, logits, values):
         self.leaves[np.asarray(self.payload['owners'], dtype=np.intp)] += 1

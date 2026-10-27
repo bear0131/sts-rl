@@ -317,6 +317,37 @@ def test_packed_searing_blow_above_old_upgrade_cache_remains_exact(combat_factor
         pool.close()
 
 
+@pytest.mark.parametrize('bad', [-1., .5, 127.5, 128.5, np.nan, np.inf, -np.inf])
+@pytest.mark.parametrize('rows', [None, [0], []])
+def test_native_hand_upgrade_validation_survives_fast_table_check(combat_factory, bad, rows):
+    from env.core import encode
+    from env.core.run_env import _nosl_compact_lut
+
+    envs = [combat_factory(['STRIKE_RED'] * 5, seed=42+i) for i in range(2)]
+    pool = NativeSearchBatch(envs, 2)
+    try:
+        pool.begin({i: ((np.zeros(env.action_space.n),), dict(simulations=8,
+            leaf_batch_size=1, state_nonce=42+i, compact_observation=True))
+            for i, env in enumerate(envs)})
+        expected = pool.observations(rows)
+        layout = _nosl_compact_lut()['layout']
+        hand_start = (6 + layout['player_status_count'] + encode.COMBAT_COUNTERS
+                      + 1 + 30 + 5 * layout['monster_status_count'])
+        # Last hand slot of an omitted row: invalid counts below the cached
+        # maximum must not escape validation, even for an empty selection.
+        column = hand_start + 18
+        original = pool.payload['scalars'][1, column]
+        pool.payload['scalars'][1, column] = bad
+        with pytest.raises(ValueError, match='upgrade'):
+            pool.observations(rows)
+        pool.payload['scalars'][1, column] = original
+        actual = pool.observations(rows)
+        for key in actual:
+            assert actual[key].tobytes() == expected[key].tobytes(), key
+    finally:
+        pool.close()
+
+
 @pytest.mark.native
 @pytest.mark.timeout(30)
 @pytest.mark.parametrize('contract', ['legacy', 'autoregressive-v2'])
