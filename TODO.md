@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| PERF-COMBAT16 | 本机融合优化通过；远端成对测量收尾 | 基线同步7f03fb08，不改dtype/输入/模型/128sim。pending状态直接写入共用codec并跳过选择尾部空槽转换；同进程32/64/192 env CPU流程减少9.0%/8.3%/19.6%，编码17%..36%，真实GPU64×64四组输出字节一致但有热降速，不能宣称同幅GPU整轮收益。原版已有两项CPU改动的四机384×512测量与完整恢复见worklog/2026-10-27.md；新融合尚未部署，含搜索实际游戏步10us仍待验收。 |
+| PERF-COMBAT16 | 本机融合优化通过；远端旧改动测量完成；10us待验收 | 基线同步7f03fb08，不改dtype/输入/模型/128sim。pending状态直接写入共用codec并跳过选择尾部空槽转换；同进程32/64/192 env CPU流程减少9.0%/8.3%/19.6%，编码17%..36%，真实GPU64×64四组输出字节一致但有热降速，不能宣称同幅GPU整轮收益。旧两项CPU改动四机384×512均值减少2.60%/9.92秒（单host仅一对、有调度波动）；原训练恢复后完整89轮及下一轮推进通过。证据见worklog/2026-10-27.md的四台5090成对结果小节；新融合尚未部署，完整GPU收益与搜索内部transition计数/10us待验收，下一大块为模型调用等待和环境执行。 |
 | SIM-DUVU-SET-DECK | 原版与候选均复现，未修 | tests/integration/test_native_leaf_live_relics.py::test_du_vu_observation_and_strength_derive_from_all_master_deck_curses：set_deck三个curse后relic_state counter为0，期望3；在明确9949ceaa基线与102c5e8e候选同样失败。核对测试夹具/动态换牌组计数契约后修复；不夹入PERF-COMBAT16优化，不skip/放宽断言。 |
 | COMBAT16-MASK | 已复现，修复验证中 | 原生叶子首次进入超过96候选的单选屏时，动作列表与overflow-equivalent-v1公开代表不一致，AR出现-182 policy id。修复仅让joint/AR搜索使用相同代表句柄，96以内保持。验收真实56恢复复现、根/叶/串行/批量回归、全状态迁移与四机完整恢复周期；管理证据reported-stop-20261027-152804。 |
 | COMBAT16 | 用户纠正：fresh准备中，错误续训协调停止 | COMBAT06配置基础、内层随机初始化step0/空Adam回放、新环境与RNG，冻结876及观测不变；Boss胜maxHP/200败0均监督，搜索纯P(win)。B真实HP监督也相同seed重新初始化，暂不自动启动。验收初始一致、无resume/fork、完整生产周期；证据runs/local/combat16-boss-win-fresh-20261027。 |
