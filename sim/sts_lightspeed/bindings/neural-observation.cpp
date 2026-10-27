@@ -5,6 +5,7 @@
 #include <pybind11/stl.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <map>
 #include <optional>
@@ -53,7 +54,7 @@ public:
     }
 
     py::dict decodeRows(py::dict packed, py::dict globals, py::object destination,
-                       const sts::search::NeuralSearchBatch *native,
+                       sts::search::NeuralSearchBatch *native,
                        const std::vector<std::size_t> &indices, py::object languageIndex) const {
         Array<std::int32_t> cat, prefix, legal;
         Array<float> scalar;
@@ -77,6 +78,7 @@ public:
             throw std::invalid_argument("native observation layout mismatch");
         py::dict out;
         std::map<std::string, py::array> arrays;
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> outputRanges;
         for (auto item : shapes_) {
             auto name = py::cast<std::string>(item.first);
             auto prototype = py::cast<py::array>(item.second);
@@ -102,8 +104,16 @@ public:
             // deck/relic/context arrays first only doubles the memory writes.
             if (!globals.contains(item.first))
                 std::memset(array.mutable_data(), 0, n * rowBytes);
+            const auto address = reinterpret_cast<std::uintptr_t>(array.mutable_data());
+            outputRanges.emplace_back(address, address+n*rowBytes);
             arrays.emplace(name, array); out[item.first] = array;
         }
+        // The public writer also accepts caller-owned views. Preserve its
+        // serial behavior if two fields share any writable bytes.
+        std::sort(outputRanges.begin(), outputRanges.end());
+        bool independentRows = true;
+        for (std::size_t k=1; k<outputRanges.size(); ++k)
+            if (outputRanges[k].first < outputRanges[k-1].second) independentRows = false;
         // Resolve all pointers once per batch, with no dictionary per leaf.
         auto f = [&](const char *key) {
             auto &array=arrays.at(key);
@@ -213,7 +223,7 @@ public:
             upgradeScale > 0 && energyScale > 0 &&
             !globals.contains("select_card_ids") && !globals.contains("select_native_indices") &&
             !globals.contains("select_card_upgrades") && !globals.contains("select_card_costs");
-        for (py::ssize_t r=0; r<n; ++r) {
+        auto decodeRow = [&](py::ssize_t r) {
             const auto *request=native ? &native->requests()[indices[r]] : nullptr;
             std::optional<compact_leaf::Row> rawRow;
             if (request) rawRow.emplace(compact_leaf::pack(*request->state));
@@ -364,6 +374,14 @@ public:
                     throw std::invalid_argument("native policy id outside observation mask");
                 mask[r*width_+id]=true;
             }
+        };
+        if (native && independentRows) {
+            // All Python objects and buffer pointers were resolved above.
+            // Rows have separate destinations; pending game states are read-only.
+            py::gil_scoped_release release;
+            native->readPendingRows(n, decodeRow);
+        } else {
+            for (py::ssize_t r=0; r<n; ++r) decodeRow(r);
         }
         return out;
     }

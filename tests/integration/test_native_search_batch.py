@@ -10,6 +10,56 @@ from rl.search.native import NativeSearchConfig
 pytestmark = [pytest.mark.native, pytest.mark.timeout(60)]
 
 
+def test_direct_decoder_worker_failure_joins_and_can_reuse(combat_factory):
+    envs = [combat_factory(['STRIKE_RED'] * 5 + ['DEFEND_RED'] * 5,
+                          seed=42+i, combat_action_contract='autoregressive-v2')
+            for i in range(16)]
+    pool = NativeSearchBatch(envs, 4, direct_observations=True)
+    calls = {i: ((np.zeros(env.action_space.n),), dict(
+        **asdict(NativeSearchConfig(simulations=4)), root_value=.5,
+        state_nonce=1729+i, compact_observation=True)) for i, env in enumerate(envs)}
+    try:
+        pool.begin(calls)
+        expected = pool.observations()
+        # This passes buffer validation, then fails inside a leaf conversion.
+        bad = {key: value[:, :0] for key, value in pool._card_stats.items()}
+        pool.decoder.set_card_stats(bad)
+        with pytest.raises(ValueError, match='hand upgrade is outside'):
+            pool.observations()
+        pool.decoder.set_card_stats(pool._card_stats)
+        rows = [pool.rows-1, 0, pool.rows-1]
+        actual = pool.observations(rows)
+        for key in expected:
+            assert actual[key].tobytes() == expected[key][rows].tobytes(), key
+        while not pool.done:
+            pool.advance(np.zeros((pool.rows, envs[0].action_space.n), dtype=np.float32),
+                         np.full(pool.rows, .5, dtype=np.float32))
+        assert all(x['simulations'] == 4 for x in pool.results().values())
+    finally:
+        pool.close()
+
+
+def test_direct_writer_overlapping_fields_preserve_serial_order(combat_factory):
+    envs = [combat_factory(['STRIKE_RED'] * 5 + ['DEFEND_RED'] * 5,
+                          seed=42+i, combat_action_contract='autoregressive-v2')
+            for i in range(16)]
+    outputs = []
+    for threads in (1, 4):
+        pool = NativeSearchBatch(envs, threads, direct_observations=True)
+        try:
+            pool.begin({i: ((np.zeros(env.action_space.n),), dict(
+                **asdict(NativeSearchConfig(simulations=4)), root_value=.5,
+                state_nonce=1729+i, compact_observation=True)) for i, env in enumerate(envs)})
+            target = pool.observations()
+            shared = np.empty((pool.rows+1, 10), dtype=np.float32)
+            target['hand_damage'], target['hand_block'] = shared[:-1], shared[1:]
+            pool.write_observations(target)
+            outputs.append({key: value.tobytes() for key, value in target.items()})
+        finally:
+            pool.close()
+    assert outputs[0] == outputs[1]
+
+
 @pytest.mark.parametrize('threads', [1, 2, 4, 8, 12, 16])
 @pytest.mark.parametrize('fixed_worldline,end_turn_as_leaf', [(True, True), (True, False), (False, False)])
 @pytest.mark.parametrize('contract,language,selection', [

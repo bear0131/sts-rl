@@ -85,6 +85,12 @@ void NeuralSearchBatch::runIndependent(std::size_t count, std::function<void(std
     parallel(count, std::move(work));
 }
 
+void NeuralSearchBatch::readPendingRows(std::size_t count, std::function<void(std::size_t)> work) {
+    if (count && requests_.empty())
+        throw std::logic_error("native observation requires pending leaves");
+    parallel(count, std::move(work));
+}
+
 void NeuralSearchBatch::begin(std::vector<std::shared_ptr<NoslNeuralSearchSession>> sessions) {
     if (!requests_.empty()) throw std::logic_error("finish or clear the previous search batch");
     std::unordered_set<const NoslNeuralSearchSession *> distinct;

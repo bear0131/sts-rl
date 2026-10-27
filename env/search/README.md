@@ -20,6 +20,10 @@ env/core/run_env.py 在 worker 中驱动这些 session；学习侧通过同一�
 继续保留完整数据及校验。该路径需要重新构建含 `decode_native` 的扩展；观测版本、
 dtype、搜索顺序不变，恢复已有完整训练状态仍须遵守 native SHA 身份检查。
 
+直接编码复用 batch 的常驻线程池处理独立叶行，持有 batch 所有权，释放 GIL；
+全部任务结束后才交还缓冲，异常也等待其他任务退出。调用方若传入重叠的输出字段，
+仍按串行顺序转换；不新增线程或改变叶子顺序。
+
 原生 `NeuralSearchBatch.work_counts()` 只读返回当前树的
 `simulator_transitions`（实际执行的完整游戏动作，包括每次 simulation 重放的路径）、
 `selection_prefix_decisions`（仅修改多选前缀、尚未执行游戏动作）和
