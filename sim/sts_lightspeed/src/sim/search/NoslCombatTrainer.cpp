@@ -2339,10 +2339,16 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
                 config_.endTurnAsLeaf &&
                 executableAction.getActionType() == ActionType::END_TURN;
             if (config_.autoregressivePolicy) {
-                if (executeAutoregressiveAction(executableAction, state, pending.selectionPrefix)) ++depth;
+                if (executeAutoregressiveAction(executableAction, state, pending.selectionPrefix)) {
+                    ++depth;
+                    ++simulatorTransitions_;
+                } else {
+                    ++selectionPrefixDecisions_;
+                }
             } else {
                 executableAction.execute(state);
                 ++depth;
+                ++simulatorTransitions_;
             }
 
             if (config_.endTurnAsLeaf &&

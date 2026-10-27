@@ -218,6 +218,10 @@ public:
                             std::size_t policyWidth);
     bool done() const { return simulationsCompleted_ >= config_.simulations; }
     int simulationsCompleted() const { return simulationsCompleted_; }
+    // Work performed, including replaying a path on each sampled clone.
+    // A prefix choice does not execute an action in the game simulator.
+    std::uint64_t simulatorTransitions() const { return simulatorTransitions_; }
+    std::uint64_t selectionPrefixDecisions() const { return selectionPrefixDecisions_; }
     NoslCombatDecision result() const;
     // Return one node's outgoing edges.  `path` contains edge indexes from
     // root; when an edge has several public-state children, the most-visited
@@ -305,6 +309,8 @@ private:
     Node root_;
     int simulationsStarted_ = 0;
     int simulationsCompleted_ = 0;
+    std::uint64_t simulatorTransitions_ = 0;
+    std::uint64_t selectionPrefixDecisions_ = 0;
     std::uint64_t nextRequestId_ = 1;
     std::unordered_map<std::uint64_t, Pending> pending_;
     std::vector<std::tuple<int, int, int, int, int, int, int, int, int>> stateKeyScratch_;

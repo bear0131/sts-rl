@@ -2832,6 +2832,20 @@ PYBIND11_MODULE(slaythespire, m) {
         }, pybind11::arg("values"), pybind11::arg("logits"),
            pybind11::arg("language_card_index") = pybind11::none(),
            pybind11::arg("direct_observations") = false)
+        .def("work_counts", [](sts::search::NeuralSearchBatch &batch) {
+            auto ownership = batch.acquire();
+            std::uint64_t transitions = 0, prefixes = 0, simulations = 0;
+            for (const auto &session : batch.sessions()) {
+                transitions += session->simulatorTransitions();
+                prefixes += session->selectionPrefixDecisions();
+                simulations += session->simulationsCompleted();
+            }
+            pybind11::dict result;
+            result["simulator_transitions"] = transitions;
+            result["selection_prefix_decisions"] = prefixes;
+            result["completed_simulations"] = simulations;
+            return result;
+        }, "work executed by current trees; prefix decisions exclude simulator actions")
         .def("clear", &sts::search::NeuralSearchBatch::clear)
         .def_property_readonly("threads", &sts::search::NeuralSearchBatch::threadCount);
     m.doc() = "pybind11 example plugin"; // optional module docstring
