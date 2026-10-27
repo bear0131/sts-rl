@@ -2846,6 +2846,11 @@ PYBIND11_MODULE(slaythespire, m) {
             result["completed_simulations"] = simulations;
             return result;
         }, "work executed by current trees; prefix decisions exclude simulator actions")
+        .def("release_retired", [](sts::search::NeuralSearchBatch &batch) {
+            auto ownership = batch.acquire();
+            pybind11::gil_scoped_release release;
+            batch.releaseRetired();
+        }, "release previous-batch ownership without invalidating externally retained trees")
         .def("clear", &sts::search::NeuralSearchBatch::clear)
         .def_property_readonly("threads", &sts::search::NeuralSearchBatch::threadCount);
     m.doc() = "pybind11 example plugin"; // optional module docstring

@@ -76,7 +76,13 @@ void NeuralSearchBatch::clear() {
     requests_.clear();
     owners_.clear();
     nextRequests_.clear();
+    releaseRetired();
     sessions_.clear();
+}
+
+void NeuralSearchBatch::releaseRetired() {
+    parallel(retired_.size(), [&](std::size_t i) { retired_[i].reset(); });
+    retired_.clear();
 }
 
 void NeuralSearchBatch::runIndependent(std::size_t count, std::function<void(std::size_t)> work) {
@@ -97,6 +103,11 @@ void NeuralSearchBatch::begin(std::vector<std::shared_ptr<NoslNeuralSearchSessio
     for (const auto &session : sessions)
         if (!session || !distinct.insert(session.get()).second)
             throw std::invalid_argument("native search batch requires distinct nonnull trees");
+    // Keep at most one previous generation. Its Python diagnostic references
+    // disappear during results(), where releasing the final owner serially
+    // would destroy every old tree on the collector thread.
+    releaseRetired();
+    retired_ = std::move(sessions_);
     sessions_ = std::move(sessions);
     select();
 }

@@ -25,6 +25,10 @@ public:
     void advance(const float *values, const float *logits, std::size_t rows,
                  std::size_t width);
     void clear();
+    // Drop the previous batch's ownership after Python has replaced its
+    // diagnostic references. External owners retain their complete trees.
+    // Caller holds acquire(); no Python objects are touched by workers.
+    void releaseRetired();
     // Binding holds this across GIL release and subsequent result encoding.
     // Reject reentry instead of blocking with the GIL held.
     std::unique_lock<std::mutex> acquire();
@@ -53,6 +57,7 @@ private:
     bool stopping_ = false;
     std::exception_ptr failure_;
     std::vector<std::shared_ptr<NoslNeuralSearchSession>> sessions_;
+    std::vector<std::shared_ptr<NoslNeuralSearchSession>> retired_;
     std::vector<std::vector<NoslNeuralSearchSession::LeafRequest>> nextRequests_;
     std::vector<NoslNeuralSearchSession::LeafRequest> requests_;
     std::vector<std::size_t> owners_;

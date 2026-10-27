@@ -252,6 +252,12 @@ class NativeSearchBatch:
             # actions, diagnostics and session lifetime. No leaves remain.
             response = self.envs[index]._finish_native_neural_session()
             results[index] = response['result']
+        # New native pools retain one previous generation so its final owners
+        # can be released in parallel after all diagnostic references change.
+        # Older extensions keep their original synchronous destruction path.
+        release_retired = getattr(self.pool, 'release_retired', None)
+        if release_retired is not None:
+            release_retired()
         return results
 
     def clear(self):

@@ -65,3 +65,56 @@ def test_result_mapping_preserves_duplicate_accumulation(combat_factory):
     assert result['visit_policy'][card_id] == .5
     assert result['selected_target'] == -1
     assert not result['selected_action_targeted']
+
+
+@pytest.mark.parametrize('threads', [1, 4])
+def test_retired_tree_release_preserves_external_owners_and_pending_batch(combat_factory, threads):
+    envs = [combat_factory(['STRIKE_RED'] * 5 + ['DEFEND_RED'] * 5,
+                           seed=42+i, combat_action_contract='autoregressive-v2')
+            for i in range(2)]
+    pool = NativeSearchBatch(envs, threads, direct_observations=True)
+    retained = []
+
+    def calls(nonce):
+        return {i: ((np.zeros(env.action_space.n),), dict(
+            simulations=16, depth=0, state_nonce=nonce+i, fixed_worldline=True,
+            end_turn_as_leaf=True, compact_observation=True, leaf_batch_size=1))
+                for i, env in enumerate(envs)}
+
+    def finish():
+        while not pool.done:
+            pool.advance(np.zeros((pool.rows, envs[0].action_space.n), np.float32),
+                         np.full(pool.rows, .5, np.float32))
+        return pool.results()
+
+    try:
+        # Explicitly require the rebuilt extension; missing native support is
+        # not a passed lifecycle test.
+        assert hasattr(pool.pool, 'release_retired')
+        for generation in range(4):
+            pool.begin(calls(100+generation*10))
+            before = {k: v.copy() for k, v in pool.observations().items()}
+            counts = pool.pool.work_counts()
+            pool.pool.release_retired()
+            pool.pool.release_retired()
+            assert pool.pool.work_counts() == counts
+            for key, value in pool.observations().items():
+                assert value.tobytes() == before[key].tobytes()
+            results = finish()
+            assert all(result['simulations'] == 16 for result in results.values())
+            for env in envs:
+                session = env._nosl_cpp_last_session
+                retained.append((session, session.result()))
+                assert env.nosl_is_az_cpp_tree_snapshot()['valid']
+            for session, expected in retained:
+                assert session.result() == expected
+        pool.begin(calls(200))
+        pool.clear()
+        pool.pool.release_retired()
+        assert pool.pool.work_counts()['completed_simulations'] == 0
+        pool.begin(calls(210))
+        finish()
+        for session, expected in retained:
+            assert session.done() and session.result() == expected
+    finally:
+        pool.close()
