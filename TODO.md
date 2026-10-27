@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| COMBAT16-MASK | 已复现，修复验证中 | 原生叶子首次进入超过96候选的单选屏时，动作列表与overflow-equivalent-v1公开代表不一致，AR出现-182 policy id。修复仅让joint/AR搜索使用相同代表句柄，96以内保持。验收真实56恢复复现、根/叶/串行/批量回归、全状态迁移与四机完整恢复周期；管理证据reported-stop-20261027-152804。 |
 | COMBAT16 | 用户纠正：fresh准备中，错误续训协调停止 | COMBAT06配置基础、内层随机初始化step0/空Adam回放、新环境与RNG，冻结876及观测不变；Boss胜maxHP/200败0均监督，搜索纯P(win)。B真实HP监督也相同seed重新初始化，暂不自动启动。验收初始一致、无resume/fork、完整生产周期；证据runs/local/combat16-boss-win-fresh-20261027。 |
 | COMBAT06-ROLLOUT | 用户已完整暂停99；共同起点见COMBAT16 | 固定生产9318a94e/native72/2025文件，原大模型及全部观测/目标/搜索参数保持。完整384×512/128sim两组同机rollout平均减少6.33%，全观测/动作/标签字节及非耗时搜索/graph次数一致。12:37从自身完整31恢复，12:50首32/global25165824完整采样/U40/保存及下轮128、全文件SHA/组内lower和Adam1280/满replay/384环境独立重放/W&B通过；12:52最终身份/源码/空间通过，观察进程已退出、pending空。旧30/31完整压缩档和依赖保留，不重跑本次测试/迁移/启动。管理唯一ledger及证据runs/local/combat06-rollout-optimization-20261026，生产pin不随日志提交改变。 |
 | COMBAT06-RESUME | 已从25续训至31，优化后现役入口转COMBAT06-ROLLOUT | 原大模型/人工means/876/384×512/128sim/U40/micro8192保持，native897→3fb只迁身份，四机201 CPU/43 GPU及原25全状态/384环境重放通过。该旧root于用户授权优化时正常停31，全30/31压缩恢复档与依赖保留；随后完整迁移至COMBAT06-ROLLOUT的新root并通过32首周期验收。原06-resume ledger仅历史，不再据此启动；当前唯一入口及生产pin见COMBAT06-ROLLOUT。见worklog/2026-10-26.md。 |

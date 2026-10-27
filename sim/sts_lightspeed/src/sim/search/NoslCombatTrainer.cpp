@@ -1442,7 +1442,8 @@ double NoslNeuralSearchSession::hpValue(const BattleContext &bc) {
 
 std::vector<Action> NoslNeuralSearchSession::legalActions(
     const BattleContext &bc, int selected) const {
-    return config_.autoregressivePolicy ? autoregressiveActions(bc, selected) : Action::enumerateCombatActions(bc);
+    if (config_.autoregressivePolicy) return autoregressiveActions(bc, selected);
+    return config_.jointPolicy ? neuralCombatActions(bc) : Action::enumerateCombatActions(bc);
 }
 
 bool NoslNeuralSearchSession::validAction(const Action &action, const BattleContext &bc, int selected) const {

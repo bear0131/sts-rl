@@ -140,6 +140,46 @@ def test_distinct_candidate_overflow_still_fails_explicitly(combat_factory):
         battle.compact_leaf_arrays()
 
 
+@pytest.mark.parametrize('contract', ['joint-v2', 'autoregressive-v2'])
+def test_search_leaf_enters_overflow_selection(combat_factory, contract):
+    """Overflow may first arise below the root, before Python builds a mask."""
+    from env.core import native_actions as C
+    from env.search.native_batch import NativeSearchBatch
+    env = combat_factory(['EXHUME'] * 5, combat_action_contract=contract,
+                         card_language=True)
+    env.thick.bc.apply_custom_state({'hand': ['EXHUME'],
+        'exhaust': ['DAZED'] * 99 + ['DEFEND_RED', ('DEFEND_RED', 1)]})
+    env._invalidate_backend_cache()
+    logits = np.full(env.action_space.n, -100., np.float32)
+    logits[C.JOINT_PLAY + 5 - (C.JOINT_END if contract == 'autoregressive-v2' else 0)] = 0
+    pool = NativeSearchBatch([env], 1)
+    saw_selection = False
+    try:
+        pool.begin({0: ((logits,), dict(simulations=8, depth=0, state_nonce=42,
+            root_search_mode=2, paper_full_gumbel=True, gumbel_scale=0,
+            compact_observation=True, leaf_batch_size=1, fixed_worldline=True))})
+        while not pool.done:
+            observed = pool.observations()
+            for row in range(pool.rows):
+                if observed['select_zone'][row, 0] != 4:
+                    continue
+                saw_selection = True
+                handles = observed['select_native_indices'][row]
+                assert handles[handles != 0].tolist() == [1, 100, 101]
+                # Every exposed choice is backed by a representable executable
+                # edge, including the upgraded card beyond the first 96 slots.
+                count = int(pool.payload['legal_action_counts'][row])
+                ids = np.asarray(pool.payload['legal_policy_ids'][row, :count])
+                assert np.all((ids >= 0) & (ids < env.action_space.n))
+                assert len(ids) == len(np.unique(ids)) == 3
+            pool.advance(np.zeros((pool.rows, env.action_space.n), np.float32),
+                         np.full(pool.rows, .5, np.float32))
+        assert saw_selection
+        assert pool.results()[0]['simulations'] == 8
+    finally:
+        pool.close()
+
+
 def test_codex_skip_is_a_public_candidate(combat_factory):
     env = combat_factory(["STRIKE_RED"] * 5, relics=("Nilry's Codex",))
     battle = env.thick.bc
