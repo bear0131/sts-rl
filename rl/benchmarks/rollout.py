@@ -44,7 +44,8 @@ def run(args):
             from rl.search.inference import CombatLeafGraphs
             model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp,
                 failure_path=args.output.with_suffix('.failed-leaves.npz'), profile_interval=args.graph_profile_interval,
-                batch_multiple=args.leaf_graph_batch_multiple)
+                batch_multiple=args.leaf_graph_batch_multiple, capacity=args.leaf_graph_capacity,
+                compile_forward=not args.no_leaf_compile, blocking_wait=args.leaf_host_wait == 'block')
         if args.model_workload != 'real':
             from rl.benchmarks.virtual_inference import VirtualInference
             VirtualInference(model, shadow=args.model_workload == 'shadow').install()

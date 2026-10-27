@@ -42,7 +42,9 @@ def run(args):
         if args.leaf_inference == 'cuda-graph':
             from rl.search.inference import CombatLeafGraphs
             model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp,
-            profile_interval=args.graph_profile_interval, batch_multiple=args.leaf_graph_batch_multiple)
+                profile_interval=args.graph_profile_interval, batch_multiple=args.leaf_graph_batch_multiple,
+                capacity=args.leaf_graph_capacity, compile_forward=not args.no_leaf_compile,
+                blocking_wait=args.leaf_host_wait == 'block')
         observations = []
         for index in range(0 if args.leaf_input else args.n_envs):
             env.reset(seed=args.seed + index)

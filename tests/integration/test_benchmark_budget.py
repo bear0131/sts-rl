@@ -5,6 +5,20 @@ import sys
 import pytest
 
 
+@pytest.mark.parametrize('options', [
+    ['--leaf-graph-capacity', '0'],
+    ['--no-leaf-compile'],
+    ['--leaf-host-wait', 'block'],
+    ['--leaf-graph-capacity', '8'],
+    ['--workload', 'train', '--leaf-inference', 'cuda-graph', '--no-leaf-compile'],
+])
+def test_benchmark_rejects_unused_or_invalid_graph_options(tmp_path, options):
+    from rl.benchmarks.train import parser, run_worker
+    args = parser().parse_args(['--output', str(tmp_path/'invalid.json'), *options])
+    with pytest.raises(ValueError, match='leaf graph'):
+        run_worker(args)
+
+
 def test_benchmark_timeout_exits_with_machine_readable_status(tmp_path):
     output = tmp_path / "timeout.json"
     result = subprocess.run(

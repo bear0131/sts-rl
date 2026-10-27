@@ -90,7 +90,8 @@ def test_outer_checkpoint_relocation_validates_material_and_context(outer_materi
 @pytest.mark.timeout(600)
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='GPU-only graph contract; deployment separately requires CUDA')
 @pytest.mark.parametrize('control', [False, True, 'finite', 'means'])
-def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control):
+@pytest.mark.parametrize('blocking_wait', [False, True])
+def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control, blocking_wait):
     """Explicit GPU gate: missing CUDA is a failure when this test is selected."""
     import gc
     import os
@@ -115,7 +116,8 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control):
     core.to('cuda').eval()
     frozen = core.teacher.assert_integrity()
     cache = CombatLeafGraphs(core, 'cuda', amp='bf16', capacity=2, batch_multiple=32,
-                             compile_forward=os.name != 'nt')
+                             compile_forward=os.name != 'nt', blocking_wait=blocking_wait,
+                             profile_interval=1 if blocking_wait else 0)
     try:
         for count in (1, 33, 65, 1, 1):
             obs = {k: np.stack([v]*count) for k, v in env._obs().items()

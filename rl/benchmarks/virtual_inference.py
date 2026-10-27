@@ -43,7 +43,8 @@ class VirtualInference:
                 source = self.backend
                 self.backend = CombatLeafGraphs(core, model.device, amp=source.amp,
                     capacity=source.capacity, profile_interval=source.profile_interval,
-                    batch_multiple=source.batch_multiple)
+                    batch_multiple=source.batch_multiple, compile_forward=source.compile_forward,
+                    blocking_wait=source.blocking_wait)
         self.root_forward = model.policy.core.actor_critic
         self.value_forward = model.policy.core.value
         self.root_calls = self.leaf_calls = self.leaf_rows = 0

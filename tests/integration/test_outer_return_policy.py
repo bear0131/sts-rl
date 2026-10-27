@@ -129,8 +129,8 @@ def test_grid_leaf_choices_override_root_context_and_reach_lower(outer_return_co
         batch.close()
 
 
-@pytest.mark.parametrize('device', ['cpu', 'cuda'])
-def test_outer_native_writer_preserves_selected_rows_context_and_padding(outer_return_core, device):
+@pytest.mark.parametrize('device,blocking_wait', [('cpu', False), ('cuda', False), ('cuda', True)])
+def test_outer_native_writer_preserves_selected_rows_context_and_padding(outer_return_core, device, blocking_wait):
     if device == 'cuda' and not torch.cuda.is_available():
         pytest.skip('direct pinned graph inputs require CUDA')
     from rl.search.inference import CombatLeafGraphs
@@ -145,7 +145,7 @@ def test_outer_native_writer_preserves_selected_rows_context_and_padding(outer_r
     if device == 'cuda':
         core.to(device).eval()
         graphs = CombatLeafGraphs(core, device, amp='bf16', batch_multiple=2,
-                                  capacity=2, compile_forward=False)
+                                  capacity=2, compile_forward=False, blocking_wait=blocking_wait)
         reference_graphs = CombatLeafGraphs(core, device, amp='bf16', batch_multiple=2,
                                             capacity=2, compile_forward=False)
     config = NativeSearchConfig(simulations=8, depth=1, outer_return=True,

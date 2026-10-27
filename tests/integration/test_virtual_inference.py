@@ -45,7 +45,8 @@ def test_virtual_and_shadow_search_have_identical_work(combat_factory):
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='virtual CUDA transport requires a GPU runner')
-def test_virtual_graph_preserves_transfers_without_model(combat_factory):
+@pytest.mark.parametrize('blocking_wait', [False, True])
+def test_virtual_graph_preserves_transfers_without_model(combat_factory, blocking_wait):
     from rl.search.inference import CombatLeafGraphs
     from rl.search.native import forward_leaves
     env = combat_factory(['STRIKE_RED'] * 5, combat_action_contract='autoregressive-v2', card_language=True)
@@ -58,8 +59,11 @@ def test_virtual_graph_preserves_transfers_without_model(combat_factory):
     model.policy.core.combat_actor_critic = forbidden
     model.policy.core.graph_actor_critic = forbidden
     model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device,
-        amp='bf16', batch_multiple=32, profile_interval=1)
+        amp='bf16', batch_multiple=32, profile_interval=1, capacity=2,
+        compile_forward=False, blocking_wait=blocking_wait)
     runtime = VirtualInference(model).install()
+    assert runtime.backend.blocking_wait == blocking_wait
+    assert runtime.backend.capacity == 2 and not runtime.backend.compile_forward
     batch = {k: np.stack([v]*17) for k,v in env._obs().items()
              if k in model.policy.core.combat_observation_keys}
     for _ in range(2):

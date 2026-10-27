@@ -26,6 +26,11 @@ def parser():
     p.add_argument("--leaf-repeats", type=int, default=200)
     p.add_argument("--leaf-input", type=Path, help="Replay a saved CPU leaf observation NPZ")
     p.add_argument("--leaf-inference", choices=("eager", "cuda-graph"), default="eager")
+    p.add_argument("--leaf-graph-capacity", type=int, default=32)
+    p.add_argument("--no-leaf-compile", action="store_true",
+                   help="capture eager forward for local compiler compatibility")
+    p.add_argument("--leaf-host-wait", choices=("spin", "block"), default="spin",
+                   help="CUDA completion wait: lower CPU use may add wakeup latency")
     p.add_argument("--model-workload", choices=("real", "virtual", "shadow"), default="real",
                    help="rollout only: virtual replies, or real inference with the same virtual replies")
     p.add_argument("--profile", action="store_true", help="Export a bounded operator trace for leaves or CPU call profile for rollout")
@@ -71,6 +76,11 @@ def make_environment():
 
 
 def run_worker(args):
+    if args.leaf_graph_capacity < 1:
+        raise ValueError('leaf graph capacity must be positive')
+    if (args.leaf_graph_capacity != 32 or args.no_leaf_compile or args.leaf_host_wait != 'spin') and (
+            args.workload not in ('leaves', 'rollout') or args.leaf_inference != 'cuda-graph'):
+        raise ValueError('leaf graph options require leaves/rollout with --leaf-inference cuda-graph')
     if args.model_workload != 'real' and args.workload != 'rollout':
         raise ValueError('virtual/shadow model workloads require --workload rollout')
     if args.workload == 'leaves':

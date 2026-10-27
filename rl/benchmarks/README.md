@@ -24,6 +24,13 @@ AR BF16融合按logits/utility/合法动作概率容差），并报告相对
 原始未补齐 eager 的 logits/value 最大、均值和 p99 绝对误差；可用实际叶 NPZ
 重复验证，不能只靠随机小模型证明生产 checkpoint 的数值误差。
 
+本机显存/编译兼容测试使用同一入口的 `--leaf-graph-capacity N`（默认32）、
+`--no-leaf-compile`（默认开启编译）和 `--leaf-host-wait spin|block`（默认spin）。
+这些参数只支持 leaves/rollout 的 cuda-graph 后端，并写入结果配置；不改变训练入口默认值。
+缩小缓存会降低显存需求，也可能增加捕获成本；关闭编译仍执行CUDA图，但不代表生产融合性能。
+block让CPU在等待叶批完成时休眠，可能增加唤醒延迟；比较时同时看端到端时间与进程CPU时间。
+图生命周期回归覆盖两种等待方式，性能候选还须经过同模型、同seed的生产长度collection。
+
 `--model-workload virtual|shadow` 仅用于 rollout 性能对照：两者向搜索返回相同的
 零 logits 与 value=0.5。virtual 跳过神经计算；shadow 执行实际模型但丢弃其结果。
 这样可严格比较相同树工作量与完整输出 hash，不把神经输出变化导致的叶数差当加速。

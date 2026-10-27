@@ -18,7 +18,8 @@ from rl.policies.precision import bf16_autocast
 
 class CombatLeafGraphs:
     def __init__(self, core, device, *, amp='off', capacity=32, failure_path=None,
-                 profile_interval=0, batch_multiple=0, compile_forward=True):
+                 profile_interval=0, batch_multiple=0, compile_forward=True,
+                 blocking_wait=False):
         if torch.device(device).type != 'cuda':
             raise ValueError('combat CUDA graphs require a CUDA device')
         if capacity < 1 or amp not in ('off', 'bf16'):
@@ -29,6 +30,7 @@ class CombatLeafGraphs:
         # Fusion changes floating point rounding, not model/search geometry.
         leaf = getattr(core, 'graph_actor_critic', None)
         self.compile_forward = bool(compile_forward)
+        self.blocking_wait = bool(blocking_wait)
         # FP32 uses PyTorch's fused encoder fast path, which cannot currently
         # be traced with symbolic shapes. Keep that supported backend eager.
         self.graph_forward = (leaf
@@ -261,9 +263,12 @@ class CombatLeafGraphs:
         torch._C._cuda_clearCublasWorkspaces()
         graph = torch.cuda.CUDAGraph()
         host_output = torch.empty(warm_output.shape, dtype=warm_output.dtype, pin_memory=True)
-        events = ([torch.cuda.Event(enable_timing=True, external=True) for _ in range(4)]
+        events = ([torch.cuda.Event(enable_timing=True, external=True,
+                                   blocking=self.blocking_wait and index == 3) for index in range(4)]
                   if self.profile_interval else None)
-        done = events[-1] if events else torch.cuda.Event(external=True)
+        # Only the completion event is host-waited. Blocking avoids consuming a
+        # CPU core while CUDA runs, but wakeup latency can hurt short kernels.
+        done = events[-1] if events else torch.cuda.Event(external=True, blocking=self.blocking_wait)
         with torch.cuda.graph(graph, stream=stream):
             if events: events[0].record()
             for host, device, _ in buffers:
