@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| COMBAT17 | fresh四机已启动，首周期验收中 | 用户指定A完整50后启动B，08:23:53–54已从原同seed未训练初始启动：Boss真实HP获胜mask辅助监督、搜索纯P(win)，普通战斗/876/统计参数不变，256/4/8、384×512×4/U40/micro8192。CLI continuous无resume/fork；源pinfae92ff3/native72。唯一ledger runs/local/combat17-boss-aux-hp-20261027/active-training.json；一次性manager仍活，禁止重复启动。完整首轮验收待完成。 |
+| COMBAT17 | fresh B首周期验收通过，同进程长驻 | A按用户要求完整停50并全状态保全；B08:23:53–54从同seed未训练初始开始，08:37首1/global786432/U40/完整保存及下轮>=128、四rank全SHA/lower6ec4e94bad82/Adamebd5cdad4f11一致、384环境独立重放/W&B通过。Boss真实HP获胜mask仅辅助，搜索纯P(win)，普通战斗/876/256-4-8/统计参数不变。源pinfae92ff3/native72，CLI continuous无resume/fork；一次性manager已退出、pending空。唯一ledger及first-cycle-acceptance.json/final-completion.json在runs/local/combat17-boss-aux-hp-20261027；B无50轮限制，不重复启动/换段。 |
 | COMBAT16 | 按用户要求完整结束50，已全状态保全 | exact50/global39321600正常exit0，49/50八包全SHA/组内lower Adam/满replay/384env RNGpending通过，gzip读回/fsync verified后仅释放精确展开副本，原根/依赖保留。W&B finished；禁止自动恢复。证据COMBAT17目录round50-final-audit.json/round50-preserved.json。 |
 | COMBAT06-ROLLOUT | 用户已完整暂停99；仅保全，不作新实验起点 | 固定生产9318a94e/native72/2025文件，原大模型及全部观测/目标/搜索参数保持。完整384×512/128sim两组同机rollout平均减少6.33%，全观测/动作/标签字节及非耗时搜索/graph次数一致。12:37从自身完整31恢复，12:50首32/global25165824完整采样/U40/保存及下轮128、全文件SHA/组内lower和Adam1280/满replay/384环境独立重放/W&B通过；12:52最终身份/源码/空间通过，观察进程已退出、pending空。旧30/31完整压缩档和依赖保留，不重跑本次测试/迁移/启动。管理唯一ledger及证据runs/local/combat06-rollout-optimization-20261026，生产pin不随日志提交改变。 |
 | COMBAT06-RESUME | 已从25续训至31，优化后现役入口转COMBAT06-ROLLOUT | 原大模型/人工means/876/384×512/128sim/U40/micro8192保持，native897→3fb只迁身份，四机201 CPU/43 GPU及原25全状态/384环境重放通过。该旧root于用户授权优化时正常停31，全30/31压缩恢复档与依赖保留；随后完整迁移至COMBAT06-ROLLOUT的新root并通过32首周期验收。原06-resume ledger仅历史，不再据此启动；当前唯一入口及生产pin见COMBAT06-ROLLOUT。见worklog/2026-10-26.md。 |
