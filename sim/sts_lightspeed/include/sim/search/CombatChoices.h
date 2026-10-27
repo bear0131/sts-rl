@@ -153,10 +153,28 @@ inline bool isMultiSelection(const BattleContext &bc) {
         bc.cardSelectInfo.isMultiSelection();
 }
 
+inline std::vector<Action> neuralCombatActions(const BattleContext &bc) {
+    auto actions = Action::enumerateCombatActions(bc);
+    if (bc.inputState == InputState::CARD_SELECT &&
+        !bc.cardSelectInfo.isMultiSelection() && actions.size() > 96) {
+        // The observation exposes one real handle per equivalent overflow
+        // choice. Use those same handles below the search root: the omitted
+        // aliases have no policy slot and must not enter a leaf's legal mask.
+        // Keep the native order and every action in already encodable states.
+        const auto choices = combatChoices(bc);
+        actions.erase(std::remove_if(actions.begin(), actions.end(), [&](const Action &action) {
+            return std::none_of(choices.cards.begin(), choices.cards.end(), [&](const CombatChoice &choice) {
+                return choice.nativeIndex == action.getSelectIdx();
+            });
+        }), actions.end());
+    }
+    return actions;
+}
+
 inline std::vector<Action> autoregressiveActions(const BattleContext &bc, int selected) {
     if (!isMultiSelection(bc)) {
         if (selected != 0) throw std::invalid_argument("selection prefix outside multi screen");
-        auto actions = Action::enumerateCombatActions(bc);
+        auto actions = neuralCombatActions(bc);
         actions.erase(std::remove_if(actions.begin(), actions.end(), [](const Action &action) {
             // Packed -1 is the unsigned 13-bit sentinel 8191.
             return action.getActionType() == ActionType::POTION && action.getTargetIdx() > 5;
