@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| PERF-COMBAT16 | 四机融合收益已验；并行编码/10us计量中；训练停90 | 固定384×512/128sim/32线程/BF16图及完整90状态，融合四机AB/BA均值369.466→347.701秒（减少5.89%），最慢400.998→366.454；所有完整输入/动作/标签及非耗时次数一致，每host仅一对仍有调度波动。旧两项Python优化另轮实测2.60%，不能相加当总收益。新常驻线程并行编码本机CPU流程减少10.24%、编码27.80%，语义通过，远端完整GPU与真实搜索transition计数待验；不改dtype/预算/目标。按用户新指令原训练停于90/global70778880，不自动启动，四机只做有界效率测试；清理及证据见worklog/2026-10-27.md的四机专用优化小节。 |
+| PERF-COMBAT16 | 四机完整优化验收；10us/simulation未达；训练保持停90 | 固定384×512/128sim/32线程/BF16图及完整90状态，packed→融合→常驻线程编码四机均值369.466→347.701→333.020秒，总减少9.865%；最慢400.998→366.454→349.101秒，总减少12.942%。三版完整输出/工作与graph计数一致，单host每版一次正式测试仍有调度波动，未测整轮optimizer训练收益。实测每轮约6340万搜索动作/1600万simulations/1260万叶；4.79..5.47us/实际动作（含重放），18.74..21.46us/搜索simulation加外层真实动作，后者10us未达。下一大块为env推进约63秒中的重复编码/深拷贝、结果映射约21秒，以及模型串行等待。旧档核验压缩净清理21.42GB，实验副本已释放；原89/90保留、STOP及自动巡检PAUSED，不自行启动训练。见worklog/2026-10-27.md的并行编码验收与停训收尾。 |
 | SIM-DUVU-SET-DECK | 原版与候选均复现，未修 | tests/integration/test_native_leaf_live_relics.py::test_du_vu_observation_and_strength_derive_from_all_master_deck_curses：set_deck三个curse后relic_state counter为0，期望3；在明确9949ceaa基线与102c5e8e候选同样失败。核对测试夹具/动态换牌组计数契约后修复；不夹入PERF-COMBAT16优化，不skip/放宽断言。 |
 | COMBAT16-MASK | 已复现，修复验证中 | 原生叶子首次进入超过96候选的单选屏时，动作列表与overflow-equivalent-v1公开代表不一致，AR出现-182 policy id。修复仅让joint/AR搜索使用相同代表句柄，96以内保持。验收真实56恢复复现、根/叶/串行/批量回归、全状态迁移与四机完整恢复周期；管理证据reported-stop-20261027-152804。 |
 | COMBAT16 | 用户纠正：fresh准备中，错误续训协调停止 | COMBAT06配置基础、内层随机初始化step0/空Adam回放、新环境与RNG，冻结876及观测不变；Boss胜maxHP/200败0均监督，搜索纯P(win)。B真实HP监督也相同seed重新初始化，暂不自动启动。验收初始一致、无resume/fork、完整生产周期；证据runs/local/combat16-boss-win-fresh-20261027。 |
