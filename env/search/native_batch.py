@@ -11,10 +11,16 @@ from env.core.run_env import (
 
 
 class NativeSearchBatch:
-    def __init__(self, envs, threads):
+    def __init__(self, envs, threads, *, direct_observations=False):
+        # Packed transport remains available to serial/diagnostic callers.
+        # Resident training can encode pending native states into the model's
+        # host buffer without allocating an intermediate batch of raw arrays.
+        self.direct_observations = direct_observations
         self.envs = [env.unwrapped for env in envs]
         if not hasattr(sts, 'NeuralSearchBatch'):
             raise RuntimeError('native vector environment requires the NeuralSearchBatch extension')
+        if direct_observations and not hasattr(sts.NeuralObservationDecoder, 'decode_native'):
+            raise RuntimeError('direct native observations require a rebuilt native extension')
         signatures = {(e._card_language, e._combat_language, e._joint_actions,
                        e._autoregressive_actions, e.action_space.n) for e in self.envs}
         if len(signatures) != 1 or any(e._combat_language for e in self.envs):
@@ -107,7 +113,8 @@ class NativeSearchBatch:
             relics = self.global_fields['relics']
             self._relic_widths = np.maximum(1, np.max(
                 (relics != 0) * np.arange(1, relics.shape[1]+1), axis=1))
-            self.payload = self.pool.begin(sessions, self.language)
+            self.payload = (self.pool.begin(sessions, self.language, True)
+                            if self.direct_observations else self.pool.begin(sessions, self.language))
             self._record_timings()
         except BaseException:
             self.clear()
@@ -124,7 +131,9 @@ class NativeSearchBatch:
         started = time.perf_counter()
         self._ensure_card_stats(validate_all=rows is not None)
         payload = self.payload
-        if rows is not None:
+        if rows is not None and self.direct_observations:
+            rows = np.arange(self.rows, dtype=np.intp)[rows]
+        if rows is not None and not self.direct_observations:
             # Select the few packed arrays before decoding, not every expanded
             # observation field afterwards. Owners retain original root IDs.
             payload = dict(payload)
@@ -132,12 +141,13 @@ class NativeSearchBatch:
                         'legal_policy_ids', 'language_ids', 'language_features'):
                 if key in payload:
                     payload[key] = np.asarray(payload[key])[rows]
-        result = self.decoder.decode(payload, self._decoder_globals, destination)
+        result = (self.decoder.decode_native(self.pool, self._decoder_globals, destination, rows, self.language)
+                  if self.direct_observations else self.decoder.decode(payload, self._decoder_globals, destination))
         if self.public_context:
             from env.core.outer_return import MISC_SCALE
             if self.payload.get('outer_return_schema') != 1:
                 raise RuntimeError('native outer-return leaf contract is missing')
-            count = len(payload['owners'])
+            count = len(rows) if self.direct_observations and rows is not None else len(payload['owners'])
             hp = result['player_scalars'][:count]
             result['run_hp'][:count, :2] = hp[:, :2]
             result['run_hp'][:count, 2] = np.divide(hp[:, 0], hp[:, 1],
@@ -192,6 +202,12 @@ class NativeSearchBatch:
         self._decode_observations(destination, rows)
 
     def _ensure_card_stats(self, *, validate_all=False):
+        if self.direct_observations:
+            highest = self.payload['max_hand_upgrade']
+            if highest >= self._card_stats['damage'].shape[1]:
+                self._card_stats = _nosl_card_stats(highest + 1)
+                self.decoder.set_card_stats(self._card_stats)
+            return
         layout = _nosl_compact_lut()['layout']
         hand_start = (6 + int(layout['player_status_count'])
                       + encode.COMBAT_COUNTERS + 1 + 30
@@ -219,7 +235,8 @@ class NativeSearchBatch:
 
     def advance(self, logits, values):
         self.leaves[np.asarray(self.payload['owners'], dtype=np.intp)] += 1
-        self.payload = self.pool.advance(values, logits, self.language)
+        self.payload = (self.pool.advance(values, logits, self.language, True)
+                        if self.direct_observations else self.pool.advance(values, logits, self.language))
         self._record_timings()
 
     def _record_timings(self):

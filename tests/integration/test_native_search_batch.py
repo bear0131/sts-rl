@@ -16,7 +16,8 @@ pytestmark = [pytest.mark.native, pytest.mark.timeout(60)]
     ('legacy', False, False), ('joint-v2', True, False), ('autoregressive-v2', True, False),
     pytest.param('joint-v2', True, True, id='joint-selection'),
     pytest.param('autoregressive-v2', True, True, id='autoregressive-selection')])
-def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, fixed_worldline, end_turn_as_leaf, contract, language, selection):
+@pytest.mark.parametrize('direct_observations', [False, True])
+def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, fixed_worldline, end_turn_as_leaf, contract, language, selection, direct_observations):
     import slaythespire as sts
 
     deck = ['STRIKE_RED'] * 5 + ['DEFEND_RED'] * 4 + ['BASH', 'BATTLE_TRANCE', 'TRUE_GRIT']
@@ -60,7 +61,7 @@ def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, fi
             np.testing.assert_array_equal(root['monster_scalars'][:2, 0], [0, 1])
         assert len({root['gold'].tobytes() for root in roots}) == 4
         assert roots[0]['relics'].tobytes() != roots[2]['relics'].tobytes()
-    pool = NativeSearchBatch(native, threads)
+    pool = NativeSearchBatch(native, threads, direct_observations=direct_observations)
     config = NativeSearchConfig(simulations=128, leaf_batch_size=1,
                                fixed_worldline=fixed_worldline, end_turn_as_leaf=end_turn_as_leaf)
     calls = {i: ((np.linspace(-.3, .7, e.action_space.n),), dict(
@@ -161,9 +162,10 @@ def test_native_decoder_keeps_autoregressive_prefix(combat_factory):
         pool.close()
 
 
-def test_native_batch_invalid_reply_can_abort_and_reuse(combat_factory):
+@pytest.mark.parametrize('direct_observations', [False, True])
+def test_native_batch_invalid_reply_can_abort_and_reuse(combat_factory, direct_observations):
     env = combat_factory(['STRIKE_RED'] * 5 + ['DEFEND_RED'] * 5)
-    pool = NativeSearchBatch([env], 2)
+    pool = NativeSearchBatch([env], 2, direct_observations=direct_observations)
     calls = {0: ((np.zeros(env.action_space.n),), dict(simulations=8,
                compact_observation=True, leaf_batch_size=1, state_nonce=1729))}
     try:
@@ -181,9 +183,10 @@ def test_native_batch_invalid_reply_can_abort_and_reuse(combat_factory):
 
 
 @pytest.mark.parametrize('invalid', ['dtype', 'shape', 'rows', 'stride', 'readonly'])
-def test_native_decoder_rejects_invalid_destination(combat_factory, invalid):
+@pytest.mark.parametrize('direct_observations', [False, True])
+def test_native_decoder_rejects_invalid_destination(combat_factory, invalid, direct_observations):
     env = combat_factory(['STRIKE_RED'] * 5)
-    pool = NativeSearchBatch([env], 1)
+    pool = NativeSearchBatch([env], 1, direct_observations=direct_observations)
     try:
         pool.begin({0: ((np.zeros(env.action_space.n),), dict(simulations=8,
             compact_observation=True, leaf_batch_size=1, state_nonce=1729))})
@@ -382,3 +385,61 @@ def test_liquid_memories_grid_progress_survives_both_leaf_decoders(combat_factor
         assert len(env.thick.bc.to_dict()['discard']) == 1
     finally:
         pool.close()
+
+
+@pytest.mark.parametrize('case', ['high_upgrade', 'grid_prefix', 'overflow'])
+def test_direct_leaf_writer_preserves_extended_cards(combat_factory, case):
+    import slaythespire as sts
+    from env.core import native_actions as C
+
+    def environment():
+        env = combat_factory(['STRIKE_RED'] * 5, relics=['SacredBark'],
+                             combat_action_contract='autoregressive-v2', card_language=True)
+        if case == 'high_upgrade':
+            env.thick.bc.apply_custom_state({'hand': [('SEARING_BLOW', 130, 2)] * 3})
+        elif case == 'grid_prefix':
+            env.thick.bc.apply_custom_state({'discard': [('BASH', 1), ('DEFEND_RED', 0), ('ANGER', 0)],
+                                            'potions': ['Liquid Memories']})
+            env.thick.bc.execute(sts.Action(sts.ActionType.POTION, 0, 0))
+        else:
+            env.thick.bc.apply_custom_state({'hand': ['EXHUME'],
+                'exhaust': ['DAZED'] * 99 + ['DEFEND_RED', ('DEFEND_RED', 1)]})
+        env._invalidate_backend_cache()
+        return env
+
+    envs = [environment(), environment()]
+    pools = [NativeSearchBatch([env], 2, direct_observations=direct)
+             for env, direct in zip(envs, (False, True))]
+    logits = np.zeros(198, np.float32)
+    if case == 'overflow':
+        logits.fill(-100)
+        logits[C.JOINT_PLAY + 5 - C.JOINT_END] = 0
+    call = {0: ((logits,), dict(simulations=16, depth=0, state_nonce=42,
+        root_search_mode=2, paper_full_gumbel=True, gumbel_scale=0,
+        compact_observation=True, leaf_batch_size=1, fixed_worldline=True))}
+    seen = False
+    try:
+        for pool in pools:
+            pool.begin(call)
+        while not pools[0].done:
+            assert not pools[1].done
+            a, b = (pool.observations() for pool in pools)
+            for key in a:
+                assert a[key].dtype == b[key].dtype
+                assert a[key].tobytes() == b[key].tobytes(), key
+            if case == 'high_upgrade':
+                seen |= bool((a['hand_damage'] * 100 >= 8917).any())
+            elif case == 'grid_prefix':
+                seen |= bool(a['selected_card_ids'].any())
+            else:
+                seen |= bool((a['select_native_indices'] == 101).any())
+            for pool in pools:
+                pool.advance(logits[None], np.array([.3], np.float32))
+        assert seen, f'{case} must occur in an actual pending search leaf'
+        assert pools[1].done
+        a, b = (pool.results()[0] for pool in pools)
+        for key in ('action', 'native_action_bits', 'root_value', 'simulations', 'root_visits'):
+            np.testing.assert_array_equal(a[key], b[key])
+    finally:
+        for pool in pools:
+            pool.close()

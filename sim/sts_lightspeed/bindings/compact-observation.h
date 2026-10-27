@@ -74,6 +74,7 @@ constexpr int kFloatSize = 6 + kPlayerStatus + kCombatCounters + 1 +
 struct Row {
     std::array<std::int32_t, kCatSize> categorical{};
     std::array<float, kFloatSize> scalars{};
+    int selectionCount = 0;
 };
 
 inline int intentCategoryFromName(const std::string &name) {
@@ -236,6 +237,7 @@ inline Row pack(const sts::BattleContext &bc) {
     const bool selecting = bc.inputState == InputState::CARD_SELECT;
     row.categorical[c++] = selecting ? static_cast<int>(bc.cardSelectInfo.cardSelectTask) : 0;
     const auto choices = sts::search::combatChoices(bc);
+    row.selectionCount = static_cast<int>(choices.cards.size());
     if (choices.cards.size() > 96 || choices.zone < 0 || choices.zone > 6) {
         throw std::invalid_argument("combat selection exceeds compact observation contract");
     }

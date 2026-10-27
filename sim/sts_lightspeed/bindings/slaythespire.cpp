@@ -2509,6 +2509,33 @@ pybind11::dict permanentCardMisc(const BattleContext &bc) {
     return changes;
 }
 
+pybind11::dict pendingNeuralLeaves(const sts::search::NeuralSearchBatch &batch) {
+    pybind11::dict out, exits, misc;
+    pybind11::list requestIds, needsPolicy, prefixes;
+    int highestUpgrade = 0;
+    const auto &requests = batch.requests();
+    for (std::size_t row=0; row<requests.size(); ++row) {
+        const auto &request=requests[row];
+        if (request.state->cards.cardsInHand < 0 || request.state->cards.cardsInHand > compact_leaf::kHandSlots)
+            throw std::invalid_argument("combat hand exceeds compact observation capacity");
+        requestIds.append(request.requestId);
+        needsPolicy.append(request.needsPolicy);
+        prefixes.append(request.selectionPrefix);
+        for (int i=0; i<request.state->cards.cardsInHand; ++i)
+            highestUpgrade=std::max(highestUpgrade,request.state->cards.hand[i].getUpgradeCount());
+        if (request.combatExit) exits[pybind11::int_(row)]=pybind11::cast(BattleContext(*request.state));
+        if (request.outerReturn || request.publicRunContext)
+            misc[pybind11::int_(row)]=permanentCardMisc(*request.state);
+    }
+    out["owners"]=batch.owners(); out["done"]=requests.empty();
+    out["request_ids"]=requestIds;out["needs_policy"]=needsPolicy;out["selection_prefix"]=prefixes;
+    out["max_hand_upgrade"]=highestUpgrade;
+    if (!misc.empty()) {
+        out["outer_return_schema"]=1;out["combat_exits"]=exits;out["permanent_misc"]=misc;
+    }
+    return out;
+}
+
 pybind11::dict packedNeuralLeaves(
     const std::vector<sts::search::NoslNeuralSearchSession::LeafRequest> &requests,
     bool done, pybind11::object language_card_index) {
@@ -2763,7 +2790,7 @@ PYBIND11_MODULE(slaythespire, m) {
           pybind11::arg("depth"),pybind11::arg("turns"),pybind11::arg("profile"))
         .def("begin", [](sts::search::NeuralSearchBatch &batch,
                           std::vector<std::shared_ptr<sts::search::NoslNeuralSearchSession>> sessions,
-                          pybind11::object language_card_index) {
+                          pybind11::object language_card_index, bool direct_observations) {
             auto ownership = batch.acquire();
             const auto started = std::chrono::steady_clock::now();
             {
@@ -2771,16 +2798,18 @@ PYBIND11_MODULE(slaythespire, m) {
                 batch.begin(std::move(sessions));
             }
             const auto selected = std::chrono::steady_clock::now();
-            auto result = packedNeuralLeaves(batch.requests(), batch.requests().empty(), language_card_index);
+            auto result = direct_observations ? pendingNeuralLeaves(batch) :
+                packedNeuralLeaves(batch.requests(), batch.requests().empty(), language_card_index);
             result["owners"] = batch.owners();
             result["native_seconds"] = std::chrono::duration<double>(selected-started).count();
             result["pack_seconds"] = std::chrono::duration<double>(std::chrono::steady_clock::now()-selected).count();
             return result;
-        }, pybind11::arg("sessions"), pybind11::arg("language_card_index") = pybind11::none())
+        }, pybind11::arg("sessions"), pybind11::arg("language_card_index") = pybind11::none(),
+           pybind11::arg("direct_observations") = false)
         .def("advance", [](sts::search::NeuralSearchBatch &batch,
                             pybind11::array_t<float, pybind11::array::c_style | pybind11::array::forcecast> values,
                             pybind11::array_t<float, pybind11::array::c_style | pybind11::array::forcecast> logits,
-                            pybind11::object language_card_index) {
+                            pybind11::object language_card_index, bool direct_observations) {
             auto ownership = batch.acquire();
             if (values.ndim() != 1 || logits.ndim() != 2 || values.shape(0) != logits.shape(0))
                 throw std::invalid_argument("native search predictions require values[N], logits[N,K]");
@@ -2794,13 +2823,15 @@ PYBIND11_MODULE(slaythespire, m) {
                 batch.advance(v, l, rows, width);
             }
             const auto selected = std::chrono::steady_clock::now();
-            auto result = packedNeuralLeaves(batch.requests(), batch.requests().empty(), language_card_index);
+            auto result = direct_observations ? pendingNeuralLeaves(batch) :
+                packedNeuralLeaves(batch.requests(), batch.requests().empty(), language_card_index);
             result["owners"] = batch.owners();
             result["native_seconds"] = std::chrono::duration<double>(selected-started).count();
             result["pack_seconds"] = std::chrono::duration<double>(std::chrono::steady_clock::now()-selected).count();
             return result;
         }, pybind11::arg("values"), pybind11::arg("logits"),
-           pybind11::arg("language_card_index") = pybind11::none())
+           pybind11::arg("language_card_index") = pybind11::none(),
+           pybind11::arg("direct_observations") = false)
         .def("clear", &sts::search::NeuralSearchBatch::clear)
         .def_property_readonly("threads", &sts::search::NeuralSearchBatch::threadCount);
     m.doc() = "pybind11 example plugin"; // optional module docstring

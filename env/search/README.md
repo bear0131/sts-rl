@@ -13,6 +13,13 @@ env/core/run_env.py 在 worker 中驱动这些 session；学习侧通过同一�
 原生观测可直接写入调用方的连续数组，只覆盖有效行；图缓存负责 padding 与输入
 生命周期，并保留模型原有 dtype 存储布局。
 
+`NativeSearchVecEnv` 使用 `direct_observations=True`：begin/advance 只返回叶子
+元数据，decoder 在 batch 的所有权锁内读取 pending 状态，复用 compact codec，
+直接填充模型 host buffer。不生成整批 categorical/scalars 中间数组；选择候选的
+尾部空槽仍存在并清零，只省去其逐项转换。packed API 和默认的诊断 adapter 路径
+继续保留完整数据及校验。该路径需要重新构建含 `decode_native` 的扩展；观测版本、
+dtype、搜索顺序不变，恢复已有完整训练状态仍须遵守 native SHA 身份检查。
+
 `overworld_rules.py` 是训练 worker 与 evaluation 共用的 Ironclad 公共状态上层规则，当前 canonical 版本由 `OVERWORLD_RULE_VERSION` 声明为 `ironclad-overworld-v3`。只对非战斗合法动作打分；未知事件/选择画面返回 `None`，由消费者显式回退。分层 NOSL 的冻结上层使用 `--nosl-is-az-upper-strategy rules`，或 canonical response file `@configs/train/nosl_ruleupper_latest.args`；该入口在代码更新后自动使用当前最新规则版本，不再绑定 `v1` 文件名。仅支持 inner-only NOSL；未覆盖画面使用冻结模型 masked argmax。默认 `model` 保留随机采样。该设置保存在 checkpoint，CLI 省略时沿用 checkpoint；不会改变战斗搜索或训练目标。
 
 启用 `--nosl-is-az-train-shared-embeddings` 会按 run seed 重置并训练 split policy 的共享 card/relic/potion embedding，projection 与整个外层 specialist 仍冻结。共享实体既作为候选 token 直接影响 `USE_POTION`、`PICK_CARD`、card/relic/potion reward、shop 与 boss relic 动作，也作为常驻 deck/relic/potion token 进入每个外层 phase 的 Transformer，因此 map、event、proceed、chest、campfire、Neow 等固定按钮 logits 也可能间接受影响。规则上层只有返回 `None` 的状态会暴露给这条 masked-argmax fallback；v3 在 v2 的确定性事件与 Bonfire Spirits 基础上，让 native canonical state 公开 Falling、N'loth、We Meet Again、Note For Yourself、Designer 按钮上已经显示的具体卡牌、遗物、药水、金额及服务模式，并据此评分。该附加元数据不进入 observation tensor；旧扩展或缺项候选仍整屏返回 `None`，不会按固定 action index 猜测。真实 bridge 的各事件契约与支持版本见 `bridge/client/README.md`；parity-v35/v36/v37分别补WeMeetAgain/Designer/NoteForYourself实际typed公开目标与来源回执。词表、源码/构建和自然实机覆盖是不同证据，不按压缩的界面编号猜测原生语义。

@@ -1,10 +1,13 @@
 #include "neural-observation.h"
+#include "compact-observation.h"
+#include "sim/search/NeuralSearchBatch.h"
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <optional>
 
 namespace py = pybind11;
 namespace {
@@ -25,19 +28,52 @@ public:
     void setCardStats(py::dict stats) { stats_ = std::move(stats); }
 
     py::dict decode(py::dict packed, py::dict globals, py::object destination) const {
-        Array<std::int32_t> cat(packed["categorical"]), prefix(packed["selection_prefix"]), legal(packed["legal_policy_ids"]);
-        Array<float> scalar(packed["scalars"]);
+        return decodeRows(packed, globals, destination, nullptr, {}, py::none());
+    }
+
+    py::dict decodeNative(sts::search::NeuralSearchBatch &batch, py::dict globals,
+                         py::object destination, py::object rows, py::object languageIndex) const {
+        auto ownership=batch.acquire();
+        std::vector<std::size_t> indices;
+        if (rows.is_none()) {
+            for (std::size_t i=0;i<batch.requests().size();++i) indices.push_back(i);
+        } else {
+            for (auto row:py::cast<py::iterable>(rows)) {
+                auto index=py::cast<py::ssize_t>(row);
+                if(index<0 || static_cast<std::size_t>(index)>=batch.requests().size())
+                    throw std::invalid_argument("native observation row out of range");
+                indices.push_back(static_cast<std::size_t>(index));
+            }
+        }
+        py::dict packed;
+        Array<std::int64_t> owners(indices.size());
+        for(std::size_t r=0;r<indices.size();++r) owners.mutable_data()[r]=batch.owners()[indices[r]];
+        packed["owners"]=owners;
+        return decodeRows(packed, globals, destination, &batch, indices, languageIndex);
+    }
+
+    py::dict decodeRows(py::dict packed, py::dict globals, py::object destination,
+                       const sts::search::NeuralSearchBatch *native,
+                       const std::vector<std::size_t> &indices, py::object languageIndex) const {
+        Array<std::int32_t> cat, prefix, legal;
+        Array<float> scalar;
         Array<std::int64_t> owners(packed["owners"]);
-        if (cat.ndim()!=2) throw std::invalid_argument("native categorical layout mismatch");
-        const auto n = cat.shape(0);
+        const auto n = owners.size();
         auto layout = py::cast<py::dict>(lut_["layout"]);
         const int ps = py::cast<int>(layout["player_status_count"]), ms = py::cast<int>(layout["monster_status_count"]);
         const int cards = py::cast<int>(layout["card_count"]), counters = py::cast<int>(limits_["counters"]);
         const int handStart = 6+ps+counters+1+30+5*ms;
         const int pileStart = handStart+20, selectStart = pileStart+3*cards;
-        if (cat.shape(1)!=226 || scalar.ndim()!=2 || scalar.shape(0)!=n ||
-            scalar.shape(1)!=selectStart+202 || owners.ndim()!=1 || owners.size()!=n ||
-            prefix.ndim()!=1 || prefix.size()!=n || legal.ndim()!=2 || legal.shape(0)!=n)
+        if (!native) {
+            cat=Array<std::int32_t>(packed["categorical"]);prefix=Array<std::int32_t>(packed["selection_prefix"]);
+            legal=Array<std::int32_t>(packed["legal_policy_ids"]);scalar=Array<float>(packed["scalars"]);
+            if (cat.ndim()!=2) throw std::invalid_argument("native categorical layout mismatch");
+            if (cat.shape(1)!=226 || cat.shape(0)!=n || scalar.ndim()!=2 || scalar.shape(0)!=n ||
+                scalar.shape(1)!=selectStart+202 || owners.ndim()!=1 ||
+                prefix.ndim()!=1 || prefix.size()!=n || legal.ndim()!=2 || legal.shape(0)!=n)
+                throw std::invalid_argument("native observation layout mismatch");
+        } else if (selectStart+202!=compact_leaf::kFloatSize || counters!=compact_leaf::kCombatCounters ||
+                   ps!=compact_leaf::kPlayerStatus || ms!=compact_leaf::kMonsterStatus)
             throw std::invalid_argument("native observation layout mismatch");
         py::dict out;
         std::map<std::string, py::array> arrays;
@@ -114,19 +150,26 @@ public:
             turnScale=scale("TURN"), buffScale=scale("BUFF"), counterScale=scale("COUNTER"),
             dmgScale=scale("DMG"), hitsScale=scale("HITS"), upgradeScale=scale("UPGRADE"), pickScale=scale("PICK"), goldScale=scale("GOLD");
         const int moveLimit=py::cast<int>(limits_["moves"]), intentLimit=py::cast<int>(limits_["intents"]), contextLimit=py::cast<int>(limits_["contexts"]);
-        const bool language=packed.contains("language_ids");
+        const bool language=native ? !languageIndex.is_none() : packed.contains("language_ids");
+        Array<std::int32_t> languageMap;
         Array<std::int32_t> languageIds;
         Array<float> languageFeatures;
         std::int64_t *langIds[2]{};
         float *langCount[2]{}, *langUpgraded[2]{}, *langUpgrades[2]{};
         int slots=0;
         if (language) {
-            languageIds=Array<std::int32_t>(packed["language_ids"]); languageFeatures=Array<float>(packed["language_features"]);
             slots=static_cast<int>(arrays.at("draw_card_ids").shape(1));
+            if (native) {
+                languageMap=Array<std::int32_t>(languageIndex);
+                if(languageMap.ndim()!=1 || languageMap.size()!=compact_leaf::kCardIds || slots!=compact_leaf::kLanguageSlots)
+                    throw std::invalid_argument("native language observation layout mismatch");
+            } else {
+            languageIds=Array<std::int32_t>(packed["language_ids"]); languageFeatures=Array<float>(packed["language_features"]);
             if (languageIds.ndim()!=3 || languageIds.shape(0)!=n || languageIds.shape(1)!=2 || languageIds.shape(2)!=slots ||
                 languageFeatures.ndim()!=4 || languageFeatures.shape(0)!=n || languageFeatures.shape(1)!=2 ||
                 languageFeatures.shape(2)!=slots || languageFeatures.shape(3)!=3)
                 throw std::invalid_argument("native language observation layout mismatch");
+            }
             langIds[0]=i("draw_card_ids"); langIds[1]=i("discard_card_ids");
             langCount[0]=f("draw_card_counts"); langCount[1]=f("discard_card_counts");
             langUpgraded[0]=f("draw_card_upgraded_counts"); langUpgraded[1]=f("discard_card_upgraded_counts");
@@ -163,8 +206,29 @@ public:
             }
             return encoded;
         };
+        // Native rows own an exact candidate count. Their unused slots were
+        // zeroed above, so avoid converting 96 padding entries at every leaf.
+        // The externally supplied packed decoder still validates all slots.
+        const bool sparseSelection = native && cardMap.data()[0] == 0 &&
+            upgradeScale > 0 && energyScale > 0 &&
+            !globals.contains("select_card_ids") && !globals.contains("select_native_indices") &&
+            !globals.contains("select_card_upgrades") && !globals.contains("select_card_costs");
         for (py::ssize_t r=0; r<n; ++r) {
-            const auto *c=cat.data()+r*cat.shape(1); const auto *s=scalar.data()+r*scalar.shape(1);
+            const auto *request=native ? &native->requests()[indices[r]] : nullptr;
+            std::optional<compact_leaf::Row> rawRow;
+            if (request) rawRow.emplace(compact_leaf::pack(*request->state));
+            const auto *c=request ? rawRow->categorical.data() : cat.data()+r*cat.shape(1);
+            const auto *s=request ? rawRow->scalars.data() : scalar.data()+r*scalar.shape(1);
+            struct LanguageRow {
+                std::array<std::int32_t,2*compact_leaf::kLanguageSlots> ids{};
+                std::array<float,6*compact_leaf::kLanguageSlots> features{};
+            };
+            std::optional<LanguageRow> nativeLanguage;
+            if (request && language) {
+                nativeLanguage.emplace();
+                compact_leaf::packLanguagePile(request->state->cards.drawPile,languageMap.data(),nativeLanguage->ids.data(),nativeLanguage->features.data());
+                compact_leaf::packLanguagePile(request->state->cards.discardPile,languageMap.data(),nativeLanguage->ids.data()+slots,nativeLanguage->features.data()+slots*3);
+            }
             if (!std::isfinite(s[5]) || s[5]<0 || s[5]>32767 || s[5]!=std::nearbyint(s[5]))
                 throw std::invalid_argument("native packed gold is outside the explicit integer domain 0..32767");
             gold[r]=s[5]/goldScale;
@@ -232,7 +296,8 @@ public:
                 else if (up != 0) throw std::invalid_argument(
                     "observation contract cannot represent selected GRID upgrades");
             }
-            for (int k=0; k<96; ++k) {
+            const int selectionCount = sparseSelection ? rawRow->selectionCount : 96;
+            for (int k=0; k<selectionCount; ++k) {
                 selectIds[r*96+k]=lookup(cardMap,c[31+k],"selection card");
                 if (c[127+k] < 0 || c[127+k] > 65536)
                     throw std::invalid_argument("native selection handle is outside its declared range");
@@ -273,21 +338,26 @@ public:
             std::memcpy(discard+r*cards,s+pileStart+cards,cards*sizeof(float));
             std::memcpy(exhaust+r*cards,s+pileStart+2*cards,cards*sizeof(float));
             for (int pile=0; pile<(language?2:0); ++pile) for (int k=0; k<slots; ++k) {
-                const auto src=(r*2+pile)*slots+k, dst=r*slots+k;
-                langIds[pile][dst]=languageIds.data()[src]; langCount[pile][dst]=languageFeatures.data()[src*3];
-                langUpgraded[pile][dst]=languageFeatures.data()[src*3+1]; langUpgrades[pile][dst]=languageFeatures.data()[src*3+2]/upgradeScale;
+                const auto src=((request ? 0 : r)*2+pile)*slots+k, dst=r*slots+k;
+                const auto *ids=request ? nativeLanguage->ids.data() : languageIds.data();
+                const auto *features=request ? nativeLanguage->features.data() : languageFeatures.data();
+                langIds[pile][dst]=ids[src]; langCount[pile][dst]=features[src*3];
+                langUpgraded[pile][dst]=features[src*3+1]; langUpgrades[pile][dst]=features[src*3+2]/upgradeScale;
             }
             pick[r]=s[selectStart]/pickScale; zero[r]=s[selectStart+1]; any[r]=s[selectStart+2];
+            const int selectionPrefix=request ? request->selectionPrefix : prefix.data()[r];
             if (autoregressive_) {
-                if (prefix.data()[r] < 0 || prefix.data()[r] >= (1 << 10))
+                if (selectionPrefix < 0 || selectionPrefix >= (1 << 10))
                     throw std::invalid_argument("native selection prefix is outside the hand bitset");
                 int count=0;
-                for (int k=0; k<10; ++k) { const int bit=(prefix.data()[r]>>k)&1; selected[r*10+k]=bit; count+=bit; }
+                for (int k=0; k<10; ++k) { const int bit=(selectionPrefix>>k)&1; selected[r*10+k]=bit; count+=bit; }
                 // NumPy's int64 sum promotes this subtraction to float64.
                 pick[r]=static_cast<float>(std::max(0.0,double(pick[r])-double(count)/double(pickScale)));
             }
-            if (mask) for (py::ssize_t k=0; k<legal.shape(1); ++k) {
-                const auto rawId=legal.data()[r*legal.shape(1)+k];
+            const auto legalCount=request ? static_cast<py::ssize_t>(request->legalActions.size()) : legal.shape(1);
+            if (mask) for (py::ssize_t k=0; k<legalCount; ++k) {
+                const auto rawId=request ? sts::search::jointActionId(request->legalActions[k], *request->state)
+                    - (request->autoregressivePolicy ? sts::search::kJointEnd : 0) : legal.data()[r*legal.shape(1)+k];
                 if (rawId == -1) continue; // explicit absent action slot
                 const auto id=rawId-offset_;
                 if (id < 0 || id >= width_)
@@ -304,6 +374,9 @@ void bindNeuralObservation(py::module_ &module) {
     py::class_<NeuralObservationDecoder>(module,"NeuralObservationDecoder")
         .def(py::init<py::dict,py::dict,py::dict,py::dict,py::dict,int,int,bool>())
         .def("set_card_stats", &NeuralObservationDecoder::setCardStats)
+        .def("decode_native", &NeuralObservationDecoder::decodeNative,
+             py::arg("batch"),py::arg("globals"),py::arg("destination")=py::none(),
+             py::arg("rows")=py::none(),py::arg("language_index")=py::none())
         .def("decode",&NeuralObservationDecoder::decode, py::arg("packed"),
              py::arg("globals"), py::arg("destination")=py::none());
 }

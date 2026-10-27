@@ -12,7 +12,7 @@ class NativeSearchVecEnv(DummyVecEnv):
     def __init__(self, env_fns, *, threads=4):
         super().__init__(env_fns)
         try:
-            self.native_search_batch = NativeSearchBatch(self.envs, threads)
+            self.native_search_batch = NativeSearchBatch(self.envs, threads, direct_observations=True)
             self.native_root_observations = None
             if (hasattr(sts, 'pack_neural_roots') and all(self._batchable(env) for env in self.envs)
                     and all(env.unwrapped.observation_space == self.envs[0].unwrapped.observation_space

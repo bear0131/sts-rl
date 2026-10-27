@@ -63,7 +63,7 @@ bank 内容嵌入 checkpoint constructor，其 SHA/teacher 身份进入 replay �
 native `outer_return=true` 要求 fixed_worldline，并拒绝旧HP/Boss效用。所有战斗
 出口返回拥有独立存储的typed终局BC，由resident NativeSearchBatch在同一采样GC上
 结算，按upper/combat/terminal分流；内部叶用新lower，出口用冻结teacher或自然终局
-真实reward。普通叶子先在packed数据上选行，再由同一native decoder直接填充lower
+真实reward。resident普通叶子直接选择pending状态行，由共用native codec填充lower
 graph输入区，保留root归属、实时HP/钱包、GRID进度与永久成长；出口仍按完整GC结算。
 resident collector把本次已编码根观测交给batch，仅复用CONTEXT_KEYS；按完整env索引
 取行并核对shape/dtype，在搜索开始时复制成自有数组，避免再次序列化根的全战斗状态。

@@ -130,7 +130,8 @@ def test_grid_leaf_choices_override_root_context_and_reach_lower(outer_return_co
 
 
 @pytest.mark.parametrize('device,blocking_wait', [('cpu', False), ('cuda', False), ('cuda', True)])
-def test_outer_native_writer_preserves_selected_rows_context_and_padding(outer_return_core, device, blocking_wait):
+@pytest.mark.parametrize('direct_observations', [False, True])
+def test_outer_native_writer_preserves_selected_rows_context_and_padding(outer_return_core, device, blocking_wait, direct_observations):
     if device == 'cuda' and not torch.cuda.is_available():
         pytest.skip('direct pinned graph inputs require CUDA')
     from rl.search.inference import CombatLeafGraphs
@@ -140,7 +141,7 @@ def test_outer_native_writer_preserves_selected_rows_context_and_padding(outer_r
     for i, item in enumerate(envs):
         item.thick.bc.apply_custom_state({'player': {'hp': 20+i*13, 'gold': 17+i*61}})
         item._invalidate_backend_cache()
-    pool = NativeSearchBatch(envs, 2)
+    pool = NativeSearchBatch(envs, 2, direct_observations=direct_observations)
     graphs = reference_graphs = None
     if device == 'cuda':
         core.to(device).eval()
@@ -328,7 +329,8 @@ def test_combat_label_context_reuses_observation_without_aliasing_or_staleness(
 
 
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
-def test_native_exit_uses_teacher_on_settled_reward_page(outer_return_core, device):
+@pytest.mark.parametrize('direct_observations', [False, True])
+def test_native_exit_uses_teacher_on_settled_reward_page(outer_return_core, device, direct_observations):
     if device == 'cuda' and not torch.cuda.is_available():
         pytest.skip('native outer graph routing requires CUDA')
     import slaythespire as sts
@@ -354,7 +356,7 @@ def test_native_exit_uses_teacher_on_settled_reward_page(outer_return_core, devi
     logits[C.AUTOREGRESSIVE_PLAY:C.AUTOREGRESSIVE_POTION] = 20
     calls = {0: ((logits,), dict(**asdict(config), root_value=2.7,
                                state_nonce=42101, compact_observation=True))}
-    batch = NativeSearchBatch([env], 2)
+    batch = NativeSearchBatch([env], 2, direct_observations=direct_observations)
     seen = []
     original = batch.combat_exits
     def capture(**kwargs):
@@ -536,7 +538,8 @@ def test_permanent_growth_context_matches_real_settlement(outer_return_core):
 
 
 @pytest.mark.parametrize('objective', ['combat-outcome-quantiles-v1', 'combat-outcome-means-v1'])
-def test_train47_context_branch_receives_leaf_hp_and_permanent_growth(frozen_upper_source, objective):
+@pytest.mark.parametrize('direct_observations', [False, True])
+def test_train47_context_branch_receives_leaf_hp_and_permanent_growth(frozen_upper_source, objective, direct_observations):
     import slaythespire as sts
     from env.core.run_env import SlayTheSpireEnv
     from rl.policies.outer_return import OuterReturnCore
@@ -557,7 +560,7 @@ def test_train47_context_branch_receives_leaf_hp_and_permanent_growth(frozen_upp
         assert hasattr(core.combat, 'distribution') == (objective == 'combat-outcome-quantiles-v1')
         assert hasattr(core.combat, 'means') == (objective == 'combat-outcome-means-v1')
         assert not torch.equal(core.combat.end.weight, source.combat.end.weight)
-        pool = NativeSearchBatch([env], 1)
+        pool = NativeSearchBatch([env], 1, direct_observations=direct_observations)
         pool.begin({0: ((np.zeros(env.action_space.n),), dict(state_nonce=42, simulations=4,
             depth=1, compact_observation=True, fixed_worldline=True, boss_win_weight=.9))})
         assert not pool.done
