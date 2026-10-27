@@ -250,9 +250,7 @@ class NativeSearchBatch:
         for index in self.indices:
             # Existing finish adapter owns native/thin action mapping, pending
             # actions, diagnostics and session lifetime. No leaves remain.
-            response = self.envs[index].nosl_is_az_cpp_leaf_batch(1)
-            if not response['done']:
-                raise RuntimeError('native batch finished with an outstanding tree')
+            response = self.envs[index]._finish_native_neural_session()
             results[index] = response['result']
         return results
 

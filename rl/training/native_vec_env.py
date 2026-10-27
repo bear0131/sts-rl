@@ -8,6 +8,41 @@ from env.search.native_batch import NativeSearchBatch
 import slaythespire as sts
 
 
+_INFO_ATOMIC_TYPES = frozenset((type(None), bool, int, float, str, bytes))
+
+
+def _copy_step_infos(infos):
+    """Copy Gym info containers without visiting every immutable scalar twice.
+
+    Keep deepcopy's shared-reference/cycle semantics and delegate arrays,
+    subclasses and custom objects to their existing copy protocol.
+    """
+    memo = {}
+    atomic = _INFO_ATOMIC_TYPES
+
+    def clone(value):
+        kind = type(value)
+        if kind in atomic:
+            return value
+        identity = id(value)
+        if identity in memo:
+            return memo[identity]
+        if kind is dict and all(type(key) in atomic for key in value):
+            result = {}
+            memo[identity] = result
+            for key, item in value.items():
+                result[key] = item if type(item) in atomic else clone(item)
+            return result
+        if kind is list:
+            result = []
+            memo[identity] = result
+            result.extend(item if type(item) in atomic else clone(item) for item in value)
+            return result
+        return deepcopy(value, memo)
+
+    return clone(infos)
+
+
 class NativeSearchVecEnv(DummyVecEnv):
     def __init__(self, env_fns, *, threads=4):
         super().__init__(env_fns)
@@ -77,7 +112,7 @@ class NativeSearchVecEnv(DummyVecEnv):
             # rows intact. The codec already returned one array per field.
             for key in self.keys:
                 self.buf_obs[key][indices] = observations[key]
-        return (self._obs_from_buf(), np.copy(self.buf_rews), np.copy(self.buf_dones), deepcopy(self.buf_infos))
+        return (self._obs_from_buf(), np.copy(self.buf_rews), np.copy(self.buf_dones), _copy_step_infos(self.buf_infos))
 
     def close(self):
         self.native_search_batch.close()

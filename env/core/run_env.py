@@ -1899,9 +1899,17 @@ class SlayTheSpireEnv(gym.Env):
         # useful for UI/diagnostics and for the optional stochastic actor.
         root_visit_policy = np.zeros(self.action_space.n, dtype=np.float32)
         root_visit_counts = np.zeros(self.action_space.n, dtype=np.int32)
+        # Visits and improved policy refer to the same immutable live root.
+        # Map each native action once, preserving accumulation order and dtype.
+        mapped_actions = {}
+        def thin_action(bits):
+            bits = int(bits)
+            if bits not in mapped_actions:
+                mapped_actions[bits] = self._native_action_to_thin(bits)
+            return mapped_actions[bits]
         raw_visits = []
         for raw_bits, visits in result.get("root_visits", ()):
-            thin = self._native_action_to_thin(int(raw_bits))
+            thin = thin_action(raw_bits)
             visits = int(visits)
             if thin is not None and visits > 0:
                 root_visit_policy[thin] += float(visits)
@@ -1915,7 +1923,7 @@ class SlayTheSpireEnv(gym.Env):
         root_policy_entries = result.get("root_policy", ())
         if root_policy_entries:
             for raw_bits, probability in root_policy_entries:
-                thin = self._native_action_to_thin(int(raw_bits))
+                thin = thin_action(raw_bits)
                 probability = float(probability)
                 if (thin is None or not np.isfinite(probability) or
                         probability < 0.0):
@@ -1969,6 +1977,7 @@ class SlayTheSpireEnv(gym.Env):
                 action = self._require_native_root_action(native_bits, live_mask)
         self._nosl_cpp_pending = (int(action), native_bits)
         self._nosl_value_capture_pending = True
+        targeted = self._native_action_targeted(native_bits)
         return {
             "action": int(action),
             # Preserve the historical field name for the learner, but use the
@@ -1986,9 +1995,9 @@ class SlayTheSpireEnv(gym.Env):
             "native_action_bits": int(native_bits),
             "selected_target": (
                 int((native_bits >> 16) & 0x1FFF)
-                if self._native_action_targeted(native_bits) else -1
+                if targeted else -1
             ),
-            "selected_action_targeted": self._native_action_targeted(native_bits),
+            "selected_action_targeted": targeted,
             "simulations": int(result.get("simulations", 0)),
             "native": True,
         }
@@ -2246,6 +2255,30 @@ class SlayTheSpireEnv(gym.Env):
         response['_worker_timing']['begin_setup_seconds'] = begin_seconds
         return response
 
+    def _finish_native_neural_session(self, *, stochastic=None, state_nonce=None,
+                                      decision_index=None):
+        """Consume a completed session without constructing an empty leaf packet."""
+        session = getattr(self, '_nosl_cpp_az_session', None)
+        if session is None or not session.done():
+            raise RuntimeError('native NOSL AlphaZero session is not complete')
+        result = self._adapt_native_neural_result(
+            session.result(),
+            stochastic=self._nosl_cpp_stochastic if stochastic is None else bool(stochastic),
+            state_nonce=self._nosl_cpp_state_nonce if state_nonce is None else int(state_nonce),
+            decision_index=self._nosl_cpp_decision_index if decision_index is None else int(decision_index),
+        )
+        # Diagnostics retain the completed tree; pending action/value capture
+        # remain owned by the existing result adapter until environment.step.
+        self._nosl_cpp_last_session = session
+        self._nosl_cpp_az_session = None
+        self._nosl_cpp_global_template = None
+        self._nosl_cpp_encoded_global_template = None
+        self._nosl_cpp_compact_observation = False
+        self._nosl_cpp_stochastic = False
+        return {"done": True, "result": result, "leaves": [],
+                "observation_batch": None, "observation_buffer": None,
+                "observation_spec": [], "leaf_meta": []}
+
     def nosl_is_az_cpp_leaf_batch(
         self,
         max_leaves: int = 64,
@@ -2271,6 +2304,9 @@ class SlayTheSpireEnv(gym.Env):
                 'packed_leaf_rows': packed_rows,
             }
             return response
+        if session.done():
+            return timed(self._finish_native_neural_session(
+                stochastic=stochastic, state_nonce=state_nonce, decision_index=decision_index))
         # The optional language extension includes grouped card-pile fields. Dynamic
         # combat-language tokens retain the canonical path.
         packed_fn = getattr(session, "next_batch_packed", None)
@@ -2284,26 +2320,8 @@ class SlayTheSpireEnv(gym.Env):
                                if self._card_language else packed_fn(int(max_leaves)))
             native_seconds += time.perf_counter() - native_started
             if bool(packed_response.get("done", False)):
-                result = self._adapt_native_neural_result(
-                    session.result(),
-                    stochastic=(self._nosl_cpp_stochastic if stochastic is None
-                                else bool(stochastic)),
-                    state_nonce=(self._nosl_cpp_state_nonce if state_nonce is None
-                                 else int(state_nonce)),
-                    decision_index=(self._nosl_cpp_decision_index if decision_index is None
-                                    else int(decision_index)),
-                )
-                self._nosl_cpp_last_session = session
-                self._nosl_cpp_az_session = None
-                self._nosl_cpp_global_template = None
-                self._nosl_cpp_encoded_global_template = None
-                self._nosl_cpp_compact_observation = False
-                self._nosl_cpp_stochastic = False
-                return timed({
-                    "done": True, "result": result, "leaves": [],
-                    "observation_batch": None, "observation_buffer": None,
-                    "observation_spec": [], "leaf_meta": [],
-                })
+                return timed(self._finish_native_neural_session(
+                    stochastic=stochastic, state_nonce=state_nonce, decision_index=decision_index))
             packed_batches = 1
             packed_rows = len(packed_response["request_ids"])
             if _defer_packed_observation:
@@ -2404,38 +2422,8 @@ class SlayTheSpireEnv(gym.Env):
                 for leaf in leaves
             ]
         if not leaves and bool(session.done()):
-            result = self._adapt_native_neural_result(
-                session.result(),
-                stochastic=(
-                    self._nosl_cpp_stochastic
-                    if stochastic is None else bool(stochastic)
-                ),
-                state_nonce=(
-                    self._nosl_cpp_state_nonce
-                    if state_nonce is None else int(state_nonce)
-                ),
-                decision_index=(
-                    self._nosl_cpp_decision_index
-                    if decision_index is None else int(decision_index)
-                ),
-            )
-            # Keep the completed C++ object alive until the next decision so a
-            # caller can request tree children by path without rerunning search.
-            self._nosl_cpp_last_session = session
-            self._nosl_cpp_az_session = None
-            self._nosl_cpp_global_template = None
-            self._nosl_cpp_encoded_global_template = None
-            self._nosl_cpp_compact_observation = False
-            self._nosl_cpp_stochastic = False
-            return timed({
-                "done": True,
-                "result": result,
-                "leaves": [],
-                "observation_batch": None,
-                "observation_buffer": None,
-                "observation_spec": [],
-                "leaf_meta": [],
-            })
+            return timed(self._finish_native_neural_session(
+                stochastic=stochastic, state_nonce=state_nonce, decision_index=decision_index))
         return timed({
             "done": False,
             "result": None,
