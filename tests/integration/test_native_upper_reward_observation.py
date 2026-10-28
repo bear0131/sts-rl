@@ -157,3 +157,27 @@ def test_multiple_reward_packs_and_current_pack_after_claim(run_combat_factory):
         assert_projection(codec.encode(root.gc), encode.encode(root.encoding_canonical()))
         if count:
             root.gc.skip_reward_cards()
+
+
+def test_native_reward_transaction_preserves_source_and_avoids_python_settlement(run_combat_factory, monkeypatch):
+    assert hasattr(sts.UpperRewardObservationEncoder, 'settle_reward'), 'rebuild the selected native extension'
+    root = run_combat_factory()
+    leaf = root.bc.clone()
+    leaf.set_player_strength(999)
+    leaf.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    env = SlayTheSpireEnv(outer_return_context=True, combat_action_contract='autoregressive-v2',
+                         combat_value_objective=NORMALIZED_OBJECTIVE)
+    try:
+        env.reset(seed=42101)
+        env._nosl_outer_branch = root.fork_run()
+        source_before = root.obs_canonical(), leaf.to_dict()
+        expected_exit, expected = env.settle_search_combat_exit(leaf)
+        def forbidden(*args, **kwargs):
+            raise AssertionError('reward transaction returned through Python settlement')
+        monkeypatch.setattr(SimGameEnv, '_settle_combat_leaf', forbidden)
+        actual_exit, actual = env.settle_search_combat_exit(leaf, upper_value_only=True)
+        assert actual_exit == expected_exit
+        assert_projection(actual, expected)
+        assert (root.obs_canonical(), leaf.to_dict()) == source_before
+    finally:
+        env.close()

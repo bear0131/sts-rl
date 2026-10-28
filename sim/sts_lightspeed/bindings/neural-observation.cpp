@@ -69,6 +69,21 @@ public:
         argStep_=py::cast<std::int64_t>(vocab["arg_step"]);
     }
 
+    py::object settleReward(const sts::GameContext &base, const sts::BattleContext &battle) const {
+        if(battle.outcome==sts::Outcome::UNDECIDED)
+            throw std::invalid_argument("combat exit requires a terminal battle");
+        // Exactly the existing settlement transaction, on an owned complete
+        // continuation. exitBattle is const: cloning the terminal BC first is
+        // unnecessary. Never infer an exit from HP or substitute reward rules.
+        auto gc=base.clone();
+        battle.exitBattle(gc);
+        // Other phases may need Python map rebuilding / another combat start,
+        // and terminal/finite-curve outcomes keep their original typed path.
+        if(gc.outcome!=sts::GameOutcome::UNDECIDED || gc.act>3 ||
+                gc.screenState!=sts::ScreenState::REWARDS) return py::none();
+        return py::make_tuple(gc.act,gc.floorNum,encode(gc));
+    }
+
     py::dict encode(const sts::GameContext &gc) const {
         if(gc.screenState!=sts::ScreenState::REWARDS || gc.outcome!=sts::GameOutcome::UNDECIDED)
             throw std::invalid_argument("upper reward observation requires a live settled reward screen");
@@ -583,6 +598,7 @@ public:
 void bindNeuralObservation(py::module_ &module) {
     py::class_<UpperRewardObservationEncoder>(module,"UpperRewardObservationEncoder")
         .def(py::init<py::dict,py::dict,py::dict>())
+        .def("settle_reward",&UpperRewardObservationEncoder::settleReward)
         .def("encode",&UpperRewardObservationEncoder::encode);
     py::class_<NeuralObservationDecoder>(module,"NeuralObservationDecoder")
         .def(py::init<py::dict,py::dict,py::dict,py::dict,py::dict,int,int,bool>())

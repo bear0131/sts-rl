@@ -643,6 +643,20 @@ class SlayTheSpireEnv(gym.Env):
         base = getattr(self, '_nosl_outer_branch', None)
         if base is None:
             raise RuntimeError('outer-return search has no sampled full-run continuation')
+        import slaythespire as sts
+        native_upper = getattr(sts, 'UpperRewardObservationEncoder', None)
+        if (upper_value_only and type(base) is SimGameEnv
+                and not getattr(base, '_finite_curve_objective', False)
+                and native_upper is not None and hasattr(native_upper, 'settle_reward')):
+            from .native_observation import upper_reward_encoder
+            settled = upper_reward_encoder(self._deck_size_observation).settle_reward(base.gc, battle)
+            if settled is not None:
+                from .outer_return import CombatExit, strategic_reward, remaining_reward_max
+                act, floor, obs = settled
+                reward = strategic_reward(base.gc.act, base.gc.floor_num,
+                    dict(act=act, floor=floor), done=False, censored=False)
+                scale = remaining_reward_max(base.gc.act, base.gc.floor_num) if self.outer_return_normalized else 1.
+                return CombatExit(reward, 'upper', value_scale=scale), obs
         # This transient view only settles and encodes; it never resets or
         # escapes to a caller. Clone the mutable GC and terminal BC, leaving
         # reset RNG/read-only map alone. _rebuild_map replaces, not mutates, it.
@@ -656,7 +670,6 @@ class SlayTheSpireEnv(gym.Env):
                                       thick.gc.act, thick.gc.floor_num)
         if outcome.kind == 'terminal':
             return outcome, None
-        import slaythespire as sts
         if (upper_value_only and outcome.kind == 'upper'
                 and hasattr(sts, 'UpperRewardObservationEncoder')
                 and thick.phase() == 'combat_reward'):
