@@ -125,7 +125,8 @@ class CombatLeafGraphs:
         # when FP32 stays eager. Other cores retain their original width API.
         if (getattr(self.core, 'autoregressive_actions', False)
                 and callable(getattr(self.core, 'graph_actor_critic', None))):
-            width = max(1, int(width))
+            # None is the entity encoder's full observed-width spelling.
+            width = max(1, int(observations['relics'].shape[1] if width is None else width))
         try:
             if self.core.training:
                 raise RuntimeError('leaf graphs require eval mode')
