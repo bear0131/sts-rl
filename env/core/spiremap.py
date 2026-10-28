@@ -85,6 +85,23 @@ class RunMap:
         ``next_columns`` comes from the live GameContext (including Wing Boots).
         Children remain physical map edges, not hypothetical relic-assisted jumps.
         """
+        # SpireMap is read-only. Retain only its physical topology, not the
+        # live choices (Wing Boots) or player-position flags. Keep each cache
+        # on its map owner so a new act/reset cannot reuse another map's DAG.
+        topology = getattr(self, '_full_view_topology', None)
+        if topology is None or topology[0] is not self._m:
+            nodes, edges = [], {}
+            for y in range(MAX_Y + 1):
+                for x in range(N_COLS):
+                    room = self.room_type(x, y)
+                    if room == _NONE:
+                        continue
+                    children = tuple(self.reachable(x, y)) if y < MAX_Y else ()
+                    nodes.append((x, y, room, children))
+                    edges[x, y] = children
+            topology = self._m, tuple(nodes), edges
+            self._full_view_topology = topology
+        _, nodes, edges = topology
         if current_y >= MAX_Y:
             # The action after row 14 enters the act boss.  MAP_NODE still uses
             # the current column, so expose that row-14 node as the DAG choice
@@ -102,29 +119,21 @@ class RunMap:
             x, y = frontier.pop()
             if y >= MAX_Y:
                 continue
-            for child_x in self.reachable(x, y):
+            for child_x in edges.get((x, y), ()):
                 child = (child_x, y + 1)
                 if child not in downstream:
                     downstream.add(child)
                     frontier.append(child)
 
-        nodes = []
-        for y in range(MAX_Y + 1):
-            for x in range(N_COLS):
-                room = self.room_type(x, y)
-                if room == _NONE:
-                    continue
-                children = self.reachable(x, y) if y < MAX_Y else []
-                nodes.append({
-                    "x": x,
-                    "y": y,
-                    "room": room,
-                    "children": children,
-                    "current": x == current_x and y == current_y,
-                    "choice": (x, y) in choices,
-                    "reachable": (x, y) in downstream,
-                })
-        return nodes
+        return [{
+            "x": x,
+            "y": y,
+            "room": room,
+            "children": list(children),
+            "current": x == current_x and y == current_y,
+            "choice": (x, y) in choices,
+            "reachable": (x, y) in downstream,
+        } for x, y, room, children in nodes]
 
     def __repr__(self):
         return repr(self._m)

@@ -377,6 +377,7 @@ class SlayTheSpireEnv(gym.Env):
                     self._nosl_is_az_boss_transition_target
                 ),
                 emit_step_observation=False,
+                emit_step_legal=False,
             )
         )
         self._global_map_view = global_map_view
@@ -1901,7 +1902,11 @@ class SlayTheSpireEnv(gym.Env):
         root_visit_counts = np.zeros(self.action_space.n, dtype=np.int32)
         # Visits and improved policy refer to the same immutable live root.
         # Map each native action once, preserving accumulation order and dtype.
-        mapped_actions = {}
+        # The native legal list already carries the current public policy IDs,
+        # including selection handles and autoregressive prefixes. Reuse it
+        # before falling back to the general mapper for diagnostic entries.
+        mapped_actions = ({int(bits): int(action) for action, bits in self._joint_policy_actions()}
+                          if self._joint_actions else {})
         def thin_action(bits):
             bits = int(bits)
             if bits not in mapped_actions:
