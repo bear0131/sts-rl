@@ -436,7 +436,11 @@ public:
             // All Python objects and buffer pointers were resolved above.
             // Rows have separate destinations; pending game states are read-only.
             py::gil_scoped_release release;
-            native->readPendingRows(n, decodeRow);
+            constexpr py::ssize_t chunkRows=8;
+            native->readPendingRows((n+chunkRows-1)/chunkRows,[&](std::size_t group) {
+                const auto last=std::min<py::ssize_t>(n,(group+1)*chunkRows);
+                for(py::ssize_t row=group*chunkRows;row<last;++row) decodeRow(row);
+            });
         } else {
             for (py::ssize_t r=0; r<n; ++r) decodeRow(r);
         }
