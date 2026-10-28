@@ -41,10 +41,15 @@ its reduced range requires finite-output and FP32 error checks on the retained
 checkpoint family. Changing precision can change search trajectories. Treat it
 as an explicit inference experiment until full-collection and strategy checks
 have passed on the target machines.
+No-grad CUDA FP16 entity attention also keeps Q/K/V projection in batch-first
+layout; BF16 and FP32 inference retain their established projection layout.
 
 Autoregressive EntityCombat BF16 leaves fuse the whole forward with
 `torch.compile(fullgraph=True, dynamic=True)` before CUDA graph capture. The
-callable is owned by this runtime; training, root prediction, legacy contracts
+FP16 path additionally uses `mode='max-autotune-no-cudagraphs'`; this tunes
+kernel choices while leaving graph capture and memory ownership to this runtime.
+Compilation and tuning belong to the reported cold warmup budget. The callable
+is owned by this runtime; training, root prediction, legacy contracts
 and FP32 retain their eager path. The card table is an explicit input whose
 stable storage is refreshed before replay after weight changes. Fused BF16
 reductions have different intermediate rounding: production-geometry tests
@@ -72,7 +77,16 @@ are recorded per collection under `nosl_is_az/leaf_graph_*`. Stream event times
 include host submission gaps; output wall time includes waiting for GPU work.
 These overlapping measurements must not be added as independent kernel costs.
 
-Each graph captures its own cuBLAS workspace. Warmup workspaces must be cleared
+Pure autoregressive entity forwards share one scratch pool within a cache.
+Their inputs and refreshed card table are allocated outside capture; each graph
+copies its result to its own pinned host buffer inside capture and retains no
+device output. Thus no captured allocation carries state between graphs, and
+independent shapes can replay in any order. Only one submission may be pending
+per cache. This specialization must not be used for graphs with device outputs
+or intermediate state consumed by other replays; those require the normal
+capture/replay-order rules for shared CUDA pools. Other cores keep private pools.
+
+Each graph captures its cuBLAS workspace inside its pool. Warmup workspaces must be cleared
 before capture and the external cache released afterward; otherwise graph
 eviction/stream reuse can free memory referenced by a different live graph.
 `test_graph_owns_workspace_after_blas_cache_is_released` reproduces that lifetime

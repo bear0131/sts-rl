@@ -42,7 +42,7 @@ def _vocabulary(space, key):
 
 
 class EntityEncoderLayer(nn.TransformerEncoderLayer):
-    """Keep training self-attention projections in batch-first layout.
+    """Keep training and FP16 inference projections in batch-first layout.
 
     Parameter names and the pre-norm/residual/MLP operations remain PyTorch's.
     Unbinding Q/K/V also gives backward one stacked projection gradient,
@@ -50,10 +50,14 @@ class EntityEncoderLayer(nn.TransformerEncoderLayer):
     """
 
     def _sa_block(self, x, attn_mask, key_padding_mask, is_causal=False):
-        # The compiled leaf path keeps its established PyTorch layout. The
-        # batch-first reshape can trigger Inductor CantSplit on symbolic relic
-        # lengths; CPU/GPU smoke tests do not cover every live search shape.
-        if (not self.training or x.ndim != 3 or not self.self_attn.batch_first
+        # Only the opt-in CUDA FP16 inference path uses the new layout. BF16
+        # root/leaf and FP32 teacher inference keep their established rounding.
+        # The FP16 path is validated with dynamic relic lengths and a complete
+        # collection, including graph eviction and temporary memory release.
+        fp16_inference = (x.is_cuda and not torch.is_grad_enabled()
+                          and torch.is_autocast_enabled('cuda')
+                          and torch.get_autocast_dtype('cuda') == torch.float16)
+        if ((not self.training and not fp16_inference) or x.ndim != 3 or not self.self_attn.batch_first
                 or attn_mask is not None or is_causal):
             return super()._sa_block(x, attn_mask, key_padding_mask, is_causal)
         batch, length, width = x.shape

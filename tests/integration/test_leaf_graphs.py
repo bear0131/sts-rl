@@ -8,7 +8,7 @@ from rl.policies.split_policy import SplitStSPointerPolicy
 from rl.search.inference import CombatLeafGraphs
 from rl.search.native import forward_leaves
 
-pytestmark = pytest.mark.native
+pytestmark = [pytest.mark.native, pytest.mark.usefixtures('isolated_torch_compile_cache')]
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='direct native graph inputs require CUDA')
@@ -440,3 +440,80 @@ def test_compiled_entity_production_geometry(combat_factory, amp):
         torch.cuda.empty_cache()
     assert cache.evictions >= 1 and cache.hits >= 1
     assert tuple(core.state_dict()) == initial_keys
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='requires CUDA scratch-pool validation')
+@pytest.mark.parametrize('amp', ['bf16', 'fp16'])
+@pytest.mark.timeout(300)  # Cold FP16 autotuning covers several independent shapes.
+def test_entity_graphs_replay_independently_after_arbitrary_order_and_release(combat_factory, amp):
+    """A cached graph must not consume another shape's scratch or outputs."""
+    import gc
+    from rl.policies.entity_combat import EntityCombatPolicy
+    env = combat_factory(['STRIKE_RED'] * 5 + ['DEFEND_RED'] * 5,
+                         combat_action_contract='autoregressive-v2', card_language=True)
+    model = AccumulatingMaskablePPO(EntityCombatPolicy, env, device='cuda', seed=42,
+        n_steps=8, batch_size=4, nosl_is_az=True, nosl_is_az_cpp=True,
+        nosl_is_az_inner_only=True, nosl_is_az_upper_strategy='rules',
+        policy_kwargs=dict(entity_config=dict(width=32, layers=1, heads=4)))
+    model.policy.set_training_mode(False)
+    core = model.policy.core
+    obs = env._obs()
+    batches = []
+    for count, width in ((2, 1), (7, 1), (11, 2), (3, 3), (9, 1), (6, 2)):
+        batch = {k: np.stack([v] * count) for k, v in obs.items()
+                 if k in core.combat_observation_keys}
+        batch['relics'].fill(0)
+        batch['relics'][:, width-1] = 1
+        batches.append((batch, width))
+
+    def independent(batch, width):
+        # No other graph has ever occupied this fresh cache. Compare exact
+        # same-shape compiled outputs without cross-shape FP rounding drift.
+        isolated = CombatLeafGraphs(core, 'cuda', amp=amp, batch_multiple=4)
+        result = isolated(batch, width)
+        isolated.clear()
+        return result
+
+    # Dynamic compilation may generalize guards after seeing another shape and
+    # select a different FP16 kernel. Stabilize those programs before comparing
+    # scratch ownership; the same initial rounding drift occurs with private pools.
+    warm = CombatLeafGraphs(core, 'cuda', amp=amp, batch_multiple=4)
+    for batch, width in batches:
+        warm(batch, width)
+    warm.clear()
+    del warm
+    expected = [independent(*row) for row in batches]
+    cache = CombatLeafGraphs(core, 'cuda', amp=amp, batch_multiple=4, capacity=3)
+    try:
+        for index in (0, 5, 2, 1, 0, 4, 3, 0, 5, 1, 4, 2):
+            actual = cache(*batches[index])
+            for a, b in zip(actual, expected[index]):
+                np.testing.assert_array_equal(a, b)
+            # An older retained result is CPU-owned, not a view of graph scratch.
+            for a, b in zip(cache(*batches[0]), expected[0]):
+                np.testing.assert_array_equal(a, b)
+            torch._C._cuda_clearCublasWorkspaces()
+            torch.cuda.empty_cache()
+        assert cache.evictions > 0
+        with torch.no_grad():
+            core.combat.end.bias.add_(.25)
+            core.combat.card.weight.add_(.1)
+        for batch, _ in batches:
+            batch['player_scalars'][:, 0] += .01
+        expected = [independent(*row) for row in batches]
+        for index in (4, 0, 5, 2, 3, 1):
+            for a, b in zip(cache(*batches[index]), expected[index]):
+                np.testing.assert_array_equal(a, b)
+        finish = cache(*batches[0], deferred=True)
+        with pytest.raises(RuntimeError, match='finish pending'):
+            cache(*batches[1])
+        cache.clear()  # Finishes in-flight D2H before dropping the pool owner.
+        for a, b in zip(finish(), expected[0]):
+            np.testing.assert_array_equal(a, b)
+        gc.collect()
+        torch._C._cuda_clearCublasWorkspaces()
+        torch.cuda.empty_cache()
+        for a, b in zip(cache(*batches[0]), expected[0]):
+            np.testing.assert_array_equal(a, b)
+    finally:
+        cache.clear()

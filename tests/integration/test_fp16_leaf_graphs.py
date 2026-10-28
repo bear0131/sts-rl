@@ -7,7 +7,8 @@ from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies.entity_combat import EntityCombatPolicy
 from rl.search.inference import CombatLeafGraphs
 
-pytestmark = [pytest.mark.native, pytest.mark.timeout(240)]
+pytestmark = [pytest.mark.native, pytest.mark.timeout(240),
+              pytest.mark.usefixtures('isolated_torch_compile_cache')]
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='requires explicit GPU validation')

@@ -26,6 +26,18 @@ def bounded_torch_threads():
 
 
 @pytest.fixture
+def isolated_torch_compile_cache():
+    """Do not spend another test model's Dynamo recompilation budget.
+
+    A single test retains all shape, precision, eviction and weight-update
+    specializations so its runtime cache behavior remains under test.
+    """
+    torch._dynamo.reset()
+    yield
+    torch._dynamo.reset()
+
+
+@pytest.fixture
 def combat_factory():
     created = []
 

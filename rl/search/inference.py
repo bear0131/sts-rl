@@ -39,8 +39,17 @@ class CombatLeafGraphs:
         self.graph_forward = (leaf
             if amp in ('bf16', 'fp16') and leaf is not None and getattr(core, 'autoregressive_actions', False)
             else None)
-        self.compiled_forward = (torch.compile(self.graph_forward, fullgraph=True, dynamic=True)
+        compile_options = ({'mode': 'max-autotune-no-cudagraphs'} if amp == 'fp16' else {})
+        self.compiled_forward = (torch.compile(self.graph_forward, fullgraph=True, dynamic=True,
+                                               **compile_options)
             if self.compile_forward and self.graph_forward is not None else None)
+        # Pure entity forwards have no inter-graph device state: inputs and
+        # the card table live outside capture, and outputs are copied to host
+        # inside capture. All graph-pool allocations can therefore be scratch.
+        # Other cores retain independent pools and their device output storage.
+        # Allocate lazily, like the graph itself, so configuration inspection
+        # does not initialize CUDA before the first actual inference.
+        self._scratch_pool = self._scratch_stream = None
         self.entries = OrderedDict()
         self._pending = None
         self.hits = self.captures = 0
@@ -74,6 +83,7 @@ class CombatLeafGraphs:
         if self._pending is not None:
             self._pending()
         self.entries.clear()
+        self._scratch_pool = None
 
     def forward_native_deferred(self, batch, rows=None):
         """Launch one independent batch; caller must finish before advancing."""
@@ -220,6 +230,10 @@ class CombatLeafGraphs:
         entry['initialized'] = True
 
     def _capture(self, observations, width, padded, *, writer=None):
+        if self.graph_forward is not None and self._scratch_pool is None:
+            self._scratch_pool = torch.cuda.graph_pool_handle()
+            if self._scratch_stream is None:
+                self._scratch_stream = torch.cuda.Stream(device=self.device)
         groups = {}
         for key, value in observations.items():
             groups.setdefault(value.dtype, []).append((key, value))
@@ -243,7 +257,7 @@ class CombatLeafGraphs:
         for host, device, _ in buffers:
             device.copy_(host, non_blocking=True)
         current = torch.cuda.current_stream(self.device)
-        stream = torch.cuda.Stream(device=self.device)
+        stream = self._scratch_stream or torch.cuda.Stream(device=self.device)
         stream.wait_stream(current)
         def forward():
             with torch.inference_mode(), self._autocast():
@@ -262,9 +276,9 @@ class CombatLeafGraphs:
                 warm_output = forward()
         current.wait_stream(stream)
         torch.cuda.synchronize(self.device)
-        # Capture each graph's cuBLAS workspace in its own private pool. CUDA
-        # streams come from a finite reusable pool; an evicted graph must not
-        # release workspace still referenced by another graph on that stream.
+        # Capture cuBLAS workspace inside the graph pool. Release the external
+        # workspace cache before and after capture so stream reuse/eviction
+        # cannot leave another graph pointing at an eager allocation.
         torch._C._cuda_clearCublasWorkspaces()
         graph = torch.cuda.CUDAGraph()
         host_output = torch.empty(warm_output.shape, dtype=warm_output.dtype, pin_memory=True)
@@ -274,7 +288,7 @@ class CombatLeafGraphs:
         # Only the completion event is host-waited. Blocking avoids consuming a
         # CPU core while CUDA runs, but wakeup latency can hurt short kernels.
         done = events[-1] if events else torch.cuda.Event(external=True, blocking=self.blocking_wait)
-        with torch.cuda.graph(graph, stream=stream):
+        with torch.cuda.graph(graph, stream=stream, pool=self._scratch_pool):
             if events: events[0].record()
             for host, device, _ in buffers:
                 device.copy_(host, non_blocking=True)
@@ -285,6 +299,11 @@ class CombatLeafGraphs:
             done.record()
         current.wait_stream(stream)
         torch._C._cuda_clearCublasWorkspaces()
-        entry.update(graph=graph, output=output, host_output=host_output,
+        entry.update(graph=graph, host_output=host_output,
                      host_output_array=host_output.numpy(), events=events, done=done)
+        if self._scratch_pool is None:
+            entry['output'] = output
+        # Shared-pool graphs must retain no device result: later captures may
+        # reuse every scratch byte. Replays are serialized by _pending, and
+        # each graph writes its own host result before releasing the scratch.
         return entry
