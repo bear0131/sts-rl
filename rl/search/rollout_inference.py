@@ -148,9 +148,15 @@ class RolloutInference:
         self.upper = ExactInputCache(upper_bytes)
         self.lower = ExactInputCache(lower_bytes)
         self.upper_graphs = None
+        self._native_upper = False
         if torch.device(model.device).type == 'cuda' and getattr(model, '_native_leaf_inference', None) is not None:
             self.upper_graphs = CombatLeafGraphs(_UpperPhaseCore(model.policy.core.teacher, upper_value_only),
                 model.device, amp='off', capacity=32, batch_multiple=8, compile_forward=False)
+            if upper_value_only:
+                from env.core.native_observation import upper_value_runtime
+                native = upper_value_runtime(model.policy.core.teacher, upper_bytes, pad=True)
+                if native is not None:
+                    self.upper, self._native_upper = native, True
         self.outer_settlement_seconds = 0.
         self.upper_prepare_seconds = 0.
         self.outer_overlap_batches = self.outer_overlap_rows = 0
@@ -158,16 +164,27 @@ class RolloutInference:
         self.outer_value_seconds = 0.
 
     def forward_upper(self, observations):
+        if self._native_upper:
+            observations = self.model.policy.core.teacher._validated_observations(observations)
+            return self.forward_upper_rows([{key: value[i] for key, value in observations.items()}
+                                            for i in range(len(observations['phase']))])
         started = time.perf_counter()
         groups = self.model.policy.core.teacher.prepare_numpy(observations)
         self.upper_prepare_seconds += time.perf_counter()-started
         return self._forward_upper(groups, len(observations['phase']))
 
     def forward_upper_rows(self, observations):
+        if self._native_upper:
+            values = self.upper.forward(observations, self.model.policy.core.teacher,
+                                        self._forward_upper_values)
+            return np.empty((len(values), 0), np.float32), values
         started = time.perf_counter()
         groups = self.model.policy.core.teacher.prepare_search_numpy(observations)
         self.upper_prepare_seconds += time.perf_counter()-started
         return self._forward_upper(groups, len(observations))
+
+    def _forward_upper_values(self, batch, signature):
+        return self.upper_graphs(batch, signature)[1]
 
     def _forward_upper(self, groups, count):
         teacher = self.model.policy.core.teacher
@@ -200,7 +217,8 @@ class RolloutInference:
         graph = self.upper_graphs.statistics() if self.upper_graphs else dict.fromkeys(GRAPH_METRICS, 0)
         result.update({f'upper_graph_{k}': graph[k] for k in GRAPH_METRICS})
         result.update(outer_settlement_seconds=self.outer_settlement_seconds,
-                      upper_prepare_seconds=self.upper_prepare_seconds,
+                      upper_prepare_seconds=self.upper_prepare_seconds +
+                          (self.upper.prepare_seconds if self._native_upper else 0.),
                       outer_overlap_batches=self.outer_overlap_batches,
                       outer_overlap_rows=self.outer_overlap_rows,
                       outer_exit_rows=self.outer_exit_rows,

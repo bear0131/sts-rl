@@ -179,6 +179,8 @@ def test_upper_rollout_graph_eviction_release_and_exact_cache(outer_return_core,
     model = SimpleNamespace(policy=SimpleNamespace(core=core), device='cuda',
                             _native_leaf_inference=object())
     runtime = RolloutInference(model, upper_bytes=0, upper_value_only=value_only)
+    if value_only:
+        assert runtime._native_upper, 'select the native upper value runtime build'
     runtime.upper_graphs.capacity = 2
     previous_precision = torch.get_float32_matmul_precision()
     torch.set_float32_matmul_precision(matmul_precision)

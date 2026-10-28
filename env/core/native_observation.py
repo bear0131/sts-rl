@@ -14,6 +14,27 @@ from schemas.combat_state import normalize_sim_global
 import slaythespire as sts
 
 
+def upper_value_runtime(teacher, max_bytes, *, pad):
+    """Collection-owned batching/cache over the frozen checkpoint's schema.
+
+    The native path accepts encoded float32/int64 arrays, including strided
+    views. It preserves phase, physical token width and full input bytes as
+    cache identity. Other backends retain the Python transport.
+    """
+    if not hasattr(sts, 'UpperValueRuntime'):
+        return None
+    schemas = {}
+    for name, phase in encode.V.PHASE_VOCAB_INDEX.items():
+        if name == 'combat':
+            continue
+        keys = (encode.OVERWORLD_OBSERVATION_KEYS |
+                encode.OVERWORLD_PHASE_OBSERVATION_KEYS.get(phase, frozenset()))
+        schemas[phase] = {key: np.empty(space.shape, dtype=space.dtype)
+                          for key, space in teacher.observation_space.spaces.items()
+                          if key in keys}
+    return sts.UpperValueRuntime(schemas, encode.V.PHASE_VOCAB_INDEX['combat'], max_bytes, pad)
+
+
 @lru_cache(maxsize=2)
 def upper_reward_encoder(deck_size_observation):
     """Native projection of settled reward screens, with canonical vocab/units.

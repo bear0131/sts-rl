@@ -596,6 +596,7 @@ public:
 } // namespace
 
 void bindNeuralObservation(py::module_ &module) {
+    bindUpperValue(module);
     py::class_<UpperRewardObservationEncoder>(module,"UpperRewardObservationEncoder")
         .def(py::init<py::dict,py::dict,py::dict>())
         .def("settle_reward",&UpperRewardObservationEncoder::settleReward)

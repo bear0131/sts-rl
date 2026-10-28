@@ -20,6 +20,10 @@
 
 搜索出口的内部推理只计算冻结上层的编码器和value头，并只缓存一个value；
 普通整局动作选择继续计算完整actor/critic。两者共用同一value readout，FP32约定不变。
+CUDA搜索的value-only transport可使用`UpperValueRuntime`原生流水线：阶段分组、输入
+校验/裁剪/padding、逐字节LRU及miss组批/回填一次完成。每次调用仍遍历当前模块注册表
+校验冻结状态；实际GPU批次的顺序、padding宽度与原Python路径一致。模块不拥有模型参数，
+随collection清理，不写入checkpoint；普通CPU及旧扩展继续既有Python路径。
 该差异只影响计算/传输内容，不改变搜索预算、归一化目标或上层训练状态。
 
 COMBAT06（用户的1号实验）的 `combat-outcome-means-v1` 保留旧战斗终点HP标签和

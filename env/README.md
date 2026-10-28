@@ -17,7 +17,13 @@
 搜索的 `upper_value_only` 是内部传输。已结算且未终局的奖励屏可由
 `core/native_observation.py` 的 `UpperRewardObservationEncoder` 直接编码；词表、
 尺度及上层消费字段仍由 `core/encode.py` 定义，保持先用双精度除法再写 float32。
-该路径不执行结算、不缓存游戏状态，逐次读取GC并返回独立数组；多包奖励显示当前最后一包。
+`encode`本身不执行结算、不缓存游戏状态，逐次读取GC并返回独立数组；多包奖励显示当前最后一包。
+`settle_reward`仅对普通未终局reward出口，在完整GC副本上调用现役const `exitBattle`后编码；
+其他屏幕、finite-curve及自定义后端继续Python结算合同。
+`UpperValueRuntime`将上层内部float32/int64行按checkpoint消费字段分组、校验、padding和
+逐字节缓存，Python只提供value推理回调；非连续数组先按原值连续化，输出始终独立。
+缓存包含phase、实际执行宽度和全部输入字节，保持64个scope的FIFO身份及128MiB逻辑容量，
+每条按输入字节+float32值+512字节保守记账；不使用游戏状态近似或hash值代替完整相等。
 其他界面和普通Gym观测继续使用canonical编码；旧扩展缺少此能力时使用原路径。
 
 测试在 ../tests。实体槽位、pending 来源、候选区域和 gauntlet 持久状态的验收范围见根 TODO F01/F02/F03/F07。
