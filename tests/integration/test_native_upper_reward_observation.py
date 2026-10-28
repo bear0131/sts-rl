@@ -80,7 +80,8 @@ def test_search_settlement_projection_and_independent_storage(run_combat_factory
 
 
 @pytest.mark.parametrize('seed', [21, 42101, 9030000])
-def test_real_run_reward_screens_across_acts(seed):
+@pytest.mark.parametrize('packed', [False, True])
+def test_real_run_reward_screens_across_acts(seed, packed):
     root = SimGameEnv(global_map_view=True)
     root.reset(seed=seed)
     root.gc.skip_battles = True
@@ -93,7 +94,8 @@ def test_real_run_reward_screens_across_acts(seed):
         if root.phase() == 'combat_reward':
             expected = encode.encode(root.encoding_canonical(), global_map_view=True,
                                      card_language=True, deck_size_observation=True)
-            assert_projection(codec.encode(root.gc), expected)
+            actual = codec.encode_packed(root.gc) if packed else codec.encode(root.gc)
+            assert_projection(actual, expected)
             seen.add(root.gc.act)
             screens += 1
         actions = root.legal_semantic_actions()
@@ -181,3 +183,27 @@ def test_native_reward_transaction_preserves_source_and_avoids_python_settlement
         assert (root.obs_canonical(), leaf.to_dict()) == source_before
     finally:
         env.close()
+
+
+def test_packed_reward_views_own_storage_after_row_and_encoder_release(run_combat_factory):
+    import gc
+    root = run_combat_factory()
+    leaf = root.bc.clone()
+    leaf.set_player_strength(999)
+    leaf.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    branch, _ = root.settle_combat_leaf(leaf)
+    codec = upper_reward_encoder(False)
+    row = codec.encode_packed(branch.gc)
+    assert isinstance(row, sts.UpperObservationRow)
+    expected = codec.encode(branch.gc)
+    views = {key: row[key] for key in row}
+    assert tuple(row.keys()) == tuple(expected)
+    assert tuple(dict(row)) == tuple(expected)
+    del row, codec, branch
+    upper_reward_encoder.cache_clear()
+    gc.collect()
+    for key, value in views.items():
+        assert value.tobytes() == expected[key].tobytes()
+        value.fill(37)
+        assert np.all(value == 37)
+        assert not np.shares_memory(value, expected[key])

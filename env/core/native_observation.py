@@ -17,8 +17,8 @@ import slaythespire as sts
 def upper_value_runtime(teacher, max_bytes, *, pad):
     """Collection-owned batching/cache over the frozen checkpoint's schema.
 
-    The native path accepts encoded float32/int64 arrays, including strided
-    views. It preserves phase, physical token width and full input bytes as
+    The native path accepts owned native rows or encoded float32/int64 arrays,
+    including strided views. It preserves phase, physical token width and full input bytes as
     cache identity. Other backends retain the Python transport.
     """
     if not hasattr(sts, 'UpperValueRuntime'):

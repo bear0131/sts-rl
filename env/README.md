@@ -20,6 +20,11 @@
 `encode`本身不执行结算、不缓存游戏状态，逐次读取GC并返回独立数组；多包奖励显示当前最后一包。
 `settle_reward`仅对普通未终局reward出口，在完整GC副本上调用现役const `exitBattle`后编码；
 其他屏幕、finite-curve及自定义后端继续Python结算合同。
+支持新扩展时，内部结算返回`UpperObservationRow`：每行拥有一块对齐连续存储，
+共享不可变字段布局，原生cache直接读取；不逐字段创建Python数组。公开`encode`
+仍返回dict，`encode_packed`及`settle_reward(..., packed=True)`返回支持索引/迭代的行。
+按需取得的NumPy字段视图持有行所有权，删除encoder/GC/行变量后仍有效；修改视图只影响
+所属行，下次缓存查询按实际字节重新判断。行不写入checkpoint或跨进程传输。
 `UpperValueRuntime`将上层内部float32/int64行按checkpoint消费字段分组、校验、padding和
 逐字节缓存，Python只提供value推理回调；非连续数组先按原值连续化，输出始终独立。
 缓存包含phase、实际执行宽度和全部输入字节，保持64个scope的FIFO身份及128MiB逻辑容量，

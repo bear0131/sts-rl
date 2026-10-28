@@ -1,4 +1,5 @@
 #include "neural-observation.h"
+#include "upper-observation.h"
 #include "compact-observation.h"
 #include "game/GameContext.h"
 #include "sim/search/NeuralSearchBatch.h"
@@ -19,12 +20,7 @@ template<class T> using Array = py::array_t<T, py::array::c_style | py::array::f
 // The Python codec supplies vocabularies, shapes and double-precision scales;
 // no rewards, RNG or game transitions are generated in this encoder.
 class UpperRewardObservationEncoder {
-    struct Field {
-        std::string name;
-        py::dtype dtype;
-        std::vector<py::ssize_t> shape;
-    };
-    std::vector<Field> fields_;
+    std::shared_ptr<const upper_observation::Layout> layout_;
     std::map<std::string, double> scales_;
     std::vector<std::int64_t> cards_, relics_, heldPotions_, rewardPotions_, bosses_, characters_;
     std::int64_t phase_, argStep_;
@@ -43,14 +39,8 @@ class UpperRewardObservationEncoder {
         return lut[i];
     }
 public:
-    UpperRewardObservationEncoder(py::dict shapes, py::dict vocab, py::dict scales) {
-        for(auto item:shapes) {
-            auto a=py::cast<py::array>(item.second);
-            if(a.ndim()!=1 || a.size()<1 ||
-                    (!a.dtype().is(py::dtype::of<float>()) && !a.dtype().is(py::dtype::of<std::int64_t>())))
-                throw std::invalid_argument("upper reward observation prototype layout mismatch");
-            fields_.push_back({py::cast<std::string>(item.first),a.dtype(),{a.shape(0)}});
-        }
+    UpperRewardObservationEncoder(py::dict shapes, py::dict vocab, py::dict scales)
+        :layout_(std::make_shared<upper_observation::Layout>(shapes)) {
         for(auto item:scales) {
             const double value=py::cast<double>(item.second);
             if(!std::isfinite(value) || value<=0) throw std::invalid_argument("invalid upper observation scale");
@@ -69,7 +59,7 @@ public:
         argStep_=py::cast<std::int64_t>(vocab["arg_step"]);
     }
 
-    py::object settleReward(const sts::GameContext &base, const sts::BattleContext &battle) const {
+    py::object settleReward(const sts::GameContext &base, const sts::BattleContext &battle, bool packed=false) const {
         if(battle.outcome==sts::Outcome::UNDECIDED)
             throw std::invalid_argument("combat exit requires a terminal battle");
         // Exactly the existing settlement transaction, on an owned complete
@@ -81,33 +71,31 @@ public:
         // and terminal/finite-curve outcomes keep their original typed path.
         if(gc.outcome!=sts::GameOutcome::UNDECIDED || gc.act>3 ||
                 gc.screenState!=sts::ScreenState::REWARDS) return py::none();
-        return py::make_tuple(gc.act,gc.floorNum,encode(gc));
+        auto row=encodePacked(gc);
+        return py::make_tuple(gc.act,gc.floorNum,packed?py::cast(row):py::object(row->asDict()));
     }
 
-    py::dict encode(const sts::GameContext &gc) const {
+    py::dict encode(const sts::GameContext &gc) const { return encodePacked(gc)->asDict(); }
+
+    std::shared_ptr<upper_observation::Row> encodePacked(const sts::GameContext &gc) const {
         if(gc.screenState!=sts::ScreenState::REWARDS || gc.outcome!=sts::GameOutcome::UNDECIDED)
             throw std::invalid_argument("upper reward observation requires a live settled reward screen");
-        py::dict out;
-        std::map<std::string,py::array> arrays;
-        for(const auto &field:fields_) {
-            py::array a(field.dtype,field.shape);
-            std::memset(a.mutable_data(),0,a.nbytes());
-            out[py::str(field.name)]=a;
-            arrays.emplace(field.name,a);
-        }
+        auto out=std::make_shared<upper_observation::Row>(layout_);
         auto capacity=[&](const char *key,int n) {
-            const auto &a=arrays.at(key);
-            if(n<0 || n>a.size()) throw std::invalid_argument(std::string("upper observation capacity exceeded: ")+key);
+            const auto &field=layout_->at(key);
+            if(n<0 || static_cast<std::size_t>(n)>field.size)
+                throw std::invalid_argument(std::string("upper observation capacity exceeded: ")+key);
         };
         auto cat=[&](const char *key,int i,std::int64_t value) {
-            auto &a=arrays.at(key);capacity(key,i+1);
-            if(!a.dtype().is(py::dtype::of<std::int64_t>())) throw std::invalid_argument("upper categorical dtype mismatch");
-            static_cast<std::int64_t *>(a.mutable_data())[i]=value;
+            const auto &field=layout_->at(key);capacity(key,i+1);
+            if(field.floating) throw std::invalid_argument("upper categorical dtype mismatch");
+            std::memcpy(out->data(field)+i*sizeof(value),&value,sizeof(value));
         };
         auto scalar=[&](const char *key,int i,double value) {
-            auto &a=arrays.at(key);capacity(key,i+1);
-            if(!a.dtype().is(py::dtype::of<float>())) throw std::invalid_argument("upper scalar dtype mismatch");
-            static_cast<float *>(a.mutable_data())[i]=static_cast<float>(value);
+            const auto &field=layout_->at(key);capacity(key,i+1);
+            if(!field.floating) throw std::invalid_argument("upper scalar dtype mismatch");
+            const float stored=static_cast<float>(value);
+            std::memcpy(out->data(field)+i*sizeof(stored),&stored,sizeof(stored));
         };
         cat("phase",0,phase_);cat("arg_step",0,argStep_);
         cat("character",0,id(characters_,gc.cc));cat("next_boss",0,id(bosses_,gc.boss));
@@ -135,7 +123,7 @@ public:
             cat("deck_ids",i,id(cards_,card.getId()));
             scalar("deck_upgrades",i,card.getUpgraded()/scales_.at("UPGRADE"));++i;
         }
-        if(arrays.count("deck_size")) scalar("deck_size",0,std::min(i/scales_.at("DECK_SIZE"),1.));
+        if(layout_->indices.count("deck_size")) scalar("deck_size",0,std::min(i/scales_.at("DECK_SIZE"),1.));
         const auto &reward=gc.info.rewardsContainer;
         if(reward.cardRewardCount<0 || reward.cardRewardCount>int(reward.cardRewards.size()))
             throw std::invalid_argument("invalid native card reward count");
@@ -597,9 +585,21 @@ public:
 
 void bindNeuralObservation(py::module_ &module) {
     bindUpperValue(module);
+    using upper_observation::Row;
+    py::class_<Row,std::shared_ptr<Row>>(module,"UpperObservationRow")
+        .def("__getitem__",&Row::view)
+        .def("__len__",[](const Row &row){return row.layout->fields.size();})
+        .def("__iter__",[](const Row &row){return row.keys().attr("__iter__")();})
+        .def("keys",[](const Row &row){
+            py::dict keys;for(const auto &field:row.layout->fields) keys[py::str(field.name)]=py::none();
+            return keys.attr("keys")();
+        })
+        .def("items",[](Row &row){return row.asDict().attr("items")();});
     py::class_<UpperRewardObservationEncoder>(module,"UpperRewardObservationEncoder")
         .def(py::init<py::dict,py::dict,py::dict>())
-        .def("settle_reward",&UpperRewardObservationEncoder::settleReward)
+        .def("settle_reward",&UpperRewardObservationEncoder::settleReward,
+             py::arg("base"),py::arg("battle"),py::arg("packed")=false)
+        .def("encode_packed",&UpperRewardObservationEncoder::encodePacked)
         .def("encode",&UpperRewardObservationEncoder::encode);
     py::class_<NeuralObservationDecoder>(module,"NeuralObservationDecoder")
         .def(py::init<py::dict,py::dict,py::dict,py::dict,py::dict,int,int,bool>())

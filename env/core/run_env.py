@@ -649,7 +649,9 @@ class SlayTheSpireEnv(gym.Env):
                 and not getattr(base, '_finite_curve_objective', False)
                 and native_upper is not None and hasattr(native_upper, 'settle_reward')):
             from .native_observation import upper_reward_encoder
-            settled = upper_reward_encoder(self._deck_size_observation).settle_reward(base.gc, battle)
+            encoder = upper_reward_encoder(self._deck_size_observation)
+            settled = (encoder.settle_reward(base.gc, battle, packed=True)
+                       if hasattr(encoder, 'encode_packed') else encoder.settle_reward(base.gc, battle))
             if settled is not None:
                 from .outer_return import CombatExit, strategic_reward, remaining_reward_max
                 act, floor, obs = settled

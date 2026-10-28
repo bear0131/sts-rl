@@ -106,3 +106,38 @@ def test_native_validation_sees_registry_changes_and_recovers_after_error(frozen
         runtime.forward(rows, teacher, fail)
     assert runtime.forward(rows, teacher, compute).tolist() == [0.]
     teacher.assert_integrity()
+
+
+@pytest.mark.parametrize('capacity', [0, 4096, 1024 * 1024])
+def test_packed_reward_and_dict_rows_share_exact_cache(frozen_upper_source, run_combat_factory, capacity):
+    from env.core.native_observation import upper_reward_encoder
+    core, space, _, _ = frozen_upper_source
+    teacher = FrozenUpperTeacher(core, space, source_sha256='1' * 64)
+    packed_runtime = upper_value_runtime(teacher, capacity, pad=True)
+    dict_runtime = upper_value_runtime(teacher, capacity, pad=True)
+    root = run_combat_factory()
+    leaf = root.bc.clone()
+    leaf.set_player_strength(999)
+    leaf.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    branch, _ = root.settle_combat_leaf(leaf)
+    codec = upper_reward_encoder(False)
+    calls = [[], []]
+    def predict(batch, signature, side):
+        calls[side].append((signature, tuple(batch),
+                           {k: (v.shape, v.dtype.str, v.tobytes()) for k, v in batch.items()}))
+        return batch['run_hp'][:, 0] + batch['gold'][:, 0]
+    for size in (4, 17, 4):
+        branch.gc.set_deck([('STRIKE_RED', 0)] * size)
+        packed = codec.encode_packed(branch.gc)
+        ordinary = codec.encode(branch.gc)
+        rows = [packed, ordinary, packed]
+        for repeat in range(3):
+            # Mutation through a retained view must invalidate exact identity.
+            packed['gold'][0] += np.float32(.1)
+            reference = [{key: row[key].copy() for key in row} for row in rows]
+            actual = packed_runtime.forward(rows, teacher, lambda b, s: predict(b, s, 0))
+            expected = dict_runtime.forward(reference, teacher, lambda b, s: predict(b, s, 1))
+            assert actual.tobytes() == expected.tobytes()
+            assert calls[0] == calls[1]
+            for key in ('requests', 'misses', 'hits', 'batch_duplicates', 'evictions', 'bytes', 'peak_bytes'):
+                assert packed_runtime.stats[key] == dict_runtime.stats[key], key

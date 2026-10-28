@@ -1,6 +1,7 @@
 // Collection-owned upper critic transport. No Torch dependency, game rules,
 // approximation or model state: Python supplies the unchanged GPU callback.
 #include "neural-observation.h"
+#include "upper-observation.h"
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 #include <algorithm>
@@ -47,10 +48,12 @@ void validateFrozen(py::object teacher) {
 class UpperValueRuntime {
     struct Field {
         py::str name;
+        std::string key;
         py::dtype dtype;
         std::vector<py::ssize_t> shape;
         std::size_t bytes;
         int trimmed; // 0=unchanged, 1=deck, 2=relic
+        bool floating;
     };
     struct Entry { std::string key; float value; std::size_t cost; };
     using Entries = std::list<Entry>;
@@ -76,9 +79,9 @@ class UpperValueRuntime {
             throw std::invalid_argument("frozen upper observation dtype changed: "+std::string(field.name));
         return a;
     }
-    static int activeWidth(const py::array &a) {
-        const auto *ids=static_cast<const std::int64_t *>(a.data());
-        for (int n=static_cast<int>(a.size());n>0;--n) if(ids[n-1]!=0) return n;
+    static int activeWidth(const void *data,std::size_t size) {
+        const auto *ids=static_cast<const std::int64_t *>(data);
+        for (int n=static_cast<int>(size);n>0;--n) if(ids[n-1]!=0) return n;
         return 1;
     }
     int padded(int width,int capacity,int minimum) const {
@@ -114,8 +117,8 @@ public:
                 int trim=(name=="deck_ids" || name=="deck_upgrades")?1:
                          (name=="relics" || name=="relic_counters")?2:0;
                 if(trim && a.ndim()!=1) throw std::invalid_argument("upper token arrays must be vectors");
-                fields.push_back({py::str(name),a.dtype(),{a.shape(),a.shape()+a.ndim()},
-                                  static_cast<std::size_t>(a.nbytes()),trim});
+                fields.push_back({py::str(name),name,a.dtype(),{a.shape(),a.shape()+a.ndim()},
+                                  static_cast<std::size_t>(a.nbytes()),trim,a.dtype().equal(py::dtype::of<float>())});
                 if(name=="deck_ids") deckCapacity_=static_cast<int>(a.size());
                 if(name=="relics") relicCapacity_=static_cast<int>(a.size());
             }
@@ -141,11 +144,21 @@ public:
         auto started=Clock::now();validateFrozen(teacher);
         if(rows.empty()) throw std::invalid_argument("upper search requires nonempty rows with scalar phase");
         std::map<int,std::vector<std::size_t>> groups;
+        std::vector<upper_observation::Row *> packed(rows.size(),nullptr);
         for(std::size_t i=0;i<rows.size();++i) {
-            auto phase=py::array::ensure(rows[i]["phase"],py::array::c_style);
-            if(!phase || phase.ndim()!=1 || phase.size()!=1 || !phase.dtype().equal(py::dtype::of<std::int64_t>()))
-                throw std::invalid_argument("upper search requires nonempty rows with scalar phase");
-            int id=static_cast<int>(*static_cast<const std::int64_t *>(phase.data()));
+            int id;
+            if(py::isinstance<upper_observation::Row>(rows[i])) {
+                auto *row=py::cast<upper_observation::Row *>(rows[i]);packed[i]=row;
+                const auto &field=row->layout->at("phase");
+                if(field.shape!=std::vector<py::ssize_t>{1} || field.floating)
+                    throw std::invalid_argument("upper search requires nonempty rows with scalar phase");
+                id=static_cast<int>(*reinterpret_cast<const std::int64_t *>(row->data(field)));
+            } else {
+                auto phase=py::array::ensure(rows[i]["phase"],py::array::c_style);
+                if(!phase || phase.ndim()!=1 || phase.size()!=1 || !phase.dtype().equal(py::dtype::of<std::int64_t>()))
+                    throw std::invalid_argument("upper search requires nonempty rows with scalar phase");
+                id=static_cast<int>(*static_cast<const std::int64_t *>(phase.data()));
+            }
             if(id==combat_ || !schemas_.count(id)) throw std::invalid_argument("upper teacher requires nonempty upper decision rows");
             groups[id].push_back(i);
         }
@@ -153,15 +166,27 @@ public:
         prepareSeconds_+=elapsed(started);
         for(const auto &[phase,indices]:groups) {
             started=Clock::now();const auto &fields=schemas_.at(phase);
-            std::vector<std::vector<py::array>> arrays(indices.size());
+            std::vector<std::vector<const void *>> arrays(indices.size());
+            std::vector<py::array> owned; // Own normalized copies of strided fallback inputs.
             int deck=1,relic=1;
             for(std::size_t i=0;i<indices.size();++i) {
-                auto row=py::cast<py::dict>(rows[indices[i]]);
+                auto *packedRow=packed[indices[i]];
                 for(const auto &field:fields) {
-                    auto a=checked(row[field.name],field);
-                    if(field.name.equal(py::str("deck_ids"))) deck=std::max(deck,activeWidth(a));
-                    if(field.name.equal(py::str("relics"))) relic=std::max(relic,activeWidth(a));
-                    arrays[i].push_back(std::move(a));
+                    const void *data;std::size_t size;
+                    if(packedRow) {
+                        const auto &source=packedRow->layout->at(field.key);
+                        if(source.shape!=field.shape)
+                            throw std::invalid_argument("frozen upper observation shape changed: "+field.key);
+                        if(source.floating!=field.floating)
+                            throw std::invalid_argument("frozen upper observation dtype changed: "+field.key);
+                        data=packedRow->data(source);size=source.size;
+                    } else {
+                        auto a=checked(rows[indices[i]][field.name],field);
+                        data=a.data();size=a.size();owned.push_back(std::move(a));
+                    }
+                    if(field.key=="deck_ids") deck=std::max(deck,activeWidth(data,size));
+                    if(field.key=="relics") relic=std::max(relic,activeWidth(data,size));
+                    arrays[i].push_back(data);
                 }
             }
             const int widths[]={0,padded(deck,deckCapacity_,16),padded(relic,relicCapacity_,4)};
@@ -186,7 +211,7 @@ public:
             for(std::size_t i=0;i<indices.size();++i) {
                 auto &key=keys[i];key.assign(prefix+offsets.back(),'\0');std::memcpy(key.data(),&header,prefix);
                 for(std::size_t k=0;k<fields.size();++k)
-                    std::memcpy(key.data()+prefix+offsets[k],arrays[i][k].data(),copied[k]);
+                    std::memcpy(key.data()+prefix+offsets[k],arrays[i][k],copied[k]);
                 auto hit=index_.find(key);
                 if(limit_ && hit!=index_.end()) {
                     out[indices[i]]=hit->second->value;found[i]=true;++hits_;
