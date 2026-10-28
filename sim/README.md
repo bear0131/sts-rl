@@ -20,14 +20,19 @@ cmake --build BUILD --target simulator-benchmark --parallel 2
 BUILD/simulator-benchmark clone 5000000 42101 60
 BUILD/simulator-benchmark playout 100000 42101 60
 BUILD/simulator-benchmark search 512 42101 60
+BUILD/simulator-benchmark playout 400000 42101 60 4
 ```
 
-Windows 可执行文件后缀为 `.exe`。参数为模式、固定次数、种子和执行阶段秒数上限；
+Windows 可执行文件后缀为 `.exe`。参数为模式、固定次数、种子和执行阶段秒数上限。
+可选最后一个参数是线程数（1–32，默认1）。总工作量在各线程间按索引分配，每个
+线程拥有独立状态和搜索器；固定线程数比较工作量和摘要，不能跨线程数比较摘要。
+`seconds` 含搜索器构造和线程退出，不含线程创建；外部同时记录进程端到端时间。
 超时返回非零。模式分别计量战斗复制、随机完整动作、128次模拟/深度8的无模型PUCT。
 使用95个左右的A0初始牌组初始/中途状态，固定六类Act1遭遇，随机战斗最多256动作，
 上限命中单独记录。JSON区分建状态与计时，给出实际动作/模拟次数、结果摘要和状态大小。
 这是性能工作负载，不替代完整规则正确性验证，也不是生产神经搜索rollout。
 新旧构建必须使用相同编译器/选项、seed/次数并核对work/digest，交替ABBA、记录资源；
+并行测试须核对实际进程CPU占用，仅设置亲和性不证明已使用多核。
 固定CPU核心的结果不能外推到四台远端吞吐。另用 `tools.validation.bitwise capture-search`
 和 `compare --allow-native-rebuild` 比较真实叶子编码和搜索树字段。
 
