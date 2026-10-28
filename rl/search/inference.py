@@ -40,9 +40,19 @@ class CombatLeafGraphs:
             if amp in ('bf16', 'fp16') and leaf is not None and getattr(core, 'autoregressive_actions', False)
             else None)
         compile_options = ({'mode': 'max-autotune-no-cudagraphs'} if amp == 'fp16' else {})
-        self.compiled_forward = (torch.compile(self.graph_forward, fullgraph=True, dynamic=True,
-                                               **compile_options)
-            if self.compile_forward and self.graph_forward is not None else None)
+        self.compiled_forward = None
+        if self.compile_forward and self.graph_forward is not None:
+            forward = self.graph_forward
+
+            def positive_width_forward(observations, width, card_table):
+                # The public boundary already normalizes empty relic sets.
+                # Refine the symbolic width too: otherwise a cold 1 -> 8
+                # transition can leave an unsupported SymMax in Inductor.
+                torch._check(width >= 1)
+                return forward(observations, width, card_table)
+
+            self.compiled_forward = torch.compile(positive_width_forward,
+                fullgraph=True, dynamic=True, **compile_options)
         # Pure entity forwards have no inter-graph device state: inputs and
         # the card table live outside capture, and outputs are copied to host
         # inside capture. All graph-pool allocations can therefore be scratch.
@@ -111,6 +121,12 @@ class CombatLeafGraphs:
                  deferred=False):
         if self._pending is not None:
             raise RuntimeError('finish pending leaf inference before another submission')
+        # Entity encoders keep one masked slot for zero active relics, also
+        # when FP32 stays eager. Other cores retain their original width API.
+        if (getattr(self.core, 'autoregressive_actions', False)
+                and callable(getattr(self.core, 'graph_actor_critic', None))):
+            # None is the entity encoder's full observed-width spelling.
+            width = max(1, int(observations['relics'].shape[1] if width is None else width))
         try:
             if self.core.training:
                 raise RuntimeError('leaf graphs require eval mode')

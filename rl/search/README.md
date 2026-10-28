@@ -58,6 +58,10 @@ First-use compilation is included in graph capture time; report cold startup
 and steady collection time separately. Dynamic batch/relic dimensions reuse a
 compiled program where supported, but dimension-one specialization can still
 require another compile. Replacing the backend resets its callable as well.
+Entity cores represent zero active relics with one masked slot. The runtime
+normalizes that width before compilation and supplies a positive-width guard
+so cold width growth can compile without a symbolic `Max(1, width)` ambiguity.
+Other cores retain their existing width contract.
 
 Inductor's disk cache also records compiled kernels and autotuned launch choices;
 it is separate from the in-process CUDA graph LRU. A fresh compile can choose

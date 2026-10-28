@@ -79,6 +79,7 @@ public:
         py::dict out;
         std::map<std::string, py::array> arrays;
         std::vector<std::pair<std::uintptr_t, std::uintptr_t>> outputRanges;
+        std::vector<std::pair<char *,py::ssize_t>> zeroPlans;
         for (auto item : shapes_) {
             auto name = py::cast<std::string>(item.first);
             auto prototype = py::cast<py::array>(item.second);
@@ -103,7 +104,7 @@ public:
             // Root globals below overwrite every real row. Clearing their
             // deck/relic/context arrays first only doubles the memory writes.
             if (!globals.contains(item.first))
-                std::memset(array.mutable_data(), 0, n * rowBytes);
+                zeroPlans.emplace_back(static_cast<char *>(array.mutable_data()),rowBytes);
             const auto address = reinterpret_cast<std::uintptr_t>(array.mutable_data());
             outputRanges.emplace_back(address, address+n*rowBytes);
             arrays.emplace(name, array); out[item.first] = array;
@@ -114,6 +115,43 @@ public:
         bool independentRows = true;
         for (std::size_t k=1; k<outputRanges.size(); ++k)
             if (outputRanges[k].first < outputRanges[k-1].second) independentRows = false;
+        // Check raw storage before Array(forcecast) can snapshot aliased values.
+        // Non-contiguous inputs may span more than nbytes, including negative strides.
+        bool parallelWrites=native && independentRows;
+        auto rawReadSafe=[&](py::handle object) {
+            if(!py::isinstance<py::array>(object)) return false;
+            auto array=py::reinterpret_borrow<py::array>(object);
+            if(array.size()==0) return true;
+            std::intptr_t low=0,high=0;
+            for(int d=0;d<array.ndim();++d) {
+                const auto extent=(array.shape(d)-1)*array.strides(d);
+                low+=std::min<py::ssize_t>(0,extent);
+                high+=std::max<py::ssize_t>(0,extent);
+            }
+            const auto base=reinterpret_cast<std::intptr_t>(array.data());
+            const auto start=static_cast<std::uintptr_t>(base+low);
+            const auto end=static_cast<std::uintptr_t>(base+high+array.itemsize());
+            for(const auto &range:outputRanges)
+                if(start<range.second && range.first<end) return false;
+            return true;
+        };
+        if(parallelWrites) {
+            for(const char *key:{"card","monster","move","potion","select_context","binary_counters",
+                    "live_relic_ids","live_relic_counter_columns","live_relic_counter_moduli","live_relic_counter_stop_turns"})
+                if(!lut_.contains(key) || !rawReadSafe(lut_[key])) parallelWrites=false;
+            for(const char *key:{"player_status_columns","monster_status_columns"}) {
+                if(!lut_.contains(key) || !py::isinstance<py::tuple>(lut_[key])) { parallelWrites=false;continue; }
+                for(auto column:py::reinterpret_borrow<py::tuple>(lut_[key]))
+                    if(!rawReadSafe(column)) parallelWrites=false;
+            }
+            for(const char *key:{"damage","block"})
+                if(!stats_.contains(key) || !rawReadSafe(stats_[key])) parallelWrites=false;
+            if(!languageIndex.is_none() && !rawReadSafe(languageIndex)) parallelWrites=false;
+        }
+        if(!parallelWrites) {
+            for(const auto &plan:zeroPlans) std::memset(plan.first,0,n*plan.second);
+            zeroPlans.clear();
+        }
         // Resolve all pointers once per batch, with no dictionary per leaf.
         auto f = [&](const char *key) {
             auto &array=arrays.at(key);
@@ -186,6 +224,9 @@ public:
             langUpgrades[0]=f("draw_card_upgrades"); langUpgrades[1]=f("discard_card_upgrades");
         }
         bool *mask=width_ ? static_cast<bool *>(arrays.at("combat_legal").mutable_data()) : nullptr;
+        struct CopyPlan { py::array source_owner; char *target; const char *source; py::ssize_t bytes; };
+        std::vector<CopyPlan> copyPlans;
+        bool sourceAliasesDestination=false;
         for (auto item : globals) {
             auto source=py::cast<py::array>(item.second); auto &target=arrays.at(py::cast<std::string>(item.first));
             if (!(source.flags() & py::array::c_style) || source.ndim()!=target.ndim() || !source.dtype().is(target.dtype()))
@@ -197,11 +238,22 @@ public:
             // elements; using strides(0) silently copied zero global bytes.
             py::ssize_t bytes=source.itemsize();
             for (int d=1; d<source.ndim(); ++d) bytes *= source.shape(d);
-            for (py::ssize_t r=0; r<n; ++r) {
+            const auto start=reinterpret_cast<std::uintptr_t>(source.data());
+            const auto end=start+source.shape(0)*bytes;
+            for (const auto &range:outputRanges)
+                if(start<range.second && range.first<end) sourceAliasesDestination=true;
+            for(py::ssize_t r=0;r<n;++r) {
                 const auto owner=owners.data()[r];
-                if (owner<0 || owner>=source.shape(0)) throw std::invalid_argument("native observation owner out of range");
-                std::memcpy(static_cast<char *>(target.mutable_data())+r*bytes, static_cast<const char *>(source.data())+owner*bytes, bytes);
+                if(owner<0 || owner>=source.shape(0)) throw std::invalid_argument("native observation owner out of range");
             }
+            copyPlans.push_back({source,static_cast<char *>(target.mutable_data()),static_cast<const char *>(source.data()),bytes});
+        }
+        parallelWrites=parallelWrites && !sourceAliasesDestination;
+        if(!parallelWrites) {
+            for(const auto &plan:zeroPlans) std::memset(plan.first,0,n*plan.second);
+            for(const auto &plan:copyPlans)
+                for(py::ssize_t r=0;r<n;++r)
+                    std::memcpy(plan.target+r*plan.bytes,plan.source+owners.data()[r]*plan.bytes,plan.bytes);
         }
         auto lookup=[](const Array<std::int64_t> &map, int value,
                        const char *field, bool allowOneAsPad=false) {
@@ -224,6 +276,11 @@ public:
             !globals.contains("select_card_ids") && !globals.contains("select_native_indices") &&
             !globals.contains("select_card_upgrades") && !globals.contains("select_card_costs");
         auto decodeRow = [&](py::ssize_t r) {
+            if(parallelWrites) {
+                for(const auto &plan:zeroPlans) std::memset(plan.first+r*plan.second,0,plan.second);
+                for(const auto &plan:copyPlans)
+                    std::memcpy(plan.target+r*plan.bytes,plan.source+owners.data()[r]*plan.bytes,plan.bytes);
+            }
             const auto *request=native ? &native->requests()[indices[r]] : nullptr;
             std::optional<compact_leaf::Row> rawRow;
             if (request) rawRow.emplace(compact_leaf::pack(*request->state));
@@ -379,7 +436,11 @@ public:
             // All Python objects and buffer pointers were resolved above.
             // Rows have separate destinations; pending game states are read-only.
             py::gil_scoped_release release;
-            native->readPendingRows(n, decodeRow);
+            constexpr py::ssize_t chunkRows=8;
+            native->readPendingRows((n+chunkRows-1)/chunkRows,[&](std::size_t group) {
+                const auto last=std::min<py::ssize_t>(n,(group+1)*chunkRows);
+                for(py::ssize_t row=group*chunkRows;row<last;++row) decodeRow(row);
+            });
         } else {
             for (py::ssize_t r=0; r<n; ++r) decodeRow(r);
         }

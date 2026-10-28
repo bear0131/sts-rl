@@ -252,23 +252,33 @@ def entity_material_source(tmp_path):
 
 
 @pytest.fixture
-def frozen_upper_source(tmp_path):
+def frozen_card_vectors_factory():
+    """Canonical synthetic frozen tables without private policy checkpoints."""
+    from rl.rules.rule_vector_model import FROZEN_CARD_VECTOR_TABLE_SCHEMA
+    from env.core.cards_vocab import CARD_VOCAB
+
+    def make(path, width, *, seed=42101):
+        generator = torch.Generator().manual_seed(seed)
+        torch.save(dict(schema=FROZEN_CARD_VECTOR_TABLE_SCHEMA, card_vocab=list(CARD_VOCAB),
+                        vectors=torch.randn(len(CARD_VOCAB), 2, width, generator=generator)), path)
+        return path
+
+    return make
+
+
+@pytest.fixture
+def frozen_upper_source(tmp_path, frozen_card_vectors_factory):
     """A small real entity-joint core with TRAIN47's shared frozen card table."""
     from gymnasium import spaces
     from rl.policies.entity_combat import EntityCombatConfig
     from rl.policies.entity_joint import EntityJointCore, UpperConfig
-    from rl.rules.rule_vector_model import FROZEN_CARD_VECTOR_TABLE_SCHEMA
-    from env.core.cards_vocab import CARD_VOCAB
 
     env = SlayTheSpireEnv(card_language=False, global_map_view=True,
                          combat_action_contract='autoregressive-v2')
     observation, _ = env.reset(seed=42101)
     old_space = spaces.Dict({k: v for k, v in env.observation_space.spaces.items()
                             if k not in ('run_keys', 'reward_keys')})
-    cards = tmp_path / 'cards.pt'
-    generator = torch.Generator().manual_seed(42101)
-    torch.save(dict(schema=FROZEN_CARD_VECTOR_TABLE_SCHEMA, card_vocab=list(CARD_VOCAB),
-                    vectors=torch.randn(len(CARD_VOCAB), 2, 12, generator=generator)), cards)
+    cards = frozen_card_vectors_factory(tmp_path / 'cards.pt', 12)
     with torch.random.fork_rng():
         torch.manual_seed(42101)
         core = EntityJointCore(old_space,
