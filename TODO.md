@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| PERF-OUTER-INPUT | 原生reward输入本机通过；30秒增量目标未达 | env/core/native_observation.py 与原生观测codec：减少搜索出口完整canonical和未消费字段生成，奖励/状态/搜索预算不变。真实GC/876 FP32输入输出一致、60项聚焦及normalized两轮恢复通过；混合出口本机2.02倍。最终要求外层value增加整轮耗时≤30s，固定权重/相同轨迹对照，512步/128sim不变；尚未部署，生产收益不得由微基准外推。见worklog/2026-10-28.md“PERF-OUTER-INPUT”。 |
 | TEST-BOSS-FORK-WINDOWS-FSYNC | 基线复现，未修 | experiments/launchers/boss_ablation.py::fork_bundle 在Windows对只读rb句柄os.fsync导致Errno9；d2e8b6eb相同源码与最小句柄复现，新normalized目标不调用该旧means fork。应使用跨平台可写同步句柄并验证fork完整恢复；不能skip原测试。见worklog/2026-10-28.md“COMBAT-OUTER-VALUE-NORM：本机合同与计时验收”。 |
 | TEST-MEDICAL-KIT-FIXTURE | 基线复现，未修 | tests/integration/test_combat_dynamic_exhaust.py::test_real_used_medical_kit_card_is_not_rejected_or_reset 的real monster夹具缺少5个simulator状态字段，在normalize_real进入native前失败；9afb0a7d原构建同样失败。后续补齐真实契约夹具并保留exhaust断言，不作为本轮模拟器回归、不skip掩盖。证据worklog/2026-10-28.md“模拟器有效状态复制优化”。 |
 | SIM-LIVE-STATE | 优先同机速度对照与搜索路径分析；暂停局部重构 | 参考spire-mentor塔2引擎工程设计，保持本仓塔1规则；先审查和优化战斗状态复制/动作队列有效数据生命周期。固定源、同机基线，完整状态/动作/观测/搜索差分与相关规则回归，再报告纯模拟及搜索收益；不改n_steps512/搜索128/模型/奖励，不干预另一agent远端实验。队列复制耗时本机少32%、随机战斗少6%，无模型搜索收益不显著；并行debug计数候选未获收益而撤回。跨硬件公开对照纯action为0.773/0.766us，搜索为30.365us/sim vs hint13.66/Advisor34.36，不能作为同工倍率；后续先同机同类场景对照与真实搜索路径成本分解，再决定架构改动。远端完整collection尚未验证。见worklog/2026-10-28.md“SIM-LIVE-STATE：先量化与spire-mentor的速度差距”。 |

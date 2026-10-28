@@ -1,16 +1,44 @@
-"""Batch encoding of settled native combat roots using the search leaf codec.
+"""Native projections of combat roots and settled upper reward inputs.
 
-Overworld/terminal observations still use the canonical encoder. This adapter
+Other overworld/terminal observations still use the canonical encoder. This adapter
 owns no game state or persistent observation cache: every call reads the live
 roots, including mutable master-deck metadata, and returns fresh arrays.
 """
 import numpy as np
+from functools import lru_cache
 
 from . import encode
 from .outer_return import CONTEXT_KEYS, permanent_misc
 from .run_env import _nosl_compact_lut, _nosl_card_stats
 from schemas.combat_state import normalize_sim_global
 import slaythespire as sts
+
+
+@lru_cache(maxsize=2)
+def upper_reward_encoder(deck_size_observation):
+    """Native projection of settled reward screens, with canonical vocab/units.
+
+    The encoder owns immutable schema only, never a GameContext or row cache.
+    Other upper phases keep the canonical path (including full map semantics).
+    """
+    phase = encode.V.PHASE_VOCAB_INDEX['combat_reward']
+    keys = (encode.OVERWORLD_OBSERVATION_KEYS |
+            encode.OVERWORLD_PHASE_OBSERVATION_KEYS[phase])
+    prototypes = {key: value for key, value in
+                  encode._empty(deck_size_observation=deck_size_observation).items()
+                  if key in keys}
+    from schemas.combat_state import _sim_card_id
+    layout = _nosl_compact_lut()['layout']
+    cards = {str(name): encode._card_id_idx(_sim_card_id(str(name)))
+             for name in layout['card_names'] if str(name) != 'INVALID'}
+    vocab = dict(card=cards, relic=encode.V.RELIC_VOCAB_INDEX,
+                 potion=encode.V.POTION_VOCAB_INDEX,
+                 boss=encode.V.BOSS_VOCAB_INDEX,
+                 character=encode.V.CHARACTER_VOCAB_INDEX,
+                 phase=phase, arg_step=encode.V.ARG_STEP_VOCAB_INDEX['root'])
+    scales = {key: getattr(encode, key+'_SCALE') for key in
+              ('HP', 'GOLD', 'ASCENSION', 'ACT', 'FLOOR', 'COUNTER', 'UPGRADE', 'DECK_SIZE')}
+    return sts.UpperRewardObservationEncoder(prototypes, vocab, scales)
 
 
 class NativeRootObservationBatch:

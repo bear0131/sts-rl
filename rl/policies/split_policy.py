@@ -97,72 +97,9 @@ COMBAT_OBSERVATION_KEYS = frozenset({
     "pending_potion_slot",
 })
 
-OVERWORLD_OBSERVATION_KEYS = frozenset({
-    "act",
-    "arg_step",
-    "ascension",
-    "can_pick_any",
-    "can_pick_zero",
-    "character",
-    "deck_ids",
-    "deck_size",
-    "deck_upgrades",
-    "event_id",
-    "floor",
-    "gold",
-    "next_boss",
-    "phase",
-    "pick_remaining",
-    "potions",
-    "relic_counters",
-    "relics",
-    "run_hp",
-    "run_keys",
-    "select_context",
-    "shop_remove_cost",
-})
-
-OVERWORLD_PHASE_OBSERVATION_KEYS = {
-    V.PHASE_VOCAB_INDEX["combat_reward"]: frozenset({
-        "offer_card_ids",
-        "offer_card_upgrades",
-        "reward_gold",
-        "reward_potion_ids",
-        "reward_relic_ids",
-        "reward_keys",
-    }),
-    V.PHASE_VOCAB_INDEX["card_select"]: frozenset({
-        "select_card_ids",
-        "select_card_upgrades",
-        "selected_card_ids",
-        "selected_card_upgrades",
-    }),
-    V.PHASE_VOCAB_INDEX["map"]: frozenset({
-        "map_full_features",
-        "map_full_rooms",
-        "map_node_rooms",
-        "map_node_x",
-    }),
-    V.PHASE_VOCAB_INDEX["shop"]: frozenset({
-        "shop_card_ids",
-        "shop_card_prices",
-        "shop_card_upgrades",
-        "shop_potion_ids",
-        "shop_potion_prices",
-        "shop_relic_ids",
-        "shop_relic_prices",
-    }),
-    V.PHASE_VOCAB_INDEX["boss_relic"]: frozenset({"boss_relic_ids"}),
-    V.PHASE_VOCAB_INDEX["event"]: frozenset({
-        "event_option_event_ids",
-        "event_option_features",
-        "event_option_ids",
-        "neow_bonus_ids",
-        "neow_drawback_ids",
-        "neow_features",
-    }),
-}
-
+# Shared transport contract; retained aliases preserve historical imports.
+OVERWORLD_OBSERVATION_KEYS = encode.OVERWORLD_OBSERVATION_KEYS
+OVERWORLD_PHASE_OBSERVATION_KEYS = encode.OVERWORLD_PHASE_OBSERVATION_KEYS
 
 class SharedSemanticTokenizer(nn.Module):
     """Shared physical-entity token design used by both specialists."""

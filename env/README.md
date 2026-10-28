@@ -14,6 +14,12 @@
 纯 encode/vocab/action 模块不加载 simulator；原生环境与工厂加载 simulator。env 不依赖 rl/apps/tools/tests，依赖方向由 tests/unit/test_repository_layout.py 检查。
 共享状态规范化在 bridge/schemas；模型额外观测裁剪在 rl/policies/model.py。不要因当前模型不使用某字段就改变环境实际状态或动作语义。
 
+搜索的 `upper_value_only` 是内部传输。已结算且未终局的奖励屏可由
+`core/native_observation.py` 的 `UpperRewardObservationEncoder` 直接编码；词表、
+尺度及上层消费字段仍由 `core/encode.py` 定义，保持先用双精度除法再写 float32。
+该路径不执行结算、不缓存游戏状态，逐次读取GC并返回独立数组；多包奖励显示当前最后一包。
+其他界面和普通Gym观测继续使用canonical编码；旧扩展缺少此能力时使用原路径。
+
 测试在 ../tests。实体槽位、pending 来源、候选区域和 gauntlet 持久状态的验收范围见根 TODO F01/F02/F03/F07。
 
 ## 冻结上层实验的完整结算

@@ -1,5 +1,6 @@
 #include "neural-observation.h"
 #include "compact-observation.h"
+#include "game/GameContext.h"
 #include "sim/search/NeuralSearchBatch.h"
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
@@ -13,6 +14,136 @@
 namespace py = pybind11;
 namespace {
 template<class T> using Array = py::array_t<T, py::array::c_style | py::array::forcecast>;
+
+// Read-only numeric projection after the ordinary battle-exit transaction.
+// The Python codec supplies vocabularies, shapes and double-precision scales;
+// no rewards, RNG or game transitions are generated in this encoder.
+class UpperRewardObservationEncoder {
+    struct Field {
+        std::string name;
+        py::dtype dtype;
+        std::vector<py::ssize_t> shape;
+    };
+    std::vector<Field> fields_;
+    std::map<std::string, double> scales_;
+    std::vector<std::int64_t> cards_, relics_, heldPotions_, rewardPotions_, bosses_, characters_;
+    std::int64_t phase_, argStep_;
+
+    template<std::size_t N>
+    static std::vector<std::int64_t> lookup(py::dict mapping, const char *const (&names)[N]) {
+        std::vector<std::int64_t> result(N, -1);
+        for (std::size_t i=0;i<N;++i)
+            if (names[i] && mapping.contains(names[i])) result[i]=py::cast<std::int64_t>(mapping[names[i]]);
+        return result;
+    }
+    template<class E>
+    static std::int64_t id(const std::vector<std::int64_t> &lut, E value) {
+        const auto i=static_cast<std::size_t>(value);
+        if(i>=lut.size() || lut[i]<0) throw std::invalid_argument("unknown upper observation categorical value");
+        return lut[i];
+    }
+public:
+    UpperRewardObservationEncoder(py::dict shapes, py::dict vocab, py::dict scales) {
+        for(auto item:shapes) {
+            auto a=py::cast<py::array>(item.second);
+            if(a.ndim()!=1 || a.size()<1 ||
+                    (!a.dtype().is(py::dtype::of<float>()) && !a.dtype().is(py::dtype::of<std::int64_t>())))
+                throw std::invalid_argument("upper reward observation prototype layout mismatch");
+            fields_.push_back({py::cast<std::string>(item.first),a.dtype(),{a.shape(0)}});
+        }
+        for(auto item:scales) {
+            const double value=py::cast<double>(item.second);
+            if(!std::isfinite(value) || value<=0) throw std::invalid_argument("invalid upper observation scale");
+            scales_[py::cast<std::string>(item.first)]=value;
+        }
+        cards_=lookup(py::cast<py::dict>(vocab["card"]),sts::cardEnumStrings);
+        relics_=lookup(py::cast<py::dict>(vocab["relic"]),sts::relicIds);
+        heldPotions_=lookup(py::cast<py::dict>(vocab["potion"]),sts::potionNames);
+        heldPotions_.at(static_cast<int>(sts::Potion::EMPTY_POTION_SLOT))=0;
+        heldPotions_.at(static_cast<int>(sts::Potion::INVALID))=-1;
+        // Both rewardInfo and overworld_potions expose getPotionName().
+        rewardPotions_=lookup(py::cast<py::dict>(vocab["potion"]),sts::potionNames);
+        bosses_=lookup(py::cast<py::dict>(vocab["boss"]),sts::monsterEncounterEnumNames);
+        characters_=lookup(py::cast<py::dict>(vocab["character"]),sts::characterClassEnumNames);
+        phase_=py::cast<std::int64_t>(vocab["phase"]);
+        argStep_=py::cast<std::int64_t>(vocab["arg_step"]);
+    }
+
+    py::dict encode(const sts::GameContext &gc) const {
+        if(gc.screenState!=sts::ScreenState::REWARDS || gc.outcome!=sts::GameOutcome::UNDECIDED)
+            throw std::invalid_argument("upper reward observation requires a live settled reward screen");
+        py::dict out;
+        std::map<std::string,py::array> arrays;
+        for(const auto &field:fields_) {
+            py::array a(field.dtype,field.shape);
+            std::memset(a.mutable_data(),0,a.nbytes());
+            out[py::str(field.name)]=a;
+            arrays.emplace(field.name,a);
+        }
+        auto capacity=[&](const char *key,int n) {
+            const auto &a=arrays.at(key);
+            if(n<0 || n>a.size()) throw std::invalid_argument(std::string("upper observation capacity exceeded: ")+key);
+        };
+        auto cat=[&](const char *key,int i,std::int64_t value) {
+            auto &a=arrays.at(key);capacity(key,i+1);
+            if(!a.dtype().is(py::dtype::of<std::int64_t>())) throw std::invalid_argument("upper categorical dtype mismatch");
+            static_cast<std::int64_t *>(a.mutable_data())[i]=value;
+        };
+        auto scalar=[&](const char *key,int i,double value) {
+            auto &a=arrays.at(key);capacity(key,i+1);
+            if(!a.dtype().is(py::dtype::of<float>())) throw std::invalid_argument("upper scalar dtype mismatch");
+            static_cast<float *>(a.mutable_data())[i]=static_cast<float>(value);
+        };
+        cat("phase",0,phase_);cat("arg_step",0,argStep_);
+        cat("character",0,id(characters_,gc.cc));cat("next_boss",0,id(bosses_,gc.boss));
+        scalar("ascension",0,gc.ascension/scales_.at("ASCENSION"));
+        scalar("act",0,gc.act/scales_.at("ACT"));
+        scalar("floor",0,gc.floorNum/scales_.at("FLOOR"));
+        scalar("gold",0,gc.gold/scales_.at("GOLD"));
+        const auto hpScale=scales_.at("HP");
+        scalar("run_hp",0,std::min<double>(gc.curHp,hpScale)/hpScale);
+        scalar("run_hp",1,std::min<double>(gc.maxHp,hpScale)/hpScale);
+        scalar("run_hp",2,gc.maxHp?double(gc.curHp)/gc.maxHp:0.);
+        scalar("run_keys",0,gc.redKey);scalar("run_keys",1,gc.greenKey);scalar("run_keys",2,gc.blueKey);
+        capacity("relics",gc.relics.relics.size());capacity("relic_counters",gc.relics.relics.size());
+        int i=0;
+        for(const auto &r:gc.relics.relics) {
+            if(r.data<0) throw std::invalid_argument("global native relic counter must be nonnegative");
+            cat("relics",i,id(relics_,r.id));scalar("relic_counters",i,r.data/scales_.at("COUNTER"));++i;
+        }
+        capacity("potions",gc.potionCapacity);
+        if(gc.potionCapacity>int(gc.potions.size())) throw std::invalid_argument("invalid native potion capacity");
+        for(i=0;i<gc.potionCapacity;++i) cat("potions",i,id(heldPotions_,gc.potions[i]));
+        capacity("deck_ids",gc.deck.cards.size());capacity("deck_upgrades",gc.deck.cards.size());
+        i=0;
+        for(const auto &card:gc.deck.cards) {
+            cat("deck_ids",i,id(cards_,card.getId()));
+            scalar("deck_upgrades",i,card.getUpgraded()/scales_.at("UPGRADE"));++i;
+        }
+        if(arrays.count("deck_size")) scalar("deck_size",0,std::min(i/scales_.at("DECK_SIZE"),1.));
+        const auto &reward=gc.info.rewardsContainer;
+        if(reward.cardRewardCount<0 || reward.cardRewardCount>int(reward.cardRewards.size()))
+            throw std::invalid_argument("invalid native card reward count");
+        if(reward.cardRewardCount) {
+            const auto &offer=reward.cardRewards[reward.cardRewardCount-1];
+            capacity("offer_card_ids",offer.size());capacity("offer_card_upgrades",offer.size());
+            for(i=0;i<offer.size();++i) {
+                cat("offer_card_ids",i,id(cards_,offer[i].getId()));
+                scalar("offer_card_upgrades",i,offer[i].getUpgraded()/scales_.at("UPGRADE"));
+            }
+        }
+        capacity("reward_gold",reward.goldRewardCount);
+        capacity("reward_relic_ids",reward.relicCount);capacity("reward_potion_ids",reward.potionCount);
+        if(reward.goldRewardCount>int(reward.gold.size()) || reward.relicCount>int(reward.relics.size()) ||
+                reward.potionCount>int(reward.potions.size()) || (reward.emeraldKey && reward.sapphireKey))
+            throw std::invalid_argument("native reward capacity exceeded");
+        for(i=0;i<reward.goldRewardCount;++i) scalar("reward_gold",i,reward.gold[i]/scales_.at("GOLD"));
+        for(i=0;i<reward.relicCount;++i) cat("reward_relic_ids",i,id(relics_,reward.relics[i]));
+        for(i=0;i<reward.potionCount;++i) cat("reward_potion_ids",i,id(rewardPotions_,reward.potions[i]));
+        scalar("reward_keys",0,reward.emeraldKey);scalar("reward_keys",1,reward.sapphireKey);
+        return out;
+    }
+};
 
 // Vocabulary, printed card data, shapes and scales come from the canonical
 // Python codec. Only numeric layout conversion runs here; no game rules.
@@ -450,6 +581,9 @@ public:
 } // namespace
 
 void bindNeuralObservation(py::module_ &module) {
+    py::class_<UpperRewardObservationEncoder>(module,"UpperRewardObservationEncoder")
+        .def(py::init<py::dict,py::dict,py::dict>())
+        .def("encode",&UpperRewardObservationEncoder::encode);
     py::class_<NeuralObservationDecoder>(module,"NeuralObservationDecoder")
         .def(py::init<py::dict,py::dict,py::dict,py::dict,py::dict,int,int,bool>())
         .def("set_card_stats", &NeuralObservationDecoder::setCardStats)

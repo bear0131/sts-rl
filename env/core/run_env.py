@@ -656,6 +656,12 @@ class SlayTheSpireEnv(gym.Env):
                                       thick.gc.act, thick.gc.floor_num)
         if outcome.kind == 'terminal':
             return outcome, None
+        import slaythespire as sts
+        if (upper_value_only and outcome.kind == 'upper'
+                and hasattr(sts, 'UpperRewardObservationEncoder')
+                and thick.phase() == 'combat_reward'):
+            from .native_observation import upper_reward_encoder
+            return outcome, upper_reward_encoder(self._deck_size_observation).encode(thick.gc)
         branch = copy.copy(self)
         branch.thick = thick
         branch._pending = branch._multi = None
