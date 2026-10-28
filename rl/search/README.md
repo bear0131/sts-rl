@@ -33,6 +33,15 @@ shape may select different GEMM kernels: padded-vs-original floating-point outpu
 are not guaranteed bitwise, and search trajectories can consequently diverge.
 CPU CI cannot validate CUDA.
 
+`--leaf-amp-mode fp16` selects FP16 only for autoregressive entity/outer-return
+leaf graphs. The default follows `--amp-mode`; learner, root inference and the
+frozen upper teacher retain their existing precision. Other cores reject this
+override. FP16 uses full-precision GEMM partial sums and uncached weight casts;
+its reduced range requires finite-output and FP32 error checks on the retained
+checkpoint family. Changing precision can change search trajectories. Treat it
+as an explicit inference experiment until full-collection and strategy checks
+have passed on the target machines.
+
 Autoregressive EntityCombat BF16 leaves fuse the whole forward with
 `torch.compile(fullgraph=True, dynamic=True)` before CUDA graph capture. The
 callable is owned by this runtime; training, root prediction, legacy contracts
