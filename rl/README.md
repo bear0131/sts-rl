@@ -94,9 +94,10 @@ graph输入区，保留root归属、实时HP/钱包、GRID进度与永久成长�
 resident collector把本次已编码根观测交给batch，仅复用CONTEXT_KEYS；按完整env索引
 取行并核对shape/dtype，在搜索开始时复制成自有数组，避免再次序列化根的全战斗状态。
 其他调用方省略root_observations时仍从环境编码；不得提供上一个状态的观测。
-混合batch在lower缓存关闭时先发起普通叶子的GPU传输/前推，CPU同时结算出口；
-返回搜索前等待传输完成并复制输出。每个图实例最多一个未完成调用，重复提交报错，
-clear或结算异常也先完成传输，不能在设备使用中覆盖或回收pinned输入。该重叠不跨
+混合batch在lower缓存关闭时先发起普通叶子的GPU传输/前推，CPU同时结算出口，
+再准备upper输入并查询缓存；两模型使用各自独立的输入区和图池。复用lower计算连战
+续值、返回搜索或传播异常前等待传输完成并复制输出。每个图实例最多一个未完成调用，
+重复提交报错，clear或异常也先完成传输，不能在设备使用中覆盖或回收pinned输入。该重叠不跨
 search advance、learner更新或checkpoint边界；计时中的output_seconds是实际等待，
 可能小于设备总工作时间，outer_overlap_batches/rows记录实际参与重叠的工作量。
 非resident传输明确拒绝，不降级到HP。GPU完整轮验证与learner/启动接入
@@ -115,7 +116,9 @@ teacher 按旧 observation space 投影输入，`decide()` 复用 checkpoint-v7-
 见 `../experiments/launchers/README.md`，当前训练与性能验收以 TODO COMBAT01/02 为准。
 搜索内部按phase先选teacher真正消费的字段再stack，逐字段核对旧checkpoint形状，
 复用同一padding裁剪和网络；公开forward/prepare_numpy仍要求完整checkpoint schema。
-upper_prepare_seconds包含这一内部字段堆叠，普通GPU等待不包含同时进行的CPU结算。
+upper_prepare_seconds包含这一内部字段堆叠。upper前推的调用方计时可能包含同一
+CUDA流上尚未完成的lower工作，不能把upper_graph_output_seconds解释成独占teacher
+耗时。完整外层增量须用相同输出轨迹的端到端对照衡量。
 
 ## Entity combat 实验架构
 

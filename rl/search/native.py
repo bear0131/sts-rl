@@ -580,6 +580,18 @@ def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MOD
             runtime.lower.stats['requests'] += len(active)
             runtime.lower.stats['misses'] += len(active)
             runtime.lower.stats['forward_seconds'] += time.perf_counter()-started
+    def finish_lower():
+        nonlocal pending
+        if pending is None:
+            return
+        finish, pending = pending, None
+        started = time.perf_counter()
+        try:
+            logits[active], values[active] = finish()
+        finally:
+            if runtime is not None:
+                runtime.lower.stats['forward_seconds'] += time.perf_counter()-started
+
     try:
         started = time.perf_counter()
         # Only RolloutInference's explicit sparse teacher transport accepts
@@ -588,63 +600,60 @@ def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MOD
         if runtime is not None:
             runtime.outer_settlement_seconds += time.perf_counter()-started
             runtime.outer_exit_rows += len(exits)
+        if active and pending is None:
+            direct = getattr(backend, 'forward_native', None)
+            if direct is not None and (runtime is None or runtime.lower.max_bytes == 0):
+                rows = active if exits else None
+                if runtime is None:
+                    prediction = direct(batch, rows=rows)
+                else:
+                    prediction = runtime.lower.forward(batch.observation_layout(rows),
+                        lambda _: direct(batch, rows=rows))
+                logits[active], values[active] = prediction
+            else:
+                observations = batch.observations(active if exits else None)
+                logits[active], values[active] = forward_leaves(model, observations,
+                    compact=True, autocast=autocast, leaf_backend=leaf_backend)
+        for kind in ('upper', 'combat'):
+            rows = [i for i, (outcome, _) in exits.items() if outcome.kind == kind]
+            if not rows:
+                continue
+            if bank is not None:
+                for i in rows:
+                    outcome = exits[i][0]
+                    if outcome.curve_state is None:
+                        raise ValueError('finite curve search omitted terminal encounter/resources')
+                    values[i] = outcome.target(bank.value(outcome.curve_state))
+                continue
+            observations = [exits[i][1] for i in rows]
+            obs = (None if kind == 'upper' and runtime is not None else
+                   {key: np.stack([row[key] for row in observations]) for key in observations[0]})
+            if kind == 'upper':
+                # Teacher owns FP32/no-grad; never send a terminal BC through the
+                # lower HP encoder or convert teacher inference to lower AMP.
+                if runtime is None:
+                    _, continuation = model.policy.core.teacher(observation_as_tensor(obs, model.device))
+                    continuation = continuation.float().flatten().cpu().numpy()
+                else:
+                    started = time.perf_counter()
+                    _, continuation = runtime.forward_upper_rows(observations)
+                    runtime.outer_value_seconds += time.perf_counter()-started
+                    runtime.outer_value_rows += len(rows)
+                    runtime.outer_value_batches += 1
+            else:
+                finish_lower()
+                _, continuation = forward_leaves(model, obs, compact=True,
+                                                 autocast=autocast, leaf_backend=leaf_backend)
+            for i, value in zip(rows, continuation, strict=True):
+                values[i] = exits[i][0].target(value)
+        for i, (outcome, _) in exits.items():
+            if outcome.kind == 'terminal':
+                values[i] = outcome.target()
     finally:
-        # Even a settlement exception must drain the graph before its pinned
-        # inputs can be overwritten or released. CPU work does not change the
-        # ordinary leaves, batch geometry, search order or random draws.
-        if pending is not None:
-            started = time.perf_counter()
-            logits[active], values[active] = pending()
-            if runtime is not None:
-                runtime.lower.stats['forward_seconds'] += time.perf_counter()-started
-    if active and pending is None:
-        direct = getattr(backend, 'forward_native', None)
-        if direct is not None and (runtime is None or runtime.lower.max_bytes == 0):
-            rows = active if exits else None
-            if runtime is None:
-                prediction = direct(batch, rows=rows)
-            else:
-                prediction = runtime.lower.forward(batch.observation_layout(rows),
-                    lambda _: direct(batch, rows=rows))
-            logits[active], values[active] = prediction
-        else:
-            observations = batch.observations(active if exits else None)
-            logits[active], values[active] = forward_leaves(model, observations,
-                compact=True, autocast=autocast, leaf_backend=leaf_backend)
-    for kind in ('upper', 'combat'):
-        rows = [i for i, (outcome, _) in exits.items() if outcome.kind == kind]
-        if not rows:
-            continue
-        if bank is not None:
-            for i in rows:
-                outcome = exits[i][0]
-                if outcome.curve_state is None:
-                    raise ValueError('finite curve search omitted terminal encounter/resources')
-                values[i] = outcome.target(bank.value(outcome.curve_state))
-            continue
-        observations = [exits[i][1] for i in rows]
-        obs = (None if kind == 'upper' and runtime is not None else
-               {key: np.stack([row[key] for row in observations]) for key in observations[0]})
-        if kind == 'upper':
-            # Teacher owns FP32/no-grad; never send a terminal BC through the
-            # lower HP encoder or convert teacher inference to lower AMP.
-            if runtime is None:
-                _, continuation = model.policy.core.teacher(observation_as_tensor(obs, model.device))
-                continuation = continuation.float().flatten().cpu().numpy()
-            else:
-                started = time.perf_counter()
-                _, continuation = runtime.forward_upper_rows(observations)
-                runtime.outer_value_seconds += time.perf_counter()-started
-                runtime.outer_value_rows += len(rows)
-                runtime.outer_value_batches += 1
-        else:
-            _, continuation = forward_leaves(model, obs, compact=True,
-                                             autocast=autocast, leaf_backend=leaf_backend)
-        for i, value in zip(rows, continuation, strict=True):
-            values[i] = exits[i][0].target(value)
-    for i, (outcome, _) in exits.items():
-        if outcome.kind == 'terminal':
-            values[i] = outcome.target()
+        # Upper input preparation and cache lookup can overlap the outstanding
+        # lower graph. Both models have separate buffers/pools; drain before
+        # reusing the lower backend, advancing a tree, or propagating an error.
+        finish_lower()
     if not np.isfinite(values).all():
         raise ValueError('outer-return search received a nonfinite value')
     return logits, values

@@ -96,3 +96,62 @@ def test_schema_eviction_cannot_alias_live_cached_values():
     cache.clear()
     logits, _ = cache.forward(obs, lambda batch: (batch['x'] * 99, np.array([99.])))
     np.testing.assert_array_equal(logits, [[99]])
+
+
+@pytest.mark.parametrize('failure', [None, 'settlement', 'upper', 'continuation'])
+def test_upper_preparation_overlaps_lower_and_always_drains(failure, monkeypatch):
+    from types import SimpleNamespace
+    from env.core.outer_return import CombatExit
+    from rl.search import native
+    from rl.search.rollout_inference import RolloutInference
+    events = []
+    pending = False
+
+    def launch(batch, rows):
+        nonlocal pending
+        assert rows == [0] and not pending
+        pending = True
+        events.append('launch')
+        def finish():
+            nonlocal pending
+            assert pending
+            pending = False
+            events.append('finish')
+            return np.array([[1., 2.]], np.float32), np.array([.3], np.float32)
+        return finish
+
+    model = SimpleNamespace(device='cpu', action_space=SimpleNamespace(n=2),
+        policy=SimpleNamespace(core=SimpleNamespace(teacher=None)),
+        _native_leaf_inference=SimpleNamespace(forward_native_deferred=launch))
+    runtime = RolloutInference(model)
+    model._rollout_inference = runtime
+    def upper(rows):
+        assert pending  # CPU input preparation runs before waiting on lower.
+        events.append('upper')
+        if failure == 'upper':
+            raise RuntimeError('upper failed')
+        return np.empty((1, 0), np.float32), np.array([.7], np.float32)
+    runtime.forward_upper_rows = upper
+    def settle(**kwargs):
+        events.append('settle')
+        if failure == 'settlement':
+            raise RuntimeError('settlement failed')
+        return {1: (CombatExit(.1, 'upper'), {'phase': np.array([3])}),
+                2: (CombatExit(.2, 'combat'), {'x': np.array([1])})}
+    batch = SimpleNamespace(rows=3, combat_exit_rows=(1, 2), combat_exits=settle)
+    def continuation(*args, **kwargs):
+        assert not pending  # Reusing the lower backend must first drain it.
+        events.append('continuation')
+        if failure == 'continuation':
+            raise RuntimeError('continuation failed')
+        return np.zeros((1, 2), np.float32), np.array([.4], np.float32)
+    monkeypatch.setattr(native, 'forward_leaves', continuation)
+    if failure is None:
+        logits, values = native.forward_outer_leaves(model, batch)
+        np.testing.assert_array_equal(logits[0], [1., 2.])
+        np.testing.assert_allclose(values, [.3, .8, .6], atol=1e-7, rtol=0)
+        assert events == ['launch', 'settle', 'upper', 'finish', 'continuation']
+    else:
+        with pytest.raises(RuntimeError, match=failure + ' failed'):
+            native.forward_outer_leaves(model, batch)
+    assert not pending and events.count('finish') == 1
