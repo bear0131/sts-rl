@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| COMBAT-OUTER-VALUE-NORM | 后续方案，未实现 | qnorm保持关闭，将战斗结束的外层value除以之后可获得的最大reward，使尺度约在[0,1]、接近原hp/200。分母按边界状态剩余累计reward理论上界解释；实施前固定奖励结算边界及零分母，统一训练target/搜索回传尺度，检查teacher、replay/checkpoint兼容和预测越界，固定n_steps512配对验收。只记录计划，不改COMBAT16或部署；见worklog/2026-10-28.md“战斗结束外层value归一化后续计划”。 |
 | PERF-COMBAT16 | 固定512四机通过；最慢16.567us，10us未达 | 源7159b983/native8d2，153权重/seed129325096、384×512/128sim，四机正式254.339/251.345/252.876/245.515秒，全部完整warm/formal、权重、上层动作、FP32数值及资源门通过。实际sim分母最慢16.567us；两个同机基线耗时减少9.56%–10.48%，非等轨迹/跨host bitwise。CPU330/GPU29项通过。短horizon结果不作验收；尾部FP32分批、memo、有效token压缩均未推广。CPU本地绑定两机完整少2.98%–4.21%且输出/work一致，另两机及反向控制待验；双流完整慢7.02%已淘汰，半池线程仅诊断。生产仍STOP153，不自动续训。证据worklog/2026-10-28.md#perf-combat16固定384512四机候选完整验收与runs/local/perf28-20261028/fixed512-summary.json。 |
 | TEST-LEGACY-MAP-CAPACITY | 基线复现，未修 | tests/integration/test_environment_recovery.py 的旧global_map_view=False/seed123夹具出现4个地图选择超过3槽；明确12d+FP16/native8d2原版也8failed/2passed。本轮global_map_view=True实际生产路径及新恢复回归通过，不改mask截断/不skip掩盖。核对旧局部地图策略支持合同后修复夹具或实现，并完整恢复验收。证据runs/local/perf28-20261028/env-evidence-ab与worklog/2026-10-28.md#perf-combat16继续有界优化。 |
 | COMBAT16-RESUME-GOLD | 本轮授权停止于153/global120324096；恢复包SHA通过 | 四Gold原run保持，152/153两代完整model/learner/environment逐SHA通过，rank1/2/3 exit0。rank0已coordinated stop并保存，W&B上传退出等待经核对PID出生后SIGINT结束，实际exit -2；这是保存后的遥测中断。四机STOP保留、不自动续训，继续PERF-COMBAT16有界优化；原只读小时巡检配置位于另一工作站，本轮未修改。证据worklog/2026-10-28.md#perf-combat16恢复10微秒优化目标与runs/local/perf28-20261028/stop-audit.json。 |
