@@ -165,7 +165,8 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control, bl
 
 
 @pytest.mark.parametrize('matmul_precision', ['highest', 'high'])
-def test_upper_rollout_graph_eviction_release_and_exact_cache(outer_return_core, matmul_precision):
+@pytest.mark.parametrize('value_only', [False, True])
+def test_upper_rollout_graph_eviction_release_and_exact_cache(outer_return_core, matmul_precision, value_only):
     import gc
     from types import SimpleNamespace
     import torch
@@ -177,7 +178,7 @@ def test_upper_rollout_graph_eviction_release_and_exact_cache(outer_return_core,
     frozen = core.teacher.assert_integrity()
     model = SimpleNamespace(policy=SimpleNamespace(core=core), device='cuda',
                             _native_leaf_inference=object())
-    runtime = RolloutInference(model, upper_bytes=0)
+    runtime = RolloutInference(model, upper_bytes=0, upper_value_only=value_only)
     runtime.upper_graphs.capacity = 2
     previous_precision = torch.get_float32_matmul_precision()
     torch.set_float32_matmul_precision(matmul_precision)
@@ -203,7 +204,10 @@ def test_upper_rollout_graph_eviction_release_and_exact_cache(outer_return_core,
             np.testing.assert_allclose(values, reference[1].cpu().numpy().flatten(), atol=atol, rtol=rtol)
             expected = reference[0].cpu().numpy()
             valid = np.abs(expected) < 1e6
-            np.testing.assert_allclose(logits[valid], expected[valid], atol=atol, rtol=rtol)
+            if value_only:
+                assert logits.shape == (count, 0)
+            else:
+                np.testing.assert_allclose(logits[valid], expected[valid], atol=atol, rtol=rtol)
             del reference
             gc.collect()
             torch._C._cuda_clearCublasWorkspaces()

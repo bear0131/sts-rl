@@ -976,8 +976,7 @@ class _SpecialistActorCritic(nn.Module):
             ):
                 self._assign(logits, segment, blocks, role)
             self._map_logits(logits, obs, blocks)
-        value_features = self.encoder.readout(global_token)
-        values = self.value_head(self.value_mlp(value_features))
+        values = self.values_from_token(global_token)
         if self.joint_actions:
             from env.core import native_actions as C
             if self.kind == "combat":
@@ -1001,6 +1000,9 @@ class _SpecialistActorCritic(nn.Module):
                 logits, (0, A.N_ACTIONS - logits.shape[1]), value=-1e9
             )
         return logits, values
+
+    def values_from_token(self, global_token):
+        return self.value_head(self.value_mlp(self.encoder.readout(global_token)))
 
 
 class SplitStSPolicyCore(nn.Module):

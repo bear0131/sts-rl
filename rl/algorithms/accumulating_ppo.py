@@ -959,7 +959,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         try:
             if self._outer_return:
                 from rl.search.rollout_inference import RolloutInference
-                self._rollout_inference = RolloutInference(self)
+                self._rollout_inference = RolloutInference(self, upper_value_only=True)
             with self.autocast_context():
                 if self.nosl_is_az:
                     result = self._collect_nosl_is_az_rollouts(

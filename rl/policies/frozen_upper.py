@@ -205,6 +205,19 @@ class FrozenUpperTeacher(nn.Module):
         return groups
 
     @torch.no_grad()
+    def forward_phase_values(self, observations, phase_id, active_widths=None):
+        """Search-only critic; identical encoder/readout, no unused actor heads.
+
+        Like forward_phase, inputs are validated by the preparation boundary.
+        Ordinary action selection always retains the complete frozen actor.
+        """
+        device = next(self.parameters()).device
+        with torch.autocast(device_type=device.type, enabled=False):
+            token, _ = self.overworld.encoder(observations, self.upper_tokenizer,
+                                             phase_id, active_widths=active_widths)
+            return self.overworld.values_from_token(token).float()
+
+    @torch.no_grad()
     def forward_phase(self, observations, phase_id, active_widths=None):
         """Internal phase entry for already validated/projected inputs."""
         device = next(self.parameters()).device

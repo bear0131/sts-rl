@@ -18,6 +18,10 @@
 
 ### 冻结上层 teacher
 
+搜索出口的内部推理只计算冻结上层的编码器和value头，并只缓存一个value；
+普通整局动作选择继续计算完整actor/critic。两者共用同一value readout，FP32约定不变。
+该差异只影响计算/传输内容，不改变搜索预算、归一化目标或上层训练状态。
+
 COMBAT06（用户的1号实验）的 `combat-outcome-means-v1` 保留旧战斗终点HP标签和
 Boss权重，输出胜率与获胜时HP效用均值两个数，不含分位数头。loss只有胜负BCE与
 胜利样本的HP MSE，两者均按完整逻辑batch归一化；死亡不给条件HP分支零标签。

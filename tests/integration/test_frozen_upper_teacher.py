@@ -258,3 +258,32 @@ def test_search_row_projection_matches_full_schema_and_rejects_bad_fields(frozen
     with pytest.raises(ValueError, match='fields missing'):
         teacher.prepare_numpy(incomplete)
     teacher.assert_integrity()
+
+
+def test_search_critic_omits_actor_and_caches_only_values(frozen_upper_source, monkeypatch):
+    from types import SimpleNamespace
+    from rl.search.rollout_inference import RolloutInference
+    core, space, env, _ = frozen_upper_source
+    teacher = FrozenUpperTeacher(core, space, source_sha256='1'*64)
+    rows = [env._obs()]
+    for _ in range(16):
+        env.step(int(np.flatnonzero(env.action_masks())[0]))
+        if env._phase() == 'map':
+            rows.append(env._obs())
+            break
+    assert len(rows) == 2
+    model = SimpleNamespace(policy=SimpleNamespace(core=SimpleNamespace(teacher=teacher)), device='cpu')
+    complete = RolloutInference(model)
+    _, reference = complete.forward_upper_rows(rows)
+    only_values = RolloutInference(model, upper_value_only=True)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('search critic evaluated the unused actor')
+    monkeypatch.setattr(teacher.overworld.fixed_head, 'forward', forbidden)
+    monkeypatch.setattr(teacher.overworld, '_assign', forbidden)
+    for observations in (rows, rows[::-1]):
+        logits, values = only_values.forward_upper_rows(observations)
+        assert logits.shape == (2, 0)
+        np.testing.assert_array_equal(values, reference if observations is rows else reference[::-1])
+    assert only_values.upper.stats['hits'] == 2
+    assert only_values.upper.stats['bytes'] < complete.upper.stats['bytes']
+    assert all(result.shape == (1,) for result, _ in only_values.upper.entries.values())

@@ -108,8 +108,9 @@ class ExactInputCache:
 
 
 class _UpperPhaseCore:
-    def __init__(self, teacher):
+    def __init__(self, teacher, value_only=False):
         self.teacher = teacher
+        self.value_only = value_only
 
     @property
     def training(self):
@@ -117,6 +118,9 @@ class _UpperPhaseCore:
 
     def combat_actor_critic(self, observations, *, active_relic_width):
         phase, deck, relics = active_relic_width
+        if self.value_only:
+            values = self.teacher.forward_phase_values(observations, phase, (deck, relics))
+            return values.new_empty((len(values), 0)), values
         return self.teacher.forward_phase(observations, phase, (deck, relics))
 
 
@@ -138,13 +142,14 @@ def _upper_graph_inputs(observations, widths, capacities):
 
 
 class RolloutInference:
-    def __init__(self, model, *, upper_bytes=128*1024**2, lower_bytes=0):
+    def __init__(self, model, *, upper_bytes=128*1024**2, lower_bytes=0, upper_value_only=False):
         self.model = model
+        self.upper_value_only = upper_value_only
         self.upper = ExactInputCache(upper_bytes)
         self.lower = ExactInputCache(lower_bytes)
         self.upper_graphs = None
         if torch.device(model.device).type == 'cuda' and getattr(model, '_native_leaf_inference', None) is not None:
-            self.upper_graphs = CombatLeafGraphs(_UpperPhaseCore(model.policy.core.teacher),
+            self.upper_graphs = CombatLeafGraphs(_UpperPhaseCore(model.policy.core.teacher, upper_value_only),
                 model.device, amp='off', capacity=32, batch_multiple=8, compile_forward=False)
         self.outer_settlement_seconds = 0.
         self.upper_prepare_seconds = 0.
@@ -177,6 +182,9 @@ class RolloutInference:
                 if self.upper_graphs is not None:
                     return self.upper_graphs(batch, signature)
                 tensors = {k: torch.as_tensor(v, device=self.model.device) for k, v in batch.items()}
+                if self.upper_value_only:
+                    values = teacher.forward_phase_values(tensors, phase, widths)
+                    return np.empty((len(values), 0), np.float32), values.reshape(-1).cpu().numpy()
                 logits, values = teacher.forward_phase(tensors, phase, widths)
                 return logits.cpu().numpy(), values.reshape(-1).cpu().numpy()
             logits, values = self.upper.forward(obs, forward, namespace=signature)
