@@ -102,11 +102,12 @@ public:
         :limit_(maxBytes),combat_(combat),pad_(pad) {
         for(auto phase:schemas) {
             auto &fields=schemas_[py::cast<int>(phase.first)];
-            // Canonical lexical key order also defines the byte cache key.
-            std::map<std::string,py::array> sorted;
-            for(auto item:py::cast<py::dict>(phase.second))
-                sorted.emplace(py::cast<std::string>(item.first),py::cast<py::array>(item.second));
-            for(const auto &[name,a]:sorted) {
+            // Keep checkpoint field order for the GPU's packed input layout.
+            // Within this immutable schema, concatenation in this order is
+            // still a bijective full-byte key, including every consumed field.
+            for(auto item:py::cast<py::dict>(phase.second)) {
+                const auto name=py::cast<std::string>(item.first);
+                const auto a=py::cast<py::array>(item.second);
                 if (a.ndim()<1 || a.size()<1 || (!a.dtype().equal(py::dtype::of<float>()) &&
                         !a.dtype().equal(py::dtype::of<std::int64_t>())))
                     throw std::invalid_argument("unsupported upper input schema: "+name);

@@ -18,13 +18,16 @@ def test_native_groups_cache_eviction_and_owned_results(frozen_upper_source, cap
     assert hasattr(sts, 'UpperValueRuntime'), 'rebuild the explicitly selected native extension'
     core, space, env, _ = frozen_upper_source
     teacher = FrozenUpperTeacher(core, space, source_sha256='1' * 64)
+    # Serialized historical checkpoints can append fields after construction.
+    # Matching dict contents is insufficient: graph input layout needs order.
+    teacher.observation_space.spaces = dict(reversed(list(teacher.observation_space.spaces.items())))
     native = upper_value_runtime(teacher, capacity, pad=pad)
     reference = ExactInputCache(capacity)
     capacities = tuple(space[key].shape[0] for key in ('deck_ids', 'relics'))
     traces = [[], []]
 
     def predict(batch, signature, side):
-        traces[side].append((signature, {key: (value.shape, value.dtype.str, value.tobytes())
+        traces[side].append((signature, tuple(batch), {key: (value.shape, value.dtype.str, value.tobytes())
                                        for key, value in batch.items()}))
         return (batch['run_hp'][:, 0] * np.float32(7) +
                 batch['deck_ids'].sum(axis=1).astype(np.float32) / np.float32(10))
