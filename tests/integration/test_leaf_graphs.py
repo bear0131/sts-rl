@@ -517,3 +517,68 @@ def test_entity_graphs_replay_independently_after_arbitrary_order_and_release(co
             np.testing.assert_array_equal(a, b)
     finally:
         cache.clear()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='requires CUDA dynamic-shape compilation')
+@pytest.mark.parametrize('amp', ['off', 'bf16', 'fp16'])
+@pytest.mark.timeout(300)
+def test_entity_graph_cold_relic_width_growth_and_zero_compatibility(
+        combat_factory, tmp_path, frozen_card_vectors_factory, amp):
+    """Cold frozen-vector geometry must generalize 1 -> 8/22 without SymMax."""
+    from rl.policies.entity_combat import EntityCombatPolicy
+    cards = frozen_card_vectors_factory(tmp_path / 'cards.pt', 128)
+    env = combat_factory(['STRIKE_RED'] * 5 + ['DEFEND_RED'] * 5,
+                         combat_action_contract='autoregressive-v2', card_language=False)
+    model = AccumulatingMaskablePPO(EntityCombatPolicy, env, device='cuda', seed=42,
+        n_steps=8, batch_size=4, nosl_is_az=True, nosl_is_az_cpp=True,
+        nosl_is_az_inner_only=True, nosl_is_az_upper_strategy='rules',
+        policy_kwargs=dict(entity_config=dict(width=256, layers=4, heads=8,
+            boss_win_weight=1., mean_loss_coef=0., card_vector_checkpoint=str(cards))))
+    model.configure_nosl_is_az_inner_only(train_shared_embeddings=False)
+    model.policy.set_training_mode(False)
+    core = model.policy.core
+    cache = CombatLeafGraphs(core, 'cuda', amp=amp, capacity=16, batch_multiple=32)
+    assert (cache.compiled_forward is not None) == (amp != 'off')
+    obs = env._obs()
+    previous_precision = torch.get_float32_matmul_precision()
+    graph_precision = 'highest' if amp == 'off' else 'high'
+    torch.set_float32_matmul_precision(graph_precision)
+    try:
+        # No other shape is compiled first. In particular, do not prewarm a
+        # general width or reset Dynamo between these successive submissions.
+        for width in (1, 8, 22):
+            for count in (128, 192, 256, 384):
+                batch = {k: np.stack([v] * count) for k, v in obs.items()
+                         if k in core.combat_observation_keys}
+                batch['relics'].fill(0)
+                batch['relics'][:, width - 1] = 1
+                actual = cache(batch, width)
+                torch.set_float32_matmul_precision('highest')
+                with torch.inference_mode(), torch.autocast('cuda', enabled=False):
+                    logits, values = core.combat_actor_critic(
+                        {k: torch.as_tensor(v, device='cuda') for k, v in batch.items()},
+                        active_relic_width=width, evaluate_subsets=False)
+                torch.set_float32_matmul_precision(graph_precision)
+                reference = logits.float().cpu().numpy(), values.float().flatten().cpu().numpy()
+                assert all(np.isfinite(a).all() for a in actual)
+                # Bound utility and legal policy independently against FP32.
+                # AMP fusion may change arithmetic order; FP32 remains eager.
+                np.testing.assert_allclose(actual[1], reference[1], rtol=0,
+                                           atol=2e-6 if amp == 'off' else .01)
+                legal = torch.as_tensor(batch['combat_legal'], dtype=torch.bool)
+                probabilities = [torch.as_tensor(a).masked_fill(~legal, -1e9).softmax(-1)
+                                 for a in (actual[0], reference[0])]
+                torch.testing.assert_close(*probabilities, rtol=0,
+                                           atol=2e-6 if amp == 'off' else .02)
+        # The public zero-width spelling keeps one masked relic slot and must
+        # share the same captured graph as explicit width 1, including replay.
+        batch['relics'].fill(0)
+        captures = cache.captures
+        zero = cache(batch, 0)
+        one = cache(batch, 1)
+        assert cache.captures == captures
+        for a, b in zip(zero, one):
+            np.testing.assert_array_equal(a, b)
+    finally:
+        cache.clear()
+        torch.set_float32_matmul_precision(previous_precision)

@@ -162,6 +162,25 @@ def test_bf16_graph_can_skip_inductor_without_changing_forward(monkeypatch):
     assert calls == []
 
 
+@pytest.mark.parametrize('amp,autoregressive,entity_forward,expected_width', [
+    ('off', False, False, 0),
+    ('bf16', False, True, 0),
+    ('off', True, False, 0),
+    ('off', True, True, 1),
+    ('bf16', True, True, 1),
+    ('fp16', True, True, 1),
+])
+def test_zero_relic_width_normalization_only_applies_to_entity_core(
+        monkeypatch, amp, autoregressive, entity_forward, expected_width):
+    core = SimpleNamespace(training=False, autoregressive_actions=autoregressive,
+                           graph_actor_critic=(lambda *a: None) if entity_forward else None)
+    cache = CombatLeafGraphs(core, 'cuda', amp=amp, compile_forward=False)
+    seen = []
+    monkeypatch.setattr(cache, '_forward', lambda observations, width, **kwargs: seen.append(width))
+    cache({}, 0)
+    assert seen == [expected_width]
+
+
 def test_explicit_backend_does_not_change_legacy_model_backend():
     calls = []
     def backend(observations, width):
