@@ -1,6 +1,7 @@
 """Executed combat segments under a fixed upper actor/critic (gamma = 1)."""
 from functools import lru_cache
 import hashlib
+import time
 from pathlib import Path
 
 import numpy as np
@@ -8,10 +9,15 @@ import torch
 
 from env.core import encode, vocab as V
 from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, CombatExit, strategic_reward, SCALAR_OBJECTIVES, FINITE_OBJECTIVE
+from env.core.outer_return import NORMALIZED_OBJECTIVE, NORMALIZATION, observation_reward_max
 from rl.search.native import observation_as_tensor
 from rl.algorithms.combat_distribution import MEAN_CONTRACT
 
 COMBAT = V.PHASE_VOCAB_INDEX['combat']
+
+
+def is_normalized(model):
+    return getattr(model.policy.core, 'training_objective', None) == NORMALIZED_OBJECTIVE
 
 
 @lru_cache(maxsize=1)
@@ -35,6 +41,8 @@ def contract(model):
                          'gumbel_max_visit_init', 'merge_equivalent_actions')})
     if objective == FINITE_OBJECTIVE:
         identity['finite_curves'] = model.policy.core.finite_curve_bank.identity
+    elif objective == NORMALIZED_OBJECTIVE:
+        identity['normalization'] = dict(NORMALIZATION)
     elif objective != OBJECTIVE:
         config = model.policy.core.config
         identity.update(boundary='combat-end-hp-v1', boss_win_weight=config.boss_win_weight,
@@ -52,6 +60,8 @@ def contract(model):
 
 
 def setup(model):
+    if is_normalized(model) and model.nosl_is_az_gumbel_rescale_q:
+        raise ValueError('remaining reward normalization requires qnorm disabled')
     if not (model.nosl_is_az and model.nosl_is_az_inner_only and model.nosl_is_az_cpp and
             model.nosl_is_az_upper_strategy == 'model' and model.nosl_is_az_combat_strategy == 'model' and
             model.nosl_is_az_fixed_worldline and not model.nosl_is_az_boss_transition_target and
@@ -82,7 +92,12 @@ def begin_collection(model, count):
         raise ValueError('outer-return pending environment count changed')
     model._outer_collection = dict(upper_exits=0, combat_exits=0, terminal_exits=0,
                                    censored_segments=0, labelled_roots=0, target_sum=0.,
-                                   target_min=None, target_max=None, upper_updates=0)
+                                   target_min=None, target_max=None, upper_updates=0,
+                                   collector_upper_rows=0, collector_upper_batches=0,
+                                   collector_upper_prepare_seconds=0., collector_upper_value_seconds=0.)
+    if is_normalized(model):
+        model._outer_collection.update(target_below_zero=0, target_above_one=0,
+                                       scale_min=None, scale_max=None)
     validate_pending(model, count)
 
 
@@ -97,12 +112,18 @@ def validate_pending(model, count):
             prefix = sample.get('outer_reward_prefix')
             if prefix is None or not np.isfinite(prefix) or prefix > rewards[i]:
                 raise ValueError('invalid outer-return pending prefix')
+            if is_normalized(model):
+                scale = sample.get('outer_value_scale')
+                if scale is None or not np.isfinite(scale) or scale <= 0:
+                    raise ValueError('invalid normalized outer-return pending scale')
 
 
 def stamp_roots(model, pending):
     for i, samples in enumerate(pending):
         if samples:
             samples[-1].setdefault('outer_reward_prefix', float(model._outer_pending_rewards[i]))
+            if is_normalized(model):
+                samples[-1].setdefault('outer_value_scale', observation_reward_max(model._last_obs, i))
 
 
 def upper_actions(model, observations, masks, actions, root_logits):
@@ -141,7 +162,9 @@ def finish_step(model, before, after, dones, infos, pending):
             model._outer_collection['censored_segments'] += 1
             continue
         kind = 'terminal' if dones[i] else ('combat' if int(after['phase'][i, 0]) == COMBAT else 'upper')
-        exits[i] = CombatExit(float(model._outer_pending_rewards[i]), kind)
+        exits[i] = CombatExit(float(model._outer_pending_rewards[i]), kind,
+            continuation_scale=(observation_reward_max(after, i)
+                                if is_normalized(model) and kind == 'combat' else 1.))
     bootstraps = {}
     for kind in ('upper', 'combat'):
         indices = [i for i, exit in exits.items() if exit.kind == kind]
@@ -154,18 +177,37 @@ def finish_step(model, before, after, dones, infos, pending):
                     raise ValueError('finite curve collection omitted terminal encounter/resources')
                 bootstraps[i] = bank.value(state)
             continue
+        started = time.perf_counter()
         obs = observation_as_tensor({key: value[indices] for key, value in after.items()}, model.device)
+        if kind == 'upper':
+            model._outer_collection['collector_upper_prepare_seconds'] += time.perf_counter() - started
+        started = time.perf_counter()
         with torch.no_grad():
             if kind == 'upper':
                 _, values = model.policy.core.teacher(obs)
             else:
                 with model.autocast_context():
                     _, values = model.policy.core.combat_actor_critic(obs)
-        bootstraps.update(zip(indices, values.float().flatten().cpu().numpy(), strict=True))
+        # CPU materialization waits for CUDA completion; this is observed host
+        # latency including transfer/wait, not isolated GPU kernel time.
+        outputs = values.float().flatten().cpu().numpy()
+        if kind == 'upper':
+            model._outer_collection['collector_upper_value_seconds'] += time.perf_counter() - started
+            model._outer_collection['collector_upper_rows'] += len(indices)
+            model._outer_collection['collector_upper_batches'] += 1
+        bootstraps.update(zip(indices, outputs, strict=True))
     for i, exit in exits.items():
         target = exit.target(bootstraps.get(i))
         for sample in pending[i]:
             value = target - sample['outer_reward_prefix']
+            if is_normalized(model):
+                scale = sample['outer_value_scale']
+                value /= scale
+                metrics = model._outer_collection
+                metrics['target_below_zero'] += int(value < 0.)
+                metrics['target_above_one'] += int(value > 1.)
+                metrics['scale_min'] = scale if metrics['scale_min'] is None else min(metrics['scale_min'], scale)
+                metrics['scale_max'] = scale if metrics['scale_max'] is None else max(metrics['scale_max'], scale)
             if not np.isfinite(value):
                 raise ValueError('outer-return target is not finite')
             sample['value_target'] = value

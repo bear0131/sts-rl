@@ -7,6 +7,11 @@ TRAIN47操作。它不会读取历史主机/HP模型/旧run默认值。训练pro
 384env/rank×512、128搜索、batch102400、micro8192、每轮40次同步更新；876上层
 永久冻结，完整下层随机初始化、从第一次更新同时训练actor/encoder/critic。
 
+归一化外层value实验使用 `configs/train/combat_normalized_outer_return_876_4x5090.json`，
+保持512步/128搜索与qnorm关闭。它是独立目标、随机下层和新replay，不能resume旧COMBAT16；
+剩余reward单位及外层耗时指标见 [rl模块合同](../../rl/README.md)。部署源码身份以
+`deployment-source.json`为准；现场GPU和完整采样验收以新run记录为准。
+
 1. 将 `experiments/launchers/combat01_876_4x5090.json` 复制到忽略目录
    `runs/local/combat01-deployment.json`。填写当前四个SSH `host/port`。默认新的
    `remote_repo=/root/autodl-tmp/combat01-876-20261021`、转发 `ring_port=29880`已提供；

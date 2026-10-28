@@ -60,6 +60,24 @@ bank 内容嵌入 checkpoint constructor，其 SHA/teacher 身份进入 replay �
 并保留GRID已选牌的进度。显式876下层初始化仅为兼容对照，不能称从头训练。
 旧boss标记仅保留为旧encoder输入，不能参与新value或搜索目标。
 
+`combat-outer-return-remaining-max-v1` 是独立的 A0 Act1–3 实验目标，保持 qnorm
+关闭。源状态的剩余奖励上界为 `M = .002*(51-floor) + .1*(act==1)
++ .2*(act<=2) + 1`。出口按 `(真实已结算reward + 后续raw value)/M(source)`
+回传；冻结876上层继续输出raw value，若出口直接进入下一战斗，下层预测先乘
+`M(next)`恢复raw单位。执行样本保存各自源状态的M，跨collection pending恢复也
+保留它。自然终局只取真实reward，不除终局的零上界。预测不裁剪到[0,1]，
+`outer_return/target_below_zero`、`target_above_one`记录越界；旧replay不可混用。
+
+完整采样的外层开销由搜索侧 `outer_settlement_seconds`、`upper_prepare_seconds`、
+`upper_cache_*` 和 `upper_graph_*`，及执行标签侧
+`outer_return/collector_upper_prepare_seconds`、`collector_upper_value_seconds`、
+`collector_upper_rows/batches`分别报告。teacher前推计时包含CPU取回结果的等待，
+是调用方观测耗时，不是单独GPU kernel时间；结算可与lower GPU前推重叠，
+不可将嵌套/重叠项直接相加当作整轮独占成本。
+搜索专用 `outer_value_seconds/rows/batches` 统计战后teacher调用的完整耗时与
+工作量（含准备、缓存查询和推理），排除真实上层动作选择；`outer_exit_rows`
+另计全部搜索出口。它与 `upper_*` 的细分计时嵌套，不能重复相加。
+
 native `outer_return=true` 要求 fixed_worldline，并拒绝旧HP/Boss效用。所有战斗
 出口返回拥有独立存储的typed终局BC，由resident NativeSearchBatch在同一采样GC上
 结算，按upper/combat/terminal分流；内部叶用新lower，出口用冻结teacher或自然终局

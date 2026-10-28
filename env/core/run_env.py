@@ -342,7 +342,12 @@ class SlayTheSpireEnv(gym.Env):
         self._defer_combat_observation = False
         self._combat_observation_pending = False
         self.outer_return_context = bool(outer_return_context)
-        from .outer_return import OBJECTIVE, SCALAR_OBJECTIVES, FINITE_OBJECTIVE
+        from .outer_return import OBJECTIVE, SCALAR_OBJECTIVES, FINITE_OBJECTIVE, NORMALIZED_OBJECTIVE
+        self.outer_return_normalized = combat_value_objective == NORMALIZED_OBJECTIVE
+        if self.outer_return_normalized and not self.outer_return_context:
+            raise ValueError('remaining reward normalization requires public run context')
+        if self.outer_return_normalized and ascension != 0:
+            raise ValueError('remaining reward normalization currently supports A0 only')
         if self.outer_return_context and combat_value_objective not in (None, *SCALAR_OBJECTIVES, 'combat-outcome-quantiles-v1', 'combat-outcome-means-v1'):
             raise ValueError('unsupported public-context combat objective')
         self.outer_return_objective = self.outer_return_context and combat_value_objective in (None, *SCALAR_OBJECTIVES)
@@ -502,6 +507,7 @@ class SlayTheSpireEnv(gym.Env):
             "combat_action_contract": self.combat_action_contract,
             "outer_return_context": self.outer_return_context,
             "outer_return_objective": self.outer_return_objective,
+            "outer_return_normalized": self.outer_return_normalized,
             "finite_curve_objective": self.finite_curve_objective,
             "backend_seed": int(self._episode_backend_seed),
             "backend_identity": (self.thick.training_identity()
@@ -532,6 +538,8 @@ class SlayTheSpireEnv(gym.Env):
             raise ValueError('environment combat objective mismatch')
         if state.get('finite_curve_objective', False) != self.finite_curve_objective:
             raise ValueError('environment finite curve objective mismatch')
+        if state.get('outer_return_normalized', False) != self.outer_return_normalized:
+            raise ValueError('environment outer-return normalization mismatch')
 
         # Bypass subclass reset hooks: production state is defined by this
         # environment's backend seed and journal, not fixture/setup actions.
@@ -642,6 +650,10 @@ class SlayTheSpireEnv(gym.Env):
         thick = copy.copy(base)
         thick.gc = base.gc.clone()
         outcome = thick._settle_combat_leaf(battle)
+        if self.outer_return_normalized:
+            from .outer_return import normalized_exit
+            outcome = normalized_exit(outcome, base.gc.act, base.gc.floor_num,
+                                      thick.gc.act, thick.gc.floor_num)
         if outcome.kind == 'terminal':
             return outcome, None
         branch = copy.copy(self)

@@ -89,7 +89,7 @@ def test_outer_checkpoint_relocation_validates_material_and_context(outer_materi
 
 @pytest.mark.timeout(600)
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='GPU-only graph contract; deployment separately requires CUDA')
-@pytest.mark.parametrize('control', [False, True, 'finite', 'means'])
+@pytest.mark.parametrize('control', [False, True, 'finite', 'means', 'normalized'])
 @pytest.mark.parametrize('blocking_wait', [False, True])
 def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control, blocking_wait):
     """Explicit GPU gate: missing CUDA is a failure when this test is selected."""
@@ -97,7 +97,7 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control, bl
     import os
     import torch
     from rl.search.inference import CombatLeafGraphs
-    from rl.policies.precision import bf16_autocast
+    from rl.policies.precision import bf16_autocast, fp16_autocast
     assert torch.cuda.is_available(), 'select this acceptance test on the GPU host'
     core, source, env = outer_return_core
     if control:
@@ -106,7 +106,8 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control, bl
         core = OuterReturnCore(source, core.teacher.observation_space, env.observation_space,
             source_sha256='1'*64,
             objective=OBJECTIVE if control == 'finite' else (
-                'combat-outcome-means-v1' if control == 'means' else 'combat-outcome-quantiles-v1'),
+                'combat-outer-return-remaining-max-v1' if control == 'normalized' else (
+                    'combat-outcome-means-v1' if control == 'means' else 'combat-outcome-quantiles-v1')),
             finite_curve_bank=finite_curve_bank if control == 'finite' else None)
     for _ in range(64):
         if env._phase() == 'combat':
@@ -115,7 +116,9 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control, bl
     assert env._phase() == 'combat'
     core.to('cuda').eval()
     frozen = core.teacher.assert_integrity()
-    cache = CombatLeafGraphs(core, 'cuda', amp='bf16', capacity=2, batch_multiple=32,
+    amp = 'fp16' if control == 'normalized' else 'bf16'
+    autocast = fp16_autocast if amp == 'fp16' else bf16_autocast
+    cache = CombatLeafGraphs(core, 'cuda', amp=amp, capacity=2, batch_multiple=32,
                              compile_forward=os.name != 'nt', blocking_wait=blocking_wait,
                              profile_interval=1 if blocking_wait else 0)
     try:
@@ -123,7 +126,7 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control, bl
             obs = {k: np.stack([v]*count) for k, v in env._obs().items()
                    if k in core.combat_observation_keys}
             tensor = observation_as_tensor(obs, 'cuda')
-            with torch.inference_mode(), bf16_autocast():
+            with torch.inference_mode(), autocast():
                 reference = core.combat_actor_critic(tensor, active_relic_width=1)
             logits, values = cache(obs, 1)
             # BF16 batch padding / compiled fusion can round at 1/128 scale.
@@ -149,7 +152,7 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control, bl
         _, changed = cache(obs, 1)
         if control is True or control == 'means':
             assert np.all(changed > before)
-            with torch.inference_mode(), bf16_autocast():
+            with torch.inference_mode(), autocast():
                 expected = core.combat_actor_critic(observation_as_tensor(obs, 'cuda'), active_relic_width=1)[1]
             np.testing.assert_allclose(changed, expected.float().cpu().numpy().flatten(), atol=.02, rtol=.02)
         else:

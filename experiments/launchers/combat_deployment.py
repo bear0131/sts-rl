@@ -45,6 +45,7 @@ def validate(config, *, connected=False):
     if config['kind'] != 'combat01-deployment-v1' or not re.fullmatch(r'[A-Za-z0-9_-]+', config['run_id']):
         raise ValueError('invalid COMBAT01 deployment identity')
     if config['profile'] not in ('configs/train/combat_outer_return_876_4x5090.json',
+                                 'configs/train/combat_normalized_outer_return_876_4x5090.json',
                                  'configs/train/combat_finite_curves_876_4x5090.json',
                                  'configs/train/combat_two_means_876_4x5090.json',
                                  'configs/train/combat_train47_context_876_4x5090.json'):
@@ -112,6 +113,8 @@ def training_command(config, profile, rank):
         '--stop-file', str(run/'STOP'), '--remote-root', str(run/'transport'),
         '--ssh-control-dir', '/tmp/combat01-ssh', '--ssh-key', str(run/'ssh/id_ed25519'), '--barrier-timeout', '900',
         '--gradient-transport', 'ssh-ring', '--ring-port', str(config['ring_port'])]
+    if t.get('leaf_amp') is not None:
+        cmd += ['--leaf-amp-mode', t['leaf_amp']]
     if config.get('continuous', False):
         i = cmd.index('--updates')
         del cmd[i:i+2]
@@ -329,7 +332,8 @@ def manage(config_path, action):
     config = validate(read(config_path), connected=action != 'plan')
     profile = read(repo/config['profile'])
     if profile['contract']['lower_init'] != 'random' or profile['contract']['objective_id'] not in (
-            'combat-outer-return-frozen-upper-v1', 'combat-finite-upper-curves-v1', 'combat-outcome-quantiles-v1', 'combat-outcome-means-v1'):
+            'combat-outer-return-frozen-upper-v1', 'combat-outer-return-remaining-max-v1',
+            'combat-finite-upper-curves-v1', 'combat-outcome-quantiles-v1', 'combat-outcome-means-v1'):
         raise ValueError('requires a wholly trainable fresh lower network with frozen upper')
     output = repo/'runs/local'/f"deployment-{config['run_id']}"
     output.mkdir(parents=True, exist_ok=True)

@@ -587,6 +587,7 @@ def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MOD
         exits = batch.combat_exits(upper_value_only=runtime is not None)
         if runtime is not None:
             runtime.outer_settlement_seconds += time.perf_counter()-started
+            runtime.outer_exit_rows += len(exits)
     finally:
         # Even a settlement exception must drain the graph before its pinned
         # inputs can be overwritten or released. CPU work does not change the
@@ -631,7 +632,11 @@ def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MOD
                 _, continuation = model.policy.core.teacher(observation_as_tensor(obs, model.device))
                 continuation = continuation.float().flatten().cpu().numpy()
             else:
+                started = time.perf_counter()
                 _, continuation = runtime.forward_upper_rows(observations)
+                runtime.outer_value_seconds += time.perf_counter()-started
+                runtime.outer_value_rows += len(rows)
+                runtime.outer_value_batches += 1
         else:
             _, continuation = forward_leaves(model, obs, compact=True,
                                              autocast=autocast, leaf_backend=leaf_backend)

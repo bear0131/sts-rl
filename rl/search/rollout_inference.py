@@ -20,6 +20,7 @@ ROLLOUT_INFERENCE_METRICS = (
     *(f'{side}_cache_{key}' for side in ('upper', 'lower') for key in CACHE_METRICS),
     *(f'upper_graph_{key}' for key in GRAPH_METRICS),
     'outer_settlement_seconds', 'upper_prepare_seconds', 'outer_overlap_batches', 'outer_overlap_rows',
+    'outer_exit_rows', 'outer_value_seconds', 'outer_value_rows', 'outer_value_batches',
 )
 
 
@@ -148,6 +149,8 @@ class RolloutInference:
         self.outer_settlement_seconds = 0.
         self.upper_prepare_seconds = 0.
         self.outer_overlap_batches = self.outer_overlap_rows = 0
+        self.outer_exit_rows = self.outer_value_rows = self.outer_value_batches = 0
+        self.outer_value_seconds = 0.
 
     def forward_upper(self, observations):
         started = time.perf_counter()
@@ -191,7 +194,11 @@ class RolloutInference:
         result.update(outer_settlement_seconds=self.outer_settlement_seconds,
                       upper_prepare_seconds=self.upper_prepare_seconds,
                       outer_overlap_batches=self.outer_overlap_batches,
-                      outer_overlap_rows=self.outer_overlap_rows)
+                      outer_overlap_rows=self.outer_overlap_rows,
+                      outer_exit_rows=self.outer_exit_rows,
+                      outer_value_seconds=self.outer_value_seconds,
+                      outer_value_rows=self.outer_value_rows,
+                      outer_value_batches=self.outer_value_batches)
         return result
 
     def clear(self):
