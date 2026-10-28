@@ -238,14 +238,31 @@ class FrozenUpperTeacher(nn.Module):
     @torch.no_grad()
     def decide(self, observations, masks):
         logits, values = self(observations)
+        return self.actions_from_logits(observations, masks, logits), values
+
+    @torch.no_grad()
+    def actions_from_logits(self, observations, masks, logits):
+        """Apply the frozen actor's legal-action contract to an existing forward."""
+        self._validate_inference_mode()
         phase_names = {value: key for key, value in V.PHASE_VOCAB_INDEX.items()}
         masks = np.asarray(masks, dtype=bool)
         if masks.shape != tuple(logits.shape):
             raise ValueError('upper masks must match the policy batch/action shape')
+        def host_column(key):
+            value = observations[key]
+            if isinstance(value, torch.Tensor):
+                value = value.detach().cpu()
+                if value.dtype == torch.bfloat16:
+                    value = value.float()
+                value = value.numpy()
+            value = np.asarray(value).reshape(-1)
+            if len(value) != len(masks):
+                raise ValueError('upper phase/act rows must match the policy batch')
+            return value
+        phases, acts = host_column('phase'), host_column('act')
         legal = np.stack([action_mask_for_policy(self, masks[i],
-            phase=phase_names[int(observations['phase'][i].item())],
-            act=round(float(observations['act'][i].item()) * encode.ACT_SCALE),
+            phase=phase_names[int(phases[i])],
+            act=round(float(acts[i]) * encode.ACT_SCALE),
             reward_policy_contract=self.reward_policy_contract) for i in range(len(masks))])
         legal = torch.as_tensor(legal, device=logits.device)
-        actions = logits.masked_fill(~legal, -torch.inf).argmax(-1)
-        return actions, values
+        return logits.masked_fill(~legal, -torch.inf).argmax(-1)

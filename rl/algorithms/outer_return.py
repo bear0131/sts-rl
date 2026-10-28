@@ -105,11 +105,14 @@ def stamp_roots(model, pending):
             samples[-1].setdefault('outer_reward_prefix', float(model._outer_pending_rewards[i]))
 
 
-def upper_actions(model, observations, masks, actions):
+def upper_actions(model, observations, masks, actions, root_logits):
     indices = np.flatnonzero(np.asarray(observations['phase']).reshape(-1) != COMBAT)
     if len(indices):
-        obs = observation_as_tensor({key: value[indices] for key, value in observations.items()}, model.device)
-        decisions, _ = model.policy.core.teacher.decide(obs, masks[indices])
+        # actor_critic already evaluated these exact upper rows. Keep its
+        # values and initial sampling/RNG consumption, then apply the frozen
+        # teacher's greedy mask contract without another network evaluation.
+        obs = {key: observations[key][indices] for key in ('phase', 'act')}
+        decisions = model.policy.core.teacher.actions_from_logits(obs, masks[indices], root_logits[indices])
         actions[indices] = decisions.cpu().numpy()
 
 
