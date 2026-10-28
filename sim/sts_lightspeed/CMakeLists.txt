@@ -59,6 +59,15 @@ if (STS_ENABLE_RULE_TRACE)
     target_compile_definitions(game-context-contract PRIVATE STS_ENABLE_RULE_TRACE)
 endif()
 
-foreach(target slaythespire main test small-test nosl-combat-train game-context-contract)
+# Pure engine measurements avoid Python's per-action binding/encoding overhead.
+add_executable(simulator-benchmark EXCLUDE_FROM_ALL
+        ../../tools/benchmarks/native_simulator.cpp ${sts_lightspeed_SOURCES})
+target_include_directories(simulator-benchmark PRIVATE include json/single_include)
+target_compile_options(simulator-benchmark PRIVATE $<$<CXX_COMPILER_ID:GNU,Clang>:-ffp-contract=off>)
+if (STS_ENABLE_RULE_TRACE)
+    target_compile_definitions(simulator-benchmark PRIVATE STS_ENABLE_RULE_TRACE)
+endif()
+
+foreach(target slaythespire main test small-test nosl-combat-train game-context-contract simulator-benchmark)
     target_link_libraries(${target} PRIVATE Threads::Threads)
 endforeach()

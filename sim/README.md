@@ -6,6 +6,31 @@ Python binding 位于 sts_lightspeed/ 的绑定源码；第三方 json/pybind11 
 按 ../tests/README.md 从本仓库源码构建。用绝对 STS_LIGHTSPEED_BUILD_DIR 选择 .pyd/.so；测试需要 STS_ENABLE_RULE_TRACE=ON。不要把已存在的 build-gumbel-current 目录当成“当前源码已重建”的证据。
 改规则需同时验证 canonical/packed 观测、合法动作与结算边界；一次训练 smoke 不能验证全部游戏规则。
 
+## 战斗状态复制与纯模拟器基准
+
+`ActionQueue` 只拥有待执行回调：弹出时移动所有权，清空/战斗胜利取消时释放捕获，
+复制时仅复制有效环区。选牌中断留下的回调必须独立复制，胜利后保留动作的顺序和
+`clearOnCombatVictory` 标记不变；不能把整个非空队列视为临时数据丢弃。
+内部所有权/环形边界回归在 `tests/integration/test_action_queue.py`。
+
+纯引擎基准用原生循环，避免现有 Python 单步探针的绑定、观测编码开销：
+
+```sh
+cmake --build BUILD --target simulator-benchmark --parallel 2
+BUILD/simulator-benchmark clone 5000000 42101 60
+BUILD/simulator-benchmark playout 100000 42101 60
+BUILD/simulator-benchmark search 512 42101 60
+```
+
+Windows 可执行文件后缀为 `.exe`。参数为模式、固定次数、种子和执行阶段秒数上限；
+超时返回非零。模式分别计量战斗复制、随机完整动作、128次模拟/深度8的无模型PUCT。
+使用95个左右的A0初始牌组初始/中途状态，固定六类Act1遭遇，随机战斗最多256动作，
+上限命中单独记录。JSON区分建状态与计时，给出实际动作/模拟次数、结果摘要和状态大小。
+这是性能工作负载，不替代完整规则正确性验证，也不是生产神经搜索rollout。
+新旧构建必须使用相同编译器/选项、seed/次数并核对work/digest，交替ABBA、记录资源；
+固定CPU核心的结果不能外推到四台远端吞吐。另用 `tools.validation.bitwise capture-search`
+和 `compare --allow-native-rebuild` 比较真实叶子编码和搜索树字段。
+
 ## Python 环境交接
 
 Python 的 `env/`、`bridge/schemas/`、模型适配器和原生扩展必须来自同一源码版本，

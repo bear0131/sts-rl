@@ -953,6 +953,88 @@ static void checkWingBootsMap(int charges, int ascension) {
     require(root.getMapChoices().empty(), "wing connection invented an absent outgoing row");
 }
 
+static void checkActionQueue(int offset, int variant) {
+    BattleContext state;
+    auto &queue = state.actionQueue;
+    // Put the next insertion at every physical ring position.
+    for (int i = 0; i < offset; ++i) {
+        queue.pushBack(Action([](BattleContext &) {}));
+        queue.popFront()(state);
+    }
+    if (variant == 0) {
+        // Mutable captures must be deep-copied; executing one fork must not
+        // advance another fork's callback state. Exercise a full wrapped ring.
+        for (int i = 0; i < queue.getCapacity(); ++i)
+            queue.pushBack(Action([n = i](BattleContext &bc) mutable { bc.player.gold = ++n; }, i % 2 == 0));
+        auto copy = queue;
+        ActionQueue<50> assigned;
+        assigned.pushFront(Action([](BattleContext &) { throw std::runtime_error("stale destination"); }));
+        assigned = queue;
+        assigned = assigned;
+        for (int i = 0; i < queue.getCapacity(); ++i) {
+            auto original = queue.popFront(); original(state);
+            require(state.player.gold == i + 1, "original FIFO changed");
+            original(state);
+            auto cloned = copy.popFront(); cloned(state);
+            require(state.player.gold == i + 1, "fork shared mutable capture");
+            assigned.popFront()(state);
+            require(state.player.gold == i + 1, "assigned queue order changed");
+        }
+        require(queue.isEmpty() && copy.isEmpty() && assigned.isEmpty(), "full queue not drained");
+    } else if (variant == 1) {
+        auto owner = std::make_shared<int>(7);
+        std::weak_ptr<int> weak = owner;
+        queue.pushBack(Action([owner](BattleContext &bc) { bc.player.gold = *owner; }));
+        owner.reset();
+        auto popped = queue.popFront();
+        auto emptyCopy = queue;
+        popped(state);
+        require(state.player.gold == 7, "popped callback lost ownership");
+        popped = nullptr;
+        require(weak.expired(), "popped callback retained in inactive queue slot");
+        owner = std::make_shared<int>(9); weak = owner;
+        queue.pushFront(Action([owner](BattleContext &) {})); owner.reset();
+        auto liveCopy = queue;
+        queue.clear();
+        require(!weak.expired(), "clear destroyed another fork's pending capture");
+        liveCopy.clear();
+        require(weak.expired(), "clear retained pending callback resources");
+        require(emptyCopy.isEmpty(), "empty clone resurrected retired work");
+    } else if (variant == 2) {
+        std::vector<int> actual;
+        auto removed = std::make_shared<int>(1);
+        std::weak_ptr<int> weak = removed;
+        for (int i = 0; i < queue.getCapacity(); ++i) {
+            if (i % 3 == 0)
+                queue.pushBack(Action([removed](BattleContext &) {}, true));
+            else
+                queue.pushBack(Action([&actual, i](BattleContext &) { actual.push_back(i); }, false));
+        }
+        removed.reset();
+        auto clone = queue;
+        queue.clearOnCombatVictory();
+        require(!weak.expired(), "cleanup damaged clone ownership");
+        clone.clearOnCombatVictory();
+        require(weak.expired(), "victory cleanup retained cancelled callbacks");
+        queue.pushFront(Action([&actual](BattleContext &) { actual.push_back(-1); }, false));
+        queue.pushBack(Action([&actual](BattleContext &) { actual.push_back(50); }, false));
+        queue.clearOnCombatVictory(); // survivor flags must survive compaction
+        while (!queue.isEmpty()) queue.popFront()(state);
+        std::vector<int> expected{-1};
+        for (int i = 0; i < 50; ++i) if (i % 3 != 0) expected.push_back(i);
+        expected.push_back(50);
+        require(actual == expected, "victory cleanup/reappend reordered survivors");
+        clone.clear();
+        queue.pushBack(Action([](BattleContext &) {}, true));
+        queue.clearOnCombatVictory();
+        queue.pushBack(Action([](BattleContext &bc) { bc.player.gold = 42; }, false));
+        queue.popFront()(state);
+        require(queue.isEmpty() && state.player.gold == 42, "all-removed queue could not restart");
+    } else {
+        throw std::invalid_argument("unknown action queue case");
+    }
+}
+
 int main(int argc, char **argv) {
 #if defined(__unix__) || defined(__APPLE__)
     const rlimit noCore{0, 0};
@@ -961,6 +1043,11 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
+        if (mode == "action-queue") {
+            checkActionQueue(std::stoi(argv[2]), std::stoi(argv[3]));
+            std::cout << "PASS" << std::endl;
+            return 0;
+        }
         if (mode == "wing-boots-map") {
             checkWingBootsMap(std::stoi(argv[2]), std::stoi(argv[3]));
             std::cout << "PASS" << std::endl;

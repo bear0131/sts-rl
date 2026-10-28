@@ -780,36 +780,8 @@ void BattleContext::checkCombat() {
 }
 
 void BattleContext::clearPostCombatActions() {
-    // todo?
     cleanCardQueue(); // this is actually done when monsters are damaged but we can do here?
-//    actionQueue.clearOnCombatVictory();
-
-    int curIdx = actionQueue.front;
-    int placeIdx = actionQueue.front;
-
-    int oldsize = actionQueue.size;
-    for (int i = 0; i < oldsize; ++i) {
-        if (curIdx >= actionQueue.getCapacity()) {
-            curIdx = 0;
-        }
-        const bool shouldClear = actionQueue.bits[curIdx];
-
-        if (shouldClear) {
-            --actionQueue.size;
-        } else {
-            if (placeIdx >= actionQueue.getCapacity()) {
-                placeIdx = 0;
-            }
-
-            actionQueue.arr[placeIdx] = actionQueue.arr[curIdx];
-            actionQueue.bits[placeIdx] = actionQueue.bits[curIdx];
-            ++placeIdx;
-        }
-        ++curIdx;
-    }
-    // pushBack must append after the compacted survivors, including when all
-    // actions were removed or the ring wrapped around its physical end.
-    actionQueue.back = placeIdx % actionQueue.getCapacity();
+    actionQueue.clearOnCombatVictory();
 }
 
 void BattleContext::cleanCardQueue() {

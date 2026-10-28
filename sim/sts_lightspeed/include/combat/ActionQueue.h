@@ -8,8 +8,10 @@
 #include "sts_common.h"
 
 #include <bitset>
+#include <array>
 #include <functional>
 #include <cassert>
+#include <utility>
 
 
 namespace sts {
@@ -38,21 +40,16 @@ namespace sts {
 
 #ifdef sts_action_queue_use_raw_array
         ActionFunction arr[capacity];
-        ActionQueue() = default;
-        ActionQueue(const ActionQueue &rhs) : size(rhs.size), back(rhs.back), front(rhs.front), bits(rhs.bits) {
-            int cur = rhs.front;
-            for (int i = 0; i < rhs.size; ++i) {
-                if (cur >= capacity) {
-                    cur = 0;
-                }
-                arr[cur] = rhs.arr[cur];
-            }
-        }
 #else
         std::array<ActionFunction,capacity> arr;
 #endif
+        ActionQueue() = default;
+        // A search clone owns only pending callbacks, never retired slot storage.
+        ActionQueue(const ActionQueue &rhs) { *this = rhs; }
+        ActionQueue &operator=(const ActionQueue &rhs);
 
         void clear();
+        void clearOnCombatVictory();
         void pushFront(Action a);
         void pushBack(Action a);
         bool isEmpty();
@@ -61,10 +58,50 @@ namespace sts {
     };
 
     template<int capacity>
+    ActionQueue<capacity> &ActionQueue<capacity>::operator=(const ActionQueue &rhs) {
+        if (this == &rhs) return *this;
+        clear();
+        front = back = rhs.front;
+        for (int i = 0, slot = rhs.front; i < rhs.size; ++i) {
+            pushBack(Action(rhs.arr[slot], rhs.bits[slot]));
+            if (++slot == capacity) slot = 0;
+        }
+        return *this;
+    }
+
+    template<int capacity>
     void ActionQueue<capacity>::clear() {
-        size = 0;
+        while (size > 0) {
+            arr[front] = nullptr;
+            if (++front == capacity) front = 0;
+            --size;
+        }
         back = 0;
         front = 0;
+        bits.reset();
+    }
+
+    template<int capacity>
+    void ActionQueue<capacity>::clearOnCombatVictory() {
+        // Keep survivor order and flags even across the ring's physical end.
+        int read = front, write = front, kept = 0;
+        for (int i = 0; i < size; ++i) {
+            if (bits[read]) {
+                arr[read] = nullptr;
+                bits.reset(read);
+            } else {
+                if (write != read) {
+                    arr[write] = std::move(arr[read]);
+                    arr[read] = nullptr;
+                }
+                bits.reset(write);
+                if (++write == capacity) write = 0;
+                ++kept;
+            }
+            if (++read == capacity) read = 0;
+        }
+        size = kept;
+        back = write;
     }
 
     template <int capacity>
@@ -107,7 +144,9 @@ namespace sts {
 #ifdef sts_asserts
         assert(size > 0 );
 #endif
-        ActionFunction a = arr[front];
+        ActionFunction a = std::move(arr[front]);
+        arr[front] = nullptr;
+        bits.reset(front);
         ++front;
         --size;
         if (front >= capacity) {
