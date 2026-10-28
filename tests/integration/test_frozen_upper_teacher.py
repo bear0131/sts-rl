@@ -72,6 +72,33 @@ def test_save_restore_and_reject_tampered_teacher(frozen_upper_source):
         restored.load_state_dict(changed)
 
 
+def test_collector_reuses_upper_logits_and_preserves_combat_actions(frozen_upper_source, monkeypatch):
+    from types import SimpleNamespace
+    from rl.algorithms.outer_return import upper_actions
+
+    core, space, env, obs = frozen_upper_source
+    teacher = FrozenUpperTeacher(core, space, source_sha256='1' * 64)
+    mask = env.action_masks()[None]
+    logits, _ = teacher(obs)
+    expected, _ = teacher.decide(obs, mask)
+    rows = {key: np.repeat(value.numpy(), 2, axis=0) for key, value in obs.items()}
+    rows['phase'][1] = V.PHASE_VOCAB_INDEX['combat']
+    actions = np.asarray([-1, 42])
+    masks = np.repeat(mask, 2, axis=0)
+    original_masks = masks.copy()
+
+    def unexpected_forward(*args, **kwargs):
+        raise AssertionError('the root actor already evaluated the upper rows')
+
+    monkeypatch.setattr(teacher, 'forward', unexpected_forward)
+    model = SimpleNamespace(policy=SimpleNamespace(core=SimpleNamespace(teacher=teacher)))
+    upper_actions(model, rows, masks, actions, logits.repeat(2, 1))
+    assert actions.tolist() == [expected.item(), 42]
+    np.testing.assert_array_equal(masks, original_masks)
+    reduced = {key: value.bfloat16() for key, value in obs.items() if key in ('phase', 'act')}
+    assert teacher.actions_from_logits(reduced, mask, logits).item() == expected.item()
+
+
 def test_freeze_guards_and_input_scope(frozen_upper_source):
     core, space, _, obs = frozen_upper_source
     teacher = FrozenUpperTeacher(core, space, source_sha256='1' * 64)

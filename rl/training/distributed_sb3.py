@@ -519,6 +519,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--leaf-inference", choices=("eager", "cuda-graph"), default="eager",
                         help="Runtime combat leaf backend; search and update semantics are unchanged")
+    parser.add_argument('--leaf-amp-mode', choices=('off', 'bf16', 'fp16'), default=None,
+                        help='CUDA leaf graph precision override; default follows --amp-mode; learner/root precision stays unchanged')
     parser.add_argument('--leaf-compile', action=argparse.BooleanOptionalAction, default=True,
                         help='Compile graph forward; disable explicitly on platforms without Triton')
     parser.add_argument("--leaf-graph-profile-interval", type=int, default=0,
@@ -2088,6 +2090,8 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.leaf_amp_mode is not None and args.leaf_inference != 'cuda-graph':
+        raise ValueError('--leaf-amp-mode requires --leaf-inference cuda-graph')
     if args.prepare_combat_outer is not None:
         from rl.training.combat_outer import prepare
         return prepare(args)
@@ -2852,7 +2856,8 @@ def main() -> None:
         args.outer_return_contract = model.outer_return_contract
     if args.leaf_inference == 'cuda-graph':
         from rl.search.inference import CombatLeafGraphs
-        model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp_mode,
+        model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device,
+            amp=args.leaf_amp_mode if args.leaf_amp_mode is not None else args.amp_mode,
             compile_forward=args.leaf_compile,
             profile_interval=args.leaf_graph_profile_interval,
             batch_multiple=args.leaf_graph_batch_multiple,

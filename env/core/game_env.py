@@ -101,14 +101,15 @@ class SimGameEnv:
     step(action) -> (canonical, reward, terminated, info).
 
     The Gym adapter builds its own observation after the transition. It opts
-    out of the redundant canonical return with ``emit_step_observation=False``;
-    terminal snapshots and transition metadata are still produced normally.
+    out of the redundant canonical return with ``emit_step_observation=False``
+    and backend legal list with ``emit_step_legal=False``. It constructs its
+    own action mask; terminal snapshots and transition metadata stay intact.
     """
 
     def __init__(self, character=None, ascension=0, global_map_view=False,
                  interactive_reasoning=False,
                  nosl_is_az_boss_transition_target=False,
-                 emit_step_observation=True):
+                 emit_step_observation=True, emit_step_legal=True):
         if not hasattr(sts, "nosl_compact_layout") or sts.nosl_compact_layout().get("version") != 9:
             raise RuntimeError("observation v20 requires native layout v9; rebuild the simulator")
         self._character = character or sts.CharacterClass.IRONCLAD
@@ -116,6 +117,7 @@ class SimGameEnv:
         self._global_map_view = global_map_view
         self._interactive_reasoning = bool(interactive_reasoning)
         self._emit_step_observation = bool(emit_step_observation)
+        self._emit_step_legal = bool(emit_step_legal)
         self._nosl_is_az_boss_transition_target = bool(
             nosl_is_az_boss_transition_target
         )
@@ -246,6 +248,11 @@ class SimGameEnv:
 
     def _info(self):
         return {"phase": self.phase(), "legal": self.legal_semantic_actions()}
+
+    def _step_info(self):
+        # The Gym adapter builds its own (possibly autoregressive) legal mask.
+        # Preserve reset/public backend defaults and all transition metadata.
+        return self._info() if self._emit_step_legal else {"phase": self.phase()}
 
     def select_descriptor(self):
         """The live combat card-select 'select' block (context/pick_max/multi/
@@ -480,7 +487,7 @@ class SimGameEnv:
             cleared_run = self.gc.outcome == _GC_UNDECIDED and self.gc.act > 3
             won = self.gc.outcome == sts.GameOutcome.PLAYER_VICTORY
             reward = 1.0 if (cleared_run or won) else -1.0
-        info = self._info()
+        info = self._step_info()
         # One event per treasure opportunity, not per reward-screen click.
         if curve is not None:
             info['finite_curve_exit'] = settled_exit(curve, self.gc)
@@ -533,7 +540,7 @@ class SimGameEnv:
             cleared_run = self.gc.outcome == _GC_UNDECIDED and self.gc.act > 3
             won = self.gc.outcome == sts.GameOutcome.PLAYER_VICTORY
             reward = 1.0 if (cleared_run or won) else -1.0
-        info = self._info()
+        info = self._step_info()
         if terminal_combat_state is not None:
             info["nosl_value_terminal_state"] = terminal_combat_state
         if curve is not None:
@@ -849,7 +856,7 @@ class _CombatBranchGameEnv(SimGameEnv):
             raise ValueError(f"combat branch received overworld action: {action!r}")
         self._apply(action)
         terminated = self.bc.is_battle_over
-        info = self._info()
+        info = self._step_info()
         target = self._nosl_value_terminal_target()
         if target is not None:
             info["nosl_value_terminal_target"] = target
@@ -867,7 +874,7 @@ class _CombatBranchGameEnv(SimGameEnv):
         if self.is_over:
             raise RuntimeError("combat branch is terminal")
         self.bc.execute(sts.Action(int(action_bits)))
-        info = self._info()
+        info = self._step_info()
         terminal = self._winning_combat_value_state()
         if terminal is not None:
             info['nosl_value_terminal_state'] = terminal

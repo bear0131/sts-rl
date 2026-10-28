@@ -1211,7 +1211,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
             actions_np = actions.cpu().numpy().reshape(-1)
             if self._frozen_upper:
-                outer.upper_actions(self, self._last_obs, action_masks, actions_np)
+                outer.upper_actions(self, self._last_obs, action_masks, actions_np, logits)
             # BF16 autocast tensors do not have a numpy representation on
             # several PyTorch versions; IPC always receives public FP32 logits.
             logits_np = logits.detach().float().cpu().numpy()

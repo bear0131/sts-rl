@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from rl.policies.precision import bf16_autocast
+from rl.policies.precision import bf16_autocast, fp16_autocast
 
 
 class CombatLeafGraphs:
@@ -22,8 +22,11 @@ class CombatLeafGraphs:
                  blocking_wait=False):
         if torch.device(device).type != 'cuda':
             raise ValueError('combat CUDA graphs require a CUDA device')
-        if capacity < 1 or amp not in ('off', 'bf16'):
+        if capacity < 1 or amp not in ('off', 'bf16', 'fp16'):
             raise ValueError('invalid graph capacity or AMP mode')
+        if amp == 'fp16' and not (getattr(core, 'autoregressive_actions', False)
+                                  and getattr(core, 'graph_actor_critic', None) is not None):
+            raise ValueError('FP16 leaf graphs require an autoregressive entity core')
         self.core, self.device, self.amp, self.capacity = core, device, amp, capacity
         # The callable belongs to this runtime, never the saved policy. Dynamic
         # batch/relic dimensions avoid compiling one program per graph shape.
@@ -34,7 +37,7 @@ class CombatLeafGraphs:
         # FP32 uses PyTorch's fused encoder fast path, which cannot currently
         # be traced with symbolic shapes. Keep that supported backend eager.
         self.graph_forward = (leaf
-            if amp == 'bf16' and leaf is not None and getattr(core, 'autoregressive_actions', False)
+            if amp in ('bf16', 'fp16') and leaf is not None and getattr(core, 'autoregressive_actions', False)
             else None)
         self.compiled_forward = (torch.compile(self.graph_forward, fullgraph=True, dynamic=True)
             if self.compile_forward and self.graph_forward is not None else None)
@@ -61,6 +64,11 @@ class CombatLeafGraphs:
             profile_samples=self.profile_samples, h2d_ms=self.h2d_ms,
             replay_ms=self.replay_ms, d2h_ms=self.d2h_ms, batch_counts=dict(self.batch_counts),
             subset_eager_rows=self.subset_eager_rows, timing_scope='captured-device-events')
+
+    def _autocast(self):
+        if self.amp == 'fp16':
+            return fp16_autocast(cache_enabled=False)
+        return bf16_autocast(enabled=self.amp == 'bf16', cache_enabled=False)
 
     def clear(self):
         if self._pending is not None:
@@ -100,8 +108,7 @@ class CombatLeafGraphs:
             if prepare is not None:
                 # A replay skips Python forward, so refresh weight-dependent
                 # constants before replay as well as before the first capture.
-                with torch.inference_mode(), bf16_autocast(
-                        enabled=self.amp == 'bf16', cache_enabled=False):
+                with torch.inference_mode(), self._autocast():
                     prepare()
             if getattr(self.core, 'joint_actions', False) and not getattr(self.core, 'autoregressive_actions', False):
                 from env.core import native_actions as C
@@ -110,8 +117,7 @@ class CombatLeafGraphs:
                     indices = np.flatnonzero(multi)
                     tensors = {key: torch.as_tensor(value[indices], device=self.device)
                                for key, value in observations.items()}
-                    with torch.inference_mode(), bf16_autocast(
-                            enabled=self.amp == 'bf16', cache_enabled=False):
+                    with torch.inference_mode(), self._autocast():
                         logits, values = self.core.combat_actor_critic(tensors, active_relic_width=width)
                     result_logits = np.empty((len(multi), logits.shape[1]), dtype=np.float32)
                     result_values = np.empty(len(multi), dtype=np.float32)
@@ -240,8 +246,7 @@ class CombatLeafGraphs:
         stream = torch.cuda.Stream(device=self.device)
         stream.wait_stream(current)
         def forward():
-            with torch.inference_mode(), bf16_autocast(
-                    enabled=self.amp == 'bf16', cache_enabled=False):
+            with torch.inference_mode(), self._autocast():
                 extra = {'evaluate_subsets': False} if getattr(self.core, 'joint_actions', False) else {}
                 if self.graph_forward is None:
                     logits, values = self.core.combat_actor_critic(tensors, active_relic_width=width, **extra)
