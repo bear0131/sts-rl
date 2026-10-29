@@ -87,6 +87,10 @@ def capture_step(model, obs, actions, masks, values, log_probs, new_obs, dones, 
                 model._upper_pending[index] = None
         if dones[index]:
             model._upper_episode_ids[index] += 1
+            if (getattr(model, 'nosl_is_az_combat_strategy', 'model') == 'small-playout'
+                    and not censored and not infos[index].get('startup_stagger_hold')
+                    and not infos[index].get('startup_occupancy_hold')):
+                model.small_playout_games_local = getattr(model, 'small_playout_games_local', 0) + 1
 
 
 def macro_advantages(records, bootstraps, gamma, gae_lambda):

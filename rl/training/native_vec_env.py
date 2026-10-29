@@ -115,11 +115,24 @@ class NativeSearchVecEnv(DummyVecEnv):
         return (self._obs_from_buf(), np.copy(self.buf_rews), np.copy(self.buf_dones), _copy_step_infos(self.buf_infos))
 
     def close(self):
+        self.__dict__.pop('small_playout_batch', None)
         self.native_search_batch.close()
         super().close()
 
     def env_method_batch(self, method_name, calls):
+        if method_name == 'small_playout_decision':
+            return self.small_playout_batch.decisions(calls)
         if method_name == 'rulebase_turn_decision':
             return self.native_search_batch.rulebase_turn_decisions(calls)
         return {index: self.env_method(method_name, *args, indices=index, **kwargs)[0]
                 for index, (args, kwargs) in calls.items()}
+
+    def configure_small_playout(self, pair):
+        from env.search.small_playout import SmallPlayoutBatch
+        if not hasattr(self, 'small_playout_batch') or self.small_playout_batch.pair['sha256'] != pair['sha256']:
+            self.small_playout_batch = SmallPlayoutBatch(self.native_search_batch.envs,
+                                                       self.native_search_batch.pool, pair)
+        self.small_playout_batch.stats = {}
+
+    def small_playout_stats(self):
+        return self.small_playout_batch.scalar_stats()

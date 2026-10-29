@@ -115,7 +115,7 @@ if [ -n "${NOSL_RESUME_STEP:-}" ]; then
 fi
 cmd=("$python" -u -m rl.training.distributed_sb3
   --rank "$rank" --world-size 4 --run-id "$run_id"
-  --remote-root "$remote_root" --ssh-key /root/.ssh/sts_dist_shared_ed25519
+  --remote-root "$remote_root" --ssh-key "${NOSL_SSH_KEY:-/root/.ssh/sts_dist_shared_ed25519}"
   --ssh-control-dir /tmp/sts-launch --checkpoint "$checkpoint"
   "@$args_file" "${extra[@]}"
   --gradient-transport ssh-ring --ring-port "${NOSL_RING_PORT:-29789}"

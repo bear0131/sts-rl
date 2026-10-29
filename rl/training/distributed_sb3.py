@@ -352,6 +352,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(fromfile_prefix_chars="@", description=__doc__)
     parser.add_argument("--rank", type=int, required=True)
     parser.add_argument("--world-size", type=int, required=True)
+    parser.add_argument('--completed-game-budget', type=int, default=None,
+                        help='Stop and save at the first collection reaching this natural full-game count (small-playout only).')
     parser.add_argument(
         "--peer",
         action="append",
@@ -553,7 +555,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--nosl-is-az-combat-strategy",
-        choices=("model", "turn-planner"),
+        choices=("model", "turn-planner", "small-playout"),
         default=None,
         help="Combat actor: checkpoint model search or fixed model-free turn planner.",
     )
@@ -2523,9 +2525,9 @@ def main() -> None:
     combat_strategy = args.nosl_is_az_combat_strategy or getattr(
         model, "nosl_is_az_combat_strategy", "model"
     )
-    if combat_strategy not in ("model", "turn-planner"):
+    if combat_strategy not in ("model", "turn-planner", "small-playout"):
         raise ValueError("NOSL-IS-AZ combat strategy must be model or turn-planner")
-    if combat_strategy == "turn-planner":
+    if combat_strategy in ("turn-planner", "small-playout"):
         if not joint_upper(model):
             raise ValueError("turn-planner combat requires joint strategic PPO")
         if not (model.nosl_is_az and model.nosl_is_az_inner_only):
@@ -2533,6 +2535,9 @@ def main() -> None:
         if args.nosl_is_az_replay_enabled:
             raise ValueError("turn-planner combat requires --no-nosl-is-az-replay")
     model.nosl_is_az_combat_strategy = args.nosl_is_az_combat_strategy = combat_strategy
+    if args.completed_game_budget is not None and (args.completed_game_budget < 1 or combat_strategy != 'small-playout'
+                                                  or args.training_state_dir is None):
+        raise ValueError('completed-game-budget needs small-playout and full recovery saving')
     planner_defaults = {
         "worlds": 2,
         "nodes": 8192,
@@ -2563,9 +2568,10 @@ def main() -> None:
     args.nosl_is_az_combat_strategy_version = (
         rulebase_turn_policy_version(planner_config)
         if combat_strategy == "turn-planner"
+        else 'sts1-small-playout-pair-v1' if combat_strategy == 'small-playout'
         else "checkpoint-model+configured-search"
     )
-    if combat_strategy == "turn-planner":
+    if combat_strategy in ("turn-planner", "small-playout"):
         frozen, upper_trainable = model.configure_rulebase_lower()
         print(
             f"[rank {args.rank}] fixed combat strategy: "
@@ -2573,6 +2579,12 @@ def main() -> None:
             f"config={planner_config} froze={frozen:,} upper_trainable={upper_trainable:,}",
             flush=True,
         )
+        if combat_strategy == 'small-playout':
+            from rl.training.small_playout import configure_collection
+            configure_collection(model, model.get_env())
+            args.nosl_is_az_combat_strategy_version = 'sts1-small-playout-pair-v1'
+            print(f'[rank {args.rank}] compact CPU search common/elite/boss=250/250/1000, '
+                  'playout cap=200, tree cap=1024; legacy NOSL leaf settings are inactive', flush=True)
     else:
         print(f"[rank {args.rank}] combat strategy: model", flush=True)
     if args.nosl_is_az_updates is not None:
@@ -3546,6 +3558,11 @@ def main() -> None:
             )
             record.update(aggregate_scalars)
             record.update({'upper/' + key: value for key, value in upper_update.items()})
+            if combat_strategy == 'small-playout':
+                record['small_playout_stats_rank'] = dict(getattr(model, '_small_playout_stats', {}))
+                games = average_scalar_dict({'completed_games': float(getattr(model, 'small_playout_games_local', 0))}, ring_transport)
+                record['completed_full_games_global'] = int(round(games['completed_games']*args.world_size))
+                record['completed_game_budget'] = args.completed_game_budget
             if joint_upper(model):
                 record['upper/total_sec_rank'] = upper_seconds
             if args.boss_opening_dataset:
@@ -3558,6 +3575,8 @@ def main() -> None:
             stop_requested = bool(average_scalar_dict(
                 {'stop_requested': float(args.stop_file is not None and args.stop_file.exists())},
                 ring_transport)['stop_requested'])
+            if args.completed_game_budget is not None:
+                stop_requested |= record['completed_full_games_global'] >= args.completed_game_budget
             save_due = bool(args.save_every_updates and (update + 1) % args.save_every_updates == 0)
             checkpoint_started = time.perf_counter()
             if args.output is not None and save_due:
@@ -3740,6 +3759,10 @@ def main() -> None:
                         ],
                     })
                 _add_game_metrics_to_wandb_payload(wandb_payload, record)
+                if combat_strategy == 'small-playout':
+                    wandb_payload['game/completed_full_games_global'] = record['completed_full_games_global']
+                    wandb_payload.update({'small_playout_rank0/'+key: value
+                                          for key, value in record['small_playout_stats_rank'].items()})
                 wandb_payload.update({'upper/' + key: value for key, value in upper_update.items()})
                 wandb_payload.update({key: value for key, value in record.items()
                                       if key.startswith(('outer_return/', 'frozen_upper/'))})

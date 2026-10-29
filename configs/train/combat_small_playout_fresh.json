@@ -124,7 +124,7 @@
     }
   },
   "target": {
-    "status": "specification_only_runtime_integration_pending",
+    "status": "four_host_wholerun_acceptance_pending",
     "game": "Slay the Spire 1",
     "character": "Ironclad",
     "ascension": 0,
@@ -149,10 +149,13 @@
       "hidden": 64,
       "embedding": 32,
       "parameter_budget_reference": 31549,
-      "action_key_count": null,
-      "feature_contract": "pending StS1 explicit mapping; no copying StS2 entity IDs or padding unused keys to fake an exact parameter count",
+      "action_key_count": 785,
+      "parameters_per_network": 30889,
+      "feature_contract": "sts1-small-playout-v1; explicit StS1 entity/selection mapping, 32 state and 24 action features",
       "initialization": "random",
-      "training": "search-visit distillation followed by outcome REINFORCE; bootstrap collection and stages require implementation",
+      "training": "32768 search-visit samples from four shards, independent playout/prior CE for four epochs, then 128 leave-one-out REINFORCE updates (32 starts x 8 trajectories); freeze pair during upper PPO",
+      "prior_source": "simulator-search supervision, because StS1 human behavior-cloning data are unavailable",
+      "remaining_reference_differences": "StS1 feature/outcome definitions; no solver proof or junk-action guard; Runic Dome public-only policy fallback",
       "learned_value_head": false
     },
     "battle_objective": {

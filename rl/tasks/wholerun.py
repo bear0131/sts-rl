@@ -195,12 +195,16 @@ class WholeRunTask(Task):
                             help='Strategic PPO architecture and learning configuration for entity-joint.')
         parser.add_argument(
             '--nosl-is-az-combat-strategy',
-            choices=('model', 'turn-planner'),
+            choices=('model', 'turn-planner', 'small-playout'),
             default=None,
             help='Combat actor during NOSL collection. turn-planner fixes the '
                  'lower policy and trains only the entity-joint upper policy.',
         )
         parser.add_argument('--rulebase-planner-worlds', type=int, default=2)
+        parser.add_argument('--small-playout-pair', default=None,
+                            help='Pretrained independent CPU playout/prior pair for a fresh strategic PPO run.')
+        parser.add_argument('--prepare-small-playout', default=None,
+                            help='Run a bounded compact pretraining stage from a JSON protocol, then exit.')
         parser.add_argument('--rulebase-planner-nodes', type=int, default=8192)
         parser.add_argument('--rulebase-planner-beam', type=int, default=8)
         parser.add_argument('--rulebase-planner-depth', type=int, default=16)

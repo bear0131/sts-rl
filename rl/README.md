@@ -21,7 +21,8 @@
 `policies/small_playout.py` / `algorithms/small_playout.py` 提供独立下层闭环；
 `search/small_playout.py` 调用 C++ SmallPlayout，评估接入 `SmallPlayoutStrategy`
 并可用 `PhaseStrategy` 与上层组合（环境必须显式使用`native-v1`完整动作）。当前支持固定战斗夹具的真实采样、搜索访问分布
-交叉熵更新、逐轮报告和保存恢复；尚未接入整局上层 PPO / 多机生产。
+交叉熵更新、逐轮报告和保存恢复，并通过 `small-playout` 战斗策略接入整局上层 PPO。
+CPU/CUDA生命周期测试覆盖两轮更新、保存及恢复后两轮；四机生产验收记录在worklog。
 
 `sts1-small-playout-v1` 是纯 policy，无 value 头：32→64 ReLU→32 状态表示，
 24→32 动作投影与 24→1 线性项，加每动作 key 的32维向量和bias。
@@ -52,6 +53,19 @@ EndTurn widening 23.148 / .436、抽牌4 / .5，其余1 / .5。探索系数按si
 包含截断的组不提供终局监督。独立先验仅做CE，不随REINFORCE更新。
 StS1暂无参考项目的人类BC数据，先验使用模拟器搜索监督；未实现参考的证明求解和废牌清理保护，
 状态/动作特征也使用StS1映射，不能把这些差异称为逐项等价移植。
+
+预训练复用 `python -m rl.training.trainer --task wholerun --prepare-small-playout protocol.json`：
+`collect` 协议指定可信环境journal bank、seed/rank、threads、samples、batch_roots、seconds、output；
+`fit` 协议指定同bank的shards、ce_epochs、batch_size、rf_updates/rf_starts/rf_k、entropy_coef。
+每阶段记录进度、真实transition计数和ResourceMonitor；80%银行起点训练，20%固定留出。
+这是有限bootstrap，不是下层收敛证明；旧权重从不读取。
+产物pair通过 `@configs/train/small_playout_fresh.args --small-playout-pair pair.pt --steps 0 --out ...`
+嵌入新上层checkpoint。该兼容容器保留一个32宽单层冻结旧combat模块，整局回归禁止调用它；
+实际搜索仅执行30889参数playout和独立30889参数prior。上层256宽4层及card encoder均随机可训练。
+分布式使用 `configs/train/small_playout_distributed.args` 和已有 `experiments/launchers/launch_nosl_replay.sh`，
+保持4×384×512，PPO两epoch、entropy .0125；自然完整游戏跨rank累加，包含胜败、排除超时/异常。
+40万局在轮末保存停止，计数随各rank模型恢复；另有10000轮硬预算。截断/模拟量按房间层级记录，
+`search_seconds`是各搜索调用耗时之和，不能当作并行墙钟；端到端以rollout_sec及iteration_wall_sec为准。
 
 复用有超时的基准入口，例如（先设置明确的原生构建路径）：
 

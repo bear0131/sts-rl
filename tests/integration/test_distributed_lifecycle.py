@@ -24,6 +24,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
     (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
 def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False, upper_micro_override=None, upper_lambda_override=None):
+    fixed_strategy = 'small-playout' if fixed_lower == 'small-playout' else 'turn-planner'
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
     fixed_calls = []
@@ -70,7 +71,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         nosl_is_az=nosl, nosl_is_az_cpp=nosl, nosl_is_az_inner_only=nosl,
         nosl_is_az_merge_equivalent_actions=merge,
         nosl_is_az_upper_strategy=upper,
-        nosl_is_az_combat_strategy='turn-planner' if fixed_lower else 'model',
+        nosl_is_az_combat_strategy=fixed_strategy if fixed_lower else 'model',
         nosl_is_az_simulations=4, nosl_is_az_depth=0, nosl_is_az_updates=3 if step_schedule else 1,
         nosl_is_az_update_schedule=(dict(mode='value-warmup', peak_updates=3,
             hold_rollouts=1, decay_rollouts=2) if combat_arch == 'entity' else None),
@@ -78,12 +79,25 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         nosl_is_az_replay_capacity=128, nosl_is_az_batch_size=16,
         nosl_is_az_micro_batch_size=8, nosl_is_az_leaf_batch_size=1,
         hierarchical_combat_hp=nosl)
+    if fixed_strategy == 'small-playout':
+        from rl.algorithms.small_playout import SmallPlayoutLearner, save_policy_pair
+        from rl.training.small_playout import install_policy_pair
+        compact = SmallPlayoutLearner(seed=42)
+        prior = SmallPlayoutLearner(seed=43).policy
+        pair = tmp_path/'pair.pt'
+        save_policy_pair(pair, compact.policy, prior, provenance={'fixture':'lifecycle'})
+        install_policy_pair(model, pair)
+        from rl.policies.entity_joint import EntityJointCore
+        monkeypatch.setattr(EntityJointCore, 'combat_actor_critic',
+                            lambda *a, **kw: pytest.fail('compact collector called large combat network'))
     initial_combat = (
-        {name: value.detach().clone()
+        {name: value.detach().cpu().clone()
          for name, value in model.policy.core.combat.state_dict().items()}
         if fixed_lower else None
     )
     checkpoint = tmp_path / 'initial.zip'
+    initial_upper = ({name: value.detach().cpu().clone() for name, value in model.policy.core.upper_tokenizer.state_dict().items()}
+                     if fixed_strategy == 'small-playout' else None)
     model.save(checkpoint)
     env.close()
     payloads, finished, identities = [], [], []
@@ -145,7 +159,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         argv += ['--upper-gae-lambda', str(upper_lambda_override)]
     if fixed_lower:
         argv += [
-            '--nosl-is-az-combat-strategy', 'turn-planner',
+            '--nosl-is-az-combat-strategy', fixed_strategy,
             '--no-nosl-is-az-replay',
             '--rulebase-planner-worlds', '1',
             '--rulebase-planner-nodes', '8',
@@ -287,10 +301,20 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
             assert final.policy_kwargs['upper_config']['gae_lambda'] == upper_lambda_override
         assert final.policy.upper_optimizer.state_dict()['state']
         if fixed_lower:
-            assert final.nosl_is_az_combat_strategy == 'turn-planner'
+            assert final.nosl_is_az_combat_strategy == fixed_strategy
             assert all(p['train/optimizer_steps'] == 0 for p in payloads)
-            assert all(p['nosl_is_az/rulebase_lower_decisions'] > 0
-                       for p in payloads)
+            if fixed_strategy == 'small-playout':
+                assert all(p['small_playout_rank0/common/simulations'] > 0 for p in payloads)
+                assert all('game/completed_full_games_global' in p for p in payloads)
+                assert final.small_playout_pair['sha256'] == model.small_playout_pair['sha256']
+                for key in ('policy', 'prior'):
+                    import numpy as np
+                    np.testing.assert_array_equal(final.small_playout_pair[key], model.small_playout_pair[key])
+                assert any(not torch.equal(value.cpu(), initial_upper[name])
+                           for name, value in final.policy.core.upper_tokenizer.state_dict().items()
+                           if name.startswith('card.'))
+            else:
+                assert all(p['nosl_is_az/rulebase_lower_decisions'] > 0 for p in payloads)
             assert all(p['nosl_is_az/rulebase_lower_batch_seconds'] > 0
                        for p in payloads)
             for name, value in final.policy.core.combat.state_dict().items():
@@ -568,6 +592,17 @@ def test_joint_wholerun_fixed_rulebase_lower_lifecycle(
         tmp_path, monkeypatch, capsys, short_combat_env_type,
         True, 'model', 'entity', 'autoregressive-v2', vector='native',
         joint=True, fixed_lower=True)
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.skipif(
+    not torch.cuda.is_available(), reason='BF16 small-playout lifecycle requires CUDA'))])
+def test_joint_wholerun_small_playout_lifecycle(
+        tmp_path, monkeypatch, capsys, short_combat_env_type, device):
+    test_training_reaches_wandb_and_checkpoint(
+        tmp_path, monkeypatch, capsys, short_combat_env_type,
+        True, 'model', 'entity', 'autoregressive-v2', vector='native',
+        device=device, amp='bf16' if device == 'cuda' else 'off',
+        joint=True, fixed_lower='small-playout')
 
 
 def test_upper_microbatch_override_survives_plain_resume(

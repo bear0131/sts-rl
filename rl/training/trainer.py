@@ -582,6 +582,10 @@ def main() -> None:
     task = TASKS[known.task]
 
     args = build_parser(task).parse_args()
+    if getattr(args, 'prepare_small_playout', None):
+        from rl.training.small_playout import pretrain
+        pretrain(args.prepare_small_playout)
+        return
     th.set_float32_matmul_precision(args.float32_matmul_precision)
     if hasattr(args, "nosl_is_az_upper_strategy"):
         resume_settings = {}
@@ -1506,7 +1510,12 @@ def main() -> None:
         else:
             print("[trainer] NOSL-IS-AZ inner-only: skipped overworld PPO and froze "
                   f"{frozen:,} parameters; {trainable:,} combat parameters trainable")
-    if getattr(args, "nosl_is_az_combat_strategy", "model") == "turn-planner":
+    if getattr(args, 'small_playout_pair', None):
+        from rl.training.small_playout import install_policy_pair
+        install_policy_pair(model, args.small_playout_pair)
+        print('[trainer] compact CPU pair: 30889 parameters each; common/elite/boss simulations=250/250/1000; '
+              'playout cap=200, tree cap=1024; legacy NOSL leaf settings below are inactive')
+    if getattr(args, "nosl_is_az_combat_strategy", "model") in ("turn-planner", "small-playout"):
         if not getattr(model.policy.core, "joint_upper", False):
             raise ValueError("turn-planner combat requires entity-joint upper training")
         if getattr(args, "nosl_is_az_replay_enabled", True):

@@ -56,6 +56,23 @@ def test_censored_macro_not_a_defeat_label():
     assert model._upper_pending == [None] and model._upper_completed == [] and model._upper_censored == 1
 
 
+def test_small_playout_budget_counts_natural_games_and_retains_prior_count():
+    model = SimpleNamespace(_upper_pending=[None], _upper_episode_ids=[0], _upper_completed=[],
+                            _upper_censored=0, nosl_is_az_combat_strategy='small-playout',
+                            small_playout_games_local=123)
+    obs = dict(phase=np.array([[V.PHASE_VOCAB_INDEX['combat']]]), act=np.array([[.25]]), floor=np.array([[.5]]))
+    def step(done, **flags):
+        capture_step(model, obs, [0], np.ones((1, 198)), [0], [0], obs, [done],
+                     [dict(run_stats=dict(act=1, floor=28, outcome='PLAYER_LOSS'), **flags)])
+    step(False)  # A combat boundary is not a full game.
+    step(True, **{'TimeLimit.truncated': True})
+    step(True, dead_screen=True)
+    step(True, startup_stagger_hold=True)
+    assert model.small_playout_games_local == 123
+    step(True)
+    assert model.small_playout_games_local == 124
+
+
 def test_lambda_one_returns_real_rewards_and_retains_only_truncation_bootstrap():
     # Interleaved environments, one true terminal and one collection boundary.
     records = [dict(env=0, episode=0, terminal=False, reward=.02, value=.8),

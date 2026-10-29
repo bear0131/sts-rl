@@ -270,9 +270,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
             nosl_is_az and nosl_is_az_inner_only
         ):
             raise ValueError("NOSL upper rules require inner-only NOSL training")
-        if nosl_is_az_combat_strategy not in ("model", "turn-planner"):
+        if nosl_is_az_combat_strategy not in ("model", "turn-planner", "small-playout"):
             raise ValueError("NOSL-IS-AZ combat strategy must be model or turn-planner")
-        if nosl_is_az_combat_strategy == "turn-planner" and not (
+        if nosl_is_az_combat_strategy in ("turn-planner", "small-playout") and not (
             nosl_is_az and nosl_is_az_inner_only
         ):
             raise ValueError("turn-planner combat requires inner-only NOSL collection")
@@ -719,7 +719,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
     def configure_rulebase_lower(self) -> tuple[int, int]:
         """Freeze the learned combat core for upper-only rulebase collection."""
-        if getattr(self, "nosl_is_az_combat_strategy", "model") != "turn-planner":
+        if getattr(self, "nosl_is_az_combat_strategy", "model") not in ("turn-planner", "small-playout"):
             raise ValueError("rulebase lower is not enabled")
         if not joint_upper(self):
             raise ValueError("rulebase lower requires the joint strategic policy")
@@ -984,7 +984,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 finally:
                     runtime.clear()
 
-        if result and self.hierarchical_combat_hp:
+        if (result and self.hierarchical_combat_hp
+                and self.nosl_is_az_combat_strategy != 'small-playout'):
             self._apply_hierarchical_returns(rollout_buffer, captured)
         if result and reasoning_enabled:
             if len(raw_reasoning_steps) != rollout_buffer.buffer_size:
@@ -1121,7 +1122,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
         upper_rules = getattr(self, "nosl_is_az_upper_strategy", "model") == "rules"
         rulebase_lower = getattr(
             self, "nosl_is_az_combat_strategy", "model"
-        ) == "turn-planner"
+        ) in ("turn-planner", "small-playout")
+        small_lower = getattr(self, "nosl_is_az_combat_strategy", "model") == "small-playout"
+        if small_lower:
+            from rl.training.small_playout import configure_collection
+            configure_collection(self, env)
         if upper_rules and not self.nosl_is_az_inner_only:
             raise ValueError("NOSL upper rules require inner-only NOSL training")
         overworld_rule_decisions = overworld_fallback_decisions = 0
@@ -1273,7 +1278,15 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     actions_np[index] = action
                     overworld_rule_decisions += 1
             result_by_index = {}
-            if combat_indices and rulebase_lower:
+            if combat_indices and small_lower:
+                small_started = time.perf_counter()
+                result_by_index = call_workers('small_playout_decision', {
+                    index: ((), {'state_nonce': (int(self.nosl_is_az_master_nonce)
+                        ^ int(self.num_timesteps) * 0x9E3779B97F4A7C15
+                        ^ int(n_steps) * 0xD1B54A32D192ED03 ^ index) & ((1 << 64)-1)})
+                    for index in combat_indices})
+                rulebase_lower_batch_seconds += time.perf_counter()-small_started
+            if combat_indices and rulebase_lower and not small_lower:
                 rule_batch_started = time.perf_counter()
                 results = call_workers("rulebase_turn_decision", {
                     env_index: ((), {
@@ -1762,6 +1775,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     and infos[idx].get("terminal_observation") is not None
                     and infos[idx].get("TimeLimit.truncated", False)
                     and not self._outer_return
+                    and not small_lower
                 ):
                     terminal_obs = self.policy.obs_to_tensor(
                         infos[idx]["terminal_observation"]
@@ -1791,9 +1805,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
             self._last_episode_starts = dones
 
         with th.no_grad():
-            values = self.policy.predict_values(
-                obs_as_tensor(new_obs, self.device)
-            )
+            values = (th.zeros(env.num_envs, device=self.device) if small_lower else
+                      self.policy.predict_values(obs_as_tensor(new_obs, self.device)))
+        if small_lower:
+            self._small_playout_stats = env.small_playout_stats()
+            for key, value in self._small_playout_stats.items():
+                self.logger.record('small_playout/'+key, value)
         if self._outer_return:
             # Only completed segment targets train this experiment. PPO's
             # rollout is retained for transport/lifecycle, never an HP target.
