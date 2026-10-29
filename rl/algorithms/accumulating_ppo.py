@@ -1225,7 +1225,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 env.num_envs, -1
             )[:, 0]
             for env_index, phase_id in enumerate(phase):
-                if int(phase_id) == combat_phase or not active_combat_samples[env_index]:
+                if (int(phase_id) == combat_phase or not active_combat_samples[env_index]
+                        or outer.is_monte_carlo(self)):
                     continue
                 # The environment can be externally reset between collectors.
                 # Such roots have no objective terminal HP and must not leak

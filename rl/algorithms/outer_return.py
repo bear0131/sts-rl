@@ -1,4 +1,4 @@
-"""Executed combat segments under a fixed upper actor/critic (gamma = 1)."""
+"""Combat-segment bootstrap or actual full-run returns under a frozen upper actor."""
 from functools import lru_cache
 import hashlib
 import time
@@ -10,6 +10,7 @@ import torch
 from env.core import encode, vocab as V
 from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, CombatExit, strategic_reward, SCALAR_OBJECTIVES, FINITE_OBJECTIVE
 from env.core.outer_return import NORMALIZED_OBJECTIVE, MIXED_RAW_OBJECTIVE, NORMALIZATION, observation_reward_max
+from env.core.outer_return import MC_OBJECTIVE, MC_EXIT_KEY
 from rl.search.native import observation_as_tensor
 from rl.algorithms.combat_distribution import MEAN_CONTRACT
 
@@ -22,6 +23,10 @@ def is_normalized(model):
 
 def is_mixed_raw(model):
     return getattr(model.policy.core, 'training_objective', None) == MIXED_RAW_OBJECTIVE
+
+
+def is_monte_carlo(model):
+    return getattr(getattr(model.policy, 'core', None), 'training_objective', None) == MC_OBJECTIVE
 
 
 @lru_cache(maxsize=1)
@@ -45,6 +50,10 @@ def contract(model):
                          'gumbel_max_visit_init', 'merge_equivalent_actions')})
     if objective == FINITE_OBJECTIVE:
         identity['finite_curves'] = model.policy.core.finite_curve_bank.identity
+    elif objective == MC_OBJECTIVE:
+        identity.update(boundary='actual-run-terminal-v1', supervision='raw-undiscounted-run-return',
+                        supervision_normalization='none', search_normalization=dict(NORMALIZATION),
+                        exit_value='lower-pre-settlement-terminal-state-v1', exit_observation=MC_EXIT_KEY)
     elif objective == MIXED_RAW_OBJECTIVE:
         identity.update(supervision='raw-exit-half-plus-whole-fight-pre-search-critic-mean-half-v1',
                         search_normalization=dict(NORMALIZATION), supervision_normalization='none',
@@ -69,7 +78,7 @@ def contract(model):
 
 
 def setup(model):
-    if (is_normalized(model) or is_mixed_raw(model)) and model.nosl_is_az_gumbel_rescale_q:
+    if (is_normalized(model) or is_mixed_raw(model) or is_monte_carlo(model)) and model.nosl_is_az_gumbel_rescale_q:
         raise ValueError('remaining reward normalization requires qnorm disabled')
     if not (model.nosl_is_az and model.nosl_is_az_inner_only and model.nosl_is_az_cpp and
             model.nosl_is_az_upper_strategy == 'model' and model.nosl_is_az_combat_strategy == 'model' and
@@ -152,6 +161,8 @@ def upper_actions(model, observations, masks, actions, root_logits):
 
 def finish_step(model, before, after, dones, infos, pending):
     """Label only executed roots, including roots retained across collections."""
+    if is_monte_carlo(model):
+        return finish_monte_carlo_step(model, before, dones, infos, pending)
     completed = discarded = fights = 0
     bank = getattr(model.policy.core, 'finite_curve_bank', None)
     exits = {}
@@ -251,6 +262,62 @@ def finish_step(model, before, after, dones, infos, pending):
         fights += 1
     model._outer_collection['labelled_roots'] += completed
     return completed, discarded, fights
+
+
+def finish_monte_carlo_step(model, before, dones, infos, pending):
+    """Keep full trajectories pending until a natural run end; never bootstrap.
+
+    Exit observations are BEFORE reward settlement. Their prefix therefore
+    excludes the reward of the transition that just ended the fight, matching
+    the hypothetical terminal BC passed to the lower search critic.
+    """
+    from rl.algorithms.accumulating_ppo import _append_nosl_value_only_sample
+    completed = discarded = ended = 0
+    metrics = model._outer_collection
+    for i, info in enumerate(infos):
+        censored = bool(info.get('TimeLimit.truncated') or info.get('dead_screen'))
+        if censored:
+            discarded += len(pending[i])
+            pending[i].clear()
+            model._outer_pending_rewards[i] = 0.
+            metrics['censored_segments'] += 1
+            continue
+        stats = info.get('run_stats')
+        if stats is None:
+            raise ValueError('Monte Carlo return requires run statistics at every phase')
+        prefix = float(model._outer_pending_rewards[i])
+        terminal = info.pop('nosl_value_terminal_observation', None)
+        if terminal is not None:
+            if not bool(np.asarray(terminal[MC_EXIT_KEY]).item()):
+                raise ValueError('Monte Carlo exit observation omitted its boundary marker')
+            _append_nosl_value_only_sample(pending[i], terminal, model.action_space.n,
+                                          sample_kind='actual_combat_exit')
+            pending[i][-1]['outer_reward_prefix'] = prefix
+            metrics['combat_exits'] += 1
+        model._outer_pending_rewards[i] += strategic_reward(
+            round(float(before['act'][i, 0]) * encode.ACT_SCALE),
+            round(float(before['floor'][i, 0]) * encode.FLOOR_SCALE),
+            stats, done=bool(dones[i]), censored=False)
+        if not dones[i]:
+            continue
+        total = float(model._outer_pending_rewards[i])
+        for sample in pending[i]:
+            value = total - sample['outer_reward_prefix']
+            if not np.isfinite(value):
+                raise ValueError('nonfinite actual run return')
+            sample.update(value_target=value, outer_exit_kind='terminal',
+                          outer_episode_seed=stats.get('seed'), outer_outcome=stats['outcome'])
+            metrics['target_sum'] += value
+            metrics['target_min'] = value if metrics['target_min'] is None else min(metrics['target_min'], value)
+            metrics['target_max'] = value if metrics['target_max'] is None else max(metrics['target_max'], value)
+        completed += len(pending[i])
+        model._nosl_is_az_samples.extend(pending[i])
+        pending[i] = []
+        model._outer_pending_rewards[i] = 0.
+        metrics['terminal_exits'] += 1
+        ended += 1
+    metrics['labelled_roots'] += completed
+    return completed, discarded, ended
 
 
 def finish_collection(model):

@@ -342,10 +342,11 @@ class SlayTheSpireEnv(gym.Env):
         self._defer_combat_observation = False
         self._combat_observation_pending = False
         self.outer_return_context = bool(outer_return_context)
-        from .outer_return import OBJECTIVE, SCALAR_OBJECTIVES, FINITE_OBJECTIVE, NORMALIZED_OBJECTIVE, MIXED_RAW_OBJECTIVE
+        from .outer_return import OBJECTIVE, SCALAR_OBJECTIVES, FINITE_OBJECTIVE, NORMALIZED_OBJECTIVE, MIXED_RAW_OBJECTIVE, MC_OBJECTIVE
+        self.outer_return_monte_carlo = combat_value_objective == MC_OBJECTIVE
         self.outer_return_normalized = combat_value_objective == NORMALIZED_OBJECTIVE
         self.outer_return_mixed_raw = combat_value_objective == MIXED_RAW_OBJECTIVE
-        self.outer_return_search_normalized = self.outer_return_normalized or self.outer_return_mixed_raw
+        self.outer_return_search_normalized = self.outer_return_normalized or self.outer_return_mixed_raw or self.outer_return_monte_carlo
         if self.outer_return_search_normalized and not self.outer_return_context:
             raise ValueError('remaining reward normalization requires public run context')
         if self.outer_return_search_normalized and ascension != 0:
@@ -442,6 +443,9 @@ class SlayTheSpireEnv(gym.Env):
         if self.outer_return_context:
             self.observation_space.spaces['outer_deck_misc'] = spaces.Box(
                 low=0, high=np.inf, shape=(encode.DECK_SLOTS,), dtype=np.float32)
+        if self.outer_return_monte_carlo:
+            self.observation_space.spaces['combat_mc_exit'] = spaces.Box(
+                low=0, high=1, shape=(1,), dtype=np.float32)
         if self._joint_actions:
             self.observation_space.spaces['combat_legal'] = spaces.Box(
                 low=0, high=1, shape=(self._neural_width,), dtype=bool)
@@ -451,6 +455,7 @@ class SlayTheSpireEnv(gym.Env):
         super().reset(seed=seed)
         self.thick = self._backend_factory()
         self.thick._finite_curve_objective = self.finite_curve_objective
+        self.thick._actual_run_return = self.outer_return_monte_carlo
         if self._joint_actions and not hasattr(self.thick, 'bc'):
             raise ValueError('joint-v2 requires the native combat backend')
         if self._nosl_is_az_boss_transition_target:
@@ -511,6 +516,7 @@ class SlayTheSpireEnv(gym.Env):
             "outer_return_objective": self.outer_return_objective,
             "outer_return_normalized": self.outer_return_normalized,
             "outer_return_mixed_raw": self.outer_return_mixed_raw,
+            "outer_return_monte_carlo": self.outer_return_monte_carlo,
             "finite_curve_objective": self.finite_curve_objective,
             "backend_seed": int(self._episode_backend_seed),
             "backend_identity": (self.thick.training_identity()
@@ -541,6 +547,8 @@ class SlayTheSpireEnv(gym.Env):
             raise ValueError('environment combat objective mismatch')
         if state.get('finite_curve_objective', False) != self.finite_curve_objective:
             raise ValueError('environment finite curve objective mismatch')
+        if state.get('outer_return_monte_carlo', False) != self.outer_return_monte_carlo:
+            raise ValueError('Monte Carlo return objective mismatch')
         if state.get('outer_return_mixed_raw', False) != self.outer_return_mixed_raw:
             raise ValueError('restored environment mixed raw objective differs')
         if state.get('outer_return_normalized', False) != self.outer_return_normalized:
@@ -850,7 +858,7 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_context_before = context
 
     def _backend_step(self, semantic):
-        if self.outer_return_context and not self.outer_return_objective:
+        if self.outer_return_context and (not self.outer_return_objective or self.outer_return_monte_carlo):
             self._capture_nosl_context()
         before = (self.thick.gc.act, self.thick.gc.floor_num) if self.outer_return_context else None
         capture_nosl_value = self._nosl_value_capture_pending
@@ -866,6 +874,7 @@ class SlayTheSpireEnv(gym.Env):
                     boundary_observation = self._native_leaf_observation(
                         raw_boundary, combat_only=True
                     )
+        self.thick._actual_run_return = self.outer_return_monte_carlo
         result = self.thick.step(semantic)
         self._invalidate_backend_cache()
         return self._with_nosl_value_observations(
@@ -876,7 +885,7 @@ class SlayTheSpireEnv(gym.Env):
         )
 
     def _backend_step_native_combat(self, action_bits):
-        if self.outer_return_context and not self.outer_return_objective:
+        if self.outer_return_context and (not self.outer_return_objective or self.outer_return_monte_carlo):
             self._capture_nosl_context()
         before = (self.thick.gc.act, self.thick.gc.floor_num) if self.outer_return_context else None
         self._nosl_value_capture_pending = False
@@ -893,6 +902,7 @@ class SlayTheSpireEnv(gym.Env):
                 boundary_observation = self._native_leaf_observation(
                     raw_boundary, combat_only=True
                 )
+        self.thick._actual_run_return = self.outer_return_monte_carlo
         result = step_native(int(action_bits))
         self._invalidate_backend_cache()
         return self._with_nosl_value_observations(
@@ -910,8 +920,13 @@ class SlayTheSpireEnv(gym.Env):
             if before is None:
                 raise RuntimeError('outer-return transition omitted its before state')
             reward = strategic_reward(*before, self.thick.run_stats(), done=terminated, censored=False)
+            terminal_state = transition_info.get('nosl_value_terminal_state')
             transition_info = {key: value for key, value in transition_info.items()
                                if not key.startswith('nosl_value_terminal_')}
+            if self.outer_return_monte_carlo and terminal_state is not None:
+                terminal_obs = self._native_leaf_observation(terminal_state, combat_only=True)
+                terminal_obs['combat_mc_exit'][:] = 1.
+                transition_info['nosl_value_terminal_observation'] = terminal_obs
             if has_terminal_state or transition_info.get('finite_curve_exit') is not None:
                 transition_info['outer_combat_exit'] = True
             return canon, reward, terminated, transition_info
@@ -1636,6 +1651,8 @@ class SlayTheSpireEnv(gym.Env):
         return self._with_joint_legal(obs, raw_state.get('joint_action_ids', ()))
 
     def _with_joint_legal(self, obs, policy_ids):
+        if self.outer_return_monte_carlo:
+            obs['combat_mc_exit'] = np.zeros(1, dtype=np.float32)
         if self._joint_actions:
             obs['combat_legal'] = C.joint_mask(policy_ids, contract=self.combat_action_contract)[self._policy_offset:]
         return obs
@@ -1670,6 +1687,8 @@ class SlayTheSpireEnv(gym.Env):
             from .outer_return import CONTEXT_KEYS
             root_obs = self._obs() if root_context is None else root_context
             result.update({key: root_obs[key] for key in CONTEXT_KEYS})
+        if self.outer_return_monte_carlo:
+            result['combat_mc_exit'] = np.zeros(1, dtype=np.float32)
         return result
 
     def _native_packed_observation_batch(self, response):
@@ -2112,7 +2131,7 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_merge_equivalent_actions = bool(merge_equivalent_actions)
         if self.thick is None or self._phase() != "combat":
             raise RuntimeError("native NOSL search requires a live combat state")
-        if self.outer_return_mixed_raw:
+        if self.outer_return_mixed_raw or self.outer_return_monte_carlo:
             from .outer_return import remaining_reward_max
             root_value = float(root_value) / remaining_reward_max(self.thick.gc.act, self.thick.gc.floor_num)
         self._nosl_outer_branch = None
@@ -2754,6 +2773,8 @@ class SlayTheSpireEnv(gym.Env):
             # A vector environment may reuse or mutate its observation storage.
             # These small arrays must survive that and the upcoming transition.
             self._nosl_current_context = {key: obs[key].copy() for key in CONTEXT_KEYS}
+        if self.outer_return_monte_carlo and not upper_value_only:
+            obs['combat_mc_exit'] = np.zeros(1, dtype=np.float32)
         return obs
 
     def equivalent_action_groups(self):

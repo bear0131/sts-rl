@@ -560,7 +560,27 @@ def complete_searches_native(
 
 
 def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MODEL_LEAF_BACKEND):
-    """Route typed exits through complete settlement before evaluating a value."""
+    """Evaluate lower leaves and dispatch exits according to the target contract."""
+    from env.core.outer_return import MC_OBJECTIVE
+    if getattr(model.policy.core, 'training_objective', None) == MC_OBJECTIVE:
+        # Every request, including terminal BCs before settlement, is predicted
+        # by the lower critic. Actual returns supervise only executed states.
+        backend = (getattr(model, '_native_leaf_inference', None)
+                   if leaf_backend is MODEL_LEAF_BACKEND else leaf_backend)
+        direct = getattr(backend, 'forward_native', None)
+        runtime = getattr(model, '_rollout_inference', None)
+        if direct is not None and (runtime is None or runtime.lower.max_bytes == 0):
+            if runtime is None:
+                logits, values = direct(batch)
+            else:
+                logits, values = runtime.lower.forward(batch.observation_layout(), lambda _: direct(batch))
+        else:
+            logits, values = forward_leaves(model, batch.observations(), compact=True,
+                                           autocast=autocast, leaf_backend=leaf_backend)
+        values = np.asarray(values, dtype=np.float32).reshape(-1) / batch.value_scales()
+        if not np.isfinite(values).all():
+            raise ValueError('Monte Carlo search received a nonfinite value')
+        return logits, values
     runtime = getattr(model, '_rollout_inference', None)
     bank = getattr(model.policy.core, 'finite_curve_bank', None)
     logits = np.zeros((batch.rows, model.action_space.n), dtype=np.float32)

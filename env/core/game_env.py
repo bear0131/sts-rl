@@ -570,7 +570,7 @@ class SimGameEnv:
         if self.bc is None or not self.bc.is_battle_over:
             return None
         state = self.bc.to_dict()
-        if state.get("outcome") != combat_env._OUTCOME_VICTORY:
+        if state.get("outcome") != combat_env._OUTCOME_VICTORY and not getattr(self, "_actual_run_return", False):
             return None
         return state
 

@@ -336,3 +336,12 @@ Python `NativeTurnPlanner.choose` 保留为串行参考。符文圆顶与未完�
 与raw continuation相加后除同一M，连战lower不乘M(next)。qnorm保持关闭。
 该目标改变统计方法；不能混用旧normalized checkpoint/replay，也不等于
 等待整局真实回报的MC实验。profile为combat_mixed_raw_outer_return_876_4x5090.json。
+
+`combat-actual-run-return-search-normalized-v1` 的监督仅来自实际轨迹：每个
+下层状态至整局自然结束的未折扣战略奖励和，包含之后全部战斗和上层决策。
+未结束整局跨collection保留，截断整局丢弃，不以critic补尾、不归一化标签。
+876仅提供冻结上层actor；搜索普通叶与假想战斗出口均由下层raw critic
+预测后除源状态M。额外输入combat_mc_exit区分结算前战斗出口，真实经历
+的出口作为policy_weight=0样本使用同样MC标签。上层critic不参与搜索和
+监督（上层选动作的共享actor/critic前向可能仍计算未使用的value）。
+新objective/观测标志进入checkpoint合同，不能混用旧目标replay或模型。

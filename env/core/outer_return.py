@@ -6,7 +6,9 @@ from .finite_curves import OBJECTIVE as FINITE_OBJECTIVE
 OBJECTIVE = 'combat-outer-return-frozen-upper-v1'
 NORMALIZED_OBJECTIVE = 'combat-outer-return-remaining-max-v1'
 MIXED_RAW_OBJECTIVE = 'combat-outer-return-raw-trajectory-mix-v1'
-SCALAR_OBJECTIVES = (OBJECTIVE, FINITE_OBJECTIVE, NORMALIZED_OBJECTIVE, MIXED_RAW_OBJECTIVE)
+MC_OBJECTIVE = 'combat-actual-run-return-search-normalized-v1'
+MC_EXIT_KEY = 'combat_mc_exit'
+SCALAR_OBJECTIVES = (OBJECTIVE, FINITE_OBJECTIVE, NORMALIZED_OBJECTIVE, MIXED_RAW_OBJECTIVE, MC_OBJECTIVE)
 NORMALIZATION = dict(schema='remaining-strategic-reward-max-v1', last_floor=51,
                      ascension=0, last_act=3, clip=False)
 CONTEXT_SCHEMA = 'combat-public-run-context-v2'

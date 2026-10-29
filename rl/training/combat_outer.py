@@ -34,6 +34,7 @@ def construct(args, profile):
                                 _outer_return=material['objective'] in SCALAR_OBJECTIVES)
     # Preserve optional source observation fields; the lower extension is explicit.
     schema_env = SlayTheSpireEnv(combat_action_contract='autoregressive-v2', outer_return_context=True,
+                                combat_value_objective=material['objective'],
                                 **observation_flags(prototype))
     prototype.observation_space = schema_env.observation_space
     schema_env.close()

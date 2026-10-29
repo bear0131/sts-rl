@@ -77,7 +77,7 @@ class NativeRootObservationBatch:
         names = {'phase', 'arg_step', 'post_enemy_turn_boundary', 'combat_is_boss',
                  'character', 'ascension', 'act', 'floor', 'next_boss', 'gold',
                  'run_hp', 'run_keys', 'relics', 'relic_counters', 'potions',
-                 'deck_ids', 'deck_upgrades', 'deck_size', 'outer_deck_misc'}
+                 'deck_ids', 'deck_upgrades', 'deck_size', 'outer_deck_misc', 'combat_mc_exit'}
         names.update(key for key in self.prototypes if key.startswith('deck_card_'))
         self.global_keys = frozenset(names.intersection(self.prototypes))
         self.stats = _nosl_card_stats()

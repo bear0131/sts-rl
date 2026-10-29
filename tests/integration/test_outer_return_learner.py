@@ -78,7 +78,7 @@ class QuickBackend(SimGameEnv):
             self.bc.set_player_strength(999)
 
 
-@pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.NORMALIZED_OBJECTIVE, outer.MIXED_RAW_OBJECTIVE, outer.FINITE_OBJECTIVE,
+@pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.NORMALIZED_OBJECTIVE, outer.MIXED_RAW_OBJECTIVE, outer.MC_OBJECTIVE, outer.FINITE_OBJECTIVE,
                                      'combat-outcome-quantiles-v1', 'combat-outcome-means-v1',
                                      'combat-outcome-means-v1-continuous',
                                      'combat-outcome-means-v1-full-or-zero',
@@ -90,6 +90,7 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     if boss_ablation:
         objective = objective.removesuffix('-'+boss_ablation)
     control = objective not in outer.SCALAR_OBJECTIVES
+    mc = objective == outer.MC_OBJECTIVE
     finite = objective == outer.FINITE_OBJECTIVE
     means = objective == 'combat-outcome-means-v1'
     outer_material = dict(outer_material, objective=objective)
@@ -110,7 +111,7 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
         n_steps=128, batch_size=32, n_epochs=1, gamma=1., device='cpu', seed=42101,
         nosl_is_az=True, nosl_is_az_cpp=True, nosl_is_az_inner_only=True,
         nosl_is_az_fixed_worldline=True, nosl_is_az_upper_strategy='model',
-        nosl_is_az_gumbel_rescale_q=objective not in (outer.NORMALIZED_OBJECTIVE, outer.MIXED_RAW_OBJECTIVE),
+        nosl_is_az_gumbel_rescale_q=objective not in (outer.NORMALIZED_OBJECTIVE, outer.MIXED_RAW_OBJECTIVE, outer.MC_OBJECTIVE),
         nosl_is_az_simulations=4, nosl_is_az_updates=2,
         nosl_is_az_leaf_batch_size=1,
         nosl_is_az_batch_size=64, nosl_is_az_micro_batch_size=32,
@@ -172,12 +173,15 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     else:
         assert all(p['outer_return/labelled_roots'] > 0 for p in payloads)
         assert all(p['outer_return/upper_updates'] == 0 for p in payloads)
-        if not finite:
+        if not finite and not mc:
             assert all(p['outer_return/collector_upper_batches'] > 0 for p in payloads)
             assert all(p['outer_return/collector_upper_value_seconds'] > 0 for p in payloads)
             assert all(p['nosl_is_az/outer_value_seconds'] > 0 for p in payloads)
             assert all(p['nosl_is_az/outer_value_batches'] > 0 for p in payloads)
             assert all(p['nosl_is_az/outer_exit_rows'] >= p['nosl_is_az/outer_value_rows'] > 0 for p in payloads)
+        if mc:
+            assert all(p['outer_return/collector_upper_batches'] == 0 for p in payloads)
+            assert all(p['nosl_is_az/outer_settlement_seconds'] == 0 for p in payloads)
         if objective == outer.MIXED_RAW_OBJECTIVE:
             assert all(p['outer_return/mixed_fights'] > 0 for p in payloads)
             assert all(p['nosl_is_az/root_value_predictions_skipped'] == 0 for p in payloads)
@@ -187,9 +191,9 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     assert all(p['nosl_is_az/updates'] == 2 for p in payloads)
     if not control:
         assert all(p['nosl_is_az/lower_cache_requests'] > 0 for p in payloads)
-        assert all((p['nosl_is_az/upper_cache_requests'] == 0 if finite else
+        assert all((p['nosl_is_az/upper_cache_requests'] == 0 if finite or mc else
                     p['nosl_is_az/upper_cache_requests'] > 0) for p in payloads)
-        assert all(p['nosl_is_az/outer_settlement_seconds'] > 0 for p in payloads)
+        assert all(p['nosl_is_az/outer_settlement_seconds'] == 0 if mc else p['nosl_is_az/outer_settlement_seconds'] > 0 for p in payloads)
     restored_env = make_env()
     restored = AccumulatingMaskablePPO.load(output, env=restored_env, device='cpu')
     assert restored.policy.core.teacher.assert_integrity() == teacher

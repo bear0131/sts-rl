@@ -42,6 +42,8 @@ class NativeSearchBatch:
         # two fields made batched native leaves differ byte-for-byte from the
         # serial bridge path.
         self._prototypes = dict(shapes)
+        if first.outer_return_monte_carlo:
+            self._prototypes['combat_mc_exit'] = np.zeros(1, dtype=np.float32)
         if self.public_context:
             from env.core.outer_return import CONTEXT_KEYS
             self._prototypes.update({key: np.zeros(first.observation_space[key].shape,
@@ -162,6 +164,13 @@ class NativeSearchBatch:
                 for index, value in changes.items():
                     if 0 <= index < result['deck_ids'].shape[1] and result['deck_ids'][row, index] != 0:
                         result['outer_deck_misc'][row, index] = value / MISC_SCALE
+        if 'combat_mc_exit' in result:
+            count = self.rows if rows is None else len(rows)
+            result['combat_mc_exit'][:count] = 0.
+            selected = range(self.rows) if rows is None else rows
+            for target, source in enumerate(selected):
+                if source in self.combat_exit_rows:
+                    result['combat_mc_exit'][target, 0] = 1.
         self.decode_seconds += time.perf_counter()-started
         return result
 

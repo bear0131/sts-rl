@@ -11,6 +11,7 @@ from stable_baselines3.common.save_util import json_to_data
 
 from env.core import vocab as V
 from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, CONTEXT_KEYS, SCALAR_OBJECTIVES, FINITE_OBJECTIVE
+from env.core.outer_return import MC_OBJECTIVE, MC_EXIT_KEY
 from env.core.finite_curves import FiniteCurveBank
 from rl.policies.entity_combat import (
     EntityCombatConfig, EntityCombatCore, EntityCombatNetwork, EntityCombatPolicy,
@@ -89,7 +90,7 @@ class OuterCombatNetwork(EntityCombatNetwork):
         self.context_character = nn.Embedding(int(space['character'].high.max()) + 1, 8)
         self.context_deck = nn.Linear(int(self.card.embedding_dim) + 2, width)
         # Public act/floor/run HP/ascension/keys plus boss/character/deck summary.
-        self.context = nn.Sequential(nn.Linear(width + 33, width), nn.GELU(), nn.Linear(width, width))
+        self.context = nn.Sequential(nn.Linear(width + 33 + int(objective == MC_OBJECTIVE), width), nn.GELU(), nn.Linear(width, width))
         if initialization == '876':
             nn.init.zeros_(self.context[-1].weight)
             nn.init.zeros_(self.context[-1].bias)
@@ -121,6 +122,8 @@ class OuterCombatNetwork(EntityCombatNetwork):
         scalars = torch.cat([obs[key].float() for key in ('act', 'floor', 'run_hp', 'ascension', 'run_keys')], -1)
         context = torch.cat((pooled, scalars, self.context_boss(obs['next_boss'].long().flatten()),
                              self.context_character(obs['character'].long().flatten())), -1)
+        if self.objective == MC_OBJECTIVE:
+            context = torch.cat((context, obs[MC_EXIT_KEY].float()), -1)
         return context.to(dtype)
 
     def _value(self, state, obs):
@@ -153,6 +156,8 @@ class OuterReturnCore(EntityCombatCore):
             raise ValueError('outer-return policy requires public run context')
         self.lower_initialization = lower_initialization
         self.training_objective = objective
+        if objective == MC_OBJECTIVE:
+            self.combat_observation_keys = self.combat_observation_keys | {MC_EXIT_KEY}
         self.boss_ablation = boss_ablation
         self.combat = OuterCombatNetwork(source.combat, source_space, space,
             initialization=lower_initialization, objective=objective, boss_ablation=boss_ablation)

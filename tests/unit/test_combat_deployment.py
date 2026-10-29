@@ -63,10 +63,11 @@ def test_production_ssh_socket_fits_even_with_long_deployment_paths():
         assert len(str(directory).encode()) + 1 + 40 + 17 < 104
 
 
-@pytest.mark.parametrize('mixed', [False, True])
+@pytest.mark.parametrize('mixed', [False, True, 'mc'])
 def test_normalized_profile_keeps_production_workload_and_fresh_lower(mixed):
     config = configuration()
-    config['profile'] = ('configs/train/combat_mixed_raw_outer_return_876_4x5090.json' if mixed else
+    config['profile'] = ('configs/train/combat_actual_run_return_876_4x5090.json' if mixed == 'mc' else
+                        'configs/train/combat_mixed_raw_outer_return_876_4x5090.json' if mixed else
                          'configs/train/combat_normalized_outer_return_876_4x5090.json')
     validate(config, connected=True)
     profile = json.loads((ROOT/config['profile']).read_text())
@@ -76,7 +77,8 @@ def test_normalized_profile_keeps_production_workload_and_fresh_lower(mixed):
     assert profile['search']['gumbel_rescale_q'] is False
     assert profile['contract']['lower_init'] == 'random'
     assert profile['source']['teacher_round'] == 876
-    assert profile['contract']['objective_id'] == ('combat-outer-return-raw-trajectory-mix-v1' if mixed else
+    assert profile['contract']['objective_id'] == ('combat-actual-run-return-search-normalized-v1' if mixed == 'mc' else
+                                                    'combat-outer-return-raw-trajectory-mix-v1' if mixed else
                                                     'combat-outer-return-remaining-max-v1')
     if mixed:
         assert profile['contract']['supervision_normalization'] == 'none'
