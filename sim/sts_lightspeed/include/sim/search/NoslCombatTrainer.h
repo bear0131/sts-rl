@@ -409,6 +409,7 @@ public:
                                       bool train = true);
 
     static std::uint64_t stateKey(const BattleContext &bc);
+    static std::uint64_t actionKey(const BattleContext &bc, const Action &action);
     void clearTable();
     bool saveTable(const std::string &path) const;
     std::size_t policyStateCount() const { return policy_.size(); }

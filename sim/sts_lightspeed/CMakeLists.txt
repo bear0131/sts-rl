@@ -16,7 +16,7 @@ add_subdirectory(json)
 add_subdirectory(pybind11)
 
 find_package(Threads REQUIRED)
-pybind11_add_module(slaythespire bindings/slaythespire.cpp bindings/bindings-util.cpp bindings/neural-observation.cpp bindings/upper-value.cpp ${sts_lightspeed_SOURCES})
+pybind11_add_module(slaythespire bindings/slaythespire.cpp bindings/bindings-util.cpp bindings/neural-observation.cpp bindings/upper-value.cpp bindings/small-playout.cpp ${sts_lightspeed_SOURCES})
 # Rule-search priorities mirror Python doubles: contraction changes exact ties.
 target_compile_options(slaythespire PRIVATE $<$<CXX_COMPILER_ID:GNU,Clang>:-ffp-contract=off>)
 if (STS_ENABLE_RULE_TRACE)

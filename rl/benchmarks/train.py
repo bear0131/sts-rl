@@ -20,7 +20,9 @@ import time
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--output", type=Path, required=True)
-    p.add_argument("--workload", choices=("train", "leaves", "rollout"), default="train")
+    p.add_argument("--workload", choices=("train", "leaves", "rollout", "small-playout"), default="train")
+    p.add_argument("--encounter", default="Jaw Worm", help="small-playout battle fixture, with Ironclad starter deck")
+    p.add_argument("--battle-deck", nargs='+', help="small-playout explicit native card IDs; default Ironclad starter")
     p.add_argument("--search-config", type=Path, help="NativeSearchConfig JSON for fixed rollout comparisons")
     p.add_argument("--checkpoint", type=Path, help="Existing model for the leaf inference workload")
     p.add_argument("--leaf-repeats", type=int, default=200)
@@ -76,6 +78,9 @@ def make_environment():
 
 
 def run_worker(args):
+    if args.workload == 'small-playout':
+        from rl.benchmarks.small_playout import run
+        return run(args)
     if args.leaf_graph_capacity < 1:
         raise ValueError('leaf graph capacity must be positive')
     if (args.leaf_graph_capacity != 32 or args.no_leaf_compile or args.leaf_host_wait != 'spin') and (

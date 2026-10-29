@@ -2704,7 +2704,10 @@ py::dict ruleTurnResult(const search::ruleturn::Result &r,int worlds) {
 
 } // namespace
 
+void bindSmallPlayout(pybind11::module_ &m);
+
 PYBIND11_MODULE(slaythespire, m) {
+    bindSmallPlayout(m);
     m.def("card_instance_traits", [](const std::string &name, int upgrades) {
         const auto id = cardIdFromEnum(name);
         if (id == CardId::INVALID || upgrades < 0 || upgrades > 32767 ||

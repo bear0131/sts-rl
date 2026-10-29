@@ -55,6 +55,30 @@ class DecisionStrategy(Protocol):
     def decide(self, requests: list[DecisionRequest], *, check: Callable[[], None]) -> list[Decision]: ...
 
 
+class SmallPlayoutStrategy:
+    """Complete native battle actions; compose with an upper via PhaseStrategy."""
+    name = 'small-playout'
+    combat_action_contract = 'native-v1'
+
+    def __init__(self, search):
+        self.search = search
+
+    def manifest(self):
+        return self.search.manifest()
+
+    def decide(self, requests, *, check=lambda: None):
+        check()
+        if any(r.info.get('phase') != 'combat' for r in requests):
+            raise ValueError('small playout policy requires combat requests')
+        if any(getattr(getattr(r.env, 'unwrapped', r.env), 'combat_action_contract', None) != 'native-v1'
+               for r in requests):
+            raise ValueError('small playout strategy requires native-v1 complete-action environments')
+        results = self.search.search([r.env.thick.bc for r in requests],
+                                     [r.seed * 1000000007 + r.step for r in requests])
+        check()
+        return [Decision(None, self.name, result['stats'], native_action=result['action']) for result in results]
+
+
 def _forced_end_batch(strategy, requests, check):
     """Resolve forced execution roots; internal search leaves still evaluate V."""
     if strategy.combat_action_contract not in C.NEURAL_CONTRACTS:

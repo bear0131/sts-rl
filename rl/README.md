@@ -16,6 +16,50 @@
 新代码使用 canonical 包路径。`_compat/` 仅保留历史 checkpoint 所需的 20 个库别名；旧 CLI 包装已删除。不会导入两套类，不在这里实现新功能。映射/退役说明见 ../tools/validation/migrations.json。
 训练/评估参数放 ../configs；启动环境放 ../experiments/launchers；输出放 ../runs/local。不要在 rl 根目录增加实验脚本或测试。
 
+### 小型下层 playout policy
+
+`policies/small_playout.py` / `algorithms/small_playout.py` 提供独立下层闭环；
+`search/small_playout.py` 调用 C++ SmallPlayout，评估接入 `SmallPlayoutStrategy`
+并可用 `PhaseStrategy` 与上层组合（环境必须显式使用`native-v1`完整动作）。当前支持固定战斗夹具的真实采样、搜索访问分布
+交叉熵更新、逐轮报告和保存恢复；尚未接入整局上层 PPO / 多机生产。
+
+`sts1-small-playout-v1` 是纯 policy，无 value 头：32→64 ReLU→32 状态表示，
+24→32 动作投影与 24→1 线性项，加每动作 key 的32维向量和bias。
+StS1共785个key（结束/跳过/空选择3个、每卡基础/升级2个、药水），总30889参数，
+FP32为123556字节。多选动作按所选卡的key向量/bias取均值，其他卡牌特征求和。
+原生权重顺序为fc1 W/b、fc2 W/b、key embedding/bias、action projection/linear；
+Torch与原生有不同浮点归约顺序，以2e-5绝对/相对容差验证，不声称跨平台逐位相同。
+
+32维状态含玩家HP/maxHP、格挡、能量、回合、药水数、四牌堆计数、力量/敏捷、
+虚弱/易伤/脆弱/人工制品、五个固定敌槽的HP/格挡/当前伤害意图、选牌状态。
+24维动作含五类动作、费用/升级/卡类型/成长值/免费/消耗/保留/虚无、选择区域与任务、
+多选数、目标HP/maxHP/格挡/力量/易伤/虚弱/原槽位、待完成选择数量。
+它是有损的小网投影，未编码全部能力/牌堆身份/遗物；合法动作、实体位置和树key仍用
+完整模拟器契约，不用投影合并树状态。draw/discard/exhaust/generated/hand分别映射，
+非目标动作不虚构敌人目标。Runic Dome / Frozen Eye 的信息状态暂不支持，显式报错。
+
+本地v1搜索是所有房间UCT、一次policy playout、均值回传、根按最多访问选动作；
+每个叶后最多200个完整原子动作，树深另限1024。真实胜/负/玩家逃跑与两类截断独立计数。
+手工分数借鉴参考RichBoth：胜利HP/药水/回合奖励，败局敌人受损/剩余HP/存活回合塑形，
+逃跑及未追回偷金单列；未结束叶用既有BattleScumSearcher2人工分数的tanh。
+不存在876前向或学习的critic补尾。根与chance重放复用NOSL未来随机性重采样；
+EndTurn widening 23.148 / .436，其余1 / .5。当前未实现参考的独立human-BC PUCT先验、
+draw专用4 / .5、根Q选择保护、REINFORCE辅助项，也未跟踪跨根已知抽牌前缀。
+因此这是可运行的StS1原型，不是参考配方/完整信息集的生产验收；新实验规格仍launch_ready=false。
+
+复用有超时的基准入口，例如（先设置明确的原生构建路径）：
+
+```text
+python -m rl.benchmarks.train --workload small-playout --output runs/local/small-playout/cpu.json --device cpu --threads 1 --native-search-threads 1 --n-envs 1 --n-steps 512 --batch-size 32 --updates 2 --warmup-updates 0 --simulations 250 --timeout 180
+```
+
+Boss测试显式传 `--encounter Hexaghost --simulations 1000`；`--battle-deck` 后可列出
+原生卡牌ID，默认战士起始牌组。输出JSON、逐轮JSONL、最后checkpoint；第一轮保存后
+实际恢复模型/Adam/未完成战斗，第二轮使用恢复对象继续。恢复仅接受相同native SHA，
+旧大网checkpoint/replay不与此合同混用。C++内执行每步策略，Torch仅更新（CPU/CUDA皆可）；
+分别报告实际执行transition、模拟次数、chance重放、真实动作、采样/更新/保存/恢复和资源。
+测试为 `tests/integration/test_small_playout.py`，新模块缺失直接失败，不静默跳过。
+
 ### 冻结上层 teacher
 
 搜索出口的内部推理只计算冻结上层的编码器和value头，并只缓存一个value；

@@ -712,6 +712,10 @@ std::uint64_t NoslCombatTrainer::stateKey(const BattleContext &bc) {
     return publicStateKey(bc);
 }
 
+std::uint64_t NoslCombatTrainer::actionKey(const BattleContext &bc, const Action &action) {
+    return publicActionKey(bc, action);
+}
+
 double NoslCombatTrainer::hpValue(const BattleContext &bc) {
     if (bc.player.maxHp <= 0) {
         return 0.0;
