@@ -171,15 +171,21 @@ inline std::vector<Action> neuralCombatActions(const BattleContext &bc) {
     return actions;
 }
 
+// Full atomic actions encodable by the policy contract, before multi prefixes.
+// Potion discard is deliberately absent from native-v1/autoregressive-v2.
+inline std::vector<Action> completePolicyCombatActions(const BattleContext &bc) {
+    auto actions = neuralCombatActions(bc);
+    actions.erase(std::remove_if(actions.begin(), actions.end(), [](const Action &action) {
+        // Packed -1 is the unsigned 13-bit sentinel 8191.
+        return action.getActionType() == ActionType::POTION && action.getTargetIdx() > 5;
+    }), actions.end());
+    return actions;
+}
+
 inline std::vector<Action> autoregressiveActions(const BattleContext &bc, int selected) {
     if (!isMultiSelection(bc)) {
         if (selected != 0) throw std::invalid_argument("selection prefix outside multi screen");
-        auto actions = neuralCombatActions(bc);
-        actions.erase(std::remove_if(actions.begin(), actions.end(), [](const Action &action) {
-            // Packed -1 is the unsigned 13-bit sentinel 8191.
-            return action.getActionType() == ActionType::POTION && action.getTargetIdx() > 5;
-        }), actions.end());
-        return actions;
+        return completePolicyCombatActions(bc);
     }
     if (selected < 0 || selected >= (1 << bc.cards.cardsInHand))
         throw std::invalid_argument("invalid selection prefix");

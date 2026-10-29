@@ -148,7 +148,10 @@ def test_selection_regions_and_complete_subsets(combat_factory, card, zone):
     env._invalidate_backend_cache()
     assert bc.select_info()['zone'] == zone
     features = sts.small_playout_features(bc)
-    assert set(features['action_bits']) == set(env.native_combat_actions())
+    if card == 'SECRET_TECHNIQUE':
+        assert set(features['action_bits']) == {2 << 29, (2 << 29) | 100}
+    else:
+        assert set(features['action_bits']) == set(env.native_combat_actions())
     learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=16, playout_depth=2))
     with torch.inference_mode():
         expected = learner.policy(*collate_features([features])).numpy()[0]
@@ -179,6 +182,27 @@ def test_target_slots_and_potion_features(combat_factory):
             assert target in (1, 2)
             assert row[16] == pytest.approx((17 if target == 1 else 29)/200)
             assert row[22] == pytest.approx((target+1)/5)
+
+
+@pytest.mark.parametrize('contract', ['native-v1', 'autoregressive-v2'])
+def test_compact_search_uses_drink_only_contract_with_passive_potion(combat_factory, contract):
+    env = combat_factory(['STRIKE_RED', 'DEFEND_RED', 'BASH'] * 4, combat_action_contract=contract)
+    bc = env.thick.bc
+    bc.apply_custom_state({'potions': ['Fairy Potion', 'Fire Potion']})
+    env._invalidate_backend_cache()
+    features = sts.small_playout_features(bc)
+    legal = set(env.native_combat_actions())
+    assert set(features['action_bits']) == legal
+    assert not any(bits >> 29 == 1 and (bits & 0xffff) == 0 for bits in legal)
+    assert any(bits >> 29 == 1 and (bits & 0xffff) == 1 for bits in legal)
+    learner = SmallPlayoutLearner(seed=42, config=SmallSearchConfig(simulations=250))
+    for nonce in range(8):
+        result = learner.search.search([bc], [nonce])[0]
+        assert set(result['action_bits']) == legal
+        assert result['action'] in legal
+        if contract == 'autoregressive-v2':
+            mapped = env._apply_rulebase_turn_decision(result['action'], {})
+            assert env.action_masks()[mapped['action']]
 
 
 def test_dome_features_hide_intent_and_search_refuses_privileged_rollouts(combat_factory):

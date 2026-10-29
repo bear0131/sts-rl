@@ -56,7 +56,7 @@ SmallFeatures smallFeatures(const BattleContext &bc) {
         s[18 + 3*i] = incoming(bc, m) / 50;
     }
     s[31] = bc.inputState == InputState::CARD_SELECT ? 1.f : 0.f;
-    const auto actions = Action::enumerateCombatActions(bc);
+    const auto actions = completePolicyCombatActions(bc);
     const auto choices = bc.inputState == InputState::CARD_SELECT ? combatChoices(bc) : CombatChoices{};
     for (const auto &action : actions) {
         SmallActionFeatures a; a.bits = action.bits;
@@ -202,7 +202,7 @@ struct Edge {
 struct Node { int visits=0; std::vector<Edge> edges; };
 void expand(Node &node,const BattleContext &s,SmallSearchStats &stats,
             const SmallSearchConfig &cfg,const SmallPlayoutNet *prior) {
-    for (auto a:Action::enumerateCombatActions(s))
+    for (auto a:completePolicyCombatActions(s))
         node.edges.push_back({a,NoslCombatTrainer::strongActionKey(s,a),0,0,{}});
     if(node.edges.empty()) throw std::runtime_error("nonterminal has no legal compact action");
     if(cfg.usePrior) {
@@ -214,7 +214,7 @@ void expand(Node &node,const BattleContext &s,SmallSearchStats &stats,
 }
 Action resolve(const Edge &e,const BattleContext &s) {
     if(e.action.isValidAction(s) && NoslCombatTrainer::strongActionKey(s,e.action)==e.semantic) return e.action;
-    for(auto a:Action::enumerateCombatActions(s))
+    for(auto a:completePolicyCombatActions(s))
         if(NoslCombatTrainer::strongActionKey(s,a)==e.semantic) return a;
     std::ostringstream detail; detail << s;
     throw std::logic_error("compact search action cannot be remapped: turn="+std::to_string(s.turn)+
