@@ -1,0 +1,228 @@
+{
+  "kind": "spire-mentor-style-experiment-spec-v1",
+  "launch_ready": false,
+  "issue": "COMBAT-SMALL-PLAYOUT",
+  "reference": {
+    "repository": "https://github.com/tfriedel/spire-mentor",
+    "commit": "c60ce39e060e5180139eaf380e90b1dfcead4aee",
+    "evidence": [
+      "sts2-pycli/data/ppo/ppo_fullrun_ironclad_cardmods_it850.provenance.md",
+      "docs/ppo-champion-training-playbook.md",
+      "sts2-pycli/python/ppo/rollout_learn.py",
+      "sts2-rs/crates/sts2-runai/src/policy/mod.rs",
+      "sts2-rs/crates/sts2-mcts/src/lib.rs",
+      "sts2-rs/data/rollout_nets/ironclad.json",
+      "sts2-rs/data/prior_nets/README.md"
+    ],
+    "training": {
+      "simulations_common": 250,
+      "simulations_elite": 250,
+      "simulations_boss": 1000,
+      "games_per_iteration": 960,
+      "upper_algorithm": "PPO",
+      "champion_epochs": 2,
+      "champion_entropy_coef": 0.0125,
+      "champion_is_fresh": false,
+      "champion_last_leg_iterations": 150,
+      "champion_last_leg_games": 144000,
+      "champion_last_leg_seconds_per_iteration_approx": 350
+    },
+    "evaluation": {
+      "simulations_common": 4000,
+      "simulations_elite": 4000,
+      "simulations_boss": 16000
+    },
+    "search": {
+      "hidden_info": "BeliefDraw",
+      "tree_selection_common": "UCT",
+      "tree_selection_elite_and_boss": "PUCT with a separate learned move prior",
+      "exploration_by_budget": [
+        {
+          "max_simulations": 499,
+          "c": 0.8
+        },
+        {
+          "max_simulations": 999,
+          "c": 1.41
+        },
+        {
+          "max_simulations": null,
+          "c": 2.5
+        }
+      ],
+      "playout_action_cap": 200,
+      "chance_descent_cap": 1024,
+      "playouts_per_leaf": 1,
+      "backup": "mean",
+      "rollout_temperature": 1,
+      "chance_widening": {
+        "c": 1,
+        "alpha": 0.5
+      },
+      "draw_widening": {
+        "c": 4,
+        "alpha": 0.5
+      },
+      "endturn_widening": {
+        "c": 23.148,
+        "alpha": 0.436
+      },
+      "removed_counts_forms": true,
+      "terminal_eval": "RichBoth",
+      "loss_gradient": true,
+      "loss_weights": {
+        "enemy_hp_removed": 0.6,
+        "player_hp_fraction": 0.25,
+        "turns_survived": 0.15
+      },
+      "loss_turns_half_life": 8,
+      "loss_span": 0.8,
+      "loot_weight": 1,
+      "persistent_weight": 0,
+      "root_tie_epsilon": 0.02,
+      "root_guards": true,
+      "prior_mix": 0.5,
+      "prior_temperature": 1,
+      "depth_cut_evaluator": "handcrafted TexelWide in the ordinary run budget; a nonterminal is not a loss",
+      "reported_depth_probe": {
+        "source": "sts2-mcts/src/lib.rs::depth_cut_value comment (GH #512)",
+        "cap_leaves": 0,
+        "total_leaves": 5912,
+        "independently_reproduced_here": false
+      }
+    },
+    "playout_policy": {
+      "role": "action selection only; no value head",
+      "state_features": 32,
+      "action_features": 24,
+      "hidden": 64,
+      "embedding": 32,
+      "action_keys": 805,
+      "parameters": 31549,
+      "parameter_formula": "4984 + 33 * action_keys",
+      "parameter_counts": {
+        "w1": 2048,
+        "b1": 64,
+        "w2": 2048,
+        "b2": 32,
+        "emb": 25760,
+        "bias": 805,
+        "proj": 768,
+        "lin": 24
+      }
+    },
+    "separate_move_prior": {
+      "hidden": 64,
+      "embedding": 32,
+      "action_keys": 594,
+      "parameters": 24586,
+      "source": "human replay behavior cloning; different weights from the playout policy",
+      "rooms": [
+        "elite",
+        "boss"
+      ]
+    }
+  },
+  "target": {
+    "status": "specification_only_runtime_integration_pending",
+    "game": "Slay the Spire 1",
+    "character": "Ironclad",
+    "ascension": 0,
+    "acts": [
+      1,
+      2,
+      3
+    ],
+    "upper": {
+      "initialization": "random",
+      "train_card_vectors": true,
+      "freeze_parameters": false,
+      "load_teacher_checkpoint": false,
+      "load_optimizer": false,
+      "load_replay": false,
+      "objective": "existing run-level reward, PPO"
+    },
+    "lower": {
+      "architecture": "reference factorized playout policy",
+      "state_features": 32,
+      "action_features": 24,
+      "hidden": 64,
+      "embedding": 32,
+      "parameter_budget_reference": 31549,
+      "action_key_count": null,
+      "feature_contract": "pending StS1 explicit mapping; no copying StS2 entity IDs or padding unused keys to fake an exact parameter count",
+      "initialization": "random",
+      "training": "search-visit distillation followed by outcome REINFORCE; bootstrap collection and stages require implementation",
+      "learned_value_head": false
+    },
+    "battle_objective": {
+      "kind": "hand_designed",
+      "use_upper_value": false,
+      "use_hypernetwork": false,
+      "reference": "RichBoth is the reference; StS1 victory, death, player escape, enemy escape and loot semantics require an explicit adapter",
+      "terminal_and_cutoff_distinct": true,
+      "cutoff_value": "explicit handcrafted in-progress estimate; never a terminal training label",
+      "boss_action_cap": 200,
+      "common_action_cap": 200,
+      "cap_unit": "playout primitive actions after tree descent, including EndTurn, choices and potions; not total battle length"
+    },
+    "collection": {
+      "world_size": 4,
+      "n_envs_per_rank": 384,
+      "n_steps": 512,
+      "n_steps_may_change": false,
+      "train_simulations": {
+        "common": 250,
+        "elite": 250,
+        "boss": 1000
+      },
+      "upper_sample_mask": "run-level decisions; combat playouts are not PPO samples",
+      "reference_games_per_iteration_is_not_our_n_steps": true
+    },
+    "budget": {
+      "completed_full_games_global": 400000,
+      "count_from_fresh_run": true,
+      "count_wins_and_losses": true,
+      "count_combats_as_games": false,
+      "count_censored_as_complete": false,
+      "stop_at": "first complete saved collection after the completed-game budget; record any collection-boundary excess",
+      "fixed_iteration_count": null
+    },
+    "metrics": [
+      "completed_full_games_global",
+      "real_environment_transitions",
+      "combat_decisions_by_tier",
+      "search_simulations",
+      "tree_environment_transitions",
+      "playout_environment_transitions",
+      "playout_actions_mean_p95_p99_by_tier",
+      "playout_depth_cap_hits_by_tier",
+      "chance_descent_cap_hits",
+      "genuine_terminal_leaves_by_tier",
+      "manual_cutoff_leaves_by_tier",
+      "warmup_seconds",
+      "rollout_seconds",
+      "encoding_ipc_seconds",
+      "upper_inference_seconds",
+      "lower_inference_seconds",
+      "optimizer_seconds",
+      "synchronization_seconds",
+      "checkpoint_seconds",
+      "process_tree_cpu_seconds",
+      "process_tree_rss_peak_bytes",
+      "system_available_bytes",
+      "torch_allocated_reserved_peak_bytes",
+      "gpu_memory_and_utilization"
+    ],
+    "launch_prerequisites": [
+      "StS1 feature/action/outcome contracts implemented and tested",
+      "native chance-aware tree and compact CPU policy integrated; not the existing 128-simulation Full Gumbel path",
+      "resolve separate move-prior training without importing incompatible StS2 human-replay weights",
+      "explicitly retain manual terminal and cutoff targets; no frozen876 or hypernetwork value calls",
+      "new run identity with upper and card vectors randomly initialized and trainable; all optimizer/replay state fresh",
+      "fixed-seed bounded remote tests and two real PPO learning/report/save/restore iterations",
+      "complete 384x512 collection across the four comparable machines with cutoffs and total workload counters",
+      "runtime launcher accepts this experiment only after validation; this spec itself is not a CLI profile"
+    ]
+  }
+}

@@ -1,5 +1,13 @@
 # 参数预设
 
+`train/combat_small_playout_fresh.json` 是 COMBAT-SMALL-PLAYOUT 的版本化实验规格，
+尚非可执行训练预设（`launch_ready=false`）。固定 spire-mentor 的参考 commit，分别
+记录训练250/1000与评测4000/16000的模拟预算、31549参数的纯playout policy和另一个
+24586参数的树先验。StS1动作/特征、原生搜索和训练接入尚待实现，不能把该JSON传给旧
+COMBAT部署入口并声称切换成功。目标上层及卡牌向量全部随机初始化可训练，战斗评分
+人工设计、playout上限200个原子动作；保持n_steps=512，以全局实际完整游戏数计40万局。
+第100轮后启动的生产条件记在TODO COMBAT-SMALL-PLAYOUT与worklog，地址/run身份不放入此配置。
+
 `.args` 是 argparse 原生 response file：每行一个原样参数，不写注释、不写 shell 引号、不展开环境变量。入口添加 `@文件` 即可；后面的同名选项可覆盖前面的值。
 
 `train/entity_combat_mature_replay.args` 是已训练模型的独立NOSL学习实验：继承groups runtime的全部搜索配置和96环境×128步；学习率1e-4、每轮16次更新、每rank逻辑batch32768/微批8192、524288容量replay中当前轮至少25%、group CE与value分布损失各权重1、梯度裁剪1。四rank合计每次更新131072个样本；每轮训练样本访问2097152次，不是新增环境transition数。此为待比较的组合实验，不是已验证最优值。用完整bundle的`--fork-state`和新run/W&B身份启动，保留Adam/replay/RNG/环境，不重启预热。分布式入口的`--nosl-is-az-policy-coef`、`--nosl-is-az-value-coef`分别控制这两个损失，省略时保留checkpoint值；PPO的`--vf-coef`和`--ent-coef`不控制NOSL监督损失。
