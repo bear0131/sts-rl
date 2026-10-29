@@ -85,6 +85,7 @@ class NativeSearchBatch:
                         value.shape != (len(self.envs), *space.shape) or value.dtype != space.dtype):
                     raise ValueError(f'root context batch disagrees with observation contract: {key}')
         self.indices = list(calls)
+        self._root_value_scales = None
         self.leaves = np.zeros(len(self.indices), dtype=np.int64)
         self.native_seconds = self.pack_seconds = 0.0
         self.decode_seconds = 0.0
@@ -163,6 +164,14 @@ class NativeSearchBatch:
                         result['outer_deck_misc'][row, index] = value / MISC_SCALE
         self.decode_seconds += time.perf_counter()-started
         return result
+
+    def value_scales(self):
+        """Remaining reward ceiling of each leaf's owning search root."""
+        from env.core.outer_return import observation_reward_max
+        if self._root_value_scales is None:
+            self._root_value_scales = np.asarray([observation_reward_max(self.global_fields, i)
+                for i in range(len(self.indices))], dtype=np.float32)
+        return self._root_value_scales[np.asarray(self.payload['owners'], dtype=np.intp)]
 
     def combat_exits(self, *, upper_value_only=False):
         if not self.outer_return:

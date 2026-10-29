@@ -1175,7 +1175,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                               & (action_masks.sum(axis=1) == 1))
                     if startup_paused:
                         forced[list(startup_paused)] = False
-                eligible = ~forced
+                mixed_raw = self._outer_return and outer.is_mixed_raw(self)
+                # Forced end-turn still belongs to the executed trajectory mean.
+                eligible = np.ones(env.num_envs, dtype=bool) if mixed_raw else ~forced
                 if rulebase_lower:
                     rulebase_roots = phase_now == combat_phase
                     eligible = eligible & ~rulebase_roots
@@ -1194,7 +1196,6 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         active_logits, active_values = core.actor_critic(obs_tensor)
                         logits[active] = active_logits.float()
                         values[active] = active_values.float()
-                    forced_end_turn_roots += int(forced.sum())
                 else:
                     obs_tensor = _leaf_observation_as_tensor(self._last_obs, self.device)
                     logits, values = core.actor_critic(obs_tensor)
@@ -1217,7 +1218,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
             logits_np = logits.detach().float().cpu().numpy()
             values_np = values.detach().float().cpu().numpy().reshape(-1)
             values_np = values_np.copy()
-            values_np[forced] = np.nan
+            forced_end_turn_roots += int(forced.sum())
+            if not mixed_raw:
+                values_np[forced] = np.nan
             phase = np.asarray(self._last_obs["phase"]).reshape(
                 env.num_envs, -1
             )[:, 0]
@@ -1832,7 +1835,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "rulebase_lower_roots": float(rulebase_lower_roots),
             "root_value_predictions_skipped": float(
                 rulebase_lower_roots if rulebase_lower
-                else forced_end_turn_roots
+                else (0 if self._outer_return and outer.is_mixed_raw(self) else forced_end_turn_roots)
             ),
             "rulebase_lower_decisions": float(rulebase_lower_decisions),
             "rulebase_lower_expanded_nodes": float(rulebase_lower_nodes),

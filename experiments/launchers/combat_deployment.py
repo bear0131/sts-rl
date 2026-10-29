@@ -46,6 +46,7 @@ def validate(config, *, connected=False):
         raise ValueError('invalid COMBAT01 deployment identity')
     if config['profile'] not in ('configs/train/combat_outer_return_876_4x5090.json',
                                  'configs/train/combat_normalized_outer_return_876_4x5090.json',
+                                 'configs/train/combat_mixed_raw_outer_return_876_4x5090.json',
                                  'configs/train/combat_finite_curves_876_4x5090.json',
                                  'configs/train/combat_two_means_876_4x5090.json',
                                  'configs/train/combat_train47_context_876_4x5090.json'):
@@ -333,6 +334,7 @@ def manage(config_path, action):
     profile = read(repo/config['profile'])
     if profile['contract']['lower_init'] != 'random' or profile['contract']['objective_id'] not in (
             'combat-outer-return-frozen-upper-v1', 'combat-outer-return-remaining-max-v1',
+            'combat-outer-return-raw-trajectory-mix-v1',
             'combat-finite-upper-curves-v1', 'combat-outcome-quantiles-v1', 'combat-outcome-means-v1'):
         raise ValueError('requires a wholly trainable fresh lower network with frozen upper')
     output = repo/'runs/local'/f"deployment-{config['run_id']}"

@@ -89,7 +89,7 @@ def test_outer_checkpoint_relocation_validates_material_and_context(outer_materi
 
 @pytest.mark.timeout(600)
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='GPU-only graph contract; deployment separately requires CUDA')
-@pytest.mark.parametrize('control', [False, True, 'finite', 'means', 'normalized'])
+@pytest.mark.parametrize('control', [False, True, 'finite', 'means', 'normalized', 'mixed-raw'])
 @pytest.mark.parametrize('blocking_wait', [False, True])
 def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control, blocking_wait):
     """Explicit GPU gate: missing CUDA is a failure when this test is selected."""
@@ -105,7 +105,7 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control, bl
         from env.core.finite_curves import OBJECTIVE
         core = OuterReturnCore(source, core.teacher.observation_space, env.observation_space,
             source_sha256='1'*64,
-            objective=OBJECTIVE if control == 'finite' else (
+            objective='combat-outer-return-raw-trajectory-mix-v1' if control == 'mixed-raw' else OBJECTIVE if control == 'finite' else (
                 'combat-outer-return-remaining-max-v1' if control == 'normalized' else (
                     'combat-outcome-means-v1' if control == 'means' else 'combat-outcome-quantiles-v1')),
             finite_curve_bank=finite_curve_bank if control == 'finite' else None)
@@ -116,7 +116,7 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control, bl
     assert env._phase() == 'combat'
     core.to('cuda').eval()
     frozen = core.teacher.assert_integrity()
-    amp = 'fp16' if control == 'normalized' else 'bf16'
+    amp = 'fp16' if control in ('normalized', 'mixed-raw') else 'bf16'
     autocast = fp16_autocast if amp == 'fp16' else bf16_autocast
     cache = CombatLeafGraphs(core, 'cuda', amp=amp, capacity=2, batch_multiple=32,
                              compile_forward=os.name != 'nt', blocking_wait=blocking_wait,

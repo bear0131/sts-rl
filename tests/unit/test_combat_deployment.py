@@ -63,9 +63,11 @@ def test_production_ssh_socket_fits_even_with_long_deployment_paths():
         assert len(str(directory).encode()) + 1 + 40 + 17 < 104
 
 
-def test_normalized_profile_keeps_production_workload_and_fresh_lower():
+@pytest.mark.parametrize('mixed', [False, True])
+def test_normalized_profile_keeps_production_workload_and_fresh_lower(mixed):
     config = configuration()
-    config['profile'] = 'configs/train/combat_normalized_outer_return_876_4x5090.json'
+    config['profile'] = ('configs/train/combat_mixed_raw_outer_return_876_4x5090.json' if mixed else
+                         'configs/train/combat_normalized_outer_return_876_4x5090.json')
     validate(config, connected=True)
     profile = json.loads((ROOT/config['profile']).read_text())
     args = build_parser().parse_args(training_command(config, profile, 0)[4:])
@@ -74,7 +76,11 @@ def test_normalized_profile_keeps_production_workload_and_fresh_lower():
     assert profile['search']['gumbel_rescale_q'] is False
     assert profile['contract']['lower_init'] == 'random'
     assert profile['source']['teacher_round'] == 876
-    assert profile['contract']['objective_id'] == 'combat-outer-return-remaining-max-v1'
+    assert profile['contract']['objective_id'] == ('combat-outer-return-raw-trajectory-mix-v1' if mixed else
+                                                    'combat-outer-return-remaining-max-v1')
+    if mixed:
+        assert profile['contract']['supervision_normalization'] == 'none'
+        assert profile['contract']['search_normalization']['clip'] is False
 
 
 @pytest.mark.parametrize('mutation', [

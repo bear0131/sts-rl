@@ -654,6 +654,11 @@ def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MOD
         # lower graph. Both models have separate buffers/pools; drain before
         # reusing the lower backend, advancing a tree, or propagating an error.
         finish_lower()
+    from env.core.outer_return import MIXED_RAW_OBJECTIVE
+    if getattr(model.policy.core, 'training_objective', None) == MIXED_RAW_OBJECTIVE and active:
+        # Exit targets already divide their settled raw reward/continuation.
+        # Only ordinary lower leaves still need conversion to source units.
+        values[active] /= batch.value_scales()[active]
     if not np.isfinite(values).all():
         raise ValueError('outer-return search received a nonfinite value')
     return logits, values

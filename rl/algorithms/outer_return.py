@@ -9,7 +9,7 @@ import torch
 
 from env.core import encode, vocab as V
 from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, CombatExit, strategic_reward, SCALAR_OBJECTIVES, FINITE_OBJECTIVE
-from env.core.outer_return import NORMALIZED_OBJECTIVE, NORMALIZATION, observation_reward_max
+from env.core.outer_return import NORMALIZED_OBJECTIVE, MIXED_RAW_OBJECTIVE, NORMALIZATION, observation_reward_max
 from rl.search.native import observation_as_tensor
 from rl.algorithms.combat_distribution import MEAN_CONTRACT
 
@@ -18,6 +18,10 @@ COMBAT = V.PHASE_VOCAB_INDEX['combat']
 
 def is_normalized(model):
     return getattr(model.policy.core, 'training_objective', None) == NORMALIZED_OBJECTIVE
+
+
+def is_mixed_raw(model):
+    return getattr(model.policy.core, 'training_objective', None) == MIXED_RAW_OBJECTIVE
 
 
 @lru_cache(maxsize=1)
@@ -41,6 +45,11 @@ def contract(model):
                          'gumbel_max_visit_init', 'merge_equivalent_actions')})
     if objective == FINITE_OBJECTIVE:
         identity['finite_curves'] = model.policy.core.finite_curve_bank.identity
+    elif objective == MIXED_RAW_OBJECTIVE:
+        identity.update(supervision='raw-exit-half-plus-whole-fight-pre-search-critic-mean-half-v1',
+                        search_normalization=dict(NORMALIZATION), supervision_normalization='none',
+                        trajectory_values='detached-at-collection-including-forced-actions',
+                        label_scope='one-shared-target-per-completed-combat')
     elif objective == NORMALIZED_OBJECTIVE:
         identity['normalization'] = dict(NORMALIZATION)
     elif objective != OBJECTIVE:
@@ -60,7 +69,7 @@ def contract(model):
 
 
 def setup(model):
-    if is_normalized(model) and model.nosl_is_az_gumbel_rescale_q:
+    if (is_normalized(model) or is_mixed_raw(model)) and model.nosl_is_az_gumbel_rescale_q:
         raise ValueError('remaining reward normalization requires qnorm disabled')
     if not (model.nosl_is_az and model.nosl_is_az_inner_only and model.nosl_is_az_cpp and
             model.nosl_is_az_upper_strategy == 'model' and model.nosl_is_az_combat_strategy == 'model' and
@@ -98,6 +107,8 @@ def begin_collection(model, count):
     if is_normalized(model):
         model._outer_collection.update(target_below_zero=0, target_above_one=0,
                                        scale_min=None, scale_max=None)
+    if is_mixed_raw(model):
+        model._outer_collection.update(mixed_fights=0, raw_exit_sum=0., trajectory_mean_sum=0.)
     validate_pending(model, count)
 
 
@@ -112,6 +123,8 @@ def validate_pending(model, count):
             prefix = sample.get('outer_reward_prefix')
             if prefix is None or not np.isfinite(prefix) or prefix > rewards[i]:
                 raise ValueError('invalid outer-return pending prefix')
+            if is_mixed_raw(model) and not np.isfinite(sample.get('estimated_value', np.nan)):
+                raise ValueError('mixed target requires every collected raw critic estimate')
             if is_normalized(model):
                 scale = sample.get('outer_value_scale')
                 if scale is None or not np.isfinite(scale) or scale <= 0:
@@ -198,8 +211,20 @@ def finish_step(model, before, after, dones, infos, pending):
         bootstraps.update(zip(indices, outputs, strict=True))
     for i, exit in exits.items():
         target = exit.target(bootstraps.get(i))
+        mixed_target = None
+        if is_mixed_raw(model) and pending[i]:
+            estimates = np.asarray([sample['estimated_value'] for sample in pending[i]], dtype=np.float64)
+            if not np.isfinite(estimates).all():
+                raise ValueError('mixed target received a nonfinite trajectory estimate')
+            trajectory_mean = float(estimates.mean())
+            mixed_target = .5 * target + .5 * trajectory_mean
+            model._outer_collection['mixed_fights'] += 1
+            model._outer_collection['raw_exit_sum'] += target
+            model._outer_collection['trajectory_mean_sum'] += trajectory_mean
         for sample in pending[i]:
-            value = target - sample['outer_reward_prefix']
+            # The mixed experiment deliberately shares one label across the
+            # complete fight, including states with different reward prefixes.
+            value = mixed_target if mixed_target is not None else target - sample['outer_reward_prefix']
             if is_normalized(model):
                 scale = sample['outer_value_scale']
                 value /= scale

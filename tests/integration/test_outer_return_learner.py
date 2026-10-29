@@ -78,7 +78,7 @@ class QuickBackend(SimGameEnv):
             self.bc.set_player_strength(999)
 
 
-@pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.NORMALIZED_OBJECTIVE, outer.FINITE_OBJECTIVE,
+@pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.NORMALIZED_OBJECTIVE, outer.MIXED_RAW_OBJECTIVE, outer.FINITE_OBJECTIVE,
                                      'combat-outcome-quantiles-v1', 'combat-outcome-means-v1',
                                      'combat-outcome-means-v1-continuous',
                                      'combat-outcome-means-v1-full-or-zero',
@@ -110,7 +110,7 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
         n_steps=128, batch_size=32, n_epochs=1, gamma=1., device='cpu', seed=42101,
         nosl_is_az=True, nosl_is_az_cpp=True, nosl_is_az_inner_only=True,
         nosl_is_az_fixed_worldline=True, nosl_is_az_upper_strategy='model',
-        nosl_is_az_gumbel_rescale_q=objective != outer.NORMALIZED_OBJECTIVE,
+        nosl_is_az_gumbel_rescale_q=objective not in (outer.NORMALIZED_OBJECTIVE, outer.MIXED_RAW_OBJECTIVE),
         nosl_is_az_simulations=4, nosl_is_az_updates=2,
         nosl_is_az_leaf_batch_size=1,
         nosl_is_az_batch_size=64, nosl_is_az_micro_batch_size=32,
@@ -178,6 +178,9 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
             assert all(p['nosl_is_az/outer_value_seconds'] > 0 for p in payloads)
             assert all(p['nosl_is_az/outer_value_batches'] > 0 for p in payloads)
             assert all(p['nosl_is_az/outer_exit_rows'] >= p['nosl_is_az/outer_value_rows'] > 0 for p in payloads)
+        if objective == outer.MIXED_RAW_OBJECTIVE:
+            assert all(p['outer_return/mixed_fights'] > 0 for p in payloads)
+            assert all(p['nosl_is_az/root_value_predictions_skipped'] == 0 for p in payloads)
         if objective == outer.NORMALIZED_OBJECTIVE:
             assert all(p['outer_return/scale_min'] >= 1. for p in payloads)
             assert all('outer_return/target_above_one' in p for p in payloads)

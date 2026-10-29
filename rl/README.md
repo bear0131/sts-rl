@@ -325,3 +325,14 @@ Python `NativeTurnPlanner.choose` 保留为串行参考。符文圆顶与未完�
 宝箱的归属由环境journal重放恢复；这些计数不改变奖励、观测或训练目标。
 
 `distributed_sb3 --continuous` supports fixed-learning-rate, frozen-upper inner-only NOSL with full recovery saves and coordinated `--stop-file`. It has no update or wall-time target; do not combine it with `--total-steps` or a finite `--updates` target. Resident deployment uses `continuous: true` with null round/time limits. Finite experiments retain their explicit budgets.
+
+`combat-outer-return-raw-trajectory-mix-v1` 保持876冻结、下层从零训练，
+每场真实完成战斗共享一个原始尺度标签：`0.5 * (战斗期间已获战略奖励
++ 出口后续raw V) + 0.5 * mean(整场实际状态搜索前的lower raw V)`。
+自然整局终止不补尾，截断丢弃；连战出口使用下层原始预测。轨迹均值包含
+只有结束回合动作的状态，使用采样时detach值，跨collection与恢复保留；
+不使用MCTS回传值，不按每个状态扣除奖励前缀，不进行监督归一化或裁剪。
+搜索根和普通lower叶除以搜索源状态剩余奖励上界M；结算出口将原始reward
+与raw continuation相加后除同一M，连战lower不乘M(next)。qnorm保持关闭。
+该目标改变统计方法；不能混用旧normalized checkpoint/replay，也不等于
+等待整局真实回报的MC实验。profile为combat_mixed_raw_outer_return_876_4x5090.json。
