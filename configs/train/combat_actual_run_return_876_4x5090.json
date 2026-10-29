@@ -157,7 +157,7 @@
     "fixed_worldline": true,
     "gumbel_candidates": 16,
     "gumbel_scale": 1.0,
-    "gumbel_value_scale": 1.0,
+    "gumbel_value_scale": 8.0,
     "gumbel_max_visit_init": 50.0,
     "gumbel_rescale_q": false,
     "gumbel_use_mixed_value": true,
@@ -190,5 +190,5 @@
     "lower-pre-settlement-terminal-state-prediction-with-actual-return-labels"
   ],
   "full_training_budget": null,
-  "notice": "Fresh random lower; frozen 876 upper actor. Supervise with actual undiscounted rewards until natural whole-run end, without any critic bootstrap or target normalization. Lower critic predicts hypothetical battle exits with an explicit pre-settlement marker; only search divides by source remaining reward maximum. qnorm off; new replay and optimizer."
+  "notice": "Fresh lower/Adam/replay, frozen 876 actor. Raw actual undiscounted rewards until natural run end; no critic bootstrap or label normalization. Search stores raw V/M and applies Gumbel value gain 8, equivalent to effective denominator M/8 (0.12525 to 0.17525). No clipping or per-tree min-max qnorm. Gain is part of the saved search/replay identity; do not resume old gain-1 state under this profile."
 }

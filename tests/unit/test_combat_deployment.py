@@ -83,6 +83,8 @@ def test_normalized_profile_keeps_production_workload_and_fresh_lower(mixed):
     if mixed:
         assert profile['contract']['supervision_normalization'] == 'none'
         assert profile['contract']['search_normalization']['clip'] is False
+    if mixed == 'mc':
+        assert profile['search']['gumbel_value_scale'] == 8.
 
 
 @pytest.mark.parametrize('mutation', [

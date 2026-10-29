@@ -11,6 +11,43 @@ from env.search.native_batch import NativeSearchBatch
 from rl.algorithms import outer_return as outer
 from rl.search.native import forward_outer_leaves
 
+
+def test_search_gain_equals_smaller_denominator_without_changing_raw_labels(run_combat_factory):
+    """The Gumbel gain rescales every Q, including unvisited/root completion."""
+    from rl.search.native import complete_searches_native
+    env = SlayTheSpireEnv(global_map_view=True, outer_return_context=True,
+                         combat_action_contract='autoregressive-v2', combat_value_objective=MC_OBJECTIVE)
+    env.reset(seed=42101)
+    env.thick = run_combat_factory()
+    env._invalidate_backend_cache()
+    before = env.thick.bc.to_dict()
+    model = SimpleNamespace(policy=SimpleNamespace(core=SimpleNamespace(training_objective=MC_OBJECTIVE)))
+    batch = NativeSearchBatch([env], 1, direct_observations=True)
+    results = []
+    try:
+        for gain, input_multiplier in ((8., 1.), (1., 8.)):
+            def predict(obs, width):
+                value = (.004 + obs['run_hp'][:, 0] * .004 - obs[MC_EXIT_KEY][:, 0] * .002)
+                return np.zeros((len(value), 198), dtype=np.float32), value * input_multiplier
+            calls = {0: ((np.linspace(-1., 1., 198, dtype=np.float32),), dict(
+                simulations=128, depth=0, root_value=.0078125 * input_multiplier,
+                state_nonce=42101, fixed_worldline=True, outer_return=True,
+                compact_observation=True, root_search_mode=2, paper_full_gumbel=True,
+                gumbel_scale=1., gumbel_value_scale=gain, gumbel_rescale_q=False))}
+            result, _ = complete_searches_native(model, batch, calls, leaf_backend=predict)
+            results.append(result[0])
+        assert results[0]['native_action_bits'] == results[1]['native_action_bits']
+        np.testing.assert_array_equal(results[0]['root_visits'], results[1]['root_visits'])
+        np.testing.assert_allclose(results[0]['visit_policy'], results[1]['visit_policy'], atol=1e-7, rtol=0)
+        assert sum(results[0]['root_visits']) == 128
+        assert env.thick.bc.to_dict() == before
+        # Labels have no gain: both real trajectories receive the same raw return.
+        assert outer.strategic_reward(1, 0, dict(act=1, floor=8, outcome='PLAYER_LOSS'),
+                                      done=True, censored=False) == .016
+    finally:
+        batch.close()
+        env.close()
+
 pytestmark = [pytest.mark.native, pytest.mark.timeout(30)]
 
 

@@ -78,7 +78,7 @@ class QuickBackend(SimGameEnv):
             self.bc.set_player_strength(999)
 
 
-@pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.NORMALIZED_OBJECTIVE, outer.MIXED_RAW_OBJECTIVE, outer.MC_OBJECTIVE, outer.FINITE_OBJECTIVE,
+@pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.NORMALIZED_OBJECTIVE, outer.MIXED_RAW_OBJECTIVE, outer.MC_OBJECTIVE, outer.MC_OBJECTIVE+'-search8', outer.FINITE_OBJECTIVE,
                                      'combat-outcome-quantiles-v1', 'combat-outcome-means-v1',
                                      'combat-outcome-means-v1-continuous',
                                      'combat-outcome-means-v1-full-or-zero',
@@ -86,6 +86,9 @@ class QuickBackend(SimGameEnv):
 def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_bank, tmp_path, monkeypatch, capsys, objective):
     continuous = objective.endswith('-continuous')
     objective = objective.removesuffix('-continuous')
+    search_gain = (8. if objective.endswith('-search8') else
+                   1. if objective == outer.MC_OBJECTIVE else .1)
+    objective = objective.removesuffix('-search8')
     boss_ablation = next((mode for mode in ('full-or-zero', 'real-hp') if objective.endswith('-'+mode)), None)
     if boss_ablation:
         objective = objective.removesuffix('-'+boss_ablation)
@@ -112,6 +115,7 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
         nosl_is_az=True, nosl_is_az_cpp=True, nosl_is_az_inner_only=True,
         nosl_is_az_fixed_worldline=True, nosl_is_az_upper_strategy='model',
         nosl_is_az_gumbel_rescale_q=objective not in (outer.NORMALIZED_OBJECTIVE, outer.MIXED_RAW_OBJECTIVE, outer.MC_OBJECTIVE),
+        nosl_is_az_gumbel_value_scale=search_gain,
         nosl_is_az_simulations=4, nosl_is_az_updates=2,
         nosl_is_az_leaf_batch_size=1,
         nosl_is_az_batch_size=64, nosl_is_az_micro_batch_size=32,
@@ -196,6 +200,8 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
         assert all(p['nosl_is_az/outer_settlement_seconds'] == 0 if mc else p['nosl_is_az/outer_settlement_seconds'] > 0 for p in payloads)
     restored_env = make_env()
     restored = AccumulatingMaskablePPO.load(output, env=restored_env, device='cpu')
+    assert restored.nosl_is_az_gumbel_value_scale == search_gain
+    assert restored.outer_return_contract['search']['gumbel_value_scale'] == search_gain
     assert restored.policy.core.teacher.assert_integrity() == teacher
     if boss_ablation:
         assert restored.policy.core.config.boss_win_weight == 1.

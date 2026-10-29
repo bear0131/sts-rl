@@ -345,3 +345,10 @@ Python `NativeTurnPlanner.choose` 保留为串行参考。符文圆顶与未完�
 的出口作为policy_weight=0样本使用同样MC标签。上层critic不参与搜索和
 监督（上层选动作的共享actor/critic前向可能仍计算未使用的value）。
 新objective/观测标志进入checkpoint合同，不能混用旧目标replay或模型。
+
+MC搜索尺度由两部分共同决定：根/叶保持raw V/M，Full-Gumbel再按
+`(50 + max_visit) * gumbel_value_scale * Q`评分。当前MC profile使用
+`gumbel_value_scale=8`，等价于把有效分母改为M/8（约0.125–0.175）；
+不把值裁剪到[0,1]，不做每棵树的min-max归一化，真实奖励监督仍为raw值。
+尺度系数属于已有checkpoint/replay的search身份，旧gain=1模型仍可按原
+身份读取；新实验fresh lower/Adam/replay，不覆盖旧模型的搜索身份续训。
