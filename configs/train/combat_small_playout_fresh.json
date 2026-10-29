@@ -1,6 +1,6 @@
 {
   "kind": "spire-mentor-style-experiment-spec-v1",
-  "launch_ready": false,
+  "launch_ready": true,
   "issue": "COMBAT-SMALL-PLAYOUT",
   "reference": {
     "repository": "https://github.com/tfriedel/spire-mentor",
@@ -124,7 +124,7 @@
     }
   },
   "target": {
-    "status": "four_host_wholerun_acceptance_pending",
+    "status": "four_host_fresh_online_wholerun_running",
     "game": "Slay the Spire 1",
     "character": "Ironclad",
     "ascension": 0,
