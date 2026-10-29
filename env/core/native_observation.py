@@ -123,6 +123,8 @@ class NativeRootObservationBatch:
             if env.outer_return_context:
                 fields['outer_deck_misc'][:] = permanent_misc(env.thick.gc, env.thick.bc)
         result = self.decoder.decode(payload, globals)
+        if 'upper_public_context' in result:
+            result['upper_public_context'].fill(1.)
         # The canonical encoder leaves untargetable monsters' power rows at
         # positive zero. Multiplying a negative native power by a zero mask
         # instead produces -0.0, which is numerically equal but not byte-equal.

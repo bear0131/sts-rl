@@ -128,6 +128,7 @@ def make_scenario(model, args, combat_model=None, combat_action_contract='legacy
                 if getattr(getattr(m.policy, 'core', None), 'frozen_upper', False)), None),
             combat_action_contract=combat_action_contract,
             global_map_view=uses(policy_model.uses_global_map_observation),
+            upper_public_context=any('upper_public_context' in m.observation_space.spaces for m in models),
             card_language=uses(policy_model.uses_card_language),
             combat_language=uses(policy_model.uses_combat_language),
             deck_size_observation=uses(policy_model.uses_deck_size_observation),

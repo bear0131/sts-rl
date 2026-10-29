@@ -329,7 +329,7 @@ class SlayTheSpireEnv(gym.Env):
     metadata = {"render_modes": ["ansi"]}
 
     def __init__(self, backend_factory=None, character=None, ascension=0,
-                 render_mode=None, global_map_view=False,
+                 render_mode=None, global_map_view=False, upper_public_context=False,
                  card_language=False, combat_language=False,
                  deck_size_observation=False, neow_observation=False,
                  event_option_observation=False,
@@ -380,6 +380,7 @@ class SlayTheSpireEnv(gym.Env):
                 character=character,
                 ascension=ascension,
                 global_map_view=global_map_view,
+                upper_public_context=upper_public_context,
                 interactive_reasoning=interactive_reasoning,
                 nosl_is_az_boss_transition_target=(
                     self._nosl_is_az_boss_transition_target
@@ -388,6 +389,9 @@ class SlayTheSpireEnv(gym.Env):
                 emit_step_legal=False,
             )
         )
+        self._upper_public_context = bool(upper_public_context)
+        if upper_public_context and (not global_map_view or outer_return_context):
+            raise ValueError("upper-public-context-v1 requires fresh global-map training without a frozen teacher")
         self._global_map_view = global_map_view
         self._card_language = card_language
         self._combat_language = combat_language
@@ -432,6 +436,7 @@ class SlayTheSpireEnv(gym.Env):
 
         self.observation_space = encode.obs_space(
             global_map_view=global_map_view,
+            upper_public_context=upper_public_context,
             card_language=card_language,
             combat_language=combat_language,
             deck_size_observation=deck_size_observation,
@@ -1640,6 +1645,7 @@ class SlayTheSpireEnv(gym.Env):
         obs = encode.encode(
             canon,
             global_map_view=self._global_map_view,
+            upper_public_context=self._upper_public_context,
             card_language=self._card_language,
             combat_language=self._combat_language,
             deck_size_observation=self._deck_size_observation,
@@ -2757,6 +2763,7 @@ class SlayTheSpireEnv(gym.Env):
         obs = encode.encode(
             canon,
             global_map_view=self._global_map_view,
+            upper_public_context=self._upper_public_context,
             card_language=self._card_language,
             combat_language=self._combat_language,
             deck_size_observation=self._deck_size_observation,

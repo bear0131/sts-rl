@@ -191,6 +191,8 @@ class WholeRunTask(Task):
     }
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument('--upper-public-context', action='store_true',
+                            help='Versioned public map context on every strategic decision screen.')
         parser.add_argument('--upper-config', type=json.loads, default=None,
                             help='Strategic PPO architecture and learning configuration for entity-joint.')
         parser.add_argument(
@@ -543,6 +545,7 @@ class WholeRunTask(Task):
                 backend_factory=getattr(args, 'backend_factory', None),
                 ascension=ascension,
                 global_map_view=args.global_map_view,
+                upper_public_context=getattr(args, "upper_public_context", False),
                 card_language=(args.card_language or interactive_reasoning),
                 combat_language=args.combat_language,
                 deck_size_observation=args.deck_size_observation,

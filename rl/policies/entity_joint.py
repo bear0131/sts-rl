@@ -4,7 +4,7 @@ import math
 
 import torch
 
-from env.core import native_actions as C, vocab as V
+from env.core import native_actions as C, vocab as V, encode
 from rl.policies.entity_combat import EntityCombatCore, EntityCombatConfig, EntityCombatPolicy
 from rl.policies.split_policy import (
     SharedSemanticTokenizer, OverworldEncoder, _SpecialistActorCritic,
@@ -77,7 +77,7 @@ class EntityJointCore(EntityCombatCore):
                 out, value = self.combat_actor_critic(batch,
                     active_relic_width=kwargs.get('combat_relic_width'))
             else:
-                keys = OVERWORLD_OBSERVATION_KEYS | OVERWORLD_PHASE_OBSERVATION_KEYS.get(phase_id, frozenset())
+                keys = encode.upper_observation_keys(phase_id, obs)
                 batch = {k: v[selected] for k, v in obs.items() if k in keys}
                 out, value = self.overworld(batch, self.upper_tokenizer, phase_id)
             indices.append(selected)

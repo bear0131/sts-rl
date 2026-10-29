@@ -653,6 +653,11 @@ class OverworldEncoder(_SpecialistEncoder):
                 event_dim + option_dim + 2, d_model
             )
 
+        self.event_details_enabled = 'event_choice_kinds' in observation_space.spaces
+        if self.event_details_enabled:
+            self.event_kind_embedding = nn.Embedding(len(encode.EVENT_CHOICE_KINDS), d_model, padding_idx=0)
+            self.event_detail_projection = nn.Linear(4, d_model)
+
         position_widths = {
             "deck": observation_space["deck_ids"].shape[0],
             "relic": observation_space["relics"].shape[0],
@@ -802,20 +807,6 @@ class OverworldEncoder(_SpecialistEncoder):
                 obs["map_node_x"].float().unsqueeze(-1),
             ], dim=-1)) + self.position["map"]
             blocks.append(("map", map_token, obs["map_node_rooms"].long() == 0))
-            if "map_full_rooms" in obs:
-                ids = obs["map_full_rooms"].long()
-                if self.map_dag is not None:
-                    full = self.map_dag(
-                        self.room_embedding(ids), obs["map_full_features"].float()
-                    )
-                else:
-                    full = self.map_projection(torch.cat([
-                        self.room_embedding(ids),
-                        obs["map_full_features"][..., :1].float(),
-                    ], dim=-1))
-                blocks.append(
-                    ("map_full", full + self.position["map_full"], ids == 0)
-                )
         elif phase_id == V.PHASE_VOCAB_INDEX["shop"]:
             blocks.extend([
                 self._card_block(
@@ -850,9 +841,32 @@ class OverworldEncoder(_SpecialistEncoder):
                     self.event_option_embedding(obs["event_option_ids"].long()),
                     obs["event_option_features"].float(),
                 ], dim=-1)) + self.position["event_option"]
+                if self.event_details_enabled:
+                    event_option = event_option + self.event_kind_embedding(obs['event_choice_kinds'].long())
+                    event_option = event_option + self.event_detail_projection(obs['event_choice_features'].float())
+                    for key, token in (
+                        ('event_choice_card_ids', shared.cards(obs['event_choice_card_ids'], obs['event_choice_card_upgrades'])),
+                        ('event_choice_relic_ids', shared.relics(obs['event_choice_relic_ids'], torch.zeros_like(obs['event_choice_relic_ids'], dtype=torch.float32))),
+                        ('event_choice_potion_ids', shared.potions(obs['event_choice_potion_ids']))):
+                        event_option = event_option + token * (obs[key] != 0).unsqueeze(-1)
                 blocks.append(
                     ("event_option", event_option, obs["event_option_ids"].long() == 0)
                 )
+        if "map_full_rooms" in obs and (phase_id == V.PHASE_VOCAB_INDEX["map"] or
+                                       "upper_public_context" in self.observation_space.spaces):
+            ids = obs["map_full_rooms"].long()
+            if self.map_dag is not None:
+                full = self.map_dag(
+                    self.room_embedding(ids), obs["map_full_features"].float()
+                )
+            else:
+                full = self.map_projection(torch.cat([
+                    self.room_embedding(ids),
+                    obs["map_full_features"][..., :1].float(),
+                ], dim=-1))
+            blocks.append(
+                ("map_full", full + self.position["map_full"], ids == 0)
+            )
         return self._run(batch_size, blocks)
 
 
@@ -1159,8 +1173,7 @@ class SplitStSPolicyCore(nn.Module):
                     obs, active_relic_width=combat_relic_width
                 )
             allowed_keys = (
-                OVERWORLD_OBSERVATION_KEYS
-                | OVERWORLD_PHASE_OBSERVATION_KEYS.get(phase_id, frozenset())
+                encode.upper_observation_keys(phase_id, obs)
             )
             return self.overworld(
                 self._keys_only(obs, allowed_keys), self.shared, phase_id
@@ -1187,8 +1200,7 @@ class SplitStSPolicyCore(nn.Module):
                 value_parts.append(values)
                 continue
             allowed_keys = (
-                OVERWORLD_OBSERVATION_KEYS
-                | OVERWORLD_PHASE_OBSERVATION_KEYS.get(phase_id, frozenset())
+                encode.upper_observation_keys(phase_id, obs)
             )
             logits, values = self.overworld(
                 self._subset(obs, indices, allowed_keys), self.shared, phase_id

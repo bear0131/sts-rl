@@ -147,7 +147,10 @@ def chest_env_type():
 
     class ChestEnv(SlayTheSpireEnv):
         def __init__(self, **kwargs):
-            super().__init__(backend_factory=ChestBackend, **kwargs)
+            from functools import partial
+            super().__init__(backend_factory=partial(ChestBackend,
+                global_map_view=kwargs.get('global_map_view', False),
+                upper_public_context=kwargs.get('upper_public_context', False)), **kwargs)
 
     return ChestEnv
 

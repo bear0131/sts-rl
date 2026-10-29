@@ -815,6 +815,11 @@ def main() -> None:
                 getattr(pretrained, "hierarchical_combat_hp", False)
             )
 
+    if hasattr(args, 'upper_public_context') and args.resume:
+        from stable_baselines3.common.save_util import load_from_zip_file
+        resume_data, _, _ = load_from_zip_file(args.resume, device='cpu')
+        args.upper_public_context = 'upper_public_context' in resume_data['observation_space'].spaces
+
     if hasattr(args, "global_map_view"):
         from rl.policies.model import uses_global_map_observation
 

@@ -140,7 +140,8 @@
       "load_teacher_checkpoint": false,
       "load_optimizer": false,
       "load_replay": false,
-      "objective": "existing run-level reward, PPO"
+      "objective": "existing run-level reward, PPO",
+      "observation_contract": "upper-public-context-v1: public map on every upper screen, dynamic event entities and selection origin; simulator only"
     },
     "lower": {
       "architecture": "reference factorized playout policy",

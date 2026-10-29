@@ -40,7 +40,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
             def build():
                 env = TimeLimit(
                     ShapedRewardWrapper(short_combat_env_type(combat_action_contract=contract,
-                        global_map_view=True, card_language=combat_arch=='entity')),
+                        global_map_view=True, upper_public_context=online_small, event_option_observation=online_small, card_language=combat_arch=='entity')),
                     max_episode_steps=12,
                 )
                 return (

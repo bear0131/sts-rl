@@ -69,6 +69,14 @@ StS1暂无参考项目的人类BC数据，备用先验使用模拟器搜索监�
 与该选项互斥，须用不含online选项的配置，不能静默覆盖随机初始化。
 兼容容器保留一个32宽单层冻结旧combat模块，整局回归禁止调用它；
 实际搜索仅执行30889参数playout。上层256宽4层及card encoder均随机可训练。
+新fresh配置启用`--upper-public-context`（`upper-public-context-v1`）：当前幕公开地图在
+奖励、选牌、事件、商店、营火、宝箱、Boss遗物和地图界面均进入编码、稀疏传输和Map DAG。
+全局HP/牌组/遗物/药水/金币/Boss信息仍共享；事件触发选牌时保留来源事件。
+Falling、N'loth、We Meet Again、Note For Yourself、Designer已公开的候选卡/遗物/药水、
+金币/HP成本和数量进入对应事件按钮token。未提供动态细节的按钮known位为0，
+不能把隐藏结果预先填入。该选项要求global-map及event-option观测，暂不与冻结teacher组合。
+旧checkpoint无标记时保持原网络和phase行为；新checkpoint保存额外事件模块并在恢复/评估中
+按观测空间恢复合同。当前仅支持模拟器训练/评估，真实游戏bridge明确拒绝新合同，避免静默补零。
 分布式使用 `configs/train/small_playout_distributed.args` 和已有 `experiments/launchers/launch_nosl_replay.sh`，
 保持4×384×512，PPO两epoch、entropy .0125；自然完整游戏跨rank累加，包含胜败、排除超时/异常。
 40万局在轮末保存停止，计数随各rank模型恢复；另有10000轮硬预算。截断/模拟量按房间层级记录，

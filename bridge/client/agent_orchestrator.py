@@ -273,6 +273,8 @@ def _load_model(
 
 
 def _adapter_for_model(model: MaskablePPO, args: argparse.Namespace) -> RealGameAdapter:
+    if 'upper_public_context' in model.observation_space.spaces:
+        raise ValueError('upper-public-context-v1 currently requires simulator observations; live bridge support is not implemented')
     return RealGameAdapter(
         character=args.character,
         ascension=args.ascension,

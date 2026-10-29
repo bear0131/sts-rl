@@ -379,6 +379,7 @@ def observation_flags(model: AccumulatingMaskablePPO) -> dict[str, bool]:
     interactive_reasoning = hasattr(core, "reasoning_loss")
     return {
         "global_map_view": model_utils.uses_global_map_observation(model),
+        "upper_public_context": "upper_public_context" in model.observation_space.spaces,
         "card_language": model_utils.uses_card_language(model),
         "combat_language": model_utils.uses_combat_language(model),
         "deck_size_observation": model_utils.uses_deck_size_observation(model),
@@ -410,6 +411,7 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
                                          or getattr(model, '_outer_return', False))
     env_args.combat_value_objective = getattr(getattr(model.policy, 'core', None), 'training_objective', None)
     env_args.global_map_view = flags["global_map_view"]
+    env_args.upper_public_context = flags["upper_public_context"]
     env_args.card_language = flags["card_language"]
     env_args.combat_language = flags["combat_language"]
     env_args.deck_size_observation = flags["deck_size_observation"]

@@ -107,7 +107,7 @@ class SimGameEnv:
     """
 
     def __init__(self, character=None, ascension=0, global_map_view=False,
-                 interactive_reasoning=False,
+                 interactive_reasoning=False, upper_public_context=False,
                  nosl_is_az_boss_transition_target=False,
                  emit_step_observation=True, emit_step_legal=True):
         if not hasattr(sts, "nosl_compact_layout") or sts.nosl_compact_layout().get("version") != 9:
@@ -115,6 +115,7 @@ class SimGameEnv:
         self._character = character or sts.CharacterClass.IRONCLAD
         self._ascension = ascension
         self._global_map_view = global_map_view
+        self._upper_public_context = upper_public_context
         self._interactive_reasoning = bool(interactive_reasoning)
         self._emit_step_observation = bool(emit_step_observation)
         self._emit_step_legal = bool(emit_step_legal)
@@ -244,7 +245,18 @@ class SimGameEnv:
             }
             if self._global_map_view:
                 d["options"]["full_map"] = self.rmap.full_view(x, y, next_columns=opts)
+        if self._upper_public_context and d['phase'] not in ('map', 'terminal'):
+            d['public_map'] = self.public_map_context()
+            if d['phase'] == 'card_select' and self.gc.cur_event_name not in ('INVALID', 'Invalid'):
+                d['public_event'] = self.gc.cur_event_name
         return d
+
+    def public_map_context(self):
+        x, y = self.gc.cur_map_node_x, self.gc.cur_map_node_y
+        opts = self.gc.legal_map_options()
+        return dict(nodes=[(x2, 'BOSS' if y == spiremap.MAX_Y else
+                            self.rmap.room_type(x2, max(0, y+1))) for x2 in opts],
+                    full_map=self.rmap.full_view(x, y, next_columns=opts))
 
     def _info(self):
         return {"phase": self.phase(), "legal": self.legal_semantic_actions()}
@@ -289,13 +301,15 @@ class SimGameEnv:
     def obs(self):
         """The structured Dict observation (encode v2) for the current state."""
         return encode.encode(
-            self.encoding_canonical(), global_map_view=self._global_map_view
+            self.encoding_canonical(), global_map_view=self._global_map_view,
+            upper_public_context=self._upper_public_context, event_option_observation=self._upper_public_context
         )
 
     @staticmethod
-    def observation_space(global_map_view=False):
+    def observation_space(global_map_view=False, upper_public_context=False):
         """The gymnasium Dict space (shared with SimCombatEnv via encode)."""
-        return encode.obs_space(global_map_view=global_map_view)
+        return encode.obs_space(global_map_view=global_map_view, upper_public_context=upper_public_context,
+                                event_option_observation=upper_public_context)
 
     # --------------------------------------------------------------- terminal
     @property

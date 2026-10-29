@@ -69,6 +69,7 @@ OBS_VERSION = 20  # owned/claimable Act-4 keys are explicit, not inferred
 
 # Sparse split-upper transport uses the same public observation fields.
 OVERWORLD_OBSERVATION_KEYS = frozenset({
+    "upper_public_context",
     "act",
     "arg_step",
     "ascension",
@@ -133,6 +134,21 @@ OVERWORLD_PHASE_OBSERVATION_KEYS = {
         "neow_features",
     }),
 }
+
+def upper_observation_keys(phase_id, observation):
+    keys = OVERWORLD_OBSERVATION_KEYS | OVERWORLD_PHASE_OBSERVATION_KEYS.get(int(phase_id), frozenset())
+    if 'upper_public_context' in observation:
+        keys |= frozenset({'map_full_rooms', 'map_full_features'})
+    return keys
+
+
+EVENT_CHOICE_KINDS = ('PAD', 'leave', 'lose_card', 'lose_relic', 'lose_potion', 'lose_gold',
+    'gain_card_then_remove', 'upgrade_card', 'upgrade_random_cards', 'remove_card',
+    'transform_cards', 'remove_card_upgrade_random', 'lose_hp')
+EVENT_CHOICE_KEYS = frozenset({'event_choice_card_ids', 'event_choice_card_upgrades',
+    'event_choice_relic_ids', 'event_choice_potion_ids', 'event_choice_kinds', 'event_choice_features'})
+OVERWORLD_PHASE_OBSERVATION_KEYS[V.PHASE_VOCAB_INDEX['event']] |= EVENT_CHOICE_KEYS
+
 
 GLOBAL_MAP_OBS_VERSION = 12
 CARD_LANGUAGE_OBS_VERSION = 13
@@ -228,7 +244,7 @@ _SCALAR = np.float32
 def obs_space(*, global_map_view=False, card_language=False,
               combat_language=False, deck_size_observation=False,
               neow_observation=False, event_option_observation=False,
-              interactive_reasoning=False):
+              interactive_reasoning=False, upper_public_context=False):
     """The gymnasium spaces.Dict matching encode()'s output. Train with SB3
     MultiInputPolicy (decision C). Categorical groups are integer Boxes bounded
     by their vocabulary capacity; the model embeds them (env stays parameter-free)."""
@@ -350,6 +366,18 @@ def obs_space(*, global_map_view=False, card_language=False,
             # so this is the stable information available at the decision point.
             "event_option_features": scal((EVENT_OPTION_SLOTS, 2)),
         })
+    if upper_public_context:
+        if not global_map_view:
+            raise ValueError('upper public context requires global map observation')
+        groups['upper_public_context'] = scal((1,), high=1.)
+        if not event_option_observation:
+            raise ValueError('upper public context requires event option observations')
+        groups.update(event_choice_card_ids=cat((EVENT_OPTION_SLOTS,), N_CARDS),
+            event_choice_card_upgrades=scal((EVENT_OPTION_SLOTS,)),
+            event_choice_relic_ids=cat((EVENT_OPTION_SLOTS,), V.RELIC_VOCAB_CAPACITY),
+            event_choice_potion_ids=cat((EVENT_OPTION_SLOTS,), V.POTION_VOCAB_CAPACITY),
+            event_choice_kinds=cat((EVENT_OPTION_SLOTS,), len(EVENT_CHOICE_KINDS)),
+            event_choice_features=scal((EVENT_OPTION_SLOTS, 4)))
     if global_map_view:
         groups.update({
             "map_full_rooms": cat((MAP_FULL_SLOTS,), len(V.ROOM_VOCAB)),
@@ -576,7 +604,7 @@ def _encode_card_sequence(o, pile, cards):
 def _empty(*, global_map_view=False, card_language=False,
            combat_language=False, deck_size_observation=False,
            neow_observation=False, event_option_observation=False,
-           interactive_reasoning=False):
+           interactive_reasoning=False, upper_public_context=False):
     """A zero/PAD-filled obs dict (every absent group encodes to this)."""
     o = {
         "player_scalars": np.zeros(PLAYER_SCALARS, _SCALAR),
@@ -655,6 +683,11 @@ def _empty(*, global_map_view=False, card_language=False,
         o["event_option_features"] = np.zeros(
             (EVENT_OPTION_SLOTS, 2), _SCALAR
         )
+    if upper_public_context:
+        o['upper_public_context'] = np.ones(1, _SCALAR)
+        for key in EVENT_CHOICE_KEYS:
+            shape = (EVENT_OPTION_SLOTS, 4) if key.endswith('features') else (EVENT_OPTION_SLOTS,)
+            o[key] = np.zeros(shape, _CAT if key.endswith(('ids', 'kinds')) else _SCALAR)
     if global_map_view:
         o["map_full_rooms"] = np.zeros(MAP_FULL_SLOTS, _CAT)
         o["map_full_features"] = np.zeros(
@@ -1239,7 +1272,7 @@ def _encode_options(o, canon):
 def encode(
     canon, *, global_map_view=False, card_language=False,
     combat_language=False, deck_size_observation=False, neow_observation=False,
-    event_option_observation=False, interactive_reasoning=False,
+    event_option_observation=False, interactive_reasoning=False, upper_public_context=False,
 ):
     """obs canonical dict -> obs dict (numpy arrays matching obs_space()).
 
@@ -1255,6 +1288,7 @@ def encode(
         neow_observation=neow_observation,
         event_option_observation=event_option_observation,
         interactive_reasoning=interactive_reasoning,
+        upper_public_context=upper_public_context,
     )
     if "pending_card_slot" in o:
         o["pending_card_slot"][0] = int(canon.get("pending_card_slot", 0))
@@ -1262,6 +1296,31 @@ def encode(
     _encode_combat(o, canon)
     _encode_global(o, canon)
     _encode_options(o, canon)
+    if upper_public_context and canon.get('phase') not in ('combat', 'map', 'terminal'):
+        if 'public_map' not in canon:
+            raise ValueError('upper-public-context-v1 requires the current public map on every upper screen')
+        _encode_options(o, dict(phase='map', options=canon['public_map']))
+    if upper_public_context:
+        if canon.get('public_event'):
+            o['event_id'][0] = _idx(V.EVENT_VOCAB_INDEX, canon['public_event'])
+        if canon.get('phase') == 'event':
+            seen = set()
+            for detail in canon.get('options', {}).get('event_choices', []):
+                i = detail['index']
+                if type(i) is not int or not 0 <= i < EVENT_OPTION_SLOTS or i in seen:
+                    raise ValueError('invalid event choice index')
+                seen.add(i)
+                o['event_choice_kinds'][i] = EVENT_CHOICE_KINDS.index(detail['kind'])
+                o['event_choice_features'][i] = (detail.get('gold', 0)/GOLD_SCALE,
+                    detail.get('hp', 0)/HP_SCALE, detail.get('count', 0)/10., 1.)
+                if 'card' in detail:
+                    cid, up = _card_tuple(detail['card'])
+                    o['event_choice_card_ids'][i] = _card_id_idx(cid)
+                    o['event_choice_card_upgrades'][i] = up/UPGRADE_SCALE
+                if 'relic' in detail:
+                    o['event_choice_relic_ids'][i] = _idx(V.RELIC_VOCAB_INDEX, detail['relic'])
+                if 'potion' in detail:
+                    o['event_choice_potion_ids'][i] = _idx(V.POTION_VOCAB_INDEX, detail['potion'])
     _encode_select(o, (canon.get("options") or {}).get("select"))
     return o
 
