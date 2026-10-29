@@ -36,16 +36,22 @@ Torch与原生有不同浮点归约顺序，以2e-5绝对/相对容差验证，�
 多选数、目标HP/maxHP/格挡/力量/易伤/虚弱/原槽位、待完成选择数量。
 它是有损的小网投影，未编码全部能力/牌堆身份/遗物；合法动作、实体位置和树key仍用
 完整模拟器契约，不用投影合并树状态。draw/discard/exhaust/generated/hand分别映射，
-非目标动作不虚构敌人目标。Runic Dome / Frozen Eye 的信息状态暂不支持，显式报错。
+非目标动作不虚构敌人目标。Frozen Eye 保留完整可见牌序；Warcry/Headbutt 等已知牌顶
+随真实 transition 跟踪。Runic Dome 特征隐藏意图，整局采用纯 policy；尚未实现其意图信念搜索。
 
-本地v1搜索是所有房间UCT、一次policy playout、均值回传、根按最多访问选动作；
+普通房间UCT，精英/Boss使用独立先验PUCT（mix=.5，temperature=1）；一次policy playout、
+均值回传，根选最高Q，.02区间内按访问数决定，并保留格挡/免费动作保护。
 每个叶后最多200个完整原子动作，树深另限1024。真实胜/负/玩家逃跑与两类截断独立计数。
 手工分数借鉴参考RichBoth：胜利HP/药水/回合奖励，败局敌人受损/剩余HP/存活回合塑形，
 逃跑及未追回偷金单列；未结束叶用既有BattleScumSearcher2人工分数的tanh。
 不存在876前向或学习的critic补尾。根与chance重放复用NOSL未来随机性重采样；
-EndTurn widening 23.148 / .436，其余1 / .5。当前未实现参考的独立human-BC PUCT先验、
-draw专用4 / .5、根Q选择保护、REINFORCE辅助项，也未跟踪跨根已知抽牌前缀。
-因此这是可运行的StS1原型，不是参考配方/完整信息集的生产验收；新实验规格仍launch_ready=false。
+EndTurn widening 23.148 / .436、抽牌4 / .5，其余1 / .5。探索系数按simulation预算
+<500 / <1000 / 其余分别为.8 / 1.41 / 2.5。完整状态和动作键采用逐字段强混合，
+避免已复现的Codex候选哈希碰撞；旧NOSL的历史键保持兼容，其碰撞修复另列TODO。
+下层先用搜索访问分布做CE，随后用独立同起点K条真实playout做leave-one-out REINFORCE；
+包含截断的组不提供终局监督。独立先验仅做CE，不随REINFORCE更新。
+StS1暂无参考项目的人类BC数据，先验使用模拟器搜索监督；未实现参考的证明求解和废牌清理保护，
+状态/动作特征也使用StS1映射，不能把这些差异称为逐项等价移植。
 
 复用有超时的基准入口，例如（先设置明确的原生构建路径）：
 

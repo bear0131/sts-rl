@@ -27,6 +27,9 @@ namespace sts {
         int nextUniqueCardId = 0; // unique card ids that are less than the masterDeckSize are non-temporary
 
         int cardsInHand = 0;
+        // Publicly known top prefix (stored at drawPile.end), never hidden order.
+        int knownDrawTop = 0;
+        std::uint64_t drawEvents = 0;
         std::array<CardInstance, MAX_HAND_SIZE> hand;
         std::array<CardInstance, MAX_HAND_SIZE> limbo; // used only for end of turn during discard, for retained cards
         std::array<CardInstance,2> stasisCards { CardId::INVALID, CardId::INVALID }; // for bronze automaton fight

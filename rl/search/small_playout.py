@@ -12,8 +12,13 @@ class SmallSearchConfig:
     simulations: int = 250
     playout_depth: int = 200
     tree_depth: int = 1024
-    exploration: float = .8
+    exploration: float = -1.
     temperature: float = 1.
+    use_prior: bool = False
+    prior_mix: float = .5
+    prior_temperature: float = 1.
+    tie_epsilon: float = .02
+    root_guards: bool = True
 
     def native(self):
         config = sts.SmallPlayoutConfig()
@@ -23,11 +28,12 @@ class SmallSearchConfig:
 
 
 class SmallPlayoutSearch:
-    def __init__(self, policy, config=SmallSearchConfig(), threads=1):
+    def __init__(self, policy, config=SmallSearchConfig(), threads=1, prior=None):
         if threads < 1:
             raise ValueError('native search threads must be positive')
         self.config, self.threads = config, threads
         self.pool = sts.NeuralSearchBatch(threads)
+        self.prior = None if prior is None else sts.SmallPlayoutNet(prior.export())
         self.refresh(policy)
 
     def refresh(self, policy):
@@ -35,11 +41,12 @@ class SmallPlayoutSearch:
             raise ValueError('native/Python action vocabulary mismatch')
         self.net = sts.SmallPlayoutNet(policy.export())
 
-    def search(self, roots, nonces):
+    def search(self, roots, nonces, configs=None):
         return sts.small_playout_search_batch(
-            self.pool, self.net, roots, [self.config.native() for _ in roots], nonces)
+            self.pool, self.net, roots, [c.native() for c in configs] if configs is not None
+            else [self.config.native() for _ in roots], nonces, self.prior)
 
     def manifest(self):
         return dict(contract=CONTRACT, config=asdict(self.config), native_threads=self.threads,
                     value_head=False, training_objective='mcts-visit-cross-entropy',
-                    tree_selection='uct-all-encounters', root_selection='max-visits')
+                    tree_selection='uct-or-separate-puct', root_selection='q-band-visits-guards')

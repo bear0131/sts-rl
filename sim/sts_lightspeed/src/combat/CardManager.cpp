@@ -36,6 +36,8 @@ namespace {
 }
 
 void CardManager::init(const sts::GameContext &gc, BattleContext &bc) {
+    knownDrawTop = 0;
+    drawEvents = 0;
 
 //    masterDeckSize = gc.deck.size();
     nextUniqueCardId = gc.deck.size();
@@ -122,6 +124,7 @@ void CardManager::createTempCardInDrawPile(int idx, CardInstance c) {
     notifyAddCardToCombat(c);
     notifyAddToDrawPile(c);
     drawPile.insert(drawPile.begin()+idx, c);
+    knownDrawTop = 0; // random insertion position is not public
 }
 
 void CardManager::createTempCardInDiscard(CardInstance c) {
@@ -157,11 +160,14 @@ void CardManager::createTempCardInHand(BattleContext &bc, CardInstance c) {
 // **************** START Remove Methods ****************
 
 void CardManager::removeFromDrawPileAtIdx(int idx) {
+    if (idx >= int(drawPile.size()) - knownDrawTop) knownDrawTop = std::max(0, knownDrawTop - 1);
     notifyRemoveFromDrawPile(drawPile[idx]);
     drawPile.erase(drawPile.begin()+idx);
 }
 
 CardInstance CardManager::popFromDrawPile() {
+    knownDrawTop = std::max(0, knownDrawTop - 1);
+    ++drawEvents;
     auto c = drawPile.back();
     notifyRemoveFromDrawPile(c);
     drawPile.pop_back();
@@ -221,6 +227,7 @@ void CardManager::insertToDrawPile(int drawPileIdx, const CardInstance &c) {
 #endif
     notifyAddToDrawPile(c);
     drawPile.insert(drawPile.begin()+drawPileIdx, resetMovedCardTurnCost(c));
+    knownDrawTop = 0; // this entry point is random insertion, not top placement
 }
 
 void CardManager::moveToDrawPileTop(const CardInstance &c) {
@@ -234,6 +241,7 @@ void CardManager::moveToDrawPileTop(const CardInstance &c) {
 #endif
     notifyAddToDrawPile(c);
     drawPile.push_back(resetMovedCardTurnCost(c));
+    ++knownDrawTop;
 }
 
 void CardManager::shuffleIntoDrawPile(Random &cardRandomRng, const CardInstance &c) {
@@ -273,6 +281,7 @@ void CardManager::moveDiscardPileIntoToDrawPile() {
 
     discardPileBloodCardCount = 0;
     discardPile.clear();
+    knownDrawTop = 0;
 }
 
 // **************** END Move Methods ****************

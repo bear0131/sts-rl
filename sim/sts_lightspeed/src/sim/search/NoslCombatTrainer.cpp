@@ -77,8 +77,20 @@ inline void hashCombine(std::uint64_t &hash, std::uint64_t value) {
     hash ^= value + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
 }
 
-template <typename T>
-inline void hashValue(std::uint64_t &hash, T value) {
+// The compact long-playout tree encounters many generated-card triples. The
+// legacy boost-style combine has reproducible collisions between such triples.
+// Keep historical NOSL identities unchanged and offer an avalanche-mixed key.
+struct StrongPublicHash {
+    std::uint64_t value;
+    StrongPublicHash(std::uint64_t initial): value(initial) {}
+    operator std::uint64_t() const { return value; }
+};
+inline void hashCombine(StrongPublicHash &hash, std::uint64_t value) {
+    hash.value = noslMix(hash.value ^ noslMix(value));
+}
+
+template <typename H, typename T>
+inline void hashValue(H &hash, T value) {
     hashCombine(hash, static_cast<std::uint64_t>(value));
 }
 
@@ -97,8 +109,8 @@ int persistentCardIdentity(const CardInstance &card) {
         ? card.uniqueId : -1;
 }
 
-template <typename Pile>
-void hashCardComposition(std::uint64_t &hash, const Pile &pile,
+template <typename H, typename Pile>
+void hashCardComposition(H &hash, const Pile &pile,
                          std::vector<CardSignature> &cards, bool equivalentFutures = true) {
     // Card id/upgrade count is not a complete card state.  Temporary cards
     // and cards such as Masterful Stab/Blood for Blood carry transition
@@ -143,7 +155,8 @@ void hashCardComposition(std::uint64_t &hash, const Pile &pile,
     }
 }
 
-void hashHandComposition(std::uint64_t &hash, const BattleContext &bc, bool equivalentFutures = true) {
+template <typename H>
+void hashHandComposition(H &hash, const BattleContext &bc, bool equivalentFutures = true) {
     using CardSignature = std::tuple<int, int, int, int, int, int, int, int, int, int>;
     std::array<CardSignature, CardManager::MAX_HAND_SIZE> cards{};
     std::size_t count = 0;
@@ -187,12 +200,13 @@ void hashHandComposition(std::uint64_t &hash, const BattleContext &bc, bool equi
 // standalone raw fields but still change the next legal transition, so they
 // must be part of the information-set key.  Hidden RNG streams, pile order,
 // and hand slot order remain deliberately excluded for NOSL.
+template <typename H = std::uint64_t>
 std::uint64_t publicStateKey(const BattleContext &bc,
                             std::vector<CardSignature> *scratch = nullptr,
                             bool equivalentFutures = true) {
     std::vector<CardSignature> localScratch;
     auto &cards = scratch != nullptr ? *scratch : localScratch;
-    std::uint64_t hash = 0xcbf29ce484222325ULL;
+    H hash = 0xcbf29ce484222325ULL;
     hashValue(hash, static_cast<int>(bc.inputState));
     hashValue(hash, static_cast<int>(bc.outcome));
     hashValue(hash, bc.turn);
@@ -546,7 +560,8 @@ int cardSelectionCollection(CardSelectTask task) {
     }
 }
 
-void hashActionCard(std::uint64_t &hash, const CardInstance &card,
+template <typename H>
+void hashActionCard(H &hash, const CardInstance &card,
                     bool includeCost) {
     hashValue(hash, static_cast<int>(card.getId()));
     hashValue(hash, static_cast<int>(card.specialData));
@@ -588,8 +603,9 @@ const CardInstance *actionCardAt(const BattleContext &bc, int collection,
 // Action ids use hand/pile indexes, but those indexes are not stable across
 // NOSL samples when the corresponding collection is treated as a composition.
 // This key lets a selected edge be remapped to the equivalent current index.
+template <typename H = std::uint64_t>
 std::uint64_t publicActionKey(const BattleContext &bc, const Action &action) {
-    std::uint64_t hash = 0xcbf29ce484222325ULL;
+    H hash = 0xcbf29ce484222325ULL;
     hashValue(hash, static_cast<int>(action.getActionType()));
     if (action.getActionType() == kSelectNext) {
         hashValue(hash, action.getSourceIdx());
@@ -658,7 +674,7 @@ std::uint64_t publicActionKey(const BattleContext &bc, const Action &action) {
                 // A set of card names/current costs is not a set of complete
                 // instances (upgrades, free-once, exhaust, etc. can differ).
                 // Reuse the single-card identity, retaining multiplicity.
-                std::uint64_t cardKey = 0xcbf29ce484222325ULL;
+                H cardKey = 0xcbf29ce484222325ULL;
                 hashActionCard(cardKey, *card, true);
                 selected[selectedCount++] = cardKey;
             }
@@ -714,6 +730,14 @@ std::uint64_t NoslCombatTrainer::stateKey(const BattleContext &bc) {
 
 std::uint64_t NoslCombatTrainer::actionKey(const BattleContext &bc, const Action &action) {
     return publicActionKey(bc, action);
+}
+
+std::uint64_t NoslCombatTrainer::strongStateKey(const BattleContext &bc) {
+    return publicStateKey<StrongPublicHash>(bc);
+}
+
+std::uint64_t NoslCombatTrainer::strongActionKey(const BattleContext &bc, const Action &action) {
+    return publicActionKey<StrongPublicHash>(bc, action);
 }
 
 double NoslCombatTrainer::hpValue(const BattleContext &bc) {

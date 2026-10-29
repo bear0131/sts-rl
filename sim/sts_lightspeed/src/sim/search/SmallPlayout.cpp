@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <random>
+#include <sstream>
 #include <stdexcept>
 
 namespace sts::search {
@@ -19,7 +20,7 @@ int cardKey(const CardInstance &c) {
     return 3 + 2 * (static_cast<int>(c.id) - 1) + int(c.getUpgradeCount() > 0);
 }
 float incoming(const BattleContext &bc, const Monster &m) {
-    if (!m.isTargetable()) return 0;
+    if (!m.isTargetable() || bc.player.hasRelic<R::RUNIC_DOME>()) return 0;
     const auto damage = m.getMoveBaseDamage(bc);
     return float(m.getIntentDamage(bc, damage.damage) * damage.attackCount);
 }
@@ -34,9 +35,6 @@ void addCard(SmallActionFeatures &f, const CardInstance &c) {
 int smallKeyCount() { return 3 + CARD_KEYS + POTION_KEYS; }
 
 SmallFeatures smallFeatures(const BattleContext &bc) {
-    // This first adapter has no hidden-intent or known-draw-prefix belief state.
-    if (bc.player.hasRelic<R::RUNIC_DOME>() || bc.player.hasRelic<R::FROZEN_EYE>())
-        throw std::invalid_argument("small playout v1 does not support Runic Dome/Frozen Eye beliefs");
     SmallFeatures f;
     auto &s = f.state;
     s[0] = float(bc.player.curHp) / 200; s[1] = float(bc.player.maxHp) / 200;
@@ -170,6 +168,21 @@ double smallManualValue(const BattleContext &bc) {
 }
 
 namespace {
+std::vector<double> probabilities(const std::vector<float> &logits, double temperature, double mix=1.) {
+    const auto top=*std::max_element(logits.begin(),logits.end());
+    std::vector<double> p; double sum=0;
+    for(auto l:logits){p.push_back(std::exp((l-top)/temperature));sum+=p.back();}
+    for(auto &v:p) v=mix*v/sum+(1.-mix)/p.size();
+    return p;
+}
+std::uint64_t beliefKey(const BattleContext &s) {
+    auto k=NoslCombatTrainer::strongStateKey(s);
+    const int known=s.player.hasRelic<R::FROZEN_EYE>() ? int(s.cards.drawPile.size()) :
+        std::clamp(s.cards.knownDrawTop,0,int(s.cards.drawPile.size()));
+    k=noslMix(k^known);
+    for(int i=0;i<known;++i) k=noslMix(k^noslMix(s.cards.drawPile[s.cards.drawPile.size()-1-i].getUniqueId()+1));
+    return k;
+}
 struct Node;
 struct OutcomeNode {
     BattleContext state;
@@ -183,32 +196,44 @@ struct Edge {
     int visits=0;
     double sum=0;
     std::vector<OutcomeNode> outcomes;
+    double prior=0;
+    bool draws=false;
 };
 struct Node { int visits=0; std::vector<Edge> edges; };
-void expand(Node &node,const BattleContext &s,SmallSearchStats &stats) {
+void expand(Node &node,const BattleContext &s,SmallSearchStats &stats,
+            const SmallSearchConfig &cfg,const SmallPlayoutNet *prior) {
     for (auto a:Action::enumerateCombatActions(s))
-        node.edges.push_back({a,NoslCombatTrainer::actionKey(s,a),0,0,{}});
+        node.edges.push_back({a,NoslCombatTrainer::strongActionKey(s,a),0,0,{}});
     if(node.edges.empty()) throw std::runtime_error("nonterminal has no legal compact action");
+    if(cfg.usePrior) {
+        auto p=probabilities(prior->logits(smallFeatures(s)),cfg.priorTemperature,cfg.priorMix);
+        for(std::size_t i=0;i<p.size();++i) node.edges[i].prior=p[i];
+        ++stats.priorCalls;
+    }
     ++stats.nodes;
 }
 Action resolve(const Edge &e,const BattleContext &s) {
-    if(e.action.isValidAction(s) && NoslCombatTrainer::actionKey(s,e.action)==e.semantic) return e.action;
+    if(e.action.isValidAction(s) && NoslCombatTrainer::strongActionKey(s,e.action)==e.semantic) return e.action;
     for(auto a:Action::enumerateCombatActions(s))
-        if(NoslCombatTrainer::actionKey(s,a)==e.semantic) return a;
-    throw std::logic_error("compact search action cannot be remapped");
+        if(NoslCombatTrainer::strongActionKey(s,a)==e.semantic) return a;
+    std::ostringstream detail; detail << s;
+    throw std::logic_error("compact search action cannot be remapped: turn="+std::to_string(s.turn)+
+        " task="+std::to_string(int(s.cardSelectInfo.cardSelectTask))+" action="+std::to_string(e.action.bits)+
+        " input="+std::to_string(int(s.inputState))+" semantic="+std::to_string(e.semantic)+"\n"+detail.str());
 }
 double playout(BattleContext &s,const SmallPlayoutNet &net,const SmallSearchConfig &cfg,
-               std::mt19937_64 &rng,SmallSearchStats &stats) {
+               std::mt19937_64 &rng,SmallSearchStats &stats,SmallPlayoutTrace *trace=nullptr) {
     int steps=0;
     while(s.outcome==Outcome::UNDECIDED && steps<cfg.playoutDepth) {
         auto f=smallFeatures(s); auto logits=net.logits(f);
         if(logits.empty()) throw std::runtime_error("nonterminal playout without actions");
         ++stats.policyCalls; stats.actionScores+=logits.size();
-        const float top=*std::max_element(logits.begin(),logits.end());
-        std::vector<double> weights; weights.reserve(logits.size());
-        for(float l:logits) weights.push_back(std::exp((l-top)/cfg.temperature));
+        auto weights=probabilities(logits,cfg.temperature);
         std::discrete_distribution<int> pick(weights.begin(),weights.end());
-        Action(f.actions[pick(rng)].bits).execute(s);
+        const int choice=pick(rng);
+        const auto bits=f.actions[choice].bits;
+        if(trace){trace->features.push_back(std::move(f));trace->choices.push_back(choice);}
+        Action(bits).execute(s);
         ++steps; ++stats.playoutTransitions;
     }
     ++stats.playoutLengths[steps];
@@ -216,46 +241,138 @@ double playout(BattleContext &s,const SmallPlayoutNet &net,const SmallSearchConf
 }
 }
 
+void smallRedeterminize(BattleContext &bc,std::uint64_t nonce) {
+    auto draw=bc.cards.drawPile;
+    noslRedeterminize(bc,nonce);
+    bc.cards.drawPile=std::move(draw);
+    const int known=bc.player.hasRelic<R::FROZEN_EYE>() ? int(bc.cards.drawPile.size()) :
+        std::clamp(bc.cards.knownDrawTop,0,int(bc.cards.drawPile.size()));
+    auto end=bc.cards.drawPile.end()-known;
+    std::sort(bc.cards.drawPile.begin(),end,[](const auto &a,const auto &b){return a.getUniqueId()<b.getUniqueId();});
+    java::Collections::shuffle(bc.cards.drawPile.begin(),end,java::Random(noslMix(nonce^0x534d414c4cULL)));
+}
+
+SmallPlayoutTrace smallCollectPlayout(const BattleContext &root,const SmallPlayoutNet &net,
+                                    const SmallSearchConfig &cfg,std::uint64_t nonce) {
+    if(root.player.hasRelic<R::RUNIC_DOME>())
+        throw std::invalid_argument("compact pretraining requires public intents");
+    if(cfg.playoutDepth<1 || cfg.playoutDepth>200 || cfg.temperature<=0 || !std::isfinite(cfg.temperature))
+        throw std::invalid_argument("invalid compact playout budget");
+    BattleContext state(root);
+#ifdef STS_ENABLE_RULE_TRACE
+    state.atomicStepObserver={};
+#endif
+    smallRedeterminize(state,nonce);
+    SmallPlayoutTrace trace; std::mt19937_64 rng(noslMix(nonce));
+    trace.value=playout(state,net,cfg,rng,trace.stats,&trace);
+    trace.outcome=int(state.outcome);
+    if(state.outcome==Outcome::UNDECIDED) ++trace.stats.depthCuts;
+    return trace;
+}
+
+static int rootPick(const BattleContext &root,const std::vector<std::uint32_t> &actions,
+                  const std::vector<int> &visits,const std::vector<double> &values,
+                  double epsilon,bool guards,std::uint64_t *transitions=nullptr) {
+    if(actions.empty() || actions.size()!=visits.size() || actions.size()!=values.size())
+        throw std::invalid_argument("root statistics shape mismatch");
+    double top=-1e100;
+    for(std::size_t i=0;i<visits.size();++i) if(visits[i]>0) top=std::max(top,values[i]);
+    int best=-1;
+    auto inBand=[&](int i){return visits[i]>0 && values[i]>=top-std::max(0.,epsilon);};
+    for(int i=0;i<int(actions.size());++i)
+        if(inBand(i) && (best<0 || visits[i]>visits[best])) best=i;
+    if(best<0) throw std::invalid_argument("root needs at least one visited action");
+    if(guards && Action(actions[best]).getActionType()==ActionType::END_TURN) {
+        double damage=0;for(const auto &m:root.monsters.arr) damage+=incoming(root,m);
+        // StS1 has dynamic block (Second Wind, Body Slam, etc.); inspect an
+        // independent transition only to classify the in-band guard.
+        int block=-1,free=-1;
+        for(int i=0;i<int(actions.size());++i) if(inBand(i)) {
+            Action a(actions[i]);if(a.getActionType()!=ActionType::CARD) continue;
+            const auto &card=root.cards.hand[a.getSourceIdx()];
+            if((card.costForTurn==0 || card.isFreeToPlay(root)) && (free<0 || visits[i]>visits[free])) free=i;
+            if(damage>root.player.block) {
+                BattleContext s(root);
+#ifdef STS_ENABLE_RULE_TRACE
+                s.atomicStepObserver={};
+#endif
+                // No sampled result is backed up or used as a value/proof.
+                smallRedeterminize(s,0x424c4f434bULL);
+                a.execute(s);
+                if(transitions) ++*transitions;
+                if(s.player.block>root.player.block && (block<0 || visits[i]>visits[block])) block=i;
+            }
+        }
+        if(block>=0) best=block;else if(free>=0) best=free;
+    }
+    return best;
+}
+
+int smallRootPick(const BattleContext &root,const std::vector<std::uint32_t> &actions,
+                  const std::vector<int> &visits,const std::vector<double> &values,
+                  double epsilon,bool guards) {
+    return rootPick(root,actions,visits,values,epsilon,guards);
+}
+
 SmallSearchResult smallSearch(const BattleContext &root,const SmallPlayoutNet &net,
-                             const SmallSearchConfig &cfg,std::uint64_t nonce) {
+                             const SmallSearchConfig &cfg,std::uint64_t nonce,const SmallPlayoutNet *prior) {
+    if(root.player.hasRelic<R::RUNIC_DOME>())
+        throw std::invalid_argument("small search requires a public-intent belief; use the public-only Dome policy");
     if(cfg.simulations<1 || cfg.playoutDepth<1 || cfg.playoutDepth>200 || cfg.treeDepth<1 ||
-       cfg.treeDepth>1024 || !std::isfinite(cfg.exploration) || cfg.exploration<0 ||
-       !std::isfinite(cfg.temperature) || cfg.temperature<=0)
+       cfg.treeDepth>1024 || !std::isfinite(cfg.exploration) || cfg.exploration < -1 ||
+       !std::isfinite(cfg.temperature) || cfg.temperature<=0 ||
+       !std::isfinite(cfg.priorMix) || cfg.priorMix<0 || cfg.priorMix>1 ||
+       !std::isfinite(cfg.priorTemperature) || cfg.priorTemperature<=0 ||
+       !std::isfinite(cfg.tieEpsilon) || cfg.tieEpsilon<0 || (cfg.usePrior && !prior))
         throw std::invalid_argument("invalid compact search budget");
     if(root.outcome!=Outcome::UNDECIDED) throw std::invalid_argument("search requires live combat");
     const auto started=std::chrono::steady_clock::now();
     SmallSearchResult result; result.features=smallFeatures(root);
-    Node tree; expand(tree,root,result.stats);
+    const double exploration=cfg.exploration>=0?cfg.exploration:(cfg.simulations<500?.8:cfg.simulations<1000?1.41:2.5);
+    Node tree; expand(tree,root,result.stats,cfg,prior);
     std::mt19937_64 rng(noslMix(nonce));
     for(int sim=0;sim<cfg.simulations;++sim) {
         BattleContext state(root);
 #ifdef STS_ENABLE_RULE_TRACE
         state.atomicStepObserver = {};
 #endif
-        noslRedeterminize(state,noslMix(nonce+sim));
+        smallRedeterminize(state,noslMix(nonce+sim));
         Node *node=&tree; std::vector<Node*> nodes{node}; std::vector<Edge*> edges;
         double value=0; bool newLeaf=false; int depth=0;
         while(state.outcome==Outcome::UNDECIDED && depth<cfg.treeDepth) {
             std::vector<int> unvisited;
             for(int i=0;i<int(node->edges.size());++i) if(!node->edges[i].visits) unvisited.push_back(i);
             int chosen=0;
-            if(!unvisited.empty()) chosen=unvisited[std::uniform_int_distribution<int>(0,int(unvisited.size())-1)(rng)];
+            if(!cfg.usePrior && !unvisited.empty()) chosen=unvisited[std::uniform_int_distribution<int>(0,int(unvisited.size())-1)(rng)];
             else {
                 double best=-1e100;
                 for(int i=0;i<int(node->edges.size());++i) {
                     const auto &e=node->edges[i];
-                    const double score=e.sum/e.visits+cfg.exploration*std::sqrt(std::log(double(node->visits)+1)/e.visits);
+                    const double q=e.visits?e.sum/e.visits:0.;
+                    const double score=q+exploration*(cfg.usePrior ?
+                        e.prior*std::sqrt(double(node->visits)+1)/(1+e.visits) :
+                        std::sqrt(std::log(double(node->visits)+1)/e.visits));
                     if(score>best){best=score;chosen=i;}
                 }
             }
             auto &edge=node->edges[chosen]; edges.push_back(&edge);
             const bool end=edge.action.getActionType()==ActionType::END_TURN;
-            const int cap=int(std::ceil((end?23.148:1.)*std::pow(edge.visits+1.,end?.436:.5)));
+            const int cap=int(std::ceil((end?23.148:edge.draws?4.:1.)*std::pow(edge.visits+1.,end?.436:.5)));
             OutcomeNode *outcome=nullptr;
             if(int(edge.outcomes.size())<cap) {
+                const auto draws=state.cards.drawEvents;
                 resolve(edge,state).execute(state); ++result.stats.treeTransitions;
-                const auto key=NoslCombatTrainer::stateKey(state);
-                for(auto &o:edge.outcomes) if(o.key==key){outcome=&o;++o.samples;break;}
+                if(!end && !edge.draws && state.cards.drawEvents>draws){edge.draws=true;++result.stats.drawEdges;}
+                const auto key=beliefKey(state);
+                for(auto &o:edge.outcomes) if(o.key==key){
+                    if(state.inputState==InputState::CARD_SELECT && o.state.cardSelectInfo.cards!=state.cardSelectInfo.cards) {
+                        std::ostringstream d; d << "generated choice key collision: ";
+                        for(auto c:o.state.cardSelectInfo.cards) d << int(c) << ',';
+                        d << " vs ";for(auto c:state.cardSelectInfo.cards) d << int(c) << ',';
+                        throw std::logic_error(d.str());
+                    }
+                    outcome=&o;++o.samples;break;
+                }
                 if(!outcome){
                     edge.outcomes.push_back({state,key,1,std::make_unique<Node>()});
                     outcome=&edge.outcomes.back(); newLeaf=true;
@@ -264,11 +381,11 @@ SmallSearchResult smallSearch(const BattleContext &root,const SmallPlayoutNet &n
                 std::vector<int> counts; for(const auto &o:edge.outcomes) counts.push_back(o.samples);
                 std::discrete_distribution<int> choose(counts.begin(),counts.end());
                 outcome=&edge.outcomes[choose(rng)]; state=outcome->state;
-                noslRedeterminize(state,rng()); ++result.stats.chanceReplays;
+                smallRedeterminize(state,rng()); ++result.stats.chanceReplays;
             }
             node=outcome->node.get(); nodes.push_back(node); ++depth;
             if(state.outcome!=Outcome::UNDECIDED) break;
-            if(newLeaf){expand(*node,state,result.stats);break;}
+            if(newLeaf){expand(*node,state,result.stats,cfg,prior);break;}
         }
         if(state.outcome!=Outcome::UNDECIDED) value=smallManualValue(state);
         else if(depth>=cfg.treeDepth){++result.stats.treeCuts;value=smallManualValue(state);}
@@ -281,12 +398,13 @@ SmallSearchResult smallSearch(const BattleContext &root,const SmallPlayoutNet &n
         for(auto *e:edges){++e->visits;e->sum+=value;}
         ++result.stats.simulations;
     }
-    int best=0;
+    std::vector<std::uint32_t> bits;
     for(int i=0;i<int(tree.edges.size());++i){
         const auto &e=tree.edges[i]; result.visits.push_back(e.visits);
         result.values.push_back(e.visits?e.sum/e.visits:0.);
-        if(e.visits>tree.edges[best].visits) best=i;
+        bits.push_back(e.action.bits);
     }
+    const int best=rootPick(root,bits,result.visits,result.values,cfg.tieEpsilon,cfg.rootGuards,&result.stats.guardTransitions);
     result.action=tree.edges[best].action.bits;
     result.stats.seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count();
     return result;

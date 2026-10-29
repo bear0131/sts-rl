@@ -181,11 +181,65 @@ def test_target_slots_and_potion_features(combat_factory):
             assert row[22] == pytest.approx((target+1)/5)
 
 
-@pytest.mark.parametrize('relic', ['Runic Dome', 'Frozen Eye'])
-def test_unsupported_information_beliefs_fail_explicitly(combat_factory, relic):
-    bc = combat_factory(['STRIKE_RED'] * 5, relics=[relic]).thick.bc
-    with pytest.raises(ValueError, match='beliefs'):
-        sts.small_playout_features(bc)
+def test_dome_features_hide_intent_and_search_refuses_privileged_rollouts(combat_factory):
+    bc = combat_factory(['STRIKE_RED'] * 5, relics=['Runic Dome']).thick.bc
+    assert np.all(sts.small_playout_features(bc)['state'][18:31:3] == 0)
+    learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=8))
+    with pytest.raises(ValueError, match='public-intent belief'):
+        learner.search.search([bc], [42])
+
+
+def test_frozen_eye_and_placed_top_survive_resampling(combat_factory):
+    frozen = combat_factory(['STRIKE_RED', 'BASH', 'DEFEND_RED'] * 5, relics=['Frozen Eye']).thick.bc
+    before = frozen.to_dict()['draw_pile'] if 'draw_pile' in frozen.to_dict() else frozen.to_dict()['draw']
+    for nonce in (1, 2, 3):
+        copied = frozen.clone()
+        sts.small_playout_redeterminize(copied, nonce)
+        data = copied.to_dict()
+        assert (data['draw_pile'] if 'draw_pile' in data else data['draw']) == before
+    bc = combat_factory(['WARCRY'] * 5).thick.bc
+    bc.apply_custom_state({'hand': ['WARCRY', 'BASH', 'DEFEND_RED'], 'draw': ['ANGER', 'CLEAVE'], 'discard': []})
+    bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    pick = next(a for a in bc.legal_actions() if int(a.action_type) == 2)
+    bc.execute(pick)
+    assert sts.small_playout_known_top(bc) == 1
+    # Drawing after each independent belief sample must return the placed card.
+    tops = []
+    for nonce in range(5):
+        copied = bc.clone()
+        sts.small_playout_redeterminize(copied, nonce)
+        raw = copied.to_dict()
+        pile = raw['draw_pile'] if 'draw_pile' in raw else raw['draw']
+        tops.append(pile[-1])
+    assert all(top == tops[0] for top in tops)
+
+
+def test_separate_prior_root_q_band_and_real_reinforce(tmp_path):
+    from rl.algorithms.small_playout import leave_one_out_advantages, save_policy_pair, load_policy_pair
+    learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=20), threads=2)
+    prior = SmallPlayoutLearner(seed=7).policy
+    root = BattleFixture().create(42)
+    config = replace(learner.search.config, use_prior=True).native()
+    native_prior = sts.SmallPlayoutNet(prior.export())
+    with pytest.raises(ValueError, match='budget'):
+        learner.search.net.search(root, config, 42)
+    result = learner.search.net.search(root, config, 42, native_prior)
+    assert result['stats']['prior_calls'] > 0
+    bits = result['action_bits'][:2]
+    assert sts.small_playout_root_pick(root, bits, [50, 2], [.1, .4], .02, False) == 1
+    assert sts.small_playout_root_pick(root, bits, [50, 2], [.39, .4], .02, False) == 0
+    a = leave_one_out_advantages([[1., 0., 0.], [-2., -2., -2.]])
+    assert a[0, 0] > 0 and np.all(a[0, 1:] < 0) and np.all(a[1] == 0)
+    before = prior.export().copy()
+    update = learner.reinforce([root] * 8, nonces=[i*100 for i in range(8)], k=4, batch_size=128)
+    assert update['accepted_groups'] > 0 and update['samples'] > 0
+    assert update['parameter_l2_change'] > 0 and np.isfinite(update['loss'])
+    np.testing.assert_array_equal(prior.export(), before)
+    save_policy_pair(tmp_path/'pair.pt', learner.policy, prior, provenance={'source':'test-real-playouts'})
+    policy2, prior2, meta = load_policy_pair(tmp_path/'pair.pt')
+    np.testing.assert_array_equal(policy2.export(), learner.policy.export())
+    np.testing.assert_array_equal(prior2.export(), prior.export())
+    assert meta['source'] == 'test-real-playouts'
 
 
 @pytest.mark.parametrize('escape', [False, True])
@@ -211,7 +265,7 @@ def test_manual_value_distinguishes_recovered_and_lost_gold(run_combat_factory, 
 
 def test_chance_widening_and_worker_failure_recovery(combat_factory):
     bc = combat_factory(['SHRUG_IT_OFF'] * 5).thick.bc
-    bc.apply_custom_state({'hand': ['SHRUG_IT_OFF'], 'draw': [
+    bc.apply_custom_state({'hand': ['BATTLE_TRANCE'], 'draw': [
         'STRIKE_RED', 'DEFEND_RED', 'BASH', 'INFLAME', 'HEAVY_BLADE', 'ANGER', 'DISARM', 'CLEAVE'],
         'discard': []})
     learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=500, tree_depth=1), threads=2)
@@ -223,6 +277,34 @@ def test_chance_widening_and_worker_failure_recovery(combat_factory):
         sts.small_playout_search_batch(learner.search.pool, learner.search.net, [bc, bc], [bad, bad], [23, 24])
     after = learner.search.search([bc, bc], [23, 24])
     assert [r['visits'] for r in first] == [r['visits'] for r in after]
+
+
+def test_codex_generated_choices_do_not_merge_colliding_legacy_keys():
+    # A real simulator journal exposed a legacy hash-combine collision between
+    # Codex triples (297,11,132) and (300,355,258). It previously reused an edge
+    # for a card absent from the current choice screen. No model is restored.
+    import json
+    from pathlib import Path
+    from env.core.run_env import SlayTheSpireEnv
+    env = SlayTheSpireEnv(global_map_view=True, combat_action_contract='autoregressive-v2',
+        outer_return_context=True, combat_value_objective='combat-outcome-means-v1',
+        deck_size_observation=True, neow_observation=True, event_option_observation=True)
+    try:
+        journal = json.loads((Path(__file__).parents[1]/'fixtures/small_playout_codex_journal.json').read_text())
+        env.restore_training_state(journal)
+        root = env.thick.bc.clone()
+        for bits in [3, 1, 2147483648, 1073741824, 8, 7]:
+            root.execute(sts.Action(bits))
+        before = root.to_dict()
+        learner = SmallPlayoutLearner(seed=42, threads=2)
+        results = learner.search.search([root, root], [42000001653]*2,
+                                       [SmallSearchConfig(simulations=1000)]*2)
+        assert results[0]['visits'] == results[1]['visits']
+        assert sum(results[0]['visits']) == 1000
+        assert results[0]['action'] in results[0]['action_bits']
+        assert root.to_dict() == before
+    finally:
+        env.close()
 
 
 def test_escaped_thief_gold_is_penalized(run_combat_factory):

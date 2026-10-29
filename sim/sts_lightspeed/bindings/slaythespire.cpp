@@ -1348,6 +1348,7 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
     }
     if (spec.contains("draw")) applyVectorPile("draw", bc.cards.drawPile);
     else applyVectorPile("draw_pile", bc.cards.drawPile);
+    if (spec.contains("draw") || spec.contains("draw_pile")) bc.cards.knownDrawTop = 0;
     if (spec.contains("discard")) applyVectorPile("discard", bc.cards.discardPile);
     else applyVectorPile("discard_pile", bc.cards.discardPile);
     if (spec.contains("exhaust")) applyVectorPile("exhaust", bc.cards.exhaustPile);

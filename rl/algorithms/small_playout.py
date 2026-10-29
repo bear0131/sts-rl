@@ -170,6 +170,58 @@ class SmallPlayoutLearner:
         torch.save(payload, temporary)
         temporary.replace(path)
 
+    def reinforce(self, roots, *, nonces, k=8, batch_size=2048, entropy_coef=.01):
+        """Independent on-policy playouts with a leave-one-out start baseline.
+
+        This is a separate stage after visit distillation, not CE on MCTS actions
+        weighted by outcomes. Censored groups provide no terminal supervision.
+        """
+        if k < 2 or len(roots) != len(nonces) or not roots:
+            raise ValueError('REINFORCE needs nonempty starts and at least two playouts each')
+        began = time.perf_counter()
+        traces = sts.small_playout_collect_batch(self.search.pool, self.search.net,
+            [root for root in roots for _ in range(k)], self.search.config.native(),
+            [(int(nonce) + i) & ((1 << 64)-1) for nonce in nonces for i in range(k)])
+        usable = [traces[i:i+k] for i in range(0, len(traces), k)
+                  if not any(t['censored'] for t in traces[i:i+k])]
+        stats = dict(playouts=len(traces), transitions=sum(t['transitions'] for t in traces),
+                     censored=sum(t['censored'] for t in traces), accepted_groups=len(usable),
+                     collection_seconds=time.perf_counter()-began)
+        if not usable:
+            return dict(stats, samples=0, loss=None, optimizer_steps=self.optimizer_steps)
+        rewards = np.asarray([[t['value'] for t in group] for group in usable], np.float64)
+        advantages = leave_one_out_advantages(rewards)
+        samples = [dict(step, advantage=float(advantages[i, j]))
+                   for i, group in enumerate(usable) for j, trace in enumerate(group)
+                   for step in trace['steps'] if len(step['action_bits']) > 1]
+        if not samples:
+            return dict(stats, samples=0, loss=None, optimizer_steps=self.optimizer_steps)
+        losses, norms = [], []
+        before = self.policy.export()
+        order = self.rng.permutation(len(samples))
+        for start in range(0, len(samples), batch_size):
+            rows = [samples[i] for i in order[start:start+batch_size]]
+            tensors = collate_features(rows, self.device)
+            logp = torch.log_softmax(self.policy(*tensors), dim=-1)
+            choices = torch.as_tensor([r['choice'] for r in rows], device=self.device)
+            advantage = torch.as_tensor([r['advantage'] for r in rows], device=self.device)
+            chosen = logp.gather(1, choices[:, None]).squeeze(1)
+            entropy = -(logp.exp() * logp.masked_fill(~tensors[-1], 0.)).sum(-1)
+            loss = -(advantage * chosen).mean() - entropy_coef * entropy.mean()
+            if not torch.isfinite(loss):
+                raise FloatingPointError('nonfinite playout REINFORCE loss')
+            loss.backward()
+            norms.append(optimizer_step(self))
+            losses.append(loss.detach())
+            self.optimizer_steps += 1
+        self.search.refresh(self.policy)
+        self.synchronize()
+        self.updates += 1
+        return dict(stats, samples=len(samples), loss=float(torch.stack(losses).mean()),
+                    grad_norm=float(torch.stack(norms).mean()), reward_mean=float(rewards.mean()),
+                    reward_std=float(rewards.std()), parameter_l2_change=float(np.linalg.norm(self.policy.export()-before)),
+                    optimizer_steps=self.optimizer_steps, seconds=time.perf_counter()-began)
+
     @classmethod
     def load(cls, path, *, device='cpu', threads=1):
         payload = torch.load(path, map_location=device, weights_only=True)
@@ -184,3 +236,39 @@ class SmallPlayoutLearner:
         learner.rng.bit_generator.state = payload['rng']
         learner.updates, learner.optimizer_steps = payload['updates'], payload['optimizer_steps']
         return learner, BattleCollector.restore(payload['collector'])
+
+
+def leave_one_out_advantages(rewards):
+    rewards = np.asarray(rewards, np.float64)
+    if rewards.ndim != 2 or rewards.shape[1] < 2 or not np.isfinite(rewards).all():
+        raise ValueError('leave-one-out baseline needs finite [starts, k>=2] rewards')
+    advantage = rewards - (rewards.sum(1, keepdims=True)-rewards)/(rewards.shape[1]-1)
+    return advantage / (advantage.std()+1e-6)
+
+
+def save_policy_pair(path, policy, prior, *, provenance):
+    """Freeze independent playout/PUCT parameters after their own pretraining."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(kind='sts1-small-playout-pair-v1', contract=CONTRACT,
+                   key_count=policy.key_count,
+                   policy={k: v.detach().cpu() for k, v in policy.state_dict().items()},
+                   prior={k: v.detach().cpu() for k, v in prior.state_dict().items()},
+                   provenance=provenance)
+    temporary = path.with_suffix('.tmp')
+    torch.save(payload, temporary)
+    temporary.replace(path)
+
+
+def load_policy_pair(path):
+    payload = torch.load(path, map_location='cpu', weights_only=True)
+    if (payload.get('kind') != 'sts1-small-playout-pair-v1' or payload['contract'] != CONTRACT
+            or payload['key_count'] != sts.small_playout_key_count()):
+        raise ValueError('incompatible compact policy pair')
+    nets = [SmallPlayoutPolicy(payload['key_count']) for _ in range(2)]
+    for net, key in zip(nets, ('policy', 'prior'), strict=True):
+        net.load_state_dict(payload[key], strict=True)
+        net.eval().requires_grad_(False)
+        if not np.isfinite(net.export()).all():
+            raise ValueError('nonfinite compact policy pair')
+    return *nets, payload['provenance']
