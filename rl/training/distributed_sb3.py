@@ -2337,6 +2337,7 @@ def main() -> None:
         args.entity_config = dict(probe_model.policy.entity_config)
         if joint_upper(probe_model):
             args.upper_config = dict(probe_model.policy.upper_config)
+            args.small_playout_config = getattr(probe_model.policy, 'small_playout_config', None)
             if args.upper_micro_batch_size is not None:
                 args.upper_config['micro_batch_size'] = args.upper_micro_batch_size
             if args.upper_gae_lambda is not None:
@@ -2582,7 +2583,8 @@ def main() -> None:
         if combat_strategy == 'small-playout':
             from rl.training.small_playout import configure_collection
             configure_collection(model, model.get_env())
-            args.nosl_is_az_combat_strategy_version = 'sts1-small-playout-pair-v1'
+            args.nosl_is_az_combat_strategy_version = ('sts1-small-playout-online-v1'
+                if hasattr(model.policy, 'small_playout') else 'sts1-small-playout-pair-v1')
             print(f'[rank {args.rank}] compact CPU search common/elite/boss=250/250/1000, '
                   'playout cap=200, tree cap=1024; legacy NOSL leaf settings are inactive', flush=True)
     else:
@@ -3222,6 +3224,17 @@ def main() -> None:
                 grad_bytes = int(nosl_update["grad_bytes"])
                 step_seconds = float(nosl_update["optimizer_step_sec"])
 
+            def sync_small(step):
+                return synchronize_gradient_step(model, rank=args.rank, world_size=args.world_size,
+                    peers=peers, key=key, control_dir=control_dir, local_root=local_root,
+                    remote_root=args.remote_root, run_id=run_id,
+                    tag=f'u{update:06d}_small{step:04d}', ring_transport=ring_transport,
+                    barrier_timeout=args.barrier_timeout)
+            small_update = {}
+            if hasattr(model.policy, 'small_playout'):
+                from rl.algorithms.small_playout import update_online
+                small_update = update_online(model, rank=args.rank, world_size=args.world_size,
+                    average=lambda values: average_scalar_dict(values, ring_transport), synchronize=sync_small)
             upper_update = {}
             upper_started = time.perf_counter()
             if joint_upper(model):
@@ -3558,8 +3571,10 @@ def main() -> None:
             )
             record.update(aggregate_scalars)
             record.update({'upper/' + key: value for key, value in upper_update.items()})
+            record.update({'small_playout_train/' + key: value for key, value in small_update.items()})
             if combat_strategy == 'small-playout':
                 record['small_playout_stats_rank'] = dict(getattr(model, '_small_playout_stats', {}))
+                record['small_playout_collection_sha256'] = getattr(model, 'small_playout_collection_sha256', None)
                 games = average_scalar_dict({'completed_games': float(getattr(model, 'small_playout_games_local', 0))}, ring_transport)
                 record['completed_full_games_global'] = int(round(games['completed_games']*args.world_size))
                 record['completed_game_budget'] = args.completed_game_budget
@@ -3764,6 +3779,7 @@ def main() -> None:
                     wandb_payload.update({'small_playout_rank0/'+key: value
                                           for key, value in record['small_playout_stats_rank'].items()})
                 wandb_payload.update({'upper/' + key: value for key, value in upper_update.items()})
+                wandb_payload.update({'small_playout_train/' + key: value for key, value in small_update.items()})
                 wandb_payload.update({key: value for key, value in record.items()
                                       if key.startswith(('outer_return/', 'frozen_upper/'))})
                 wandb_payload.update({

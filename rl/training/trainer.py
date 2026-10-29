@@ -1515,6 +1515,11 @@ def main() -> None:
         install_policy_pair(model, args.small_playout_pair)
         print('[trainer] compact CPU pair: 30889 parameters each; common/elite/boss simulations=250/250/1000; '
               'playout cap=200, tree cap=1024; legacy NOSL leaf settings below are inactive')
+    if hasattr(model.policy, 'small_playout'):
+        if getattr(args, 'nosl_is_az_combat_strategy', 'model') != 'small-playout':
+            raise ValueError('online compact module requires small-playout collection')
+        print('[trainer] random online compact policy: 30889 trainable parameters, no pretrained weights/prior; '
+              'search-visits CE after every collection')
     if getattr(args, "nosl_is_az_combat_strategy", "model") in ("turn-planner", "small-playout"):
         if not getattr(model.policy.core, "joint_upper", False):
             raise ValueError("turn-planner combat requires entity-joint upper training")

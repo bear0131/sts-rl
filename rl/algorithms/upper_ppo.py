@@ -21,13 +21,14 @@ def enabled(model):
 
 
 @contextmanager
-def train_phase(model, upper=False):
+def train_phase(model, upper=False, *, small_playout=False):
     if not enabled(model):
         yield
         return
     flags = [(p, p.requires_grad) for p in model.policy.parameters()]
-    active = {id(p) for p in (model.policy.core.upper_parameters() if upper
-                             else model.policy.core.combat.parameters())}
+    active = {id(p) for p in (model.policy.small_playout.parameters() if small_playout else
+                             model.policy.core.upper_parameters() if upper else
+                             model.policy.core.combat.parameters())}
     try:
         for p, flag in flags:
             p.grad = None

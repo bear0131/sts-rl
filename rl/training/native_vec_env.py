@@ -129,6 +129,8 @@ class NativeSearchVecEnv(DummyVecEnv):
 
     def configure_small_playout(self, pair):
         from env.search.small_playout import SmallPlayoutBatch
+        if hasattr(self, 'small_playout_batch') and self.small_playout_batch.samples:
+            raise RuntimeError('previous compact training samples were not consumed')
         if not hasattr(self, 'small_playout_batch') or self.small_playout_batch.pair['sha256'] != pair['sha256']:
             self.small_playout_batch = SmallPlayoutBatch(self.native_search_batch.envs,
                                                        self.native_search_batch.pool, pair)
@@ -136,3 +138,7 @@ class NativeSearchVecEnv(DummyVecEnv):
 
     def small_playout_stats(self):
         return self.small_playout_batch.scalar_stats()
+
+    def take_small_playout_samples(self):
+        samples, self.small_playout_batch.samples = self.small_playout_batch.samples, []
+        return samples

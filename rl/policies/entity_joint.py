@@ -91,8 +91,11 @@ class EntityJointCore(EntityCombatCore):
 
 
 class EntityJointPolicy(EntityCombatPolicy):
-    def __init__(self, *args, upper_config=None, **kwargs):
+    def __init__(self, *args, upper_config=None, small_playout_config=None, **kwargs):
         self.upper_config = asdict(UpperConfig(**(upper_config or {})))
+        from rl.policies.small_playout import OnlinePlayoutConfig
+        self.small_playout_config = (asdict(OnlinePlayoutConfig(**small_playout_config))
+                                    if small_playout_config is not None else None)
         super().__init__(*args, **kwargs)
 
     def _build(self, lr_schedule):
@@ -106,6 +109,12 @@ class EntityJointPolicy(EntityCombatPolicy):
             lr=lr_schedule(1), **self.optimizer_kwargs)
         self.upper_optimizer = self.optimizer_class(self.core.upper_parameters(),
             lr=cfg.learning_rate, **self.optimizer_kwargs)
+        if self.small_playout_config is not None:
+            from rl.policies.small_playout import SmallPlayoutPolicy
+            self.small_playout = SmallPlayoutPolicy(self.small_playout_config['key_count'])
+            self.small_playout_optimizer = torch.optim.Adam(self.small_playout.parameters(),
+                lr=self.small_playout_config['learning_rate'])
 
     def _get_constructor_parameters(self):
-        return dict(super()._get_constructor_parameters(), upper_config=self.upper_config)
+        return dict(super()._get_constructor_parameters(), upper_config=self.upper_config,
+                    small_playout_config=self.small_playout_config)

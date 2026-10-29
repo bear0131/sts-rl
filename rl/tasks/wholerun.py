@@ -203,6 +203,8 @@ class WholeRunTask(Task):
         parser.add_argument('--rulebase-planner-worlds', type=int, default=2)
         parser.add_argument('--small-playout-pair', default=None,
                             help='Pretrained independent CPU playout/prior pair for a fresh strategic PPO run.')
+        parser.add_argument('--small-playout-online', type=json.loads, default=None,
+                            help='Random compact policy learning from each collection; JSON OnlinePlayoutConfig overrides.')
         parser.add_argument('--prepare-small-playout', default=None,
                             help='Run a bounded compact pretraining stage from a JSON protocol, then exit.')
         parser.add_argument('--rulebase-planner-nodes', type=int, default=8192)
@@ -597,6 +599,10 @@ class WholeRunTask(Task):
                 from rl.policies.entity_joint import EntityJointPolicy, UpperConfig
                 policy = EntityJointPolicy
                 upper = dict(upper_config=asdict(UpperConfig(**(args.upper_config or {}))))
+                if getattr(args, 'small_playout_online', None) is not None:
+                    if args.small_playout_pair or args.nosl_is_az_combat_strategy != 'small-playout':
+                        raise ValueError('online small playout requires small-playout strategy without a pretrained pair')
+                    upper['small_playout_config'] = args.small_playout_online
             return policy, dict(entity_config=dict(
                 width=args.d_model, layers=args.n_layers, heads=args.n_heads,
                 quantiles=args.hp_quantiles, boss_win_weight=args.boss_win_weight,

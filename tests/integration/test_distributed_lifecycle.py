@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
     (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False, upper_micro_override=None, upper_lambda_override=None):
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False, upper_micro_override=None, upper_lambda_override=None, online_small=False):
     fixed_strategy = 'small-playout' if fixed_lower == 'small-playout' else 'turn-planner'
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
@@ -65,6 +65,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         from rl.policies.entity_joint import EntityJointPolicy
         policy = EntityJointPolicy
         kwargs['upper_config'] = dict(width=32, layers=1, heads=4, epochs=2, micro_batch_size=8)
+    if online_small:
+        kwargs['small_playout_config'] = dict(epochs=2, batch_size=8, micro_batch_size=3)
     model = AccumulatingMaskablePPO(
         policy, env, n_steps=16, batch_size=8, n_epochs=1,
         policy_kwargs=kwargs, device=device, seed=42, amp_mode=amp,
@@ -79,7 +81,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         nosl_is_az_replay_capacity=128, nosl_is_az_batch_size=16,
         nosl_is_az_micro_batch_size=8, nosl_is_az_leaf_batch_size=1,
         hierarchical_combat_hp=nosl)
-    if fixed_strategy == 'small-playout':
+    if fixed_strategy == 'small-playout' and not online_small:
         from rl.algorithms.small_playout import SmallPlayoutLearner, save_policy_pair
         from rl.training.small_playout import install_policy_pair
         compact = SmallPlayoutLearner(seed=42)
@@ -87,6 +89,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         pair = tmp_path/'pair.pt'
         save_policy_pair(pair, compact.policy, prior, provenance={'fixture':'lifecycle'})
         install_policy_pair(model, pair)
+    if fixed_strategy == 'small-playout':
         from rl.policies.entity_joint import EntityJointCore
         monkeypatch.setattr(EntityJointCore, 'combat_actor_critic',
                             lambda *a, **kw: pytest.fail('compact collector called large combat network'))
@@ -98,6 +101,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     checkpoint = tmp_path / 'initial.zip'
     initial_upper = ({name: value.detach().cpu().clone() for name, value in model.policy.core.upper_tokenizer.state_dict().items()}
                      if fixed_strategy == 'small-playout' else None)
+    initial_small = model.policy.small_playout.export().copy() if online_small else None
     model.save(checkpoint)
     env.close()
     payloads, finished, identities = [], [], []
@@ -239,6 +243,10 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     else:
         assert restored.policy_kwargs['combat_arch'] == combat_arch
     assert restored.num_timesteps == 64
+    if online_small:
+        steps_before_resume = restored.small_playout_optimizer_steps
+        assert steps_before_resume == sum(p['small_playout_train/updates'] for p in payloads)
+        assert {int(s['step']) for s in restored.policy.small_playout_optimizer.state.values()} == {steps_before_resume}
     if not fixed_lower:
         assert restored.policy.optimizer.state
     bundle = tmp_path/'state'/'rank0'/'step-000000000064'
@@ -306,10 +314,20 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
             if fixed_strategy == 'small-playout':
                 assert all(p['small_playout_rank0/common/simulations'] > 0 for p in payloads)
                 assert all('game/completed_full_games_global' in p for p in payloads)
-                assert final.small_playout_pair['sha256'] == model.small_playout_pair['sha256']
-                for key in ('policy', 'prior'):
+                if online_small:
                     import numpy as np
-                    np.testing.assert_array_equal(final.small_playout_pair[key], model.small_playout_pair[key])
+                    assert not hasattr(final, 'small_playout_pair')
+                    assert not np.array_equal(final.policy.small_playout.export(), initial_small)
+                    assert all(p['small_playout_train/parameter_l2_change'] > 0 for p in payloads)
+                    total = sum(p['small_playout_train/updates'] for p in payloads)
+                    assert final.small_playout_optimizer_steps == total > steps_before_resume
+                    assert {int(s['step']) for s in final.policy.small_playout_optimizer.state.values()} == {total}
+                    assert all(p.get('small_playout_rank0/common/prior_calls', 0) == 0 for p in payloads)
+                else:
+                    assert final.small_playout_pair['sha256'] == model.small_playout_pair['sha256']
+                    for key in ('policy', 'prior'):
+                        import numpy as np
+                        np.testing.assert_array_equal(final.small_playout_pair[key], model.small_playout_pair[key])
                 assert any(not torch.equal(value.cpu(), initial_upper[name])
                            for name, value in final.policy.core.upper_tokenizer.state_dict().items()
                            if name.startswith('card.'))
@@ -328,6 +346,12 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     records=[json.loads(line) for line in capsys.readouterr().out.splitlines()
              if line.startswith('{') and 'rollout_resources' in line]
     assert len(records)==4
+    if online_small:
+        import hashlib
+        hashes = [r['small_playout_collection_sha256'] for r in records]
+        assert hashes[0] == hashlib.sha256(initial_small.tobytes()).hexdigest()
+        assert len(set(hashes)) == 4
+        assert hashes[2] == hashlib.sha256(restored.policy.small_playout.export().tobytes()).hexdigest()
     # The collector must carry actual native work through reduction and both
     # reporting sinks, including the two rounds after checkpoint recovery.
     # Pin the public metric contract so deleting a key cannot weaken this test.
@@ -596,13 +620,14 @@ def test_joint_wholerun_fixed_rulebase_lower_lifecycle(
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.skipif(
     not torch.cuda.is_available(), reason='BF16 small-playout lifecycle requires CUDA'))])
+@pytest.mark.parametrize('online', [False, True])
 def test_joint_wholerun_small_playout_lifecycle(
-        tmp_path, monkeypatch, capsys, short_combat_env_type, device):
+        tmp_path, monkeypatch, capsys, short_combat_env_type, device, online):
     test_training_reaches_wandb_and_checkpoint(
         tmp_path, monkeypatch, capsys, short_combat_env_type,
         True, 'model', 'entity', 'autoregressive-v2', vector='native',
         device=device, amp='bf16' if device == 'cuda' else 'off',
-        joint=True, fixed_lower='small-playout')
+        joint=True, fixed_lower='small-playout', online_small=online)
 
 
 def test_upper_microbatch_override_survives_plain_resume(

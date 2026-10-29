@@ -1,4 +1,4 @@
-"""Attach a frozen, independently pretrained compact pair to strategic PPO."""
+"""Configure compact CPU search for online learning or an explicit frozen backup."""
 import hashlib
 import json
 from pathlib import Path
@@ -8,6 +8,8 @@ from rl.algorithms.small_playout import load_policy_pair
 
 
 def install_policy_pair(model, path):
+    if hasattr(model.policy, 'small_playout'):
+        raise ValueError('online random initialization and pretrained pair are mutually exclusive')
     if not getattr(model.policy.core, 'joint_upper', False):
         raise ValueError('small playout requires joint strategic PPO')
     if model.nosl_is_az_replay_enabled or getattr(model, '_frozen_upper', False):
@@ -21,9 +23,22 @@ def install_policy_pair(model, path):
 
 
 def configure_collection(model, env):
-    pair = getattr(model, 'small_playout_pair', None)
+    if hasattr(model.policy, 'small_playout'):
+        import slaythespire as sts
+        if (model.policy.small_playout.key_count != sts.small_playout_key_count()
+                or model.nosl_is_az_replay_enabled or getattr(model, '_frozen_upper', False)
+                or hasattr(model, 'small_playout_pair')):
+            raise ValueError('online compact policy needs its own vocabulary and fresh whole-run objective')
+        weights = model.policy.small_playout.export()
+        pair = dict(sha256=hashlib.sha256(weights.tobytes()).hexdigest(),
+            contract='sts1-small-playout-v1', online=True, policy=weights, prior=None,
+            common_simulations=250, elite_simulations=250, boss_simulations=1000,
+            playout_depth=200, tree_depth=1024)
+        model.small_playout_collection_sha256 = pair['sha256']
+    else:
+        pair = getattr(model, 'small_playout_pair', None)
     if pair is None:
-        raise ValueError('small-playout requires an embedded pretrained policy pair')
+        raise ValueError('small-playout requires an online policy or an explicit frozen backup pair')
     if not hasattr(env, 'configure_small_playout'):
         raise ValueError('small-playout currently supports the native vector backend only')
     env.configure_small_playout(pair)

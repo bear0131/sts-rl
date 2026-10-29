@@ -10,8 +10,9 @@ class SmallPlayoutBatch:
             raise ValueError('unknown small playout feature contract')
         self.envs, self.pool, self.pair = envs, pool, pair
         self.net = sts.SmallPlayoutNet(pair['policy'])
-        self.prior = sts.SmallPlayoutNet(pair['prior'])
+        self.prior = sts.SmallPlayoutNet(pair['prior']) if pair.get('prior') is not None else None
         self.stats = {}
+        self.samples = []
 
     def tier(self, env):
         room = env.thick.gc.cur_room
@@ -46,7 +47,7 @@ class SmallPlayoutBatch:
             cfg.simulations = self.pair[tier+'_simulations']
             cfg.playout_depth = self.pair['playout_depth']
             cfg.tree_depth = self.pair['tree_depth']
-            cfg.use_prior = tier in ('elite', 'boss')
+            cfg.use_prior = self.prior is not None and tier in ('elite', 'boss')
             jobs.append((index, tier, cfg, nonce))
         # A public, cheap cost hint avoids sending the longest bosses last.
         jobs.sort(key=lambda j: j[2].simulations, reverse=True)
@@ -54,6 +55,10 @@ class SmallPlayoutBatch:
             results = sts.small_playout_search_batch(self.pool, self.net,
                 [self.envs[j[0]].thick.bc for j in jobs], [j[2] for j in jobs], [j[3] for j in jobs], self.prior)
             for (index, tier, _, _), result in zip(jobs, results, strict=True):
+                if self.pair.get('online') and len(result['action_bits']) > 1:
+                    self.samples.append({key: np.asarray(result[key], dtype=dtype) for key, dtype in
+                        (('state', np.float32), ('actions', np.float32), ('keys', np.int32),
+                         ('action_bits', np.uint32), ('visits', np.float32))})
                 self.stats[tier+'/decisions'] = self.stats.get(tier+'/decisions', 0)+1
                 for key, value in result['stats'].items():
                     name = tier+'/'+key

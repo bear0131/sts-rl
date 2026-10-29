@@ -5,11 +5,30 @@ The key table contains real StS1 card/upgrade and potion IDs, not StS2 padding.
 """
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
+import math
 import numpy as np
 import torch
 from torch import nn
 
 CONTRACT = 'sts1-small-playout-v1'
+
+
+@dataclass(frozen=True)
+class OnlinePlayoutConfig:
+    key_count: int = 785
+    learning_rate: float = 3e-4
+    epochs: int = 2
+    batch_size: int = 2048
+    micro_batch_size: int = 256
+    max_grad_norm: float = 1.
+
+    def __post_init__(self):
+        if (not all(math.isfinite(v) for v in asdict(self).values())
+                or self.key_count < 3 or self.learning_rate <= 0 or self.max_grad_norm <= 0
+                or min(self.epochs, self.batch_size, self.micro_batch_size) < 1
+                or any(int(v) != v for v in (self.key_count, self.epochs, self.batch_size, self.micro_batch_size))):
+            raise ValueError('invalid online compact policy configuration')
 
 
 class SmallPlayoutPolicy(nn.Module):

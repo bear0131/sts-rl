@@ -486,6 +486,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "_nosl_is_az_pending_fights",
             "_outer_pending_rewards", "_outer_collection",
             "_upper_pending", "_upper_completed", "_upper_episode_ids",
+            "_small_playout_samples",
             "_nosl_is_az_replay",
             "_nosl_is_az_replay_prepare_stats",
             "_nosl_is_az_rollout_hp_order",
@@ -503,6 +504,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
         state_dicts, variables = super()._get_torch_save_params()
         if joint_upper(self):
             state_dicts = [*state_dicts, 'policy.upper_optimizer']
+        if hasattr(self.policy, 'small_playout_optimizer'):
+            state_dicts = [*state_dicts, 'policy.small_playout_optimizer']
         return state_dicts, variables
 
     def _ensure_nosl_is_az_replay(self) -> NOSLISAZReplayBuffer:
@@ -1809,6 +1812,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                       self.policy.predict_values(obs_as_tensor(new_obs, self.device)))
         if small_lower:
             self._small_playout_stats = env.small_playout_stats()
+            self._small_playout_samples = env.take_small_playout_samples()
             for key, value in self._small_playout_stats.items():
                 self.logger.record('small_playout/'+key, value)
         if self._outer_return:
@@ -2938,6 +2942,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
             else {}
         )
         if joint_upper(self):
+            if hasattr(self.policy, 'small_playout'):
+                from rl.algorithms.small_playout import update_online
+                update_online(self)
             update_upper(self)
 
         flat_values = self.rollout_buffer.values.flatten()

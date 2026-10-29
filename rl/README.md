@@ -40,7 +40,7 @@ Torch与原生有不同浮点归约顺序，以2e-5绝对/相对容差验证，�
 非目标动作不虚构敌人目标。Frozen Eye 保留完整可见牌序；Warcry/Headbutt 等已知牌顶
 随真实 transition 跟踪。Runic Dome 特征隐藏意图，整局采用纯 policy；尚未实现其意图信念搜索。
 
-普通房间UCT，精英/Boss使用独立先验PUCT（mix=.5，temperature=1）；一次policy playout、
+在线随机起步时所有房间UCT；显式加载备用pair时普通UCT、精英/Boss独立先验PUCT（mix=.5，temperature=1）。一次policy playout、
 均值回传，根选最高Q，.02区间内按访问数决定，并保留格挡/免费动作保护。
 每个叶后最多200个完整原子动作，树深另限1024。真实胜/负/玩家逃跑与两类截断独立计数。
 手工分数借鉴参考RichBoth：胜利HP/药水/回合奖励，败局敌人受损/剩余HP/存活回合塑形，
@@ -49,19 +49,26 @@ Torch与原生有不同浮点归约顺序，以2e-5绝对/相对容差验证，�
 EndTurn widening 23.148 / .436、抽牌4 / .5，其余1 / .5。探索系数按simulation预算
 <500 / <1000 / 其余分别为.8 / 1.41 / 2.5。完整状态和动作键采用逐字段强混合，
 避免已复现的Codex候选哈希碰撞；旧NOSL的历史键保持兼容，其碰撞修复另列TODO。
-下层先用搜索访问分布做CE，随后用独立同起点K条真实playout做leave-one-out REINFORCE；
-包含截断的组不提供终局监督。独立先验仅做CE，不随REINFORCE更新。
-StS1暂无参考项目的人类BC数据，先验使用模拟器搜索监督；未实现参考的证明求解和废牌清理保护，
+当前整体实验上下层均随机起步，不预训练、不加载独立先验。每轮实际经过的多动作战斗根
+用搜索visits分布做在线CE（两epoch，Adam 3e-4，每rank有效batch2048/micro256，FP32，clip1），
+按全局有效样本量平均梯度；空rank/末尾不等长仍参加相同同步。没有旧replay，单动作根和Dome无搜索标签。
+下层权重、Adam、累计更新数与整局环境/RNG一起保存恢复，下一轮重建原生权重。
+这与参考的先离线训练再固定小网不同，是用户要求的无预训练实验；manual score仍只用于搜索，
+没有给小网增加value监督。备用流程支持CE后独立同起点K条真实playout的leave-one-out REINFORCE，
+包含截断的组不提供终局监督；备用独立先验仅做CE，不随REINFORCE更新。
+StS1暂无参考项目的人类BC数据，备用先验使用模拟器搜索监督；未实现参考的证明求解和废牌清理保护，
 状态/动作特征也使用StS1映射，不能把这些差异称为逐项等价移植。
 
-预训练复用 `python -m rl.training.trainer --task wholerun --prepare-small-playout protocol.json`：
+备用预训练复用 `python -m rl.training.trainer --task wholerun --prepare-small-playout protocol.json`：
 `collect` 协议指定可信环境journal bank、seed/rank、threads、samples、batch_roots、seconds、output；
 `fit` 协议指定同bank的shards、ce_epochs、batch_size、rf_updates/rf_starts/rf_k、entropy_coef。
 每阶段记录进度、真实transition计数和ResourceMonitor；80%银行起点训练，20%固定留出。
 这是有限bootstrap，不是下层收敛证明；旧权重从不读取。
-产物pair通过 `@configs/train/small_playout_fresh.args --small-playout-pair pair.pt --steps 0 --out ...`
-嵌入新上层checkpoint。该兼容容器保留一个32宽单层冻结旧combat模块，整局回归禁止调用它；
-实际搜索仅执行30889参数playout和独立30889参数prior。上层256宽4层及card encoder均随机可训练。
+默认 `@configs/train/small_playout_fresh.args --steps 0 --out ...` 创建随机上下层初始checkpoint，
+其中 `--small-playout-online` 接受OnlinePlayoutConfig的JSON字段。显式备用 `--small-playout-pair pair.pt`
+与该选项互斥，须用不含online选项的配置，不能静默覆盖随机初始化。
+兼容容器保留一个32宽单层冻结旧combat模块，整局回归禁止调用它；
+实际搜索仅执行30889参数playout。上层256宽4层及card encoder均随机可训练。
 分布式使用 `configs/train/small_playout_distributed.args` 和已有 `experiments/launchers/launch_nosl_replay.sh`，
 保持4×384×512，PPO两epoch、entropy .0125；自然完整游戏跨rank累加，包含胜败、排除超时/异常。
 40万局在轮末保存停止，计数随各rank模型恢复；另有10000轮硬预算。截断/模拟量按房间层级记录，

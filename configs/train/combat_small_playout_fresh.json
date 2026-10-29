@@ -153,10 +153,11 @@
       "parameters_per_network": 30889,
       "feature_contract": "sts1-small-playout-v1; explicit StS1 entity/selection mapping, 32 state and 24 action features",
       "initialization": "random",
-      "training": "32768 search-visit samples from four shards, independent playout/prior CE for four epochs, then 128 leave-one-out REINFORCE updates (32 starts x 8 trajectories); freeze pair during upper PPO",
-      "prior_source": "simulator-search supervision, because StS1 human behavior-cloning data are unavailable",
+      "training": "Online search-visits cross entropy after every whole-run collection; two epochs, Adam 3e-4, effective batch 2048/rank, microbatch256, FP32, clip1; no replay or pretraining",
+      "prior_source": "disabled: all room tiers use UCT; pretrained pair retained only as an explicit fallback",
       "remaining_reference_differences": "StS1 feature/outcome definitions; no solver proof or junk-action guard; Runic Dome public-only policy fallback",
-      "learned_value_head": false
+      "learned_value_head": false,
+      "online_contract": "sts1-small-playout-online-v1"
     },
     "battle_objective": {
       "kind": "hand_designed",
@@ -220,7 +221,7 @@
     "launch_prerequisites": [
       "StS1 feature/action/outcome contracts implemented and tested",
       "native chance-aware tree and compact CPU policy integrated; not the existing 128-simulation Full Gumbel path",
-      "resolve separate move-prior training without importing incompatible StS2 human-replay weights",
+      "No pretrained lower/prior or historical model weights; random compact policy updates online and restores its Adam",
       "explicitly retain manual terminal and cutoff targets; no frozen876 or hypernetwork value calls",
       "new run identity with upper and card vectors randomly initialized and trainable; all optimizer/replay state fresh",
       "fixed-seed bounded remote tests and two real PPO learning/report/save/restore iterations",

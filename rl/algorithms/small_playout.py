@@ -21,6 +21,76 @@ from rl.policies.small_playout import CONTRACT, SmallPlayoutPolicy, collate_feat
 from rl.search.small_playout import SmallPlayoutSearch, SmallSearchConfig
 
 
+def update_online(model, *, rank=0, world_size=1, average=lambda values: values, synchronize=None):
+    """Fresh search-visit expert iteration, with globally sample-weighted Adam.
+
+    Every rank runs the same number of steps, including empty ranks/tails.
+    Microbatches bound memory; only the effective batch is clipped and stepped.
+    The outer trainer owns gradient transport and checkpoint/RNG restoration.
+    """
+    if not hasattr(model.policy, 'small_playout'):
+        return {}
+    from rl.algorithms.upper_ppo import train_phase
+    from rl.policies.small_playout import OnlinePlayoutConfig
+    cfg = OnlinePlayoutConfig(**model.policy.small_playout_config)
+    samples = getattr(model, '_small_playout_samples', [])
+    counts = average({f'rank_{i}': float(len(samples) if i == rank else 0) for i in range(world_size)})
+    sizes = [int(round(counts[f'rank_{i}'] * world_size)) for i in range(world_size)]
+    out = dict(samples=sum(sizes), updates=0, loss=0., entropy=0., grad_norm=0., sync_seconds=0.)
+    if not out['samples']:
+        return out
+    net, optimizer = model.policy.small_playout, model.policy.small_playout_optimizer
+    before = net.export()
+    model._sync_device()
+    started = time.perf_counter()
+    totals = dict(loss=0., entropy=0.)
+    norms = []
+    model.policy.set_training_mode(True)
+    with train_phase(model, small_playout=True):
+        for _ in range(cfg.epochs):
+            order = np.random.permutation(len(samples))
+            for start in range(0, max(sizes), cfg.batch_size):
+                mean_count = sum(min(cfg.batch_size, max(0, n-start)) for n in sizes) / world_size
+                optimizer.zero_grad(set_to_none=True)
+                indices = order[start:start+cfg.batch_size]
+                for offset in range(0, len(indices), cfg.micro_batch_size):
+                    batch = [samples[i] for i in indices[offset:offset+cfg.micro_batch_size]]
+                    tensors = collate_features(batch, model.device)
+                    target = np.zeros(tensors[-1].shape, np.float32)
+                    for i, sample in enumerate(batch):
+                        visits = np.asarray(sample['visits'], np.float32)
+                        if not np.isfinite(visits).all() or np.any(visits < 0) or visits.sum() <= 0:
+                            raise ValueError('online compact supervision needs finite positive visits')
+                        target[i, :len(visits)] = visits / visits.sum()
+                    # Compact learner is FP32 even when upper PPO uses BF16.
+                    logp = torch.log_softmax(net(*tensors), -1).masked_fill(~tensors[-1], 0.)
+                    loss = -(torch.as_tensor(target, device=model.device) * logp).sum()
+                    entropy = -(logp.exp() * logp * tensors[-1]).sum()
+                    if not torch.isfinite(loss):
+                        raise FloatingPointError('nonfinite online compact loss')
+                    (loss / mean_count).backward()
+                    totals['loss'] += float(loss.detach())
+                    totals['entropy'] += float(entropy.detach())
+                if synchronize is not None:
+                    stats = synchronize(out['updates'])
+                    out['sync_seconds'] += float((stats or {}).get('sync_sec', 0.))
+                norms.append(optimizer_step(model, optimizer=optimizer, max_grad_norm=cfg.max_grad_norm))
+                out['updates'] += 1
+    totals = average(totals)
+    mean_samples = out['samples'] / world_size * cfg.epochs
+    out.update({key: value / mean_samples for key, value in totals.items()})
+    out['grad_norm'] = float(torch.stack(norms).mean())
+    out['parameter_l2_change'] = float(np.linalg.norm(net.export()-before))
+    model.small_playout_optimizer_steps = getattr(model, 'small_playout_optimizer_steps', 0) + out['updates']
+    out['optimizer_steps_total'] = model.small_playout_optimizer_steps
+    model._small_playout_samples = []
+    model._sync_device()
+    out['seconds'] = time.perf_counter()-started
+    for key, value in out.items():
+        model.logger.record('small_playout_train/'+key, value)
+    return out
+
+
 @dataclass(frozen=True)
 class BattleFixture:
     encounter: str = 'Jaw Worm'
