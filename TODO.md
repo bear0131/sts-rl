@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| COMBAT-SMALL-ALIGN | 诊断/CE阶段对齐及回归已通过；正在全fresh重训 | combat21已完整停止67轮/187748局。固定c60ce39e CE：8epoch/AdamW.003/wd1e-4/全局4096/.8推荐+.2visits，不启用离线REINFORCE/预训练；恢复本仓原upper10次/entropy.02，其他上层超参不动。四机各134项、完整CPU/CUDA生命周期39项通过，固定256战斗根配对说明下层有学习但上层后期loss/KL极低。保持384×512/人工目标/搜索预算；待combat22首轮生产更新保存，后续重点上层逐epoch policy loss/KL及固定战斗能力，持续停滞需保存诊断。见worklog/2026-10-30.md“COMBAT-SMALL-ALIGN”。 |
 | SIM-ACTION-QUEUE-GROWTH | 已修复并完成四机生产恢复验收 | sim/sts_lightspeed/include/combat/ActionQueue.h固定50槽长回调链溢出导致small playout bad_function_call；55626e1a保留内联槽并按需扩容，保留顺序/复制/胜利清理与回调释放。固定故障根250sim通过，四机各378项、兼容62项、完整生命周期37项通过。已从第60轮47185920/169574局完整恢复，四台384环境全部恢复，并完成保存第61轮47972352/172127局；权重及两套Adam一致，upper122/compact7066，目标和预算不变。见worklog/2026-10-30.md“13:58 巡检”。 |
 | SIM-ACT3-TERMINAL-OBS | 79db049d已修复；完整生产一轮恢复验收通过 | env/core/game_env.py、encode.py：三幕胜利进入native Act4后，任务末帧使用既有none phase，不解析旧RunMap中的新幕候选；奖励/终局定义、普通死亡与观测空间不变。legacy/global_map/public_context真实step及NativeSearchVecEnv自动reset四项回归，四机各128项、兼容62项、完整生命周期37项通过；从19轮14942208完整恢复后，第20轮15728640/64618自然整局保存成功，四rank模型/两套Adam一致。见worklog/2026-10-30.md“08:47 巡检”。 |
 | COMBAT-SMALL-PLAYOUT | 四机无预训练整体长训中；质量待观察 | source55626e1a，combat21-small-playout-fresh-r1；随机upper4,932,354+card及lower30,889，在线visits CE，无独立先验/876/hypernetwork/replay，人工目标。四机Gold6459C/5090各384×512、250/250/1000sim、playout200/tree1024不变；最初两轮生产验收已完成。第20轮终局地图、第61轮回调队列溢出均已修复并从共同完整包恢复；现已保存第61轮47972352/172127局，权重/两套Adam一致，继续40万局预算及小时巡检。COMBAT18已保存40轮；参考差异/真实bridge边界见rl/README.md，证据worklog/2026-10-30.md“完整生产验收与长训”“08:47 巡检”“13:58 巡检”。 |

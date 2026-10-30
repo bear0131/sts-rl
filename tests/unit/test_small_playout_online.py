@@ -9,7 +9,7 @@ import pytest
 import torch
 
 from rl.algorithms.small_playout import update_online
-from rl.policies.small_playout import OnlinePlayoutConfig, SmallPlayoutPolicy
+from rl.policies.small_playout import OnlinePlayoutConfig, SmallPlayoutPolicy, search_target
 from rl.training.distributed_sb3 import install_flat_gradients, pack_gradients
 
 
@@ -69,7 +69,40 @@ def test_unequal_and_empty_ranks_match_global_batch(sizes):
         assert model.policy.core.weight.grad is None
 
 
-@pytest.mark.parametrize('cfg', [dict(epochs=0), dict(batch_size=2.5), dict(learning_rate=float('nan'))])
+@pytest.mark.parametrize('cfg', [dict(epochs=0), dict(batch_size=2.5), dict(learning_rate=float('nan')),
+    dict(target_mix=-.1), dict(target_mix=1.1), dict(optimizer='unknown'), dict(weight_decay=-1)])
 def test_invalid_online_configuration_is_rejected(cfg):
     with pytest.raises(ValueError, match='invalid online'):
         OnlinePlayoutConfig(**cfg)
+
+
+def test_recommendation_is_not_the_most_visited_action():
+    # Q-band/root guards can recommend a move different from argmax(visits).
+    sample = dict(action_bits=[17, 42, 99], visits=[8, 1, 1], recommended_action=42)
+    np.testing.assert_allclose(search_target(sample, .2), [.16, .82, .02], atol=1e-7)
+    np.testing.assert_allclose(search_target(sample, 1), [.8, .1, .1], atol=1e-7)
+    with pytest.raises(ValueError, match='exactly one legal'):
+        search_target(dict(sample, recommended_action=3), .2)
+
+
+def test_aligned_ce_learns_recommended_move_and_exposes_target_entropy():
+    torch.manual_seed(57)
+    sample = dict(state=np.ones(32, np.float32), actions=np.zeros((2, 24), np.float32),
+        keys=np.pad(np.array([[5], [10]]), ((0, 0), (0, 9)), constant_values=-1),
+        action_bits=[17, 42], visits=[9, 1], recommended_action=42)
+    model = model_for(SmallPlayoutPolicy(785).state_dict(), [sample] * 8)
+    model.policy.small_playout_config = asdict(OnlinePlayoutConfig(epochs=8, batch_size=8,
+        micro_batch_size=2, learning_rate=.003, target_mix=.2, optimizer='adamw',
+        weight_decay=.0001, max_grad_norm=0))
+    model.policy.small_playout_optimizer = torch.optim.AdamW(model.policy.small_playout.parameters(),
+        lr=.003, weight_decay=.0001)
+    from rl.policies.small_playout import collate_features
+    inputs = collate_features([sample])
+    before = model.policy.small_playout(*inputs).softmax(-1)[0, 1].item()
+    report = update_online(model)
+    after = model.policy.small_playout(*inputs).softmax(-1)[0, 1].item()
+    assert after > before + .1
+    assert report['updates'] == 8
+    assert report['target_entropy'] == pytest.approx(-(.18*np.log(.18)+.82*np.log(.82)), abs=1e-6)
+    assert report['target_kl'] == pytest.approx(report['loss']-report['target_entropy'])
+    assert report['uniform_ce'] == pytest.approx(np.log(2))

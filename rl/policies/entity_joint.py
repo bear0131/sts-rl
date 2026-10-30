@@ -112,8 +112,11 @@ class EntityJointPolicy(EntityCombatPolicy):
         if self.small_playout_config is not None:
             from rl.policies.small_playout import SmallPlayoutPolicy
             self.small_playout = SmallPlayoutPolicy(self.small_playout_config['key_count'])
-            self.small_playout_optimizer = torch.optim.Adam(self.small_playout.parameters(),
-                lr=self.small_playout_config['learning_rate'])
+            optimizer = (torch.optim.AdamW if self.small_playout_config['optimizer'] == 'adamw'
+                         else torch.optim.Adam)
+            self.small_playout_optimizer = optimizer(self.small_playout.parameters(),
+                lr=self.small_playout_config['learning_rate'],
+                weight_decay=self.small_playout_config['weight_decay'])
 
     def _get_constructor_parameters(self):
         return dict(super()._get_constructor_parameters(), upper_config=self.upper_config,

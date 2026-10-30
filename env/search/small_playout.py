@@ -59,6 +59,7 @@ class SmallPlayoutBatch:
                     self.samples.append({key: np.asarray(result[key], dtype=dtype) for key, dtype in
                         (('state', np.float32), ('actions', np.float32), ('keys', np.int32),
                          ('action_bits', np.uint32), ('visits', np.float32))})
+                    self.samples[-1]['recommended_action'] = int(result['action'])
                 self.stats[tier+'/decisions'] = self.stats.get(tier+'/decisions', 0)+1
                 for key, value in result['stats'].items():
                     name = tier+'/'+key

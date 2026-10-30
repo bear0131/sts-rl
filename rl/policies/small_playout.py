@@ -22,13 +22,34 @@ class OnlinePlayoutConfig:
     batch_size: int = 2048
     micro_batch_size: int = 256
     max_grad_norm: float = 1.
+    target_mix: float = 1.
+    weight_decay: float = 0.
+    optimizer: str = 'adam'
 
     def __post_init__(self):
-        if (not all(math.isfinite(v) for v in asdict(self).values())
-                or self.key_count < 3 or self.learning_rate <= 0 or self.max_grad_norm <= 0
+        if (not all(math.isfinite(v) for k, v in asdict(self).items() if k != 'optimizer')
+                or self.optimizer not in ('adam', 'adamw')
+                or not 0 <= self.target_mix <= 1 or self.weight_decay < 0
+                or self.key_count < 3 or self.learning_rate <= 0 or self.max_grad_norm < 0
                 or min(self.epochs, self.batch_size, self.micro_batch_size) < 1
                 or any(int(v) != v for v in (self.key_count, self.epochs, self.batch_size, self.micro_batch_size))):
             raise ValueError('invalid online compact policy configuration')
+
+
+def search_target(sample, target_mix):
+    """Reference teacher: recommended move mass plus the root visit distribution."""
+    visits = np.asarray(sample['visits'], np.float32)
+    if not np.isfinite(visits).all() or np.any(visits < 0) or visits.sum() <= 0:
+        raise ValueError('online compact supervision needs finite positive visits')
+    target = visits / visits.sum()
+    if target_mix < 1:
+        bits = np.asarray(sample['action_bits'])
+        chosen = np.flatnonzero(bits == sample['recommended_action'])
+        if len(chosen) != 1:
+            raise ValueError('search recommendation must name exactly one legal action')
+        target *= target_mix
+        target[chosen[0]] += 1 - target_mix
+    return target
 
 
 class SmallPlayoutPolicy(nn.Module):

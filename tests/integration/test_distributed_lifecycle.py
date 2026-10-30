@@ -40,7 +40,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
             def build():
                 env = TimeLimit(
                     ShapedRewardWrapper(short_combat_env_type(combat_action_contract=contract,
-                        global_map_view=True, upper_public_context=online_small, event_option_observation=online_small, card_language=combat_arch=='entity')),
+                        global_map_view=True, upper_public_context=bool(online_small), event_option_observation=bool(online_small), card_language=combat_arch=='entity')),
                     max_episode_steps=12,
                 )
                 return (
@@ -67,6 +67,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         kwargs['upper_config'] = dict(width=32, layers=1, heads=4, epochs=2, micro_batch_size=8)
     if online_small:
         kwargs['small_playout_config'] = dict(epochs=2, batch_size=8, micro_batch_size=3)
+        if online_small == 'reference-ce':
+            kwargs['small_playout_config'].update(target_mix=.2, optimizer='adamw',
+                weight_decay=1e-4, learning_rate=3e-3, max_grad_norm=0)
     model = AccumulatingMaskablePPO(
         policy, env, n_steps=16, batch_size=8, n_epochs=1,
         policy_kwargs=kwargs, device=device, seed=42, amp_mode=amp,
@@ -247,6 +250,10 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         steps_before_resume = restored.small_playout_optimizer_steps
         assert steps_before_resume == sum(p['small_playout_train/updates'] for p in payloads)
         assert {int(s['step']) for s in restored.policy.small_playout_optimizer.state.values()} == {steps_before_resume}
+        if online_small == 'reference-ce':
+            assert isinstance(restored.policy.small_playout_optimizer, torch.optim.AdamW)
+            assert restored.policy.small_playout_config['target_mix'] == .2
+            assert all(p['small_playout_train/target_entropy'] >= 0 for p in payloads)
     if not fixed_lower:
         assert restored.policy.optimizer.state
     bundle = tmp_path/'state'/'rank0'/'step-000000000064'
@@ -300,6 +307,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     if joint:
         assert all('upper/samples' in p and 'upper/updates' in p for p in payloads)
         assert sum(p['upper/updates'] for p in payloads) > 0
+        assert all(p['upper/grad_norm'] > 0 and p['upper/parameter_l2_change'] > 0 for p in payloads)
+        assert all('upper/policy_loss_epoch_1' in p and 'upper/clip_fraction' in p for p in payloads)
         final = AccumulatingMaskablePPO.load(output, device='cpu')
         if upper_micro_override is not None:
             assert final.policy.core.upper_config.micro_batch_size == upper_micro_override
@@ -620,7 +629,7 @@ def test_joint_wholerun_fixed_rulebase_lower_lifecycle(
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.skipif(
     not torch.cuda.is_available(), reason='BF16 small-playout lifecycle requires CUDA'))])
-@pytest.mark.parametrize('online', [False, True])
+@pytest.mark.parametrize('online', [False, True, 'reference-ce'])
 def test_joint_wholerun_small_playout_lifecycle(
         tmp_path, monkeypatch, capsys, short_combat_env_type, device, online):
     test_training_reaches_wandb_and_checkpoint(

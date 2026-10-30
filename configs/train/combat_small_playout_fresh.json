@@ -124,7 +124,7 @@
     }
   },
   "target": {
-    "status": "four_host_fresh_online_wholerun_running",
+    "status": "reference_ce_alignment_pending_production",
     "game": "Slay the Spire 1",
     "character": "Ironclad",
     "ascension": 0,
@@ -141,7 +141,8 @@
       "load_optimizer": false,
       "load_replay": false,
       "objective": "existing run-level reward, PPO",
-      "observation_contract": "upper-public-context-v1: public map on every upper screen, dynamic event entities and selection origin; simulator only"
+      "observation_contract": "upper-public-context-v1: public map on every upper screen, dynamic event entities and selection origin; simulator only",
+      "configuration": "Unchanged repository entity_joint_upper_batch4x_e10: restore epochs10 and entropy.02; other settings match original. Do not import reference PPO settings."
     },
     "lower": {
       "architecture": "reference factorized playout policy",
@@ -154,7 +155,7 @@
       "parameters_per_network": 30889,
       "feature_contract": "sts1-small-playout-v1; explicit StS1 entity/selection mapping, 32 state and 24 action features",
       "initialization": "random",
-      "training": "Online search-visits cross entropy after every whole-run collection; two epochs, Adam 3e-4, effective batch 2048/rank, microbatch256, FP32, clip1; no replay or pretraining",
+      "training": "Online reference CE stage: target 0.8 recommended action + 0.2 visits, AdamW 3e-3/wd1e-4, 8 epochs, global batch4096 (1024 per rank), micro256, FP32, no gradient clipping; fresh/no pretraining. Reference offline outcome REINFORCE remains a separate stage and is not enabled by this CE alignment.",
       "prior_source": "disabled: all room tiers use UCT; pretrained pair retained only as an explicit fallback",
       "remaining_reference_differences": "StS1 feature/outcome definitions; no solver proof or junk-action guard; Runic Dome public-only policy fallback",
       "learned_value_head": false,

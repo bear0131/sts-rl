@@ -155,13 +155,18 @@ def update_upper(model, *, world_size=1, average=lambda values: values, synchron
         return out
     mean = stats['advantage_sum'] / mean_count
     std = max(0., stats['advantage_square_sum'] / mean_count - mean * mean) ** .5
+    out.update(advantage_mean=mean, advantage_std=std, grad_norm=0., parameter_l2_change=0.,
+               clip_fraction=0., requested_updates=float(cfg.epochs), kl_stopped=0.)
     advantages = (advantages - mean) / (std + 1e-8)
     batches = list(_training_batches(records, cfg.micro_batch_size))
+    parameters = list(model.policy.core.upper_parameters())
+    before = [p.detach().clone() for p in parameters]
+    norms = []
     model.policy.set_training_mode(True)
     with train_phase(model, upper=True):
         for epoch in range(cfg.epochs):
             model.policy.upper_optimizer.zero_grad(set_to_none=True)
-            totals = dict(kl=0., policy_loss=0., value_loss=0., entropy=0.)
+            totals = dict(kl=0., policy_loss=0., value_loss=0., entropy=0., clip_fraction=0.)
             for batch_index, batch in enumerate(batches):
                 start = batch_index * cfg.micro_batch_size
                 n = len(batch['actions'])
@@ -180,18 +185,25 @@ def update_upper(model, *, world_size=1, average=lambda values: values, synchron
                 loss = components.policy_loss + cfg.value_coef * components.value_loss + cfg.entropy_coef * components.entropy_loss
                 (loss * (n / mean_count)).backward()
                 for name, value in (('kl', components.approx_kl), ('policy_loss', components.policy_loss),
-                                    ('value_loss', components.value_loss), ('entropy', -components.entropy_loss)):
+                                    ('value_loss', components.value_loss), ('entropy', -components.entropy_loss),
+                                    ('clip_fraction', components.clip_fraction)):
                     totals[name] += float(value.detach()) * n
             reduced = average(totals)
             out.update({k: v / mean_count for k, v in reduced.items()})
+            out[f'policy_loss_epoch_{epoch + 1}'] = out['policy_loss']
+            out[f'kl_epoch_{epoch + 1}'] = out['kl']
             if not all(np.isfinite(v) for v in out.values()):
                 raise FloatingPointError('nonfinite strategic PPO statistics')
             if out['kl'] > 1.5 * cfg.target_kl:
+                out['kl_stopped'] = 1.
                 break
             if synchronize is not None:
                 synchronize(epoch)
-            optimizer_step(model, optimizer=model.policy.upper_optimizer, max_grad_norm=cfg.max_grad_norm)
+            norms.append(optimizer_step(model, optimizer=model.policy.upper_optimizer, max_grad_norm=cfg.max_grad_norm))
             out['updates'] += 1
+    out['grad_norm'] = float(torch.stack(norms).mean()) if norms else 0.
+    out['parameter_l2_change'] = float(torch.stack([
+        (p.detach() - old).float().square().sum() for p, old in zip(parameters, before)]).sum().sqrt())
     model._upper_completed = []
     for name, value in out.items():
         model.logger.record('upper/' + name, value)
