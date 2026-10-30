@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| COMBAT-SMALL-BATCH-RESTORE | 配置和生命周期通过；准备COMBAT23全fresh启动 | 仅替换下层；其有效batch102400/rank、micro8192；上层12项锁定TRAIN47/876原值，仅micro因完整地图4096 OOM经用户授权改2048。384×512/10次上层更新/搜索预算不变。39项生命周期与四机容量已过，待新训练完整生产保存、学习指标、显存差异核查。旧COMBAT22第6轮完整保留。见worklog/2026-10-30.md“训练耗时原因核查”。 |
+| COMBAT-SMALL-BATCH-RESTORE | COMBAT23已全fresh启动，首轮四机保存验收完成；监控学习 | sourcea799794d，run combat23-small-ce-batch-restored-fresh-r1/W&B combat23batch30a。上层仅获授权micro2048，其余12项原TRAIN47不变；下层batch102400/rank、micro8192、8epoch。18unit/39生命周期及四机配置/模型/双Adam/完整保存通过，首轮global786432/3789局，upper10步/lower16步，整轮338–344秒；upper loss-.001822/KL.005638。第二轮已128/512。地图补全增加105token，是实测显存增长主因；保留完整观测。COMBAT22停止第6轮不恢复。后续小时巡检学习曲线及固定战斗评测，持续停滞保存诊断。见worklog/2026-10-30.md“COMBAT23全fresh启动与显存归因”。 |
 | COMBAT-SMALL-ALIGN | COMBAT22保存停止6轮，转COMBAT-SMALL-BATCH-RESTORE | 下层CE标签/AdamW/8epoch对齐已完成；原入口误改上层micro和GAE已查明，按用户要求恢复并另开COMBAT23。旧run第6轮global4718592/18300局四rank模型及两套Adam一致，保留不再启动。见worklog/2026-10-30.md对应节。 |
 | SIM-ACTION-QUEUE-GROWTH | 已修复并完成四机生产恢复验收 | sim/sts_lightspeed/include/combat/ActionQueue.h固定50槽长回调链溢出导致small playout bad_function_call；55626e1a保留内联槽并按需扩容，保留顺序/复制/胜利清理与回调释放。固定故障根250sim通过，四机各378项、兼容62项、完整生命周期37项通过。已从第60轮47185920/169574局完整恢复，四台384环境全部恢复，并完成保存第61轮47972352/172127局；权重及两套Adam一致，upper122/compact7066，目标和预算不变。见worklog/2026-10-30.md“13:58 巡检”。 |
 | SIM-ACT3-TERMINAL-OBS | 79db049d已修复；完整生产一轮恢复验收通过 | env/core/game_env.py、encode.py：三幕胜利进入native Act4后，任务末帧使用既有none phase，不解析旧RunMap中的新幕候选；奖励/终局定义、普通死亡与观测空间不变。legacy/global_map/public_context真实step及NativeSearchVecEnv自动reset四项回归，四机各128项、兼容62项、完整生命周期37项通过；从19轮14942208完整恢复后，第20轮15728640/64618自然整局保存成功，四rank模型/两套Adam一致。见worklog/2026-10-30.md“08:47 巡检”。 |
