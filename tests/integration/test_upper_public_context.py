@@ -9,6 +9,49 @@ from rl.policies.entity_joint import EntityJointPolicy
 pytestmark = [pytest.mark.native, pytest.mark.timeout(120)]
 
 
+@pytest.mark.parametrize('schema', ['legacy', 'global_map', 'public_context'])
+def test_act3_victory_returns_terminal_observation(act3_boss_map_root, schema):
+    from env.core import action_space as A
+    env = SlayTheSpireEnv(global_map_view=schema != 'legacy',
+        upper_public_context=schema == 'public_context',
+        event_option_observation=schema == 'public_context')
+    try:
+        env.reset(seed=42)
+        x = act3_boss_map_root(env)
+        obs, reward, done, cut, info = env.step(A.seg_base('MAP_NODE') + x)
+        assert done and not cut and reward == 1.
+        assert info['run_stats']['act'] == 4
+        assert env.thick.phase() == 'none'
+        assert obs['phase'][0] == V.PHASE_VOCAB_INDEX['none']
+        assert env.observation_space.contains(obs) and not env.action_masks().any()
+        assert not obs['map_node_rooms'].any()
+        if schema != 'legacy':
+            assert not obs['map_full_rooms'].any()
+        assert obs['run_hp'][0] > 0 and obs['deck_ids'].any()
+    finally:
+        env.close()
+
+
+def test_native_vector_preserves_victory_terminal_before_reset(act3_boss_map_root):
+    from env.core import action_space as A
+    from rl.training.native_vec_env import NativeSearchVecEnv
+    vec = NativeSearchVecEnv([lambda: SlayTheSpireEnv(global_map_view=True,
+        upper_public_context=True, event_option_observation=True,
+        combat_action_contract='autoregressive-v2')], threads=1)
+    try:
+        vec.seed(42); vec.reset()
+        x = act3_boss_map_root(vec.envs[0])
+        obs, rewards, dones, infos = vec.step(np.array([A.seg_base('MAP_NODE') + x]))
+        assert dones[0] and rewards[0] == 1.
+        assert infos[0]['terminal_observation']['phase'][0] == V.PHASE_VOCAB_INDEX['none']
+        assert not infos[0]['TimeLimit.truncated']
+        assert infos[0]['run_stats']['act'] == 4
+        assert obs['phase'][0, 0] != V.PHASE_VOCAB_INDEX['none']
+        assert vec.envs[0].thick.gc.act == 1
+    finally:
+        vec.close()
+
+
 @pytest.mark.parametrize('phase', ['combat_reward', 'card_select', 'event', 'shop', 'rest', 'chest', 'boss_relic', 'map'])
 def test_all_upper_screens_preserve_context_and_network_reads_map(monkeypatch, phase):
     from env.core import game_env

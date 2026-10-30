@@ -202,6 +202,8 @@ class SimGameEnv:
     def phase(self):
         """Semantic phase. 'combat' whenever a BattleContext is live; otherwise
         the gc's screen phase."""
+        if self.gc.act > 3:
+            return "none"
         if self.bc is not None:
             return "combat"
         return sim_phase(self.gc)
@@ -210,6 +212,14 @@ class SimGameEnv:
         """Backend-agnostic state dict. In combat: the combat canonical (+phase).
         Out of combat: the overworld canonical, with map options filled in from
         the rebuilt SpireMap (the schema can't do that without depending on env)."""
+        if self.gc.act > 3:
+            # This task ends after Act 3 even when the native game opens Act 4.
+            # Preserve the final inventory/HP, without projecting a new map
+            # through the previous act's deliberately retained RunMap.
+            d = normalize_sim_overworld(self.gc, for_encoding=for_encoding)
+            # Reuse the existing no-screen phase; checkpoint vocab stays fixed.
+            d.update(phase="none", options={})
+            return d
         if self.bc is not None:
             d = normalize_sim(self.bc.to_dict())
             d["phase"] = "combat"

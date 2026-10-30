@@ -122,6 +122,23 @@ def replayable_selection_env():
 
 
 @pytest.fixture
+def act3_boss_map_root():
+    """Controlled final boss entry; the native victory callback advances the act."""
+    def configure(env):
+        gc = env.thick.gc
+        gc.act = 3
+        gc.red_key = gc.blue_key = gc.green_key = True
+        gc.cur_map_node_x = next(x for x in range(7)
+                                if env.thick.rmap.room_type(x, 14) == 'REST')
+        gc.cur_map_node_y, gc.floor_num = 14, 50
+        gc.screen_state = sts.ScreenState.MAP_SCREEN
+        gc.skip_battles = True
+        env._invalidate_backend_cache()
+        return gc.cur_map_node_x
+    return configure
+
+
+@pytest.fixture
 def chest_env_type():
     """Real treasure/reward state machine, reached through a replayable route."""
     from env.core.game_env import SimGameEnv

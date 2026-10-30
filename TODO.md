@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| SIM-ACT3-TERMINAL-OBS | 已修复并通过回归；生产恢复验收中 | env/core/game_env.py、encode.py：三幕胜利进入native Act4后，任务末帧使用既有none phase，不解析旧RunMap中的新幕候选；奖励/终局定义、普通死亡与观测空间不变。legacy/global_map/public_context真实step及NativeSearchVecEnv自动reset四项回归，四机各128项、地图/观测/模型兼容62项通过；从共同第19轮14942208完整恢复并继续生产，见worklog/2026-10-30.md“08:47 巡检”。 |
 | COMBAT-SMALL-PLAYOUT | 四机无预训练整体长训已启动；质量待观察 | source5d7f625a，combat21-small-playout-fresh-r1；随机upper4,932,354+card及lower30,889，在线visits CE，无独立先验/876/hypernetwork/replay，人工目标。四机Gold6459C/5090各384×512、250/250/1000sim、playout200/tree1024不变；两轮生产验收global1572864/7654自然整局，权重和两套Adam一致，恢复后继续40万局预算并按小时巡检。COMBAT18已保存40轮；参考差异/真实bridge边界见rl/README.md，证据worklog/2026-10-30.md“完整生产验收与长训”。 |
 | TEST-CHEST-MAP-FIXTURE | 已修复并验收 | tests/conftest.py的ChestBackend透传global_map_view和upper_public_context；完整test_distributed_lifecycle 37passed，三个chest模式不再缺full_map。见worklog/2026-10-30.md“UPPER-PUBLIC-CONTEXT”。 |
 | UPPER-PUBLIC-CONTEXT | 修复并随新整体训练部署 | env/core/encode.py、game_env.py、split_policy.py：八类上层界面完整公开地图、五类事件动态候选、选牌来源；新合同upper-public-context-v1。四机124项、CPU/CUDA两轮保存恢复与四机384×512两轮生产验收通过，旧native/upper/joint兼容39项通过。旧checkpoint保留原行为；新模型真实bridge暂明确拒绝，未宣称穷举所有事件语义。见rl/README.md和worklog/2026-10-30.md。 |

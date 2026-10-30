@@ -1296,7 +1296,7 @@ def encode(
     _encode_combat(o, canon)
     _encode_global(o, canon)
     _encode_options(o, canon)
-    if upper_public_context and canon.get('phase') not in ('combat', 'map', 'terminal'):
+    if upper_public_context and canon.get('phase') not in ('combat', 'map', 'none', 'terminal'):
         if 'public_map' not in canon:
             raise ValueError('upper-public-context-v1 requires the current public map on every upper screen')
         _encode_options(o, dict(phase='map', options=canon['public_map']))
