@@ -5,6 +5,24 @@
 旧 apps.dashboard / apps.watch / apps.play_gauntlet 入口继续可用。训练和算法不能反向依赖 apps；UI 只消费 env/policy/evaluation。
 日志、截图和 dashboard session JSON 写入 runs/local，不放仓库根目录。启动前查看 --help，自行指定端口/结果路径。
 
+### 远端训练实时曲线
+
+`python -m apps.training_monitor --config runs/local/monitor/config.json --output runs/local/monitor/state.json`
+提供只读的 `http://127.0.0.1:8773` 窗口，默认每30秒通过SSH同步各rank状态及rank0的完整轮次指标，
+48小时后停止采集并保留展示。`--poll-seconds` / `--max-hours` 可显式调整。
+它与需要模拟器、Torch及checkpoint的交互dashboard分开，纯标准库运行，不加载模型或触发评测。
+配置示例（实际地址、run和密钥路径放本地配置，不写入页面）：
+
+```json
+{"host":"root@example.com","ports":[2200,2201,2202,2203],"ssh_key":"/path/to/key",
+ "root":"/remote/repository","run_id":"my-run","iteration_steps":786432}
+```
+
+远端使用已有`.venv/bin/python`读取日志、PID及保存目录。SSH需预先配置可信host key，
+所有远端操作只读。指标按global timesteps去重，半行留到下次读取；日志轮转从头读并保留已有历史。
+断连不会清空曲线，会显示连接异常；本地服务停止后页面会标记断开，不把缓存当实时状态。
+窗口中胜率沿用训练记录的400局窗口，五轮均值只是相关窗口的均值，不是独立评测。
+
 ### 战士选牌排名
 
 打开 `http://127.0.0.1:8765/?view=ranking`，75 种战士牌（含基础牌）与
