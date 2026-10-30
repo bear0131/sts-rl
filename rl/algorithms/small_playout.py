@@ -31,7 +31,7 @@ def update_online(model, *, rank=0, world_size=1, average=lambda values: values,
     if not hasattr(model.policy, 'small_playout'):
         return {}
     from rl.algorithms.upper_ppo import train_phase
-    from rl.policies.small_playout import OnlinePlayoutConfig, search_target
+    from rl.policies.small_playout import OnlinePlayoutConfig, PreparedPlayoutSamples
     cfg = OnlinePlayoutConfig(**model.policy.small_playout_config)
     samples = getattr(model, '_small_playout_samples', [])
     counts = average({f'rank_{i}': float(len(samples) if i == rank else 0) for i in range(world_size)})
@@ -46,6 +46,11 @@ def update_online(model, *, rank=0, world_size=1, average=lambda values: values,
     model._sync_device()
     started = time.perf_counter()
     totals = dict(loss=0., entropy=0., target_entropy=0., teacher_top1=0., uniform_ce=0.)
+    prepared = PreparedPlayoutSamples(samples, cfg.target_mix) if samples else None
+    if prepared is not None:
+        totals.update(target_entropy=prepared.target_entropy * cfg.epochs,
+                      uniform_ce=prepared.uniform_ce * cfg.epochs)
+    device_totals = {key: [] for key in ('loss', 'entropy', 'teacher_top1')}
     norms = []
     model.policy.set_training_mode(True)
     with train_phase(model, small_playout=True):
@@ -56,31 +61,27 @@ def update_online(model, *, rank=0, world_size=1, average=lambda values: values,
                 optimizer.zero_grad(set_to_none=True)
                 indices = order[start:start+cfg.batch_size]
                 for offset in range(0, len(indices), cfg.micro_batch_size):
-                    batch = [samples[i] for i in indices[offset:offset+cfg.micro_batch_size]]
-                    tensors = collate_features(batch, model.device)
-                    target = np.zeros(tensors[-1].shape, np.float32)
-                    for i, sample in enumerate(batch):
-                        row = search_target(sample, cfg.target_mix)
-                        target[i, :len(row)] = row
-                        totals['target_entropy'] -= float(np.sum(row[row > 0] * np.log(row[row > 0])))
-                        totals['uniform_ce'] += float(np.log(len(row)))
+                    tensors, target, teacher = prepared.batch(
+                        indices[offset:offset+cfg.micro_batch_size], model.device)
                     # Compact learner is FP32 even when upper PPO uses BF16.
-                    logp = torch.log_softmax(net(*tensors), -1).masked_fill(~tensors[-1], 0.)
-                    loss = -(torch.as_tensor(target, device=model.device) * logp).sum()
+                    logp = torch.log_softmax(net.forward_packed(*tensors), -1).masked_fill(~tensors[-1], 0.)
+                    loss = -(target * logp).sum()
                     entropy = -(logp.exp() * logp * tensors[-1]).sum()
                     if not torch.isfinite(loss):
                         raise FloatingPointError('nonfinite online compact loss')
                     (loss / mean_count).backward()
-                    totals['loss'] += float(loss.detach())
-                    totals['entropy'] += float(entropy.detach())
-                    totals['teacher_top1'] += float((logp.masked_fill(~tensors[-1], -torch.inf).argmax(-1)
-                        == torch.as_tensor(target.argmax(-1), device=model.device)).sum())
+                    device_totals['loss'].append(loss.detach())
+                    device_totals['entropy'].append(entropy.detach())
+                    device_totals['teacher_top1'].append((
+                        logp.masked_fill(~tensors[-1], -torch.inf).argmax(-1) == teacher).sum())
                 if synchronize is not None:
                     stats = synchronize(out['updates'])
                     out['sync_seconds'] += float((stats or {}).get('sync_sec', 0.))
                 norms.append(optimizer_step(model, optimizer=optimizer,
                     max_grad_norm=cfg.max_grad_norm if cfg.max_grad_norm else float('inf')))
                 out['updates'] += 1
+    for key, values in device_totals.items():
+        totals[key] = float(torch.stack(values).double().sum()) if values else 0.
     totals = average(totals)
     mean_samples = out['samples'] / world_size * cfg.epochs
     out.update({key: value / mean_samples for key, value in totals.items()})

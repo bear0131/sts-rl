@@ -69,13 +69,39 @@ class SmallPlayoutPolicy(nn.Module):
 
     def forward(self, state, actions, keys, mask):
         z = self.fc2(torch.relu(self.fc1(state)))
+        logits = self._score_actions(z.unsqueeze(1), actions, keys)
+        return logits.masked_fill(~mask, -torch.inf)
+
+    def _score_actions(self, z, actions, keys):
+        embedding, bias = self._key_features(keys)
+        logits = ((embedding + self.projection(actions)) * z).sum(-1)
+        logits = logits + bias + self.linear(actions).squeeze(-1)
+        return logits
+
+    def _key_features(self, keys):
         valid = keys >= 0
         count = valid.sum(-1, keepdim=True).clamp_min(1)
         indices = keys.clamp_min(0)
         embedding = (self.keys(indices) * valid.unsqueeze(-1)).sum(-2) / count
         bias = (self.bias(indices).squeeze(-1) * valid).sum(-1) / count.squeeze(-1)
-        logits = ((embedding + self.projection(actions)) * z.unsqueeze(1)).sum(-1)
-        logits = logits + bias + self.linear(actions).squeeze(-1)
+        return embedding, bias
+
+    def forward_packed(self, state, actions, keys, slots, mask):
+        """Embed real candidates; preserve dense projection/gradient reductions.
+
+        Packing the projection GEMM also changes near-zero gradient cancellation
+        in action-constant features, which Adam can amplify. Keep that reduction
+        layout and remove the much larger candidate-by-key embedding padding.
+        """
+        z = self.fc2(torch.relu(self.fc1(state)))
+        embedding, bias = self._key_features(keys)
+        dense_embedding = embedding.new_zeros((mask.numel(), embedding.shape[-1]))
+        dense_embedding = dense_embedding.index_copy(0, slots, embedding).view(*mask.shape, -1)
+        dense_bias = bias.new_zeros(mask.numel()).index_copy(0, slots, bias).view_as(mask)
+        dense_actions = actions.new_zeros((mask.numel(), actions.shape[-1]))
+        dense_actions = dense_actions.index_copy(0, slots, actions).view(*mask.shape, -1)
+        logits = ((dense_embedding + self.projection(dense_actions)) * z.unsqueeze(1)).sum(-1)
+        logits = logits + dense_bias + self.linear(dense_actions).squeeze(-1)
         return logits.masked_fill(~mask, -torch.inf)
 
     def export(self):
@@ -99,3 +125,48 @@ def collate_features(samples, device='cpu'):
         n = len(sample['action_bits'])
         actions[i, :n], keys[i, :n], mask[i, :n] = sample['actions'], sample['keys'], True
     return tuple(torch.as_tensor(x, device=device) for x in (state, actions, keys, mask))
+
+
+class PreparedPlayoutSamples:
+    """Immutable CPU feature/target arrays reused across online CE epochs.
+
+    Inputs contain real candidates only; the forward pass retains the projection
+    reduction layout. Candidate/key order, shuffle, microbatch boundaries and the
+    effective optimizer batch remain unchanged.
+    This is collection-local data and is never part of a model checkpoint.
+    """
+
+    def __init__(self, samples, target_mix):
+        if not samples:
+            raise ValueError('empty compact policy samples')
+        self.lengths = np.asarray([len(s['action_bits']) for s in samples], np.int64)
+        if np.any(self.lengths == 0):
+            raise ValueError('compact policy requires a live decision')
+        self.starts = np.cumsum(self.lengths) - self.lengths
+        self.states = np.stack([s['state'] for s in samples])
+        self.actions = np.concatenate([s['actions'] for s in samples]).astype(np.float32, copy=False)
+        self.keys = np.concatenate([s['keys'] for s in samples]).astype(np.int64, copy=False)
+        targets = [search_target(s, target_mix) for s in samples]
+        self.targets = np.concatenate(targets)
+        self.teacher = np.asarray([row.argmax() for row in targets], np.int64)
+        self.target_entropy = sum(-float(np.sum(row[row > 0] * np.log(row[row > 0])))
+                                  for row in targets)
+        self.uniform_ce = float(np.log(self.lengths).sum())
+
+    def batch(self, indices, device):
+        lengths = self.lengths[indices]
+        width = int(lengths.max())
+        ends = np.cumsum(lengths)
+        owners = np.repeat(np.arange(len(indices)), lengths)
+        within = np.arange(ends[-1]) - np.repeat(ends - lengths, lengths)
+        source = np.repeat(self.starts[indices], lengths) + within
+        slots = owners * width + within
+        mask = np.zeros(len(indices) * width, bool)
+        mask[slots] = True
+        target = np.zeros(len(indices) * width, np.float32)
+        target[slots] = self.targets[source]
+        inputs = (self.states[indices], self.actions[source], self.keys[source],
+                  slots, mask.reshape(len(indices), width))
+        return (tuple(torch.as_tensor(x, device=device) for x in inputs),
+                torch.as_tensor(target.reshape(len(indices), width), device=device),
+                torch.as_tensor(self.teacher[indices], device=device))
