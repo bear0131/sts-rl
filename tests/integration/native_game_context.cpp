@@ -1030,6 +1030,50 @@ static void checkActionQueue(int offset, int variant) {
         queue.pushBack(Action([](BattleContext &bc) { bc.player.gold = 42; }, false));
         queue.popFront()(state);
         require(queue.isEmpty() && state.player.gold == 42, "all-removed queue could not restart");
+    } else if (variant == 3 || variant == 4) {
+        // More than 50 callbacks can be queued by legal exhaust/power chains.
+        // Force growth at wrapped offsets, from both insertion directions.
+        std::vector<int> expected;
+        auto owner = std::make_shared<int>(1);
+        std::weak_ptr<int> weak = owner;
+        for (int i = 0; i < 173; ++i) {
+            Action action([owner, n = i](BattleContext &bc) mutable { bc.player.gold = ++n; }, i % 3 == 0);
+            if (i % 2) {
+                queue.pushFront(std::move(action));
+                expected.insert(expected.begin(), i);
+            } else {
+                queue.pushBack(std::move(action));
+                expected.push_back(i);
+            }
+        }
+        owner.reset();
+        auto clone = queue;
+        ActionQueue<50> assigned;
+        assigned = queue;
+        if (variant == 4) {
+            queue.clearOnCombatVictory();
+            clone.clearOnCombatVictory();
+            assigned.clearOnCombatVictory();
+        }
+        for (int n : expected) {
+            if (variant == 4 && n % 3 == 0) continue;
+            auto original = queue.popFront(); original(state);
+            require(state.player.gold == n + 1, "grown queue reordered callbacks");
+            original(state);
+            clone.popFront()(state);
+            require(state.player.gold == n + 1, "grown clone shared mutable capture");
+            assigned.popFront()(state);
+            require(state.player.gold == n + 1, "grown assignment lost callback/flag");
+        }
+        require(queue.isEmpty() && clone.isEmpty() && assigned.isEmpty(), "grown queue did not drain");
+        require(weak.expired(), "grown queue retained retired callbacks");
+        queue.pushBack(Action([](BattleContext &bc) { bc.player.gold = 77; }));
+        queue.popFront()(state);
+        require(state.player.gold == 77, "grown drained queue cannot restart");
+        owner = std::make_shared<int>(2); weak = owner;
+        for (int i = 0; i < 300; ++i) queue.pushBack(Action([owner](BattleContext &) {}));
+        owner.reset(); queue.clear();
+        require(weak.expired() && queue.isEmpty(), "grown clear retained callbacks");
     } else {
         throw std::invalid_argument("unknown action queue case");
     }

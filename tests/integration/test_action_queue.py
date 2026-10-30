@@ -6,7 +6,8 @@ import pytest
 
 @pytest.mark.native
 @pytest.mark.timeout(240)
-@pytest.mark.parametrize('variant', [0, 1, 2], ids=['fork-fifo', 'ownership', 'victory'])
+@pytest.mark.parametrize('variant', [0, 1, 2, 3, 4],
+                         ids=['fork-fifo', 'ownership', 'victory', 'growth-forks', 'growth-victory'])
 @pytest.mark.parametrize('offset', range(50))
 def test_pending_queue_contract(game_context_executable, offset, variant):
     executable, run_env = game_context_executable

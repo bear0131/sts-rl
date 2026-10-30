@@ -12,6 +12,8 @@
 #include <functional>
 #include <cassert>
 #include <utility>
+#include <memory>
+#include <vector>
 
 
 namespace sts {
@@ -55,22 +57,61 @@ namespace sts {
         bool isEmpty();
         ActionFunction popFront();
         [[nodiscard]] int getCapacity() const;
+
+    private:
+        // Ordinary search states retain inline storage. Only a long callback
+        // chain allocates a larger ring; no pending action may be overwritten.
+        std::unique_ptr<std::vector<Action>> overflow;
+        void grow();
+        ActionFunction &callback(int slot) {
+            return overflow ? (*overflow)[slot].actFunc : arr[slot];
+        }
+        const ActionFunction &callback(int slot) const {
+            return overflow ? (*overflow)[slot].actFunc : arr[slot];
+        }
+        bool clearsOnVictory(int slot) const {
+            return overflow ? (*overflow)[slot].clearOnCombatVictory : bits[slot];
+        }
+        void setClearFlag(int slot, bool value) {
+            if (overflow) (*overflow)[slot].clearOnCombatVictory = value;
+            else bits.set(slot, value);
+        }
     };
+
+    template<int capacity>
+    void ActionQueue<capacity>::grow() {
+        const int oldCapacity = getCapacity();
+        auto expanded = std::make_unique<std::vector<Action>>(oldCapacity * 2);
+        for (int i = 0, slot = front; i < size; ++i) {
+            (*expanded)[i] = Action(std::move(callback(slot)), clearsOnVictory(slot));
+            callback(slot) = nullptr;
+            if (++slot == oldCapacity) slot = 0;
+        }
+        overflow = std::move(expanded);
+        bits.reset();
+        front = 0;
+        back = size;
+    }
 
     template<int capacity>
     ActionQueue<capacity> &ActionQueue<capacity>::operator=(const ActionQueue &rhs) {
         if (this == &rhs) return *this;
         clear();
-        front = back = rhs.front;
+        if (!rhs.overflow) front = back = rhs.front;
+        const int bound = rhs.getCapacity();
         for (int i = 0, slot = rhs.front; i < rhs.size; ++i) {
-            pushBack(Action(rhs.arr[slot], rhs.bits[slot]));
-            if (++slot == capacity) slot = 0;
+            pushBack(Action(rhs.callback(slot), rhs.clearsOnVictory(slot)));
+            if (++slot == bound) slot = 0;
         }
         return *this;
     }
 
     template<int capacity>
     void ActionQueue<capacity>::clear() {
+        if (overflow) {
+            overflow.reset();
+            size = 0;
+        }
         while (size > 0) {
             arr[front] = nullptr;
             if (++front == capacity) front = 0;
@@ -85,20 +126,21 @@ namespace sts {
     void ActionQueue<capacity>::clearOnCombatVictory() {
         // Keep survivor order and flags even across the ring's physical end.
         int read = front, write = front, kept = 0;
+        const int bound = getCapacity();
         for (int i = 0; i < size; ++i) {
-            if (bits[read]) {
-                arr[read] = nullptr;
-                bits.reset(read);
+            if (clearsOnVictory(read)) {
+                callback(read) = nullptr;
+                setClearFlag(read, false);
             } else {
                 if (write != read) {
-                    arr[write] = std::move(arr[read]);
-                    arr[read] = nullptr;
+                    callback(write) = std::move(callback(read));
+                    callback(read) = nullptr;
                 }
-                bits.reset(write);
-                if (++write == capacity) write = 0;
+                setClearFlag(write, false);
+                if (++write == bound) write = 0;
                 ++kept;
             }
-            if (++read == capacity) read = 0;
+            if (++read == bound) read = 0;
         }
         size = kept;
         back = write;
@@ -106,30 +148,24 @@ namespace sts {
 
     template <int capacity>
     void ActionQueue<capacity>::pushFront(Action a) {
-#ifdef sts_asserts
-        assert(size != capacity);
-#endif
+        if (size == getCapacity()) grow();
         --front;
         ++size;
         if (front < 0) {
-            front = capacity-1;
+            front = getCapacity()-1;
         }
-        bits.set(front, a.clearOnCombatVictory);
-        arr[front] = std::move(a.actFunc);
+        setClearFlag(front, a.clearOnCombatVictory);
+        callback(front) = std::move(a.actFunc);
     }
 
     template<int capacity>
     void ActionQueue<capacity>::pushBack(Action a) {
-#ifdef sts_asserts
-        if (size >= capacity) {
-            assert(false);
-        }
-#endif
-        if (back >= capacity) {
+        if (size == getCapacity()) grow();
+        if (back >= getCapacity()) {
             back = 0;
         }
-        bits.set(back, a.clearOnCombatVictory);
-        arr[back] = std::move(a.actFunc);
+        setClearFlag(back, a.clearOnCombatVictory);
+        callback(back) = std::move(a.actFunc);
         ++back;
         ++size;
     }
@@ -144,12 +180,12 @@ namespace sts {
 #ifdef sts_asserts
         assert(size > 0 );
 #endif
-        ActionFunction a = std::move(arr[front]);
-        arr[front] = nullptr;
-        bits.reset(front);
+        ActionFunction a = std::move(callback(front));
+        callback(front) = nullptr;
+        setClearFlag(front, false);
         ++front;
         --size;
-        if (front >= capacity) {
+        if (front >= getCapacity()) {
             front = 0;
         }
         return a;
@@ -157,7 +193,7 @@ namespace sts {
 
     template<int capacity>
     int ActionQueue<capacity>::getCapacity() const {
-        return capacity;
+        return overflow ? static_cast<int>(overflow->size()) : capacity;
     }
 
 }

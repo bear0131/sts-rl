@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| SIM-ACTION-QUEUE-GROWTH | 已定位并修复；生产恢复验收中 | sim/sts_lightspeed/include/combat/ActionQueue.h原固定50槽队列在长回调链中覆盖待执行动作，导致small playout bad_function_call。保留50槽内联，满时扩容，复制仅保留有效回调且不共享可变捕获，胜利清理保留顺序。原第60轮rank2恢复后复现env376/nonce13903683987241495836，固定战斗250sim已通过；新增扩容/复制/清理回归与现有合同四机各378项通过。下一步从47185920/169574局完整恢复并保存一轮，不改预算/目标。见worklog/2026-10-30.md“13:58 巡检”。 |
 | SIM-ACT3-TERMINAL-OBS | 79db049d已修复；完整生产一轮恢复验收通过 | env/core/game_env.py、encode.py：三幕胜利进入native Act4后，任务末帧使用既有none phase，不解析旧RunMap中的新幕候选；奖励/终局定义、普通死亡与观测空间不变。legacy/global_map/public_context真实step及NativeSearchVecEnv自动reset四项回归，四机各128项、兼容62项、完整生命周期37项通过；从19轮14942208完整恢复后，第20轮15728640/64618自然整局保存成功，四rank模型/两套Adam一致。见worklog/2026-10-30.md“08:47 巡检”。 |
 | COMBAT-SMALL-PLAYOUT | 四机无预训练整体长训中；质量待观察 | source79db049d，combat21-small-playout-fresh-r1；随机upper4,932,354+card及lower30,889，在线visits CE，无独立先验/876/hypernetwork/replay，人工目标。四机Gold6459C/5090各384×512、250/250/1000sim、playout200/tree1024不变；两轮生产验收已完成。第20轮终局地图异常已修，从19轮完整恢复并成功保存20/global15728640/64618局，权重/两套Adam一致，继续40万局预算及小时巡检。COMBAT18已保存40轮；参考差异/真实bridge边界见rl/README.md，证据worklog/2026-10-30.md“完整生产验收与长训”和“08:47 巡检”。 |
 | TEST-CHEST-MAP-FIXTURE | 已修复并验收 | tests/conftest.py的ChestBackend透传global_map_view和upper_public_context；完整test_distributed_lifecycle 37passed，三个chest模式不再缺full_map。见worklog/2026-10-30.md“UPPER-PUBLIC-CONTEXT”。 |
