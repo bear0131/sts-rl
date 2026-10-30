@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| SIM-VIOLENCE-LONG-PILE | 已修复并通过回归，待第45轮恢复生产验收 | Actions::ViolenceAction固定64项攻击候选数组在合法长抽牌堆溢出；改为动态列表，保留插入/随机顺序。四机176项、ASAN42项/原故障根1000sim、旧范围30项完全一致、兼容62项、CPU/CUDA生命周期39项通过。COMBAT23保存于45轮/global35389440/106355局；修复后从共同包恢复，不改上层/目标/预算。见worklog/2026-10-30.md“SIM-STACK-SMASH”。 |
 | COMBAT-SMALL-BATCH-RESTORE | COMBAT23运行至43轮；下层固定评测近平台，全局仍进步 | sourcea799794d，combat23-small-ce-batch-restored-fresh-r1/W&B combat23batch30a；仅授权upper micro2048，其余12项原TRAIN47保持；lower batch102400/rank、micro8192、8epoch，384×512/搜索预算保持。共同global33816576/102536局，四rank模型/双Adam/权重刷新一致，upper430/small688步；upper loss-.0005238/KL.001782未触发停滞。35→43固定纯策略77.44→77.64%（增益不确定）、搜索91.41%不变，监督KL仍无改善；31–35→36–40窗口楼层27.88→29.76、胜率.016→.027继续提升，保持配置。下次51–55轮若全局也停滞或能力明确退化则保存诊断；旧COMBAT18/21/22不恢复。见worklog/2026-10-30.md“23:04 健康与第43轮固定战斗评测”。 |
 | COMBAT-SMALL-ALIGN | COMBAT22保存停止6轮，转COMBAT-SMALL-BATCH-RESTORE | 下层CE标签/AdamW/8epoch对齐已完成；原入口误改上层micro和GAE已查明，按用户要求恢复并另开COMBAT23。旧run第6轮global4718592/18300局四rank模型及两套Adam一致，保留不再启动。见worklog/2026-10-30.md对应节。 |
 | SIM-ACTION-QUEUE-GROWTH | 已修复并完成四机生产恢复验收 | sim/sts_lightspeed/include/combat/ActionQueue.h固定50槽长回调链溢出导致small playout bad_function_call；55626e1a保留内联槽并按需扩容，保留顺序/复制/胜利清理与回调释放。固定故障根250sim通过，四机各378项、兼容62项、完整生命周期37项通过。已从第60轮47185920/169574局完整恢复，四台384环境全部恢复，并完成保存第61轮47972352/172127局；权重及两套Adam一致，upper122/compact7066，目标和预算不变。见worklog/2026-10-30.md“13:58 巡检”。 |

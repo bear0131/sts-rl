@@ -664,7 +664,10 @@ Action Actions::TransmutationAction(bool upgraded, int energy, bool useEnergy) {
 
 Action Actions::ViolenceAction(int count) { // todo a faster algorithm for inserting into the attack list
     return {[=] (BattleContext &bc) {
-        fixed_list<int,CardManager::MAX_GROUP_SIZE> attackIdxList;
+        // Generated cards can grow the draw pile beyond MAX_GROUP_SIZE.
+        // Keep the insertion/shuffle order and RNG calls unchanged.
+        std::vector<int> attackIdxList;
+        attackIdxList.reserve(bc.cards.drawPile.size());
         for (int i = 0; i < bc.cards.drawPile.size(); ++i) {
             const auto &c = bc.cards.drawPile[i];
             if (c.getType() == CardType::ATTACK) {
@@ -672,8 +675,8 @@ Action Actions::ViolenceAction(int count) { // todo a faster algorithm for inser
                 if (attackIdxList.empty()) {
                     attackIdxList.push_back(i);
                 } else {
-                    const auto randomIdx = bc.cardRandomRng.random(attackIdxList.size() - 1);
-                    attackIdxList.insert(randomIdx, i);
+                    const auto randomIdx = bc.cardRandomRng.random(static_cast<int>(attackIdxList.size()) - 1);
+                    attackIdxList.insert(attackIdxList.begin() + randomIdx, i);
                 }
             }
         }
@@ -686,7 +689,7 @@ Action Actions::ViolenceAction(int count) { // todo a faster algorithm for inser
         // hack to do this faster: the attackList is just pushed forward by i so we skip removing from bottom
         int i = 0;
         for (; i < count; ++i) {
-            if (attackIdxList.size()-i <= 0) {
+            if (i >= static_cast<int>(attackIdxList.size())) {
                 // Still remove the cards already transferred. Returning here
                 // leaves the same instances in both draw and hand/discard.
                 break;
