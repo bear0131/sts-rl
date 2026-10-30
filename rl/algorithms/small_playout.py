@@ -36,7 +36,9 @@ def update_online(model, *, rank=0, world_size=1, average=lambda values: values,
     samples = getattr(model, '_small_playout_samples', [])
     counts = average({f'rank_{i}': float(len(samples) if i == rank else 0) for i in range(world_size)})
     sizes = [int(round(counts[f'rank_{i}'] * world_size)) for i in range(world_size)]
-    out = dict(samples=sum(sizes), updates=0, loss=0., entropy=0., grad_norm=0., sync_seconds=0.)
+    out = dict(samples=sum(sizes), updates=0, loss=0., entropy=0., grad_norm=0., sync_seconds=0.,
+               batch_size_per_rank=cfg.batch_size, batch_size_global=cfg.batch_size * world_size,
+               micro_batch_size=cfg.micro_batch_size)
     if not out['samples']:
         return out
     net, optimizer = model.policy.small_playout, model.policy.small_playout_optimizer

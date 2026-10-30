@@ -414,6 +414,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=4)
+    parser.add_argument('--small-playout-batch-size', type=int, default=None,
+                        help='Online compact learner effective batch per rank; preserves upper PPO.')
+    parser.add_argument('--small-playout-micro-batch-size', type=int, default=None,
+                        help='Online compact learner forward/backward chunk size only.')
     parser.add_argument(
         "--upper-micro-batch-size", type=int, default=None,
         help="Override only strategic PPO's forward/backward chunk size; "
@@ -2103,6 +2107,9 @@ def main() -> None:
         raise ValueError('--upper-micro-batch-size must be positive')
     if args.upper_gae_lambda is not None and not 0.0 <= args.upper_gae_lambda <= 1.0:
         raise ValueError('--upper-gae-lambda must be finite and between 0 and 1')
+    for name in ('small_playout_batch_size', 'small_playout_micro_batch_size'):
+        if getattr(args, name) is not None and getattr(args, name) < 1:
+            raise ValueError('--' + name.replace('_', '-') + ' must be positive')
     if args.resume_state is not None and args.fork_state is not None:
         raise ValueError("--resume-state and --fork-state are mutually exclusive")
     if args.fork_reset_environments and args.fork_state is None:
@@ -2331,6 +2338,11 @@ def main() -> None:
         raise ValueError('--upper-micro-batch-size requires joint strategic PPO')
     if args.upper_gae_lambda is not None and not joint_upper(probe_model):
         raise ValueError('--upper-gae-lambda requires joint strategic PPO')
+    small_overrides = {key: getattr(args, 'small_playout_' + key)
+                       for key in ('batch_size', 'micro_batch_size')
+                       if getattr(args, 'small_playout_' + key) is not None}
+    if small_overrides and not hasattr(probe_model.policy, 'small_playout'):
+        raise ValueError('small playout batch overrides require an online compact checkpoint')
     args.policy_architecture = type(probe_model.policy).__name__
     args.combat_supervision_contract = getattr(probe_model,'nosl_supervision_contract','scalar-hp-v1')
     if getattr(getattr(probe_model.policy,'core',None),'combat_only',False) or joint_upper(probe_model) or getattr(probe_model, '_frozen_upper', False):
@@ -2338,6 +2350,11 @@ def main() -> None:
         if joint_upper(probe_model):
             args.upper_config = dict(probe_model.policy.upper_config)
             args.small_playout_config = getattr(probe_model.policy, 'small_playout_config', None)
+            if small_overrides:
+                from dataclasses import asdict
+                from rl.policies.small_playout import OnlinePlayoutConfig
+                args.small_playout_config = asdict(OnlinePlayoutConfig(
+                    **(dict(args.small_playout_config) | small_overrides)))
             if args.upper_micro_batch_size is not None:
                 args.upper_config['micro_batch_size'] = args.upper_micro_batch_size
             if args.upper_gae_lambda is not None:
@@ -2413,6 +2430,8 @@ def main() -> None:
             )
     if joint_upper(probe_model):
         policy_kwargs['upper_config'] = dict(args.upper_config)
+        if args.small_playout_config is not None:
+            policy_kwargs['small_playout_config'] = dict(args.small_playout_config)
     env = make_env(probe_model, args)
     del probe_model
     custom_objects = {
@@ -3580,6 +3599,8 @@ def main() -> None:
                 record['completed_game_budget'] = args.completed_game_budget
             if joint_upper(model):
                 record['upper/total_sec_rank'] = upper_seconds
+                record['upper/effective_batch_size_global'] = upper_update.get('samples', 0.)
+                record['upper/micro_batch_size'] = model.policy.upper_config['micro_batch_size']
             if args.boss_opening_dataset:
                 record['episode_scope'] = 'boss-opening'
 
@@ -3775,11 +3796,19 @@ def main() -> None:
                     })
                 _add_game_metrics_to_wandb_payload(wandb_payload, record)
                 if combat_strategy == 'small-playout':
+                    # Ordinary PPO is disabled here; its placeholder batch is
+                    # neither the compact learner nor the strategic full batch.
+                    for key in ('train/effective_batch_size', 'train/effective_batch_size_global',
+                                'train/gradient_accumulation_steps', 'train/optimizer_steps'):
+                        wandb_payload.pop(key, None)
                     wandb_payload['game/completed_full_games_global'] = record['completed_full_games_global']
                     wandb_payload.update({'small_playout_rank0/'+key: value
                                           for key, value in record['small_playout_stats_rank'].items()})
                 wandb_payload.update({'upper/' + key: value for key, value in upper_update.items()})
                 wandb_payload.update({'small_playout_train/' + key: value for key, value in small_update.items()})
+                if joint_upper(model):
+                    for key in ('upper/effective_batch_size_global', 'upper/micro_batch_size'):
+                        wandb_payload[key] = record[key]
                 wandb_payload.update({key: value for key, value in record.items()
                                       if key.startswith(('outer_return/', 'frozen_upper/'))})
                 wandb_payload.update({

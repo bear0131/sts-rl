@@ -50,10 +50,11 @@ EndTurn widening 23.148 / .436、抽牌4 / .5，其余1 / .5。探索系数按si
 <500 / <1000 / 其余分别为.8 / 1.41 / 2.5。完整状态和动作键采用逐字段强混合，
 避免已复现的Codex候选哈希碰撞；旧NOSL的历史键保持兼容，其碰撞修复另列TODO。
 当前整体实验上下层均随机起步，不预训练、不加载独立先验。每轮实际经过的多动作战斗根
-用参考项目搜索监督目标做在线CE：0.8×实际推荐动作one-hot + 0.2×visits分布；推荐动作保留Q-band及root guards，不能替换为argmax visits。8 epoch，AdamW 3e-3、weight decay 1e-4，四rank各有效batch1024（全局4096）/micro256，FP32，无梯度裁剪，与参考CE阶段一致。旧checkpoint缺省仍为visits-only/Adam/clip1，加载不静默迁移。
+用参考项目搜索监督目标做在线CE：0.8×实际推荐动作one-hot + 0.2×visits分布；推荐动作保留Q-band及root guards，不能替换为argmax visits。8 epoch，AdamW 3e-3、weight decay 1e-4，按用户要求使用旧下层每rank有效batch102400（全局409600），GPU分块由`--small-playout-micro-batch-size`显式指定，FP32、无梯度裁剪。该有效batch已主动偏离参考CE的4096；epoch仍为8，不能宣称更新次数不变。旧checkpoint缺省仍为visits-only/Adam/clip1，加载不静默迁移。
+在线小网的两项batch覆盖参数仅改变下层分批，保留已有Adam/权重/环境恢复；省略时沿用checkpoint。日志以`small_playout_train/batch_size_per_rank`、`batch_size_global`、`micro_batch_size`及`upper/effective_batch_size_global`、`upper/micro_batch_size`区分含义。小网路径不再上报已禁用普通PPO的`train/effective_batch_size*`占位值。
 按全局有效样本量平均梯度；空rank/末尾不等长仍参加相同同步。没有旧replay，单动作根和Dome无搜索标签。
 下层权重、Adam、累计更新数与整局环境/RNG一起保存恢复，下一轮重建原生权重。
-目标熵、CE减目标熵的KL、teacher top1、uniform CE与策略熵一同上报，避免把变化的标签难度误当学习进步。上层独立恢复本仓entity_joint_upper_batch4x_e10配置（10次整批更新上限，原LR/熵/GAE不改），逐epoch policy loss/KL、clip fraction、梯度范数和参数变化用于诊断；不套参考上层超参数。
+目标熵、CE减目标熵的KL、teacher top1、uniform CE与策略熵一同上报，避免把变化的标签难度误当学习进步。上层锁定实际TRAIN47/876生产存档（10次整批更新上限、GAE λ=1、LR1e-4/熵.02及其余配置保持），完整公开地图观测下4096分块已测显存溢出，仅此项经用户授权采用2048。不能只核对未含运行时覆盖的基础args，逐epoch policy loss/KL、clip fraction、梯度范数和参数变化用于诊断；不套参考上层超参数。
 这与参考的先离线CE、再REINFORCE、最终固定小网不同，是用户要求的无预训练在线实验；当前对齐的是搜索监督阶段，并未声称在线启用了后续REINFORCE。manual score仍只用于搜索，
 没有给小网增加value监督。备用流程支持CE后独立同起点K条真实playout的leave-one-out REINFORCE，
 包含截断的组不提供终局监督；备用独立先验仅做CE，不随REINFORCE更新。

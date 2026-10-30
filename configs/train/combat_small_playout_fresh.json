@@ -142,7 +142,7 @@
       "load_replay": false,
       "objective": "existing run-level reward, PPO",
       "observation_contract": "upper-public-context-v1: public map on every upper screen, dynamic event entities and selection origin; simulator only",
-      "configuration": "Unchanged repository entity_joint_upper_batch4x_e10: restore epochs10 and entropy.02; other settings match original. Do not import reference PPO settings."
+      "configuration": "Locked to actual TRAIN47/876 saved runtime (source model693670e4): width256/layers4/heads8, epochs10, user-authorized micro2048 (original4096 exceeded VRAM with complete public maps), lr1e-4, gamma1/lambda1, clip.2/entropy.02/value.5/grad.5/KL.02. No reference upper tuning."
     },
     "lower": {
       "architecture": "reference factorized playout policy",
@@ -155,7 +155,7 @@
       "parameters_per_network": 30889,
       "feature_contract": "sts1-small-playout-v1; explicit StS1 entity/selection mapping, 32 state and 24 action features",
       "initialization": "random",
-      "training": "Online reference CE stage: target 0.8 recommended action + 0.2 visits, AdamW 3e-3/wd1e-4, 8 epochs, global batch4096 (1024 per rank), micro256, FP32, no gradient clipping; fresh/no pretraining. Reference offline outcome REINFORCE remains a separate stage and is not enabled by this CE alignment.",
+      "training": "Online CE: target .8 recommended action + .2 visits, AdamW lr.003/wd.0001, 8 epochs, FP32/no clipping. User restores former lower effective batch102400 per rank/global409600; micro8192 (larger tested chunks slower; 102400 OOM). This batch intentionally differs from reference CE4096. No pretraining or outcome REINFORCE.",
       "prior_source": "disabled: all room tiers use UCT; pretrained pair retained only as an explicit fallback",
       "remaining_reference_differences": "StS1 feature/outcome definitions; no solver proof or junk-action guard; Runic Dome public-only policy fallback",
       "learned_value_head": false,

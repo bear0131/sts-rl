@@ -31,4 +31,10 @@ model
 --rollout-resource-interval
 1
 --upper-micro-batch-size
-256
+2048
+--upper-gae-lambda
+1
+--small-playout-batch-size
+102400
+--small-playout-micro-batch-size
+8192

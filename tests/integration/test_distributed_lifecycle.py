@@ -164,6 +164,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         argv += ['--upper-micro-batch-size', str(upper_micro_override)]
     if upper_lambda_override is not None:
         argv += ['--upper-gae-lambda', str(upper_lambda_override)]
+    if online_small == 'reference-ce':
+        argv += ['--small-playout-batch-size', '12', '--small-playout-micro-batch-size', '6']
     if fixed_lower:
         argv += [
             '--nosl-is-az-combat-strategy', fixed_strategy,
@@ -254,6 +256,14 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
             assert isinstance(restored.policy.small_playout_optimizer, torch.optim.AdamW)
             assert restored.policy.small_playout_config['target_mix'] == .2
             assert all(p['small_playout_train/target_entropy'] >= 0 for p in payloads)
+            assert restored.policy.small_playout_config['batch_size'] == 12
+            assert restored.policy_kwargs['small_playout_config']['micro_batch_size'] == 6
+            assert restored.policy.upper_config == model.policy.upper_config
+            assert all(p['small_playout_train/batch_size_per_rank'] == 12 for p in payloads)
+            assert all(p['small_playout_train/batch_size_global'] == 12 for p in payloads)
+            assert all(p['small_playout_train/micro_batch_size'] == 6 for p in payloads)
+            assert all('train/effective_batch_size_global' not in p for p in payloads)
+            assert all(p['upper/effective_batch_size_global'] == p['upper/samples'] for p in payloads)
     if not fixed_lower:
         assert restored.policy.optimizer.state
     bundle = tmp_path/'state'/'rank0'/'step-000000000064'
@@ -319,8 +329,10 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert final.policy.upper_optimizer.state_dict()['state']
         if fixed_lower:
             assert final.nosl_is_az_combat_strategy == fixed_strategy
-            assert all(p['train/optimizer_steps'] == 0 for p in payloads)
+            if fixed_strategy != 'small-playout':
+                assert all(p['train/optimizer_steps'] == 0 for p in payloads)
             if fixed_strategy == 'small-playout':
+                assert all('train/optimizer_steps' not in p for p in payloads)
                 assert all(p['small_playout_rank0/common/simulations'] > 0 for p in payloads)
                 assert all('game/completed_full_games_global' in p for p in payloads)
                 if online_small:
