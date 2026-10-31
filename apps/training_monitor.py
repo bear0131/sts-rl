@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import ipaddress
 import math
 import os
 from pathlib import Path
@@ -74,6 +75,11 @@ def merge_rows(existing, incoming):
     return [rows[step] for step in sorted(rows)]
 
 
+def allowed_client(address, networks):
+    address = ipaddress.ip_address(address)
+    return address.is_loopback or any(address in network for network in networks)
+
+
 class Monitor:
     def __init__(self, config, output, interval):
         self.config, self.output, self.interval = config, output, interval
@@ -86,6 +92,16 @@ class Monitor:
             if saved.get('run_id') == config['run_id']:
                 self.state.update(saved)
         self.state.update(interval=interval, polling=False)
+        self.state['label'] = config.get('label', config['run_id'])
+        self.state['branch_step'] = config.get('branch_step', 0)
+        self.state['comparisons'] = []
+        for reference in config.get('comparisons', []):
+            saved = json.loads(Path(reference['history_file']).read_text(encoding='utf-8'))
+            if saved['run_id'] != reference['run_id']:
+                raise ValueError('comparison history belongs to a different run')
+            self.state['comparisons'].append(dict(run_id=saved['run_id'],
+                label=reference.get('label', saved['run_id']), rows=saved['rows'],
+                iteration_steps=saved['iteration_steps'], branch_step=reference.get('branch_step', 0)))
 
     def read_rank(self, rank):
         with self.lock:
@@ -143,9 +159,20 @@ def main():
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--port', type=int, default=8773)
+    parser.add_argument('--listen', default='127.0.0.1',
+                        help='Bind address; non-loopback requires explicit --allow-subnet.')
+    parser.add_argument('--allow-subnet', action='append', default=[],
+                        help='LAN CIDR allowed to read the dashboard; may be repeated.')
     parser.add_argument('--poll-seconds', type=float, default=30)
     parser.add_argument('--max-hours', type=float, default=48)
     args = parser.parse_args()
+    try:
+        listen = ipaddress.ip_address(args.listen)
+        networks = [ipaddress.ip_network(value, strict=False) for value in args.allow_subnet]
+    except ValueError as exc:
+        parser.error(str(exc))
+    if not listen.is_loopback and not networks:
+        parser.error('non-loopback listener requires --allow-subnet')
     if args.poll_seconds < 10 or args.max_hours <= 0:
         parser.error('poll-seconds >= 10 and max-hours > 0 required')
     config = json.loads(args.config.read_text(encoding='utf-8'))
@@ -156,6 +183,9 @@ def main():
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            if not allowed_client(self.client_address[0], networks):
+                self.send_error(403)
+                return
             if self.path == '/api/state':
                 body, content = monitor.snapshot(), 'application/json; charset=utf-8'
             elif self.path in ('/', '/training.html'):
@@ -173,11 +203,11 @@ def main():
         def log_message(self, *args):
             pass
 
-    # Bind only loopback: this viewer must not expose SSH or training data remotely.
-    server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
+    # Read-only HTTP: optional explicit LAN allowlist, no credentials/control API.
+    server = ThreadingHTTPServer((str(listen), args.port), Handler)
     thread = threading.Thread(target=monitor.watch, args=(args.max_hours,), daemon=True)
     thread.start()
-    print(f'Training monitor: http://127.0.0.1:{args.port}', flush=True)
+    print(f'Training monitor listening on {listen}:{args.port}', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

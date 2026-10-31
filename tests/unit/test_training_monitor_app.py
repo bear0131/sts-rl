@@ -2,7 +2,18 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from apps.training_monitor import Monitor, clean, merge_rows
+from apps.training_monitor import Monitor, clean, merge_rows, allowed_client
+
+
+def test_lan_access_is_explicit_and_loopback_stays_available():
+    import ipaddress
+    networks = [ipaddress.ip_network('192.168.20.0/24')]
+    assert allowed_client('127.0.0.1', [])
+    assert allowed_client('::1', [])
+    assert allowed_client('192.168.20.15', networks)
+    assert not allowed_client('192.168.21.15', networks)
+    assert not allowed_client('8.8.8.8', networks)
+    assert not allowed_client('192.168.20.15', [])
 
 
 def test_resume_rows_replace_duplicate_steps_without_losing_history():
@@ -47,3 +58,20 @@ def test_ssh_stdin_uses_literal_lf_on_windows(tmp_path):
     assert isinstance(script, bytes) and b'\r' not in script
     assert script.startswith(b"cd '/repo with space'\n")
     assert script.endswith(b'\nPY_MONITOR\n')
+
+
+def test_comparison_keeps_same_steps_separate_and_survives_restart(tmp_path):
+    old = tmp_path / 'old.json'
+    old.write_text(json.dumps(dict(run_id='old', iteration_steps=10,
+                                  rows=[dict(global_timesteps=20, loss=1.)])))
+    config = dict(run_id='new', iteration_steps=10, ports=[2200], branch_step=20,
+                  comparisons=[dict(run_id='old', history_file=str(old), branch_step=10)])
+    output = tmp_path / 'new.json'
+    output.write_text(json.dumps(dict(run_id='new', rows=[dict(global_timesteps=20, loss=2.)])))
+    m = Monitor(config, output, 30)
+    snapshot = json.loads(m.snapshot())
+    assert snapshot['rows'][0]['loss'] == 2.
+    assert snapshot['comparisons'][0]['rows'][0]['loss'] == 1.
+    assert snapshot['branch_step'] == 20
+    assert snapshot['comparisons'][0]['branch_step'] == 10
+    assert json.loads(old.read_text())['rows'][0]['loss'] == 1.
