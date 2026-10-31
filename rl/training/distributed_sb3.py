@@ -433,6 +433,8 @@ def build_parser() -> argparse.ArgumentParser:
              "Omission preserves the checkpoint value.",
     )
     parser.add_argument("--n-epochs", type=int, default=1)
+    parser.add_argument('--upper-auxiliary-search', choices=('public-v1', 'off'), default=None,
+                        help='Optional public upper search supervision; omission preserves checkpoint configuration.')
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument(
         "--max-grad-norm",
@@ -2341,6 +2343,8 @@ def main() -> None:
     # Load once without env to infer obs flags, then load again with env and
     # custom_objects so SB3 rebuilds the rollout buffer at the requested shape.
     probe_model = AccumulatingMaskablePPO.load(args.checkpoint, device=args.device)
+    if args.upper_auxiliary_search is not None and not joint_upper(probe_model):
+        raise ValueError('--upper-auxiliary-search requires joint strategic PPO')
     if args.upper_micro_batch_size is not None and not joint_upper(probe_model):
         raise ValueError('--upper-micro-batch-size requires joint strategic PPO')
     if args.upper_epochs is not None and not joint_upper(probe_model):
@@ -2358,6 +2362,15 @@ def main() -> None:
         args.entity_config = dict(probe_model.policy.entity_config)
         if joint_upper(probe_model):
             args.upper_config = dict(probe_model.policy.upper_config)
+            args.upper_auxiliary_config = getattr(probe_model.policy, 'upper_auxiliary_config', None)
+            if args.upper_auxiliary_search == 'off':
+                args.upper_auxiliary_config = None
+            elif args.upper_auxiliary_search == 'public-v1':
+                from dataclasses import asdict
+                from rl.algorithms.upper_auxiliary import UpperAuxiliaryConfig
+                args.upper_auxiliary_config = asdict(UpperAuxiliaryConfig())
+            if args.upper_auxiliary_config is not None and not probe_model.nosl_is_az:
+                raise ValueError('public upper search currently requires the joint NOSL collector')
             args.small_playout_config = getattr(probe_model.policy, 'small_playout_config', None)
             if small_overrides:
                 from dataclasses import asdict
@@ -2441,6 +2454,7 @@ def main() -> None:
             )
     if joint_upper(probe_model):
         policy_kwargs['upper_config'] = dict(args.upper_config)
+        policy_kwargs['upper_auxiliary_config'] = args.upper_auxiliary_config
         if args.small_playout_config is not None:
             policy_kwargs['small_playout_config'] = dict(args.small_playout_config)
     env = make_env(probe_model, args)

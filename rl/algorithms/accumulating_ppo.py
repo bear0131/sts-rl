@@ -487,6 +487,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "_nosl_is_az_pending_fights",
             "_outer_pending_rewards", "_outer_collection",
             "_upper_pending", "_upper_completed", "_upper_episode_ids",
+            "_upper_auxiliary",
             "_upper_reward_counts",
             "_small_playout_samples",
             "_nosl_is_az_replay",
@@ -896,6 +897,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             self._upper_completed = []
             self._upper_censored = 0
             reward_monitor.begin_collection(self)
+            from rl.algorithms import upper_auxiliary
+            upper_auxiliary.begin_collection(self, n_rollout_steps)
         reasoning_samples = []
         original_step_wait = env.step_wait
         original_step_async = env.step_async
@@ -1229,6 +1232,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
             # BF16 autocast tensors do not have a numpy representation on
             # several PyTorch versions; IPC always receives public FP32 logits.
             logits_np = logits.detach().float().cpu().numpy()
+            if joint_upper(self):
+                from rl.algorithms import upper_auxiliary
+                upper_auxiliary.collect(self, self._last_obs, action_masks, logits_np,
+                                        n_steps, call_workers, startup_paused)
             values_np = values.detach().float().cpu().numpy().reshape(-1)
             values_np = values_np.copy()
             forced_end_turn_roots += int(forced.sum())

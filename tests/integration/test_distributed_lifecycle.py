@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
     (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False, upper_micro_override=None, upper_lambda_override=None, online_small=False, upper_epochs_override=None):
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False, upper_micro_override=None, upper_lambda_override=None, online_small=False, upper_epochs_override=None, upper_auxiliary=False):
     fixed_strategy = 'small-playout' if fixed_lower == 'small-playout' else 'turn-planner'
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
@@ -65,6 +65,11 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         from rl.policies.entity_joint import EntityJointPolicy
         policy = EntityJointPolicy
         kwargs['upper_config'] = dict(width=32, layers=1, heads=4, epochs=2, micro_batch_size=8)
+        if upper_auxiliary == 'checkpoint':
+            # An untrained tiny critic has sub-.01 spreads. Exercise real
+            # nonzero auxiliary gradients with an explicit fixture config;
+            # production's gap filter is tested separately and unchanged.
+            kwargs['upper_auxiliary_config'] = dict(min_spread=0.)
     if online_small:
         kwargs['small_playout_config'] = dict(epochs=2, batch_size=8, micro_batch_size=3)
         if online_small == 'reference-ce':
@@ -166,6 +171,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         argv += ['--upper-gae-lambda', str(upper_lambda_override)]
     if upper_epochs_override is not None:
         argv += ['--upper-epochs', str(upper_epochs_override)]
+    if upper_auxiliary == 'public-v1':
+        argv += ['--upper-auxiliary-search', 'public-v1']
     if online_small == 'reference-ce':
         argv += ['--small-playout-batch-size', '12', '--small-playout-micro-batch-size', '6']
     if fixed_lower:
@@ -226,6 +233,11 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert identities[0]['id'] == 'ci-existing-run'
     assert finished == [0]
     restored = AccumulatingMaskablePPO.load(output, device='cpu')
+    if upper_auxiliary:
+        assert restored.policy.upper_auxiliary_config['loss_coef'] == .02
+        assert all(p['upper/aux_transition_count'] > 0 for p in payloads)
+        if upper_auxiliary == 'checkpoint':
+            assert all(p['upper/aux_count'] > 0 and p['upper/aux_loss'] > 0 for p in payloads)
     if upper_micro_override is not None:
         assert restored.policy.core.upper_config.micro_batch_size == upper_micro_override
         assert restored.policy.upper_config['micro_batch_size'] == upper_micro_override
@@ -291,6 +303,12 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         if contract == 'autoregressive-v2':
             assert manifest['config']['nosl_is_az_fixed_worldline'] is True
     resume_argv = list(sys.argv)
+    if upper_auxiliary:
+        manifest = json.loads((bundle / 'manifest.json').read_text())
+        assert manifest['config']['upper_auxiliary_config'] == restored.policy.upper_auxiliary_config
+        if '--upper-auxiliary-search' in resume_argv:
+            index = resume_argv.index('--upper-auxiliary-search')
+            del resume_argv[index:index + 2]
     if upper_micro_override is not None:
         manifest = json.loads((bundle / 'manifest.json').read_text())
         assert manifest['config']['upper_config']['micro_batch_size'] == upper_micro_override
@@ -310,6 +328,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     monkeypatch.setattr(sys, 'argv', [*resume_argv, '--resume-state', str(bundle)])
     distributed_sb3.main()
     assert [p['global_step'] for p in payloads] == [32, 64, 96, 128]
+    if upper_auxiliary == 'checkpoint':
+        assert all(p['upper/aux_count'] > 0 and p['upper/aux_loss'] > 0 for p in payloads)
     assert payloads[-1]['legacy_step'] == 4
     if chests:
         assert payloads[-1]['game/chest_opportunities_window'] > 0
@@ -744,3 +764,16 @@ def test_upper_epochs_rejects_invalid_override(monkeypatch, value):
         '--world-size', '1', '--checkpoint', 'unused.zip', '--upper-epochs', value])
     with pytest.raises(ValueError, match='upper-epochs must be positive'):
         distributed_sb3.main()
+
+
+@pytest.mark.parametrize('device,amp,profile', [('cpu', 'off', 'checkpoint'),
+    ('cpu', 'off', 'public-v1'), ('cuda', 'bf16', 'checkpoint')])
+def test_upper_auxiliary_real_collection_updates_and_plain_resume(
+        tmp_path, monkeypatch, capsys, short_combat_env_type, device, amp, profile):
+    if device == 'cuda':
+        assert torch.cuda.is_available(), 'explicit CUDA lifecycle requires a CUDA device'
+    test_training_reaches_wandb_and_checkpoint(
+        tmp_path, monkeypatch, capsys, short_combat_env_type,
+        nosl=True, upper='model', combat_arch='entity', contract='autoregressive-v2',
+        device=device, amp=amp, vector='native', joint=True, fixed_lower='small-playout',
+        online_small='reference-ce', upper_epochs_override=10, upper_auxiliary=profile)

@@ -91,8 +91,12 @@ class EntityJointCore(EntityCombatCore):
 
 
 class EntityJointPolicy(EntityCombatPolicy):
-    def __init__(self, *args, upper_config=None, small_playout_config=None, **kwargs):
+    def __init__(self, *args, upper_config=None, small_playout_config=None,
+                 upper_auxiliary_config=None, **kwargs):
         self.upper_config = asdict(UpperConfig(**(upper_config or {})))
+        from rl.algorithms.upper_auxiliary import UpperAuxiliaryConfig
+        self.upper_auxiliary_config = (asdict(UpperAuxiliaryConfig(**upper_auxiliary_config))
+                                       if upper_auxiliary_config is not None else None)
         from rl.policies.small_playout import OnlinePlayoutConfig
         self.small_playout_config = (asdict(OnlinePlayoutConfig(**small_playout_config))
                                     if small_playout_config is not None else None)
@@ -120,4 +124,5 @@ class EntityJointPolicy(EntityCombatPolicy):
 
     def _get_constructor_parameters(self):
         return dict(super()._get_constructor_parameters(), upper_config=self.upper_config,
-                    small_playout_config=self.small_playout_config)
+                    small_playout_config=self.small_playout_config,
+                    upper_auxiliary_config=self.upper_auxiliary_config)

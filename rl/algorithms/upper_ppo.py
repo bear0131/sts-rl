@@ -14,6 +14,7 @@ from rl.policies.split_policy import OVERWORLD_OBSERVATION_KEYS, OVERWORLD_PHASE
 from rl.policies.precision import full_precision
 from rl.search.native import observation_as_tensor
 from rl.training import reward_monitor
+from rl.algorithms import upper_auxiliary
 
 UPPER_KEYS = OVERWORLD_OBSERVATION_KEYS | frozenset().union(*OVERWORLD_PHASE_OBSERVATION_KEYS.values())
 COMBAT_PHASE = V.PHASE_VOCAB_INDEX['combat']
@@ -165,12 +166,13 @@ def update_upper(model, *, world_size=1, average=lambda values: values, synchron
             bootstrap[batch] = model.policy.predict_values(observations).flatten().float().cpu().numpy()
     bootstrap_seconds = time.perf_counter() - bootstrap_started
     advantages, returns = macro_advantages(records, bootstrap, cfg.gamma, cfg.gae_lambda)
+    auxiliary, aux_stats = upper_auxiliary.prepare(model)
     stats = average(dict(count=float(count), advantage_sum=float(advantages.sum(dtype=np.float64)),
         advantage_square_sum=float(np.square(advantages.astype(np.float64)).sum()),
         censored=float(getattr(model, '_upper_censored', 0)),
         pending=float(sum(x is not None for x in model._upper_pending)),
         bootstrap_samples=float(len(indices)), bootstrap_seconds=bootstrap_seconds,
-        **reward_monitor.counts(model)))
+        **reward_monitor.counts(model), **aux_stats))
     mean_count = stats['count']
     out = dict(samples=mean_count * world_size, updates=0., kl=0., policy_loss=0.,
         value_loss=0., entropy=0., censored=stats['censored'] * world_size,
@@ -179,6 +181,14 @@ def update_upper(model, *, world_size=1, average=lambda values: values, synchron
         bootstrap_seconds=stats['bootstrap_seconds'], bootstrap_precision_bits=32.,
         gae_precision_bits=64., target_precision_version=1.,
         **reward_monitor.metrics(stats, world_size))
+    mean_aux_count = stats.get('aux_count', 0.)
+    if aux_stats:
+        out.update({k: stats[k] * (1. if k.endswith('_seconds') else world_size)
+                    for k in aux_stats if not k.endswith('_sum')})
+        if mean_aux_count:
+            out.update(aux_q_spread=stats['aux_spread_sum'] / mean_aux_count,
+                       aux_target_entropy=stats['aux_entropy_sum'] / mean_aux_count,
+                       aux_policy_disagreement=stats['aux_disagreement_sum'] / mean_aux_count)
     if not mean_count:
         return out
     mean = stats['advantage_sum'] / mean_count
@@ -216,8 +226,14 @@ def update_upper(model, *, world_size=1, average=lambda values: values, synchron
                                     ('value_loss', components.value_loss), ('entropy', -components.entropy_loss),
                                     ('clip_fraction', components.clip_fraction)):
                     totals[name] += float(value.detach()) * n
+            auxiliary_started = time.perf_counter()
+            if aux_stats:
+                totals['aux_loss'] = upper_auxiliary.backward(model, auxiliary, mean_aux_count)
             reduced = average(totals)
-            out.update({k: v / mean_count for k, v in reduced.items()})
+            out.update({k: v / mean_count for k, v in reduced.items() if k != 'aux_loss'})
+            if aux_stats:
+                out['aux_loss'] = reduced['aux_loss'] / max(mean_aux_count, 1.)
+                out['aux_update_seconds'] = out.get('aux_update_seconds', 0.) + time.perf_counter() - auxiliary_started
             out[f'policy_loss_epoch_{epoch + 1}'] = out['policy_loss']
             out[f'kl_epoch_{epoch + 1}'] = out['kl']
             out[f'value_loss_epoch_{epoch + 1}'] = out['value_loss']
