@@ -627,7 +627,9 @@ class SlayTheSpireEnv(gym.Env):
         return self._fork(complete=True, worldline=worldline)
 
     def _fork(self, *, complete, worldline=None):
-        if self.thick is None or self._phase() != "combat":
+        if self.thick is None or self.thick.is_over:
+            raise RuntimeError("search requires a live run state")
+        if self._phase() != "combat" and (not complete or worldline is not None):
             raise RuntimeError("combat search requires a live combat state")
         branch = copy.copy(self)
         branch.thick = (self.thick.fork_run(worldline=worldline) if complete
@@ -650,6 +652,7 @@ class SlayTheSpireEnv(gym.Env):
         branch._episode_action_journal = copy.deepcopy(
             self._episode_action_journal
         )
+        branch._np_random = copy.deepcopy(self._np_random)
         branch._invalidate_backend_cache()
         return branch
 
@@ -1388,6 +1391,11 @@ class SlayTheSpireEnv(gym.Env):
             rmap=self.thick.rmap, current_y=self.thick.gc.cur_map_node_y,
         )
         return None if ranked is None else int(ranked[0]["action"])
+
+    def upper_search_tree(self, config):
+        """Build bounded public upper branches without touching the live game."""
+        from env.search.upper_public import build_tree, SearchBudget
+        return build_tree(self, SearchBudget(**config))
 
     def overworld_rule_diagnostics(self):
         """Expose only the visible screen and legal actions after a rule miss."""

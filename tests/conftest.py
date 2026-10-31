@@ -78,6 +78,43 @@ def short_combat_env_type():
 
 
 @pytest.fixture
+def upper_search_env_factory():
+    """Real public room entries with native callbacks, not a saved-run claim."""
+    created = []
+    def make(kind, *, relics=()):
+        env = SlayTheSpireEnv(global_map_view=True, upper_public_context=True,
+            event_option_observation=True, combat_action_contract='autoregressive-v2')
+        created.append(env)
+        # Event identities are seeded native draws. Bound discovery instead of
+        # changing opaque GameContext unions or mocking the transition code.
+        for seed in range(1, 65):
+            env.reset(seed=seed)
+            gc = env.thick.gc
+            room = 'MONSTER' if kind == 'combat_reward' else kind.upper()
+            choices = [(x, y) for y in range(15) for x in range(7)
+                       if env.thick.rmap.room_type(x, y) == room]
+            if not choices:
+                continue
+            x, y = choices[0]
+            gc.set_relics(list(relics))
+            gc.gold, gc.cur_hp = 400, 40
+            gc.skip_battles = kind == 'combat_reward'
+            gc.monster_chance = gc.shop_chance = gc.treasure_chance = 0
+            gc.cur_map_node_y = y - 1
+            gc.cur_map_node_x = (-1 if y == 0 else next(px for px in range(7)
+                                    if x in env.thick.rmap.reachable(px, y - 1)))
+            gc.transition_to_map_node(x)
+            env._invalidate_backend_cache()
+            if kind != 'event' or gc.cur_event_name in ('The Cleric', 'Purifier', 'Upgrade Shrine'):
+                assert env._phase() == kind
+                return env
+        raise AssertionError('bounded native fixture did not find requested room')
+    yield make
+    for env in created:
+        env.close()
+
+
+@pytest.fixture
 def run_combat_factory():
     """Controlled battle with a real run exit continuation; seed 42101."""
     from env.core.game_env import SimGameEnv
