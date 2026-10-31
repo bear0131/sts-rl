@@ -11,6 +11,7 @@ from rl.algorithms.ppo import ppo_loss_components
 from rl.algorithms.updates import optimizer_step
 from rl.policies.split_policy import OVERWORLD_OBSERVATION_KEYS, OVERWORLD_PHASE_OBSERVATION_KEYS
 from rl.search.native import observation_as_tensor
+from rl.training import reward_monitor
 
 UPPER_KEYS = OVERWORLD_OBSERVATION_KEYS | frozenset().union(*OVERWORLD_PHASE_OBSERVATION_KEYS.values())
 COMBAT_PHASE = V.PHASE_VOCAB_INDEX['combat']
@@ -154,11 +155,12 @@ def update_upper(model, *, world_size=1, average=lambda values: values, synchron
     stats = average(dict(count=float(count), advantage_sum=float(advantages.sum(dtype=np.float64)),
         advantage_square_sum=float(np.square(advantages.astype(np.float64)).sum()),
         censored=float(getattr(model, '_upper_censored', 0)),
-        pending=float(sum(x is not None for x in model._upper_pending))))
+        pending=float(sum(x is not None for x in model._upper_pending)),
+        **reward_monitor.counts(model)))
     mean_count = stats['count']
     out = dict(samples=mean_count * world_size, updates=0., kl=0., policy_loss=0.,
         value_loss=0., entropy=0., censored=stats['censored'] * world_size,
-        pending=stats['pending'] * world_size)
+        pending=stats['pending'] * world_size, **reward_monitor.metrics(stats, world_size))
     if not mean_count:
         return out
     mean = stats['advantage_sum'] / mean_count

@@ -316,6 +316,22 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert finished == [0, 0]
     if joint:
         assert all('upper/samples' in p and 'upper/updates' in p for p in payloads)
+        for kind in ('gold', 'potion'):
+            prefix = 'upper/reward_' + kind + '_'
+            assert all(prefix + 'resolved' in p and prefix + 'policy_decisions' in p for p in payloads)
+            for p in payloads:
+                if p[prefix + 'resolved']:
+                    assert p[prefix + 'pickup_rate'] == pytest.approx(
+                        p[prefix + 'taken'] / p[prefix + 'resolved'])
+                else:
+                    assert prefix + 'pickup_rate' not in p
+                if p[prefix + 'policy_decisions']:
+                    assert p[prefix + 'policy_probability'] == pytest.approx(
+                        p[prefix + 'policy_probability_sum'] / p[prefix + 'policy_decisions'])
+                else:
+                    assert prefix + 'policy_probability' not in p
+        assert sum(p['upper/reward_gold_policy_decisions'] for p in payloads) > 0
+        assert sum(p['upper/reward_gold_resolved'] for p in payloads) > 0
         assert sum(p['upper/updates'] for p in payloads) > 0
         assert all(p['upper/grad_norm'] > 0 and p['upper/parameter_l2_change'] > 0 for p in payloads)
         assert all('upper/policy_loss_epoch_1' in p and 'upper/clip_fraction' in p for p in payloads)

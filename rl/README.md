@@ -433,3 +433,15 @@ MC搜索尺度由两部分共同决定：根/叶保持raw V/M，Full-Gumbel再�
 不把值裁剪到[0,1]，不做每棵树的min-max归一化，真实奖励监督仍为raw值。
 尺度系数属于已有checkpoint/replay的search身份，旧gain=1模型仍可按原
 身份读取；新实验fresh lower/Adam/replay，不覆盖旧模型的搜索身份续训。
+
+上层奖励监控沿用现有奖励动作段：`upper/reward_gold_pickup_rate` 与
+`upper/reward_potion_pickup_rate` 为领取份数除以已经处理的奖励份数。
+领取时计 taken/resolved，奖励页 PROCEED 时把剩余条目计入 resolved；
+同一奖励多次出现在决策页不会重复计数，未处理条目不提前作为失败。
+金币按条目而非金额，药水按瓶；满栏/Sozu 等离开时不可领取的条目也计未领取，
+并单列 `unavailable_left`。`upper/reward_{gold,potion}_policy_probability`
+是存在合法对应领取动作时，已有 masked 策略分配给这一类动作的概率质量均值，
+并非整张奖励页最终领取的概率。日志同时保留 resolved/taken/policy_decisions/
+policy_probability_sum；跨 rank 先聚合计数再除，无分母时省略比例，旧日志不补零。
+当前支持 joint-upper 的 NOSL/小网整局采样入口；计数不参与损失、动作或 RNG，
+无需新增 pending 状态，尚未处理的奖励通过原环境保存恢复。

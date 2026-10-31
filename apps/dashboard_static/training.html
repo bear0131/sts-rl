@@ -5,7 +5,7 @@
 </style></head><body>
 <header><div><h1>训练实时曲线</h1><p id="run">正在连接远端日志…</p><p id="connection">等待首次同步</p></div><label class="label">查看范围 <select id="range"><option value="0">全部轮次</option><option value="30">最近30轮</option><option value="60">最近60轮</option></select></label></header>
 <section id="cards"><div class="card"><div class="label">已完成轮次</div><div class="value" id="round">—</div><div class="sub" id="ongoing">—</div></div><div class="card"><div class="label">整局胜率 · 最近400局</div><div class="value" id="win">—</div><div class="sub" id="winavg">—</div></div><div class="card"><div class="label">累计自然完整游戏</div><div class="value" id="games">—</div><div class="sub">训练轨迹统计</div></div><div class="card"><div class="label">平均到达楼层 · 最近400局</div><div class="value" id="floor">—</div><div class="sub" id="seconds">—</div></div></section>
-<div id="ranks"></div><section id="charts"></section><div id="notice">每30秒读取远端日志；曲线在每轮完成后增加。胜率是训练窗口统计，不是独立评测胜率。W&B上传受限不影响此窗口。</div><div id="tooltip"></div>
+<div id="ranks"></div><section id="charts"></section><div id="notice">每30秒读取远端日志；曲线在每轮完成后增加。胜率是训练窗口统计，不是独立评测胜率。W&B上传受限不影响此窗口。金币按奖励份数、药水按瓶统计：实际领取率＝领取／（领取＋离开时留下）；满栏无法领取也计为留下。模型概率只统计能领取时当前这一步的拿取概率；无样本不显示，旧轮次不补造数据。</div><div id="tooltip"></div>
 <script>
 'use strict';
 const colors=['#56baf0','#b09af9','#f5bc69'];
@@ -13,6 +13,8 @@ const specs=[
  ['整局胜率',['game/win_rate'],['最近400局'],true],
  ['上层 policy loss',['upper/policy_loss'],['policy loss'],false],
  ['上层 value loss',['upper/value_loss'],['value loss'],false],
+ ['金币领取',['upper/reward_gold_pickup_rate','upper/reward_gold_policy_probability'],['实际领取率','模型当前拿取概率'],true],
+ ['药水领取',['upper/reward_potion_pickup_rate','upper/reward_potion_policy_probability'],['实际领取率','模型当前拿取概率'],true],
  ['上层 KL',['upper/kl'],['KL'],false],
  ['下层监督损失',['small_playout_train/loss','small_playout_train/target_entropy','small_playout_train/target_kl'],['交叉熵','目标熵','目标 KL'],false],
  ['平均到达楼层',['game/floor_mean'],['楼层'],false],

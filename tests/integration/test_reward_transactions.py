@@ -66,6 +66,35 @@ def test_normal_claim_consumes_exactly_one_reward(reward_env):
     assert list(gc.overworld_potions).count('Block Potion') == 1
 
 
+def test_reward_monitor_counts_real_claim_and_leaving_without_repeated_offers(reward_env):
+    from types import SimpleNamespace
+    import numpy as np
+    from env.core import action_space as A
+    from rl.training import reward_monitor as monitor
+    env, model = reward_env, SimpleNamespace()
+    original = env.thick.gc.get_reward_info()
+    gold_count, potion_count = len(original['gold']), len(original['potions'])
+    assert gold_count and potion_count
+
+    def take(action):
+        obs = {k: v[None] for k, v in env._obs().items()}
+        mask = env.action_masks()[None]
+        _, _, _, _, info = env.step(action)
+        monitor.record_step(model, obs, [action], mask,
+                            (np.array([0]), np.array([[.25, .25]])), [info])
+
+    take(A.seg_base('REWARD_GOLD'))
+    first = monitor.counts(model)
+    assert first['reward_gold_resolved'] == first['reward_gold_taken'] == 1
+    assert first['reward_potion_resolved'] == 0  # Still undecided, not a skip.
+    monitor.begin_collection(model)
+    take(A.seg_base('PROCEED'))
+    combined = {k: v + monitor.counts(model)[k] for k, v in first.items()}
+    assert combined['reward_gold_resolved'] == gold_count
+    assert combined['reward_potion_resolved'] == potion_count
+    assert monitor.metrics(combined)['reward_potion_pickup_rate'] == 0
+
+
 @pytest.mark.parametrize('method', ['claim_gold', 'claim_potion', 'claim_relic'])
 @pytest.mark.parametrize('index', [-1, 1, 256, 257])
 def test_claim_rejects_missing_or_aliased_indices(reward_env, method, index):
