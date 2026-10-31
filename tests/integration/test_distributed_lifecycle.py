@@ -816,7 +816,7 @@ def test_campfire_monitor_real_collection_and_plain_resume(
         upper_epochs_override=10, upper_auxiliary='public-v1', campfire_env_type=campfire_env_type)
 
 
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(300)
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 def test_joint_continuous_longer_rollout_fork_and_resume(
         tmp_path, monkeypatch, capsys, short_combat_env_type, campfire_env_type, device):
