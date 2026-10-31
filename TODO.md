@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| COMBAT25-AUX-768 | 配置/入口/监控已准备；真实恢复资格因80°C热控待补；等当前225后切换 | 用户明确当前225之后沿用10更新+aux、n_steps512→768，并从215附近开始、不设上限。选原不可变215完整包、独立新run，保留模型/双Adam/RNG/1536环境；取消新臂40万/10000轮上限，故障和学习监控保留。验证continuous joint入口、1.5倍采样长度保存恢复、监控共同215轮次映射及火堆指标；当前225守护/封顶对照不动，准备后登记自动后续启动，无需再确认。 |
 | COMBAT24-CAMPFIRE-MONITOR | 本机实现/验证完成；待下一次训练启动部署 | 七种火堆主选择的可选时选择率/条件模型概率及原始计数，global sum/count、无样本省略、旧历史不回填。57项语义/真实原生/PPO回归及2项CPU/CUDA真实joint采样更新上报、两轮保存后普通恢复再两轮通过，无skip；本地HTTP新七图/无伪造数据验证。运行fc1e9ba2未变，不为本项STOP当前十轮对照；下一次已授权启动先同步监控文件/更新manifest并核真实首轮payload。证据campfire-monitor-20261101，见同日日志。 |
 | SIM-STASIS-LONG-PILE | 静态风险，未复现 | sim/sts_lightspeed/src/combat/MonsterSpecific.cpp:stasisHelper仍用fixed_list<StasisPair,64>收集同稀有度候选；长抽/弃牌堆可能超过容量。此项不属于已验收的Violence修复，当前生产未改此路径。后续独立最小反例/ASAN和随机顺序回归后处理。 |
 | SIM-VIOLENCE-LONG-PILE | 已修复并通过四机完整恢复验收 | Actions::ViolenceAction固定64项攻击候选数组在长抽牌堆溢出；8db87735改为动态列表，保留插入/随机顺序。四机176项、ASAN42项/原故障根1000sim、旧范围30项完全一致、兼容62项、CPU/CUDA生命周期39项通过。从第45轮恢复后完整第46轮/global36175872/108230局已保存，四rank模型/双Adam一致，upper460/small736步，第47轮采样继续；上层/目标/预算不变。见worklog/2026-10-30.md“SIM-VIOLENCE-LONG-PILE：恢复生产验收”。 |

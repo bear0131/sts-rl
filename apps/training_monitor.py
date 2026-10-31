@@ -94,6 +94,9 @@ class Monitor:
         self.state.update(interval=interval, polling=False)
         self.state['label'] = config.get('label', config['run_id'])
         self.state['branch_step'] = config.get('branch_step', 0)
+        self.state['iteration_steps'] = config['iteration_steps']
+        self.state['branch_round'] = config.get('branch_round',
+            self.state['branch_step'] / config['iteration_steps'])
         self.state['comparisons'] = []
         for reference in config.get('comparisons', []):
             saved = json.loads(Path(reference['history_file']).read_text(encoding='utf-8'))
@@ -101,7 +104,9 @@ class Monitor:
                 raise ValueError('comparison history belongs to a different run')
             self.state['comparisons'].append(dict(run_id=saved['run_id'],
                 label=reference.get('label', saved['run_id']), rows=saved['rows'],
-                iteration_steps=saved['iteration_steps'], branch_step=reference.get('branch_step', 0)))
+                iteration_steps=saved['iteration_steps'], branch_step=reference.get('branch_step', 0),
+                branch_round=reference.get('branch_round', saved.get('branch_round',
+                    reference.get('branch_step', 0) / saved['iteration_steps']))))
 
     def read_rank(self, rank):
         with self.lock:

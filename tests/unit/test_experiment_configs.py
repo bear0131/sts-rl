@@ -9,6 +9,22 @@ from rl.training.distributed_sb3 import build_parser
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_aux768_continuous_preserves_current_training_configuration(monkeypatch):
+    monkeypatch.chdir(ROOT)
+    parser = build_parser()
+    prefix = ['--rank', '0', '--world-size', '4']
+    old = parser.parse_args(prefix + ['@configs/train/small_playout_distributed.args',
+                                     '@configs/train/small_playout_upper_aux.args'])
+    new = parser.parse_args(prefix + ['@configs/train/small_playout_upper_aux_768.args'])
+    assert {key: (value, vars(new)[key]) for key, value in vars(old).items()
+            if value != vars(new)[key]} == dict(n_steps=(512, 768),
+        updates=(10000, 1), continuous=(False, True), completed_game_budget=(400000, None),
+        wandb_step_base=(None, 215), wandb_step_base_timesteps=(None, 169082880))
+    assert new.learning_rate == old.learning_rate == .0003
+    assert new.total_steps is None and new.upper_epochs == 10
+    assert new.upper_auxiliary_search == 'public-v1'
+
+
 def test_boss_normalized_q_experiment_only_changes_requested_search_parameters(monkeypatch):
     from rl.search.native import NativeSearchConfig, apply_strict_training_settings
     from rl.tasks import TASKS

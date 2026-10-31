@@ -409,7 +409,9 @@ Python `NativeTurnPlanner.choose` 保留为串行参考。符文圆顶与未完�
 不报告0概率。普通resume与其他滚动指标相同，显示窗口重新累计，已打开待领
 宝箱的归属由环境journal重放恢复；这些计数不改变奖励、观测或训练目标。
 
-`distributed_sb3 --continuous` supports fixed-learning-rate, frozen-upper inner-only NOSL with full recovery saves and coordinated `--stop-file`. It has no update or wall-time target; do not combine it with `--total-steps` or a finite `--updates` target. Resident deployment uses `continuous: true` with null round/time limits. Finite experiments retain their explicit budgets.
+`distributed_sb3 --continuous` supports fixed-learning-rate, frozen-upper inner-only NOSL and joint-upper small-playout training. The latter retains the upper and compact policy's own fixed learning rates and update budgets. Full recovery saves and a coordinated `--stop-file` are required. It has no update or wall-time target; do not combine it with `--total-steps` or a finite `--updates` target. Omit `--completed-game-budget` when there should also be no completed-game cap. Resident deployment uses `continuous: true` with null round/time limits. Finite experiments retain their explicit budgets.
+
+`configs/train/small_playout_upper_aux_768.args` forks the upper-auxiliary experiment from the preserved round-215 bundle, retaining 384 environments per rank and 10 upper updates while collecting 768 vector steps. Use this standalone config instead of layering it over the finite 512-step config. Preserve the source environments, optimizers and learner RNG on fork. Log rounds from the explicit step anchor: `215 + (global_steps - 169082880) / (4 * 384 * 768)`; dashboard comparisons use `branch_round: 215`, `branch_step: 169082880` and each run's own `iteration_steps`. Equal round counts across the two lengths represent different sample budgets.
 
 `combat-outer-return-raw-trajectory-mix-v1` 保持876冻结、下层从零训练，
 每场真实完成战斗共享一个原始尺度标签：`0.5 * (战斗期间已获战略奖励

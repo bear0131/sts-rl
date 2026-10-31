@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
     (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False, upper_micro_override=None, upper_lambda_override=None, online_small=False, upper_epochs_override=None, upper_auxiliary=False, campfire_env_type=None):
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False, upper_micro_override=None, upper_lambda_override=None, online_small=False, upper_epochs_override=None, upper_auxiliary=False, campfire_env_type=None, return_setup=False):
     fixed_strategy = 'small-playout' if fixed_lower == 'small-playout' else 'turn-planner'
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
@@ -44,6 +44,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
                         global_map_view=True, upper_public_context=bool(online_small), event_option_observation=bool(online_small), card_language=combat_arch=='entity')),
                     max_episode_steps=12,
                 )
+                if return_setup:
+                    from rl.training.environments import TrainingStateWrapper
+                    env = TrainingStateWrapper(env)
                 return (
                     StartupStaggerWrapper(env, hold_steps=hold_steps)
                     if staggered else env
@@ -572,6 +575,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert manifest['config']['nosl_is_az_policy_coef'] == 0.75
         assert manifest['config']['nosl_is_az_value_coef'] == 1.25
 
+    if return_setup:
+        return dict(argv=argv, payloads=payloads, stop_file=stop_file)
+
 
 @pytest.mark.parametrize('nosl', [False, True], ids=['ppo', 'entity-nosl'])
 def test_cpu_native_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl):
@@ -808,3 +814,82 @@ def test_campfire_monitor_real_collection_and_plain_resume(
         device=device, amp='bf16' if device == 'cuda' else 'off', vector='native',
         joint=True, fixed_lower='small-playout', online_small='reference-ce',
         upper_epochs_override=10, upper_auxiliary='public-v1', campfire_env_type=campfire_env_type)
+
+
+@pytest.mark.timeout(180)
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_joint_continuous_longer_rollout_fork_and_resume(
+        tmp_path, monkeypatch, capsys, short_combat_env_type, campfire_env_type, device):
+    import random
+    import numpy as np
+    from rl.training.checkpoints import read_bundle
+    if device == 'cuda':
+        assert torch.cuda.is_available(), 'explicit CUDA lifecycle requires CUDA'
+    setup = test_training_reaches_wandb_and_checkpoint(
+        tmp_path, monkeypatch, capsys, campfire_env_type,
+        nosl=True, upper='model', combat_arch='entity', contract='autoregressive-v2',
+        device=device, amp='bf16' if device == 'cuda' else 'off', vector='native',
+        joint=True, fixed_lower='small-playout', online_small='reference-ce',
+        upper_epochs_override=10, upper_auxiliary='public-v1', campfire_env_type=campfire_env_type, return_setup=True)
+    payloads = setup['payloads']
+    stop = tmp_path / 'longer-STOP'
+    root = tmp_path / 'longer-state'
+    output = tmp_path / 'longer.zip'
+    source = tmp_path / 'state/rank0/step-000000000128'
+    original_restore = distributed_sb3.restore_learner
+    restored_steps = []
+
+    def observed_restore(model, path, **kwargs):
+        # Reference loading precedes RNG restore; never perturb resumed RNG.
+        expected = AccumulatingMaskablePPO.load(path / 'model.zip', device='cpu')
+        learner = torch.load(path / 'learner.pt', weights_only=False)
+        result = original_restore(model, path, **kwargs)
+        assert model.n_steps == 24 and model.env.num_envs == 2
+        assert model._recovery_environment_restored
+        for actual, saved in ((model.policy.state_dict(), expected.policy.state_dict()),
+                (model.policy.upper_optimizer.state_dict(), expected.policy.upper_optimizer.state_dict()),
+                (model.policy.small_playout_optimizer.state_dict(), expected.policy.small_playout_optimizer.state_dict()),
+                (model._upper_pending, learner['upper_pending'])):
+            torch.testing.assert_close(actual, saved, rtol=0, atol=0, check_device=False)
+        assert torch.equal(torch.get_rng_state(), learner['torch_rng'])
+        assert random.getstate() == learner['python_rng']
+        np.testing.assert_equal(np.random.get_state(), learner['numpy_rng'])
+        if device == 'cuda':
+            assert all(torch.equal(a, b) for a, b in zip(torch.cuda.get_rng_state_all(), learner['cuda_rng']))
+        restored_steps.append(result['global_step'])
+        return result
+
+    def publish(payload):
+        payloads.append(json.loads(json.dumps(payload, allow_nan=False)))
+        # The default --updates=1 must not stop continuous training. A real
+        # STOP after its first payload takes effect at the second saved round.
+        if len(payloads) in (5, 7):
+            stop.touch()
+
+    monkeypatch.setattr(distributed_sb3, 'restore_learner', observed_restore)
+    monkeypatch.setattr(sys.modules['wandb'], 'log', publish)
+    argv = [*setup['argv'], '--continuous', '--updates', '1', '--learning-rate', '.0003',
+            '--n-steps', '24', '--run-id', 'ci-longer', '--wandb-id', 'ci-longer',
+            '--wandb-step-base', '4', '--wandb-step-base-timesteps', '128',
+            '--fork-state', str(source), '--training-state-dir', str(root),
+            '--stop-file', str(stop), '--output', str(output)]
+    monkeypatch.setattr(sys, 'argv', argv)
+    distributed_sb3.main()
+    bundle = root / 'rank0/step-000000000224'
+    manifest = read_bundle(bundle, rank=0, world_size=1)
+    assert manifest['config']['continuous'] and manifest['config']['n_steps'] == 24
+    assert manifest['config']['fork_source_global_step'] == 128
+    assert manifest['config']['completed_game_budget'] is None
+    assert manifest['config']['total_steps'] is None
+    assert [p['global_step'] for p in payloads[4:]] == [176, 224]
+    stop.unlink()
+    index = argv.index('--fork-state')
+    argv[index:index+2] = ['--resume-state', str(bundle)]
+    monkeypatch.setattr(sys, 'argv', argv)
+    distributed_sb3.main()
+    assert restored_steps == [128, 224]
+    assert [p['global_step'] for p in payloads[4:]] == [176, 224, 272, 320]
+    assert [p['legacy_step'] for p in payloads[4:]] == [5, 6, 7, 8]
+    assert all(p['upper/updates'] == 10 or p['upper/kl_stopped'] for p in payloads[4:])
+    assert all(p['upper/campfire_decisions'] > 0 for p in payloads[4:])
+    assert read_bundle(root/'rank0/step-000000000320', rank=0, world_size=1)['config']['continuous']

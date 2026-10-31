@@ -85,3 +85,19 @@ def test_comparison_keeps_same_steps_separate_and_survives_restart(tmp_path):
     assert snapshot['branch_step'] == 20
     assert snapshot['comparisons'][0]['branch_step'] == 10
     assert json.loads(old.read_text())['rows'][0]['loss'] == 1.
+
+
+def test_rollout_length_change_keeps_common_branch_round_after_reload(tmp_path):
+    old = tmp_path / 'old.json'
+    old.write_text(json.dumps(dict(run_id='old', iteration_steps=786432, rows=[])))
+    config = dict(run_id='longer', iteration_steps=1179648, branch_step=169082880,
+                  branch_round=215, ports=[2200], comparisons=[dict(run_id='old',
+                  history_file=str(old), branch_step=169082880)])
+    output = tmp_path / 'new.json'
+    output.write_text(json.dumps(dict(run_id='longer', iteration_steps=786432,
+                                      rows=[dict(global_timesteps=170262528)])))
+    state = json.loads(Monitor(config, output, 30).snapshot())
+    assert state['iteration_steps'] == 1179648 and state['branch_round'] == 215
+    assert state['comparisons'][0]['branch_round'] == 215
+    assert state['comparisons'][0]['iteration_steps'] == 786432
+    assert state['rows'][0]['global_timesteps'] == 170262528  # Never rewrite samples.
