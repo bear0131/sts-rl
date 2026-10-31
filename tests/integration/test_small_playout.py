@@ -52,6 +52,28 @@ def test_torch_native_logits_and_weight_refresh(combat_factory):
     assert learner.search.net.logits(root) != old
 
 
+@pytest.mark.parametrize('layer,parameter', [('fc1', 'weight'), ('fc1', 'bias'),
+                                           ('fc2', 'weight'), ('fc2', 'bias')])
+def test_hidden_layer_refresh_preserves_existing_snapshot(layer, parameter):
+    learner = SmallPlayoutLearner(seed=19)
+    root = BattleFixture().create(42)
+    features = sts.small_playout_features(root)
+    snapshot = learner.search.net
+    old = snapshot.logits(root)
+    with torch.no_grad():
+        getattr(getattr(learner.policy, layer), parameter).add_(.25)
+    assert snapshot.logits(root) == old
+    learner.search.refresh(learner.policy)
+    assert snapshot.logits(root) == old
+    actual = learner.search.net.logits(root)
+    assert actual != old
+    with torch.inference_mode():
+        expected = learner.policy(*collate_features([features])).numpy()[0]
+    # Torch uses a different reduction layout; native-to-native equivalence is
+    # separately checked with fixed searches and complete collection traces.
+    np.testing.assert_allclose(actual, expected, atol=2e-5, rtol=2e-5)
+
+
 @pytest.mark.parametrize('selection', [False, True])
 def test_zero_action_features_ignore_unused_coefficients(combat_factory, selection):
     bc = combat_factory(['PURITY', 'STRIKE_RED', 'DEFEND_RED'] * 3).thick.bc

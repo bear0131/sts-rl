@@ -20,6 +20,8 @@ SmallFeatures smallFeatures(const BattleContext &bc);
 // Parameter order is the versioned Python export contract, not a Torch ABI.
 class SmallPlayoutNet {
     std::vector<float> weights_;
+    std::array<float, SMALL_STATE * SMALL_HIDDEN> stateColumns_;
+    std::array<float, SMALL_HIDDEN * SMALL_EMBED> hiddenColumns_;
 public:
     explicit SmallPlayoutNet(std::vector<float> weights);
     std::vector<float> logits(const SmallFeatures &features) const;

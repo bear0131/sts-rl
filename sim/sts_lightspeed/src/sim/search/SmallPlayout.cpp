@@ -111,20 +111,25 @@ SmallPlayoutNet::SmallPlayoutNet(std::vector<float> weights) : weights_(std::mov
     if (weights_.size() != std::size_t(4984 + 33 * smallKeyCount()) ||
         !std::all_of(weights_.begin(), weights_.end(), [](float x){ return std::isfinite(x); }))
         throw std::invalid_argument("compact policy parameter shape/finite contract");
+    // Immutable inference layout: independent output channels are contiguous.
+    // Each output still accumulates inputs in the exported parameter order.
+    for (int j=0;j<32;++j) for (int i=0;i<64;++i)
+        stateColumns_[j*64+i]=weights_[i*32+j];
+    for (int j=0;j<64;++j) for (int i=0;i<32;++i)
+        hiddenColumns_[j*32+i]=weights_[2112+i*64+j];
 }
 std::vector<float> SmallPlayoutNet::logits(const SmallFeatures &f) const {
-    const float *w = weights_.data();
     float h[64], z[32];
-    for (int i=0; i<64; ++i) {
-        float v=w[2048+i];
-        for (int j=0; j<32; ++j) v+=w[i*32+j]*f.state[j];
-        h[i]=std::max(0.f,v);
+    std::copy_n(weights_.data()+2048,64,h);
+    for (int j=0;j<32;++j) {
+        const float x=f.state[j], *column=stateColumns_.data()+j*64;
+        for (int i=0;i<64;++i) h[i]+=column[i]*x;
     }
-    w += 2112;
-    for (int i=0; i<32; ++i) {
-        float v=w[2048+i];
-        for (int j=0; j<64; ++j) v+=w[i*64+j]*h[j];
-        z[i]=v;
+    for (int i=0;i<64;++i) h[i]=std::max(0.f,h[i]);
+    std::copy_n(weights_.data()+4160,32,z);
+    for (int j=0;j<64;++j) {
+        const float x=h[j], *column=hiddenColumns_.data()+j*32;
+        for (int i=0;i<32;++i) z[i]+=column[i]*x;
     }
     const float *emb=weights_.data()+4192, *bias=emb+32*smallKeyCount();
     const float *proj=bias+smallKeyCount(), *lin=proj+768;
