@@ -34,8 +34,7 @@ void addCard(SmallActionFeatures &f, const CardInstance &c) {
 }
 int smallKeyCount() { return 3 + CARD_KEYS + POTION_KEYS; }
 
-SmallFeatures smallFeatures(const BattleContext &bc) {
-    SmallFeatures f;
+static void fillFeatures(const BattleContext &bc, SmallFeatures &f) {
     auto &s = f.state;
     s[0] = float(bc.player.curHp) / 200; s[1] = float(bc.player.maxHp) / 200;
     s[2] = float(bc.player.block) / 100; s[3] = float(bc.player.energy) / 10;
@@ -57,10 +56,14 @@ SmallFeatures smallFeatures(const BattleContext &bc) {
     }
     s[31] = bc.inputState == InputState::CARD_SELECT ? 1.f : 0.f;
     const auto actions = completePolicyCombatActions(bc);
-    f.actions.reserve(actions.size());
+    f.actions.resize(actions.size());
     const auto choices = bc.inputState == InputState::CARD_SELECT ? combatChoices(bc) : CombatChoices{};
-    for (const auto &action : actions) {
-        SmallActionFeatures a; a.bits = action.bits;
+    for (std::size_t i = 0; i < actions.size(); ++i) {
+        const auto &action = actions[i];
+        auto &a = f.actions[i];
+        a.bits = action.bits;
+        a.keys.clear();
+        a.x.fill(0.f);
         const auto kind = action.getActionType();
         a.x[static_cast<int>(kind)] = 1;
         a.x[13] = float(choices.zone) / 7;
@@ -102,8 +105,12 @@ SmallFeatures smallFeatures(const BattleContext &bc) {
                 a.x[22] = float(target + 1) / 5;
             }
         }
-        f.actions.push_back(std::move(a));
     }
+}
+
+SmallFeatures smallFeatures(const BattleContext &bc) {
+    SmallFeatures f;
+    fillFeatures(bc, f);
     return f;
 }
 
@@ -237,8 +244,9 @@ Action resolve(const Edge &e,const BattleContext &s) {
 double playout(BattleContext &s,const SmallPlayoutNet &net,const SmallSearchConfig &cfg,
                std::mt19937_64 &rng,SmallSearchStats &stats,SmallPlayoutTrace *trace=nullptr) {
     int steps=0;
+    SmallFeatures f;
     while(s.outcome==Outcome::UNDECIDED && steps<cfg.playoutDepth) {
-        auto f=smallFeatures(s); auto logits=net.logits(f);
+        fillFeatures(s, f); auto logits=net.logits(f);
         if(logits.empty()) throw std::runtime_error("nonterminal playout without actions");
         ++stats.policyCalls; stats.actionScores+=logits.size();
         auto weights=probabilities(logits,cfg.temperature);

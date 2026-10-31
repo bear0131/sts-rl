@@ -143,6 +143,30 @@ def test_search_determinism_hidden_state_and_parallel_equivalence():
         assert a.nosl_future_key() == b.nosl_future_key()
 
 
+@pytest.mark.parametrize('nonce', [0, 91])
+def test_playout_trace_keeps_independent_features_across_selection_and_hand_changes(combat_factory, nonce):
+    bc = combat_factory(['PURITY', 'STRIKE_RED', 'DEFEND_RED'] * 3).thick.bc
+    bc.apply_custom_state({'hand': ['PURITY', 'BASH', 'DEFEND_RED']})
+    bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    learner = SmallPlayoutLearner(seed=19, threads=1)
+    trace = sts.small_playout_collect_batch(
+        learner.search.pool, learner.search.net, [bc], learner.search.config.native(), [nonce])[0]
+    replay = bc.clone()
+    sts.small_playout_redeterminize(replay, nonce)
+    sizes = set()
+    assert trace['steps'][0]['state'][31] == 1
+    for step in trace['steps']:
+        expected = sts.small_playout_features(replay)
+        for field in ('state', 'actions', 'keys'):
+            np.testing.assert_array_equal(step[field], expected[field])
+        assert step['action_bits'] == expected['action_bits']
+        sizes.add(len(step['action_bits']))
+        replay.execute(sts.Action(step['action_bits'][step['choice']]))
+    assert len(sizes) > 1
+    assert len(trace['steps']) == trace['transitions']
+    assert sts.small_playout_value(replay) == trace['value']
+
+
 def test_caps_are_not_terminal_and_invalid_budgets_fail():
     learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=16, playout_depth=1))
     root = BattleFixture().create(42)
