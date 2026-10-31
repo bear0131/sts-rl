@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
     (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False, upper_micro_override=None, upper_lambda_override=None, online_small=False):
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False, upper_micro_override=None, upper_lambda_override=None, online_small=False, upper_epochs_override=None):
     fixed_strategy = 'small-playout' if fixed_lower == 'small-playout' else 'turn-planner'
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
@@ -164,6 +164,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         argv += ['--upper-micro-batch-size', str(upper_micro_override)]
     if upper_lambda_override is not None:
         argv += ['--upper-gae-lambda', str(upper_lambda_override)]
+    if upper_epochs_override is not None:
+        argv += ['--upper-epochs', str(upper_epochs_override)]
     if online_small == 'reference-ce':
         argv += ['--small-playout-batch-size', '12', '--small-playout-micro-batch-size', '6']
     if fixed_lower:
@@ -232,6 +234,10 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert restored.policy.core.upper_config.gae_lambda == upper_lambda_override
         assert restored.policy.upper_config['gae_lambda'] == upper_lambda_override
         assert restored.policy_kwargs['upper_config']['gae_lambda'] == upper_lambda_override
+    if upper_epochs_override is not None:
+        assert restored.policy.core.upper_config.epochs == upper_epochs_override
+        assert restored.policy.upper_config['epochs'] == upper_epochs_override
+        assert restored.policy_kwargs['upper_config']['epochs'] == upper_epochs_override
     if contract == 'autoregressive-v2':
         assert (not fixed_calls if fixed_lower
                 else fixed_calls and all(value is True for value in fixed_calls))
@@ -258,7 +264,10 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
             assert all(p['small_playout_train/target_entropy'] >= 0 for p in payloads)
             assert restored.policy.small_playout_config['batch_size'] == 12
             assert restored.policy_kwargs['small_playout_config']['micro_batch_size'] == 6
-            assert restored.policy.upper_config == model.policy.upper_config
+            expected_upper = dict(model.policy.upper_config)
+            if upper_epochs_override is not None:
+                expected_upper['epochs'] = upper_epochs_override
+            assert restored.policy.upper_config == expected_upper
             assert all(p['small_playout_train/batch_size_per_rank'] == 12 for p in payloads)
             assert all(p['small_playout_train/batch_size_global'] == 12 for p in payloads)
             assert all(p['small_playout_train/micro_batch_size'] == 6 for p in payloads)
@@ -292,6 +301,11 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         manifest = json.loads((bundle / 'manifest.json').read_text())
         assert manifest['config']['upper_config']['gae_lambda'] == upper_lambda_override
         index = resume_argv.index('--upper-gae-lambda')
+        del resume_argv[index:index + 2]
+    if upper_epochs_override is not None:
+        manifest = json.loads((bundle / 'manifest.json').read_text())
+        assert manifest['config']['upper_config']['epochs'] == upper_epochs_override
+        index = resume_argv.index('--upper-epochs')
         del resume_argv[index:index + 2]
     monkeypatch.setattr(sys, 'argv', [*resume_argv, '--resume-state', str(bundle)])
     distributed_sb3.main()
@@ -345,6 +359,14 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         if upper_lambda_override is not None:
             assert final.policy.core.upper_config.gae_lambda == upper_lambda_override
             assert final.policy_kwargs['upper_config']['gae_lambda'] == upper_lambda_override
+        if upper_epochs_override is not None:
+            assert final.policy.core.upper_config.epochs == upper_epochs_override
+            assert final.policy_kwargs['upper_config']['epochs'] == upper_epochs_override
+            assert all(p['upper/requested_updates'] == upper_epochs_override for p in payloads)
+            assert all(p['upper/updates'] == upper_epochs_override or p['upper/kl_stopped'] == 1
+                       for p in payloads)
+            assert max(int(s['step']) for s in final.policy.upper_optimizer.state.values()) == sum(
+                p['upper/updates'] for p in payloads)
         assert final.policy.upper_optimizer.state_dict()['state']
         if fixed_lower:
             assert final.nosl_is_az_combat_strategy == fixed_strategy
@@ -701,4 +723,24 @@ def test_upper_lambda_rejects_invalid_override(monkeypatch, value):
     monkeypatch.setattr(sys, 'argv', ['distributed_sb3', '--rank', '0',
         '--world-size', '1', '--checkpoint', 'unused.zip', '--upper-gae-lambda', value])
     with pytest.raises(ValueError, match='upper-gae-lambda must be finite'):
+        distributed_sb3.main()
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.skipif(
+    not torch.cuda.is_available(), reason='BF16 upper lifecycle requires CUDA'))])
+def test_upper_epochs_override_survives_plain_resume(
+        tmp_path, monkeypatch, capsys, short_combat_env_type, device):
+    test_training_reaches_wandb_and_checkpoint(
+        tmp_path, monkeypatch, capsys, short_combat_env_type,
+        True, 'model', 'entity', 'autoregressive-v2', vector='native',
+        device=device, amp='bf16' if device == 'cuda' else 'off',
+        joint=True, fixed_lower='small-playout', online_small='reference-ce',
+        upper_epochs_override=30)
+
+
+@pytest.mark.parametrize('value', ['0', '-1'])
+def test_upper_epochs_rejects_invalid_override(monkeypatch, value):
+    monkeypatch.setattr(sys, 'argv', ['distributed_sb3', '--rank', '0',
+        '--world-size', '1', '--checkpoint', 'unused.zip', '--upper-epochs', value])
+    with pytest.raises(ValueError, match='upper-epochs must be positive'):
         distributed_sb3.main()

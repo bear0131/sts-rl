@@ -34,6 +34,8 @@ model
 2048
 --upper-gae-lambda
 1
+--upper-epochs
+30
 --small-playout-batch-size
 102400
 --small-playout-micro-batch-size

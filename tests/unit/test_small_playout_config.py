@@ -19,6 +19,9 @@ def test_lower_replacement_preserves_upper_except_authorized_memory_chunk():
         '@'+str(root/'configs/train/small_playout_distributed.args')])
     assert args.upper_micro_batch_size == expected['micro_batch_size']
     assert args.upper_gae_lambda == expected['gae_lambda']
+    # Explicit follow-up experiment from COMBAT23 round215; fresh historical
+    # recipe remains intact, while continuation requests thirty upper updates.
+    assert args.upper_epochs == 30
     assert (args.n_envs,args.n_steps)==(384,512)
     # COMBAT18 saved manifest: 102400 per rank, hence 409600 over four ranks.
     assert args.small_playout_batch_size == 102400

@@ -356,6 +356,8 @@ OBS19新增公开的`combat_is_boss`，由房间身份生成，涵盖A20两场Bo
 
 `--upper-gae-lambda L` 单独覆盖 `entity-joint` 上层 GAE，范围为有限的 `[0,1]`；省略时沿用 checkpoint 的 upper_config，保存和普通恢复保持该值。普通 `--gae-lambda` 不控制这一路上层目标。λ=1 仍在 collection 截断处使用 bootstrap；只有连续记录的下一状态估值相互一致时，内部 value 项才严格抵消，不能等同于完整无截断 Monte Carlo。此参数改变统计目标，应作为独立实验使用。
 
+`--upper-epochs N` 单独覆盖上层每轮最大完整批次更新次数，正整数，省略沿用 checkpoint；保存后普通恢复保留覆盖值。每次更新仍使用全部有效上层样本，保留原 `1.5 * target_kl` 提前停止。它不改变下层 epoch 或采样长度。`upper/requested_updates` 与 `upper/updates` 分别报告上限及实际次数；逐 epoch 的 policy/value loss、KL、clip fraction 在该次 Adam **之前**计算，不能视为更新后的独立评估。修改更新次数是统计配置实验，不是等价性能优化。
+
 `entity-joint` 可通过 `--card-vector-checkpoint` 使用冻结的匿名规则卡向量。该模式关闭 card-language 观测，把 `[card id, base/upgraded]` 的完整固定表同时用于上下层；表注册为持久 buffer，不属于任何优化器参数，上下层仍各自训练独立的 `129 -> 256` 投影。输入可为原 standalone rule-encoder checkpoint，也可为 `frozen-card-vector-table-v1` 紧凑表；两者都严格校验371张全局卡表及基础/升级两版，不能用只有75张未升级战士牌的PCA展示数据替代。普通不传该参数的 entity-joint 初始化与既有 card-language 路径保持不变。
 
 上层将一次进入战斗的决策延迟到战斗真实结束才结算，跨采样轮持久保存 pending；GAE以战略动作而非战斗点击为时间单位。尚未完成的末尾动作等待后续轮，截断/异常状态丢弃而不当作死亡。跨轮完成的动作保留原行为log_prob，属于延迟宏动作的PPO近似，不能宣称所有样本均由本轮同一策略产生；通过clip及KL门槛约束更新，不复用上层历史replay。下层replay完全沿用原契约。

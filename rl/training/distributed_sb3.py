@@ -427,6 +427,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--upper-gae-lambda", type=float, default=None,
         help="Override strategic PPO GAE lambda (0..1); omission preserves the checkpoint value.",
     )
+    parser.add_argument(
+        "--upper-epochs", type=int, default=None,
+        help="Maximum full-batch strategic PPO updates per collection; retains KL early stopping. "
+             "Omission preserves the checkpoint value.",
+    )
     parser.add_argument("--n-epochs", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument(
@@ -2105,6 +2110,8 @@ def main() -> None:
         raise ValueError('supply a checkpoint or explicitly prepare new combat material')
     if args.upper_micro_batch_size is not None and args.upper_micro_batch_size < 1:
         raise ValueError('--upper-micro-batch-size must be positive')
+    if args.upper_epochs is not None and args.upper_epochs < 1:
+        raise ValueError('--upper-epochs must be positive')
     if args.upper_gae_lambda is not None and not 0.0 <= args.upper_gae_lambda <= 1.0:
         raise ValueError('--upper-gae-lambda must be finite and between 0 and 1')
     for name in ('small_playout_batch_size', 'small_playout_micro_batch_size'):
@@ -2336,6 +2343,8 @@ def main() -> None:
     probe_model = AccumulatingMaskablePPO.load(args.checkpoint, device=args.device)
     if args.upper_micro_batch_size is not None and not joint_upper(probe_model):
         raise ValueError('--upper-micro-batch-size requires joint strategic PPO')
+    if args.upper_epochs is not None and not joint_upper(probe_model):
+        raise ValueError('--upper-epochs requires joint strategic PPO')
     if args.upper_gae_lambda is not None and not joint_upper(probe_model):
         raise ValueError('--upper-gae-lambda requires joint strategic PPO')
     small_overrides = {key: getattr(args, 'small_playout_' + key)
@@ -2357,6 +2366,8 @@ def main() -> None:
                     **(dict(args.small_playout_config) | small_overrides)))
             if args.upper_micro_batch_size is not None:
                 args.upper_config['micro_batch_size'] = args.upper_micro_batch_size
+            if args.upper_epochs is not None:
+                args.upper_config['epochs'] = args.upper_epochs
             if args.upper_gae_lambda is not None:
                 args.upper_config['gae_lambda'] = args.upper_gae_lambda
             if args.world_size > 1 and args.gradient_transport != 'ssh-ring':

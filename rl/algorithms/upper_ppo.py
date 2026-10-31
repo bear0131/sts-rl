@@ -144,7 +144,7 @@ def _training_batches(records, micro_batch_size):
 
 
 def update_upper(model, *, world_size=1, average=lambda values: values, synchronize=None):
-    """Four full-batch PPO epochs by default, weighted by actual global row count.
+    """Configured full-batch PPO epochs, weighted by actual global row count.
 
     Microbatches only bound memory. Unequal/empty ranks use the same collective
     sequence, global advantage normalization and a single clip/Adam per epoch.
@@ -220,6 +220,8 @@ def update_upper(model, *, world_size=1, average=lambda values: values, synchron
             out.update({k: v / mean_count for k, v in reduced.items()})
             out[f'policy_loss_epoch_{epoch + 1}'] = out['policy_loss']
             out[f'kl_epoch_{epoch + 1}'] = out['kl']
+            out[f'value_loss_epoch_{epoch + 1}'] = out['value_loss']
+            out[f'clip_fraction_epoch_{epoch + 1}'] = out['clip_fraction']
             if not all(np.isfinite(v) for v in out.values()):
                 raise FloatingPointError('nonfinite strategic PPO statistics')
             if out['kl'] > 1.5 * cfg.target_kl:
