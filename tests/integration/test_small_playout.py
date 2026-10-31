@@ -52,6 +52,47 @@ def test_torch_native_logits_and_weight_refresh(combat_factory):
     assert learner.search.net.logits(root) != old
 
 
+@pytest.mark.parametrize('selection', [False, True])
+def test_zero_action_features_ignore_unused_coefficients(combat_factory, selection):
+    bc = combat_factory(['PURITY', 'STRIKE_RED', 'DEFEND_RED'] * 3).thick.bc
+    bc.apply_custom_state({'hand': ['PURITY', 'STRIKE_RED', 'DEFEND_RED']})
+    if selection:
+        bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    features = sts.small_playout_features(bc)
+    inactive = np.all(features['actions'] == 0, axis=0)
+    assert inactive.any() and not inactive.all()
+    if selection:
+        assert set((features['keys'] >= 0).sum(axis=1)) == {1, 2}
+    learner = SmallPlayoutLearner(seed=19)
+    expected = learner.search.net.logits(bc)
+    with torch.no_grad():
+        # Coefficients of absent features cannot affect candidate scores, even
+        # when their magnitude dwarfs all active features and card embeddings.
+        learner.policy.projection.weight[:, inactive] = 1e20
+        learner.policy.linear.weight[:, inactive] = -1e20
+    learner.search.refresh(learner.policy)
+    assert learner.search.net.logits(bc) == expected
+
+
+def test_selected_card_embeddings_are_averaged_not_summed(combat_factory):
+    bc = combat_factory(['PURITY', 'STRIKE_RED', 'DEFEND_RED'] * 3).thick.bc
+    bc.apply_custom_state({'hand': ['PURITY', 'STRIKE_RED', 'DEFEND_RED']})
+    bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    features = sts.small_playout_features(bc)
+    learner = SmallPlayoutLearner(seed=19)
+    with torch.no_grad():
+        for parameter in learner.policy.parameters():
+            parameter.zero_()
+        learner.policy.fc2.bias[0] = 1
+        learner.policy.keys.weight[:, 0] = torch.arange(learner.policy.key_count) / 4
+        learner.policy.bias.weight[:, 0] = torch.arange(learner.policy.key_count) / 8
+    learner.search.refresh(learner.policy)
+    # Binary fractions keep this independent single/two-key oracle exact.
+    expected = [float(row[row >= 0].mean() * 3 / 8) for row in features['keys']]
+    assert set((features['keys'] >= 0).sum(axis=1)) == {1, 2}
+    assert learner.search.net.logits(bc) == expected
+
+
 def test_search_determinism_hidden_state_and_parallel_equivalence():
     learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=32), threads=2)
     bc = BattleFixture().create(42)

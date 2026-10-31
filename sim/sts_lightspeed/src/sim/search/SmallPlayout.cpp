@@ -57,6 +57,7 @@ SmallFeatures smallFeatures(const BattleContext &bc) {
     }
     s[31] = bc.inputState == InputState::CARD_SELECT ? 1.f : 0.f;
     const auto actions = completePolicyCombatActions(bc);
+    f.actions.reserve(actions.size());
     const auto choices = bc.inputState == InputState::CARD_SELECT ? combatChoices(bc) : CombatChoices{};
     for (const auto &action : actions) {
         SmallActionFeatures a; a.bits = action.bits;
@@ -129,13 +130,20 @@ std::vector<float> SmallPlayoutNet::logits(const SmallFeatures &f) const {
     const float *proj=bias+smallKeyCount(), *lin=proj+768;
     std::vector<float> scores; scores.reserve(f.actions.size());
     for (const auto &a:f.actions) {
+        // Native action features are sparse. Retain the original column order:
+        // factoring z through the projection would change float cancellation.
+        int columns[SMALL_ACTION], count=0;
+        for (int j=0;j<SMALL_ACTION;++j) if (a.x[j]!=0.f) columns[count++]=j;
+        const bool singleKey=a.keys.size()==1;
         float v=0;
-        for (int k:a.keys) v+=bias[k]/float(a.keys.size());
-        for (int j=0;j<24;++j) v+=lin[j]*a.x[j];
+        if (singleKey) v+=bias[a.keys.front()];
+        else for (int k:a.keys) v+=bias[k]/float(a.keys.size());
+        for (int col=0;col<count;++col) { const int j=columns[col]; v+=lin[j]*a.x[j]; }
         for (int i=0;i<32;++i) {
             float e=0;
-            for (int k:a.keys) e+=emb[k*32+i]/float(a.keys.size());
-            for (int j=0;j<24;++j) e+=proj[i*24+j]*a.x[j];
+            if (singleKey) e+=emb[a.keys.front()*32+i];
+            else for (int k:a.keys) e+=emb[k*32+i]/float(a.keys.size());
+            for (int col=0;col<count;++col) { const int j=columns[col]; e+=proj[i*24+j]*a.x[j]; }
             v+=z[i]*e;
         }
         if (!std::isfinite(v)) throw std::runtime_error("nonfinite compact policy score");
@@ -170,7 +178,7 @@ double smallManualValue(const BattleContext &bc) {
 namespace {
 std::vector<double> probabilities(const std::vector<float> &logits, double temperature, double mix=1.) {
     const auto top=*std::max_element(logits.begin(),logits.end());
-    std::vector<double> p; double sum=0;
+    std::vector<double> p; p.reserve(logits.size()); double sum=0;
     for(auto l:logits){p.push_back(std::exp((l-top)/temperature));sum+=p.back();}
     for(auto &v:p) v=mix*v/sum+(1.-mix)/p.size();
     return p;
