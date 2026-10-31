@@ -13,6 +13,7 @@ import torch
 from gymnasium import spaces
 from sb3_contrib.common.maskable.policies import MaskableMultiInputActorCriticPolicy
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 from env.core import action_space as A
 from env.core import encode
@@ -231,6 +232,17 @@ class SharedSemanticTokenizer(nn.Module):
         return self.potion_projection(self.potion(ids.long()))
 
 
+class _CheckpointEncoderLayer(nn.TransformerEncoderLayer):
+    """Identical parameter layout; recomputation is scoped to strategic updates."""
+
+    checkpoint_training = False
+
+    def forward(self, *args, **kwargs):
+        if self.checkpoint_training and torch.is_grad_enabled():
+            return checkpoint(super().forward, *args, use_reentrant=False, **kwargs)
+        return super().forward(*args, **kwargs)
+
+
 class _SpecialistEncoder(nn.Module):
     def __init__(
         self,
@@ -247,7 +259,7 @@ class _SpecialistEncoder(nn.Module):
         self.role_index = {role: i for i, role in enumerate(roles)}
         self.role_embedding = nn.Embedding(len(roles), d_model)
         self.cls = nn.Parameter(torch.zeros(1, 1, d_model))
-        layer = nn.TransformerEncoderLayer(
+        layer = _CheckpointEncoderLayer(
             d_model=d_model,
             nhead=n_heads,
             dim_feedforward=dim_feedforward or 4 * d_model,

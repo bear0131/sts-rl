@@ -83,3 +83,105 @@ def test_lambda_one_returns_real_rewards_and_retains_only_truncation_bootstrap()
     advantages, returns = macro_advantages(records, [.2, .4, 99., .6, 99.], 1., 1.)
     np.testing.assert_allclose(returns, [.32, .9, .3, .8, 0.], atol=1e-7)
     np.testing.assert_allclose(advantages, [-.48, 0., .1, .4, -.7], atol=1e-7)
+
+@pytest.mark.parametrize('micro', [2, 4, 16])
+@pytest.mark.parametrize('multi_step', [False, True])
+def test_upper_grouped_execution_preserves_global_sample_weights_and_targets(micro, multi_step):
+    import copy
+    from contextlib import nullcontext
+    import torch
+    from rl.algorithms.upper_ppo import update_upper
+    from rl.policies.entity_joint import UpperConfig
+
+    class Policy(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.tensor([.2, -.1]))
+            self.core = SimpleNamespace(joint_upper=True,
+                upper_config=UpperConfig(epochs=1, micro_batch_size=micro, gae_lambda=1., entropy_coef=0., value_coef=1.),
+                upper_parameters=lambda: iter([self.weight]))
+            self.upper_optimizer = torch.optim.Adam([self.weight], lr=1e-4)
+        def set_training_mode(self, training):
+            self.train(training)
+        def predict_values(self, observations):
+            return observations['x'].float() @ self.weight
+        def evaluate_actions(self, observations, actions, action_masks):
+            values = observations['x'].float() @ self.weight
+            zero = values * 0.
+            return values, zero, zero
+
+    phases = ['map', 'shop', 'map', 'event', 'map', 'map', 'map']
+    x = np.array([[1., 0.], [0., 3.], [2., 1.], [-1., 2.], [1., 1.], [.5, -.5], [3., -2.]], dtype=np.float32)
+    targets = np.array([.4, 1.2, -.1, .8, .3, -.5, .7], dtype=np.float32)
+    records = [dict(env=i, episode=0, terminal=True, reward=float(targets[i]), value=0.,
+                    observation={'phase': np.array([V.PHASE_VOCAB_INDEX[p]]), 'x': x[i]},
+                    action=0, mask=np.array([True]), log_prob=0.) for i, p in enumerate(phases)]
+    policy = Policy()
+    if multi_step:
+        for i, record in enumerate(records):
+            record['env'] = i % 2
+            record['value'] = float(torch.as_tensor(x[i]) @ policy.weight.detach())
+            record['terminal'] = i + 2 >= len(records)
+            if not record['terminal']:
+                record['next_observation'] = records[i + 2]['observation']
+        targets = np.array([sum(targets[i::2]) for i in range(len(records))], dtype=np.float32)
+    original = copy.deepcopy(records)
+    expected_gradient = 2 * torch.as_tensor(x).T @ (torch.as_tensor(x) @ policy.weight.detach() - torch.as_tensor(targets)) / len(records)
+    seen = []
+    model = SimpleNamespace(policy=policy, device=torch.device('cpu'), _upper_completed=records,
+        _upper_pending=[], autocast_context=nullcontext, amp_enabled=False,
+        logger=SimpleNamespace(record=lambda *args: None))
+    result = update_upper(model, synchronize=lambda epoch: seen.append(policy.weight.grad.detach().clone()))
+    torch.testing.assert_close(seen[0], expected_gradient, rtol=2e-6, atol=2e-7)
+    assert result['samples'] == 7 and result['updates'] == 1
+    assert model._upper_completed == []
+    # The caller's chronological records are neither reordered nor rewritten.
+    for before, after in zip(original, records):
+        assert before['env'] == after['env'] and before['reward'] == after['reward']
+        np.testing.assert_array_equal(before['observation']['x'], after['observation']['x'])
+
+
+def test_upper_checkpoint_layer_preserves_forward_backward_across_shapes():
+    import copy
+    import torch
+    from rl.policies.split_policy import _CheckpointEncoderLayer
+    torch.manual_seed(413)
+    original = _CheckpointEncoderLayer(16, 4, dim_feedforward=32, dropout=0.,
+                                       batch_first=True, norm_first=True)
+    candidate = copy.deepcopy(original)
+    candidate.checkpoint_training = True
+    for batch, length in [(2, 7), (3, 11), (1, 4)]:
+        x = torch.randn(batch, length, 16)
+        mask = torch.zeros(batch, length, dtype=torch.bool)
+        mask[:, -1] = True
+        original.zero_grad(set_to_none=True)
+        candidate.zero_grad(set_to_none=True)
+        old = original(x, src_key_padding_mask=mask)
+        new = candidate(x.clone(), src_key_padding_mask=mask)
+        torch.testing.assert_close(new, old, rtol=0, atol=0)
+        old.square().mean().backward()
+        new.square().mean().backward()
+        for before, after in zip(original.parameters(), candidate.parameters()):
+            torch.testing.assert_close(after.grad, before.grad, rtol=0, atol=0)
+        with torch.no_grad():
+            for before, after in zip(original.parameters(), candidate.parameters()):
+                before.add_(before.grad, alpha=-.01)
+                after.add_(after.grad, alpha=-.01)
+
+
+def test_upper_training_scope_restores_recomputation_and_gradient_flags_on_error():
+    import torch
+    from rl.algorithms.upper_ppo import train_phase
+    from rl.policies.split_policy import _CheckpointEncoderLayer
+    layer = _CheckpointEncoderLayer(8, 2, dropout=0., batch_first=True)
+    policy = torch.nn.Module()
+    policy.add_module('layer', layer)
+    policy.core = SimpleNamespace(joint_upper=True, upper_parameters=layer.parameters,
+        overworld=SimpleNamespace(encoder=SimpleNamespace(transformer=SimpleNamespace(layers=[layer]))))
+    assert not layer.checkpoint_training
+    with pytest.raises(RuntimeError, match='intentional'):
+        with train_phase(SimpleNamespace(policy=policy), upper=True):
+            assert layer.checkpoint_training
+            raise RuntimeError('intentional')
+    assert not layer.checkpoint_training
+    assert all(p.requires_grad for p in policy.parameters())

@@ -29,12 +29,20 @@ def train_phase(model, upper=False, *, small_playout=False):
     active = {id(p) for p in (model.policy.small_playout.parameters() if small_playout else
                              model.policy.core.upper_parameters() if upper else
                              model.policy.core.combat.parameters())}
+    encoder = getattr(getattr(model.policy.core, 'overworld', None), 'encoder', None)
+    layers = getattr(getattr(encoder, 'transformer', None), 'layers', ())
+    checkpoint_flags = [(layer, layer.checkpoint_training) for layer in layers
+                        if hasattr(layer, 'checkpoint_training')]
     try:
+        for layer, _ in checkpoint_flags:
+            layer.checkpoint_training = upper and not small_playout
         for p, flag in flags:
             p.grad = None
             p.requires_grad_(flag and id(p) in active)
         yield
     finally:
+        for layer, flag in checkpoint_flags:
+            layer.checkpoint_training = flag
         for p, flag in flags:
             p.requires_grad_(flag)
 
@@ -158,7 +166,13 @@ def update_upper(model, *, world_size=1, average=lambda values: values, synchron
     out.update(advantage_mean=mean, advantage_std=std, grad_norm=0., parameter_l2_change=0.,
                clip_fraction=0., requested_updates=float(cfg.epochs), kl_stopped=0.)
     advantages = (advantages - mean) / (std + 1e-8)
-    batches = list(_training_batches(records, cfg.micro_batch_size))
+    # Advantages must be computed in trajectory order. Only the execution of
+    # the full-batch update is grouped: every sample keeps its target and weight.
+    # This avoids repeatedly launching all phase-specific encoders per chunk.
+    order = np.argsort([int(r['observation']['phase'][0]) for r in records], kind='stable')
+    training_records = [records[int(i)] for i in order]
+    advantages, returns = advantages[order], returns[order]
+    batches = list(_training_batches(training_records, cfg.micro_batch_size))
     parameters = list(model.policy.core.upper_parameters())
     before = [p.detach().clone() for p in parameters]
     norms = []
