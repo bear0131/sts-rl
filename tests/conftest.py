@@ -137,6 +137,39 @@ def run_combat_factory():
 
 
 @pytest.fixture
+def campfire_env_type():
+    """Replayable native rest entry; setup is repeated inside backend reset."""
+    from functools import partial
+    from env.core.game_env import SimGameEnv
+
+    class CampfireBackend(SimGameEnv):
+        def reset(self, *, seed=None):
+            super().reset(seed=seed)
+            x, y = next((x, y) for y in range(15) for x in range(7)
+                        if self.rmap.room_type(x, y) == 'REST')
+            self.gc.set_relics(['Girya', 'Peace Pipe', 'Shovel'])
+            self.gc.cur_map_node_y = y - 1
+            self.gc.cur_map_node_x = (-1 if y == 0 else next(px for px in range(7)
+                                        if x in self.rmap.reachable(px, y - 1)))
+            self.gc.transition_to_map_node(x)
+            assert self.phase() == 'rest'
+            return self._canonical(), self._info()
+
+        def _settle(self):
+            super()._settle()
+            if self.bc is not None:
+                self.bc.set_player_strength(999)
+
+    class CampfireEnv(SlayTheSpireEnv):
+        def __init__(self, **kwargs):
+            super().__init__(backend_factory=partial(CampfireBackend,
+                global_map_view=kwargs.get('global_map_view', False),
+                upper_public_context=kwargs.get('upper_public_context', False)), **kwargs)
+
+    return CampfireEnv
+
+
+@pytest.fixture
 def replayable_selection_env():
     from env.core.game_env import SimGameEnv
     from env.core import native_actions as C

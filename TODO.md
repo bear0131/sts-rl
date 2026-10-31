@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| COMBAT24-CAMPFIRE-MONITOR | 本机实现/验证完成；待下一次训练启动部署 | 七种火堆主选择的可选时选择率/条件模型概率及原始计数，global sum/count、无样本省略、旧历史不回填。57项语义/真实原生/PPO回归及2项CPU/CUDA真实joint采样更新上报、两轮保存后普通恢复再两轮通过，无skip；本地HTTP新七图/无伪造数据验证。运行fc1e9ba2未变，不为本项STOP当前十轮对照；下一次已授权启动先同步监控文件/更新manifest并核真实首轮payload。证据campfire-monitor-20261101，见同日日志。 |
 | SIM-STASIS-LONG-PILE | 静态风险，未复现 | sim/sts_lightspeed/src/combat/MonsterSpecific.cpp:stasisHelper仍用fixed_list<StasisPair,64>收集同稀有度候选；长抽/弃牌堆可能超过容量。此项不属于已验收的Violence修复，当前生产未改此路径。后续独立最小反例/ASAN和随机顺序回归后处理。 |
 | SIM-VIOLENCE-LONG-PILE | 已修复并通过四机完整恢复验收 | Actions::ViolenceAction固定64项攻击候选数组在长抽牌堆溢出；8db87735改为动态列表，保留插入/随机顺序。四机176项、ASAN42项/原故障根1000sim、旧范围30项完全一致、兼容62项、CPU/CUDA生命周期39项通过。从第45轮恢复后完整第46轮/global36175872/108230局已保存，四rank模型/双Adam一致，upper460/small736步，第47轮采样继续；上层/目标/预算不变。见worklog/2026-10-30.md“SIM-VIOLENCE-LONG-PILE：恢复生产验收”。 |
 | COMBAT-SMALL-BATCH-RESTORE | 上层30更新续训已完成216/217生产验收 | 1cf41182于11月1日01:03恢复同run和各384进行中环境；仅上层epochs10→30，保留KL保护，其余上层/下层/精度/512采样/搜索/40万预算不变。217/global170655744/356811自然局，四rank模型/双Adam及更新后collection刷新一致；215/216完整包永久保留，详见COMBAT23-UPPER-30。旧COMBAT18/21/22不恢复。 |

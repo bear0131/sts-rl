@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
     (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False, upper_micro_override=None, upper_lambda_override=None, online_small=False, upper_epochs_override=None, upper_auxiliary=False):
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False, upper_micro_override=None, upper_lambda_override=None, online_small=False, upper_epochs_override=None, upper_auxiliary=False, campfire_env_type=None):
     fixed_strategy = 'small-playout' if fixed_lower == 'small-playout' else 'turn-planner'
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
@@ -39,7 +39,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         def factory(hold_steps):
             def build():
                 env = TimeLimit(
-                    ShapedRewardWrapper(short_combat_env_type(combat_action_contract=contract,
+                    ShapedRewardWrapper((campfire_env_type if campfire_env_type and hold_steps == 0
+                                         else short_combat_env_type)(combat_action_contract=contract,
                         global_map_view=True, upper_public_context=bool(online_small), event_option_observation=bool(online_small), card_language=combat_arch=='entity')),
                     max_episode_steps=12,
                 )
@@ -350,6 +351,23 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert finished == [0, 0]
     if joint:
         assert all('upper/samples' in p and 'upper/updates' in p for p in payloads)
+        from rl.training.campfire_monitor import OPTIONS
+        for p in payloads:
+            total = p['upper/campfire_decisions']
+            assert total == sum(p[f'upper/campfire_{name}_selected'] for name in OPTIONS)
+            for name in OPTIONS:
+                prefix = f'upper/campfire_{name}_'
+                if p[prefix + 'available']:
+                    assert p[prefix + 'choice_rate'] == pytest.approx(
+                        p[prefix + 'selected'] / p[prefix + 'available'])
+                    assert p[prefix + 'policy_probability'] == pytest.approx(
+                        p[prefix + 'probability_sum'] / p[prefix + 'available'])
+                    assert 0 <= p[prefix + 'policy_probability'] <= 1.000001
+                else:
+                    assert prefix + 'choice_rate' not in p
+                    assert prefix + 'policy_probability' not in p
+        if campfire_env_type:
+            assert all(p['upper/campfire_decisions'] > 0 for p in payloads)
         for kind in ('gold', 'potion'):
             prefix = 'upper/reward_' + kind + '_'
             assert all(prefix + 'resolved' in p and prefix + 'policy_decisions' in p for p in payloads)
@@ -777,3 +795,16 @@ def test_upper_auxiliary_real_collection_updates_and_plain_resume(
         nosl=True, upper='model', combat_arch='entity', contract='autoregressive-v2',
         device=device, amp=amp, vector='native', joint=True, fixed_lower='small-playout',
         online_small='reference-ce', upper_epochs_override=10, upper_auxiliary=profile)
+
+
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_campfire_monitor_real_collection_and_plain_resume(
+        tmp_path, monkeypatch, capsys, short_combat_env_type, campfire_env_type, device):
+    if device == 'cuda':
+        assert torch.cuda.is_available(), 'explicit CUDA lifecycle requires CUDA'
+    test_training_reaches_wandb_and_checkpoint(
+        tmp_path, monkeypatch, capsys, short_combat_env_type,
+        nosl=True, upper='model', combat_arch='entity', contract='autoregressive-v2',
+        device=device, amp='bf16' if device == 'cuda' else 'off', vector='native',
+        joint=True, fixed_lower='small-playout', online_small='reference-ce',
+        upper_epochs_override=10, upper_auxiliary='public-v1', campfire_env_type=campfire_env_type)

@@ -450,6 +450,16 @@ policy_probability_sum；跨 rank 先聚合计数再除，无分母时省略比�
 当前支持 joint-upper 的 NOSL/小网整局采样入口；计数不参与损失、动作或 RNG，
 无需新增 pending 状态，尚未处理的奖励通过原环境保存恢复。
 
+同一 joint-upper 入口记录火堆七种主选择（rest/smith/recall/lift/toke/dig/skip）。
+`upper/campfire_{option}_choice_rate` 是实际选择次数除以该项合法的主选择次数；
+`policy_probability` 是这些相同状态上已有 masked 策略的平均概率，先在合法火堆
+选项内归一化，排除药水等其他操作。仅实际提交合法主选择时计数，升级/删牌后的
+选牌、挖掘/捕梦网奖励和后续离开不重复计数。`PROCEED` 只有在 rest phase 才是 skip。
+原始 `available/selected/probability_sum` 与 `campfire_decisions` 先跨 rank 聚合；
+无可选样本时省略条件比例，不把未解锁项目伪造为零偏好。另存 `share`（所选次数/
+全部主选择次数）供总体分布分析；条件选择率不同分母，不必相加为100%。计数每轮
+重置，普通 checkpoint 恢复不重放已统计选择，也不回填旧轮次；不改变训练/RNG。
+
 Strategic targets use the `fp32-tail-fp64-gae-v1` numerical contract. Within an
 observed trajectory, GAE reuses the following record's behavior value so adjacent
 terms cancel at lambda=1. Only an unfinished trajectory tail is evaluated again,

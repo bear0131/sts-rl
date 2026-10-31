@@ -34,7 +34,7 @@ from rl.algorithms.updates import ppo_forward, optimizer_step, reasoning_microba
 from rl.search.native import apply_strict_training_settings
 from rl.algorithms.hierarchical_returns import compute_hierarchical_returns
 from rl.algorithms.upper_ppo import enabled as joint_upper, combat_update, capture_step, update_upper
-from rl.training import reward_monitor
+from rl.training import reward_monitor, campfire_monitor
 from rl.algorithms.nosl_replay import NOSLISAZReplayBuffer
 from rl.algorithms import outer_return as outer
 
@@ -897,6 +897,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             self._upper_completed = []
             self._upper_censored = 0
             reward_monitor.begin_collection(self)
+            campfire_monitor.begin_collection(self)
             from rl.algorithms import upper_auxiliary
             upper_auxiliary.begin_collection(self, n_rollout_steps)
         reasoning_samples = []
@@ -1227,6 +1228,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             actions_np = actions.cpu().numpy().reshape(-1)
             reward_probabilities = (reward_monitor.policy_probabilities(distribution, self._last_obs)
                                     if joint_upper(self) else None)
+            campfire_probabilities = (campfire_monitor.policy_probabilities(distribution, self._last_obs)
+                                      if joint_upper(self) else None)
             if self._frozen_upper:
                 outer.upper_actions(self, self._last_obs, action_masks, actions_np, logits)
             # BF16 autocast tensors do not have a numpy representation on
@@ -1652,6 +1655,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     values_np, log_probs.detach().cpu().numpy(), new_obs, dones, infos)
                 reward_monitor.record_step(self, self._last_obs, actions_np, action_masks,
                     reward_probabilities, infos)
+                campfire_monitor.record_step(self, actions_np, action_masks, campfire_probabilities, infos)
             prefix_steps = sum(info.get('simulator_transition') is False for info in infos)
             nosl_timings['selection_prefix_decisions'] += prefix_steps
             nosl_timings['simulator_transitions'] += env.num_envs - prefix_steps

@@ -13,7 +13,7 @@ from rl.algorithms.updates import optimizer_step
 from rl.policies.split_policy import OVERWORLD_OBSERVATION_KEYS, OVERWORLD_PHASE_OBSERVATION_KEYS
 from rl.policies.precision import full_precision
 from rl.search.native import observation_as_tensor
-from rl.training import reward_monitor
+from rl.training import reward_monitor, campfire_monitor
 from rl.algorithms import upper_auxiliary
 
 UPPER_KEYS = OVERWORLD_OBSERVATION_KEYS | frozenset().union(*OVERWORLD_PHASE_OBSERVATION_KEYS.values())
@@ -172,7 +172,7 @@ def update_upper(model, *, world_size=1, average=lambda values: values, synchron
         censored=float(getattr(model, '_upper_censored', 0)),
         pending=float(sum(x is not None for x in model._upper_pending)),
         bootstrap_samples=float(len(indices)), bootstrap_seconds=bootstrap_seconds,
-        **reward_monitor.counts(model), **aux_stats))
+        **reward_monitor.counts(model), **campfire_monitor.counts(model), **aux_stats))
     mean_count = stats['count']
     out = dict(samples=mean_count * world_size, updates=0., kl=0., policy_loss=0.,
         value_loss=0., entropy=0., censored=stats['censored'] * world_size,
@@ -180,7 +180,7 @@ def update_upper(model, *, world_size=1, average=lambda values: values, synchron
         bootstrap_samples=stats['bootstrap_samples'] * world_size,
         bootstrap_seconds=stats['bootstrap_seconds'], bootstrap_precision_bits=32.,
         gae_precision_bits=64., target_precision_version=1.,
-        **reward_monitor.metrics(stats, world_size))
+        **reward_monitor.metrics(stats, world_size), **campfire_monitor.metrics(stats, world_size))
     mean_aux_count = stats.get('aux_count', 0.)
     if aux_stats:
         out.update({k: stats[k] * (1. if k.endswith('_seconds') else world_size)

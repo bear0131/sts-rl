@@ -27,6 +27,16 @@ def test_nonfinite_metrics_are_missing_not_zero():
         'loss': None, 'values': [None, -0.1]}
 
 
+def test_new_campfire_metrics_do_not_backfill_historical_rows():
+    old = {'global_timesteps': 10}
+    new = {'global_timesteps': 20, 'upper/campfire_rest_choice_rate': .25,
+           'upper/campfire_rest_policy_probability': .3}
+    rows = clean(merge_rows([old], [new]))
+    assert rows == [old, new]
+    assert 'upper/campfire_rest_choice_rate' not in rows[0]
+    assert 'upper/campfire_dig_choice_rate' not in rows[1]
+
+
 def test_connection_failure_preserves_cache_and_marks_stale(tmp_path):
     config = dict(run_id='example', iteration_steps=10, ports=[2200], ssh_key='key',
                   root='/repo', host='root@example.com')
