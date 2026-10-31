@@ -1,6 +1,7 @@
 """Strategic macro transitions and PPO; combat remains the existing NOSL learner."""
 from contextlib import contextmanager
 from functools import wraps
+import time
 
 import numpy as np
 import torch
@@ -10,6 +11,7 @@ from env.core.outer_return import strategic_reward
 from rl.algorithms.ppo import ppo_loss_components
 from rl.algorithms.updates import optimizer_step
 from rl.policies.split_policy import OVERWORLD_OBSERVATION_KEYS, OVERWORLD_PHASE_OBSERVATION_KEYS
+from rl.policies.precision import full_precision
 from rl.search.native import observation_as_tensor
 from rl.training import reward_monitor
 
@@ -30,20 +32,12 @@ def train_phase(model, upper=False, *, small_playout=False):
     active = {id(p) for p in (model.policy.small_playout.parameters() if small_playout else
                              model.policy.core.upper_parameters() if upper else
                              model.policy.core.combat.parameters())}
-    encoder = getattr(getattr(model.policy.core, 'overworld', None), 'encoder', None)
-    layers = getattr(getattr(encoder, 'transformer', None), 'layers', ())
-    checkpoint_flags = [(layer, layer.checkpoint_training) for layer in layers
-                        if hasattr(layer, 'checkpoint_training')]
     try:
-        for layer, _ in checkpoint_flags:
-            layer.checkpoint_training = upper and not small_playout
         for p, flag in flags:
             p.grad = None
             p.requires_grad_(flag and id(p) in active)
         yield
     finally:
-        for layer, flag in checkpoint_flags:
-            layer.checkpoint_training = flag
         for p, flag in flags:
             p.requires_grad_(flag)
 
@@ -105,17 +99,34 @@ def capture_step(model, obs, actions, masks, values, log_probs, new_obs, dones, 
 
 def macro_advantages(records, bootstraps, gamma, gae_lambda):
     """Discount once per strategic action, never once per combat click."""
-    advantages = np.zeros(len(records), dtype=np.float32)
+    advantages = np.zeros(len(records), dtype=np.float64)
     continuation = {}
     for i in range(len(records) - 1, -1, -1):
         record = records[i]
         key = (record['env'], record['episode'])
-        future = 0. if record['terminal'] else float(bootstraps[i])
-        tail = 0. if record['terminal'] else continuation.get(key, 0.)
+        if record['terminal']:
+            tail, future = 0., 0.
+        else:
+            # The same recorded V must appear with opposite signs in adjacent
+            # deltas. Re-estimating every next state breaks lambda=1 cancellation
+            # through mixed precision, changed batch shapes or pending records.
+            tail, future = continuation[key] if key in continuation else (0., float(bootstraps[i]))
         advantages[i] = record['reward'] + gamma * future - record['value'] + gamma * gae_lambda * tail
-        continuation[key] = float(advantages[i])
-    returns = advantages + np.array([r['value'] for r in records], dtype=np.float32)
+        continuation[key] = (float(advantages[i]), float(record['value']))
+    returns = advantages + np.array([r['value'] for r in records], dtype=np.float64)
     return advantages, returns
+
+
+def bootstrap_indices(records):
+    """Only the unfinished tail of each environment/episode needs a new V."""
+    seen, indices = set(), []
+    for i in range(len(records) - 1, -1, -1):
+        record = records[i]
+        key = (record['env'], record['episode'])
+        if key not in seen and not record['terminal']:
+            indices.append(i)
+        seen.add(key)
+    return indices[::-1]
 
 
 def _training_batches(records, micro_batch_size):
@@ -144,23 +155,30 @@ def update_upper(model, *, world_size=1, average=lambda values: values, synchron
     cfg = model.policy.core.upper_config
     count = len(records)
     bootstrap = np.zeros(count, dtype=np.float32)
-    with torch.no_grad(), model.autocast_context():
-        indices = [i for i, r in enumerate(records) if not r['terminal']]
+    bootstrap_started = time.perf_counter()
+    indices = bootstrap_indices(records)
+    with torch.no_grad(), full_precision(model.device):
         for start in range(0, len(indices), cfg.micro_batch_size):
             batch = indices[start:start + cfg.micro_batch_size]
             observations = observation_as_tensor({k: np.stack([records[i]['next_observation'][k] for i in batch])
                 for k in records[batch[0]]['next_observation']}, model.device)
             bootstrap[batch] = model.policy.predict_values(observations).flatten().float().cpu().numpy()
+    bootstrap_seconds = time.perf_counter() - bootstrap_started
     advantages, returns = macro_advantages(records, bootstrap, cfg.gamma, cfg.gae_lambda)
     stats = average(dict(count=float(count), advantage_sum=float(advantages.sum(dtype=np.float64)),
         advantage_square_sum=float(np.square(advantages.astype(np.float64)).sum()),
         censored=float(getattr(model, '_upper_censored', 0)),
         pending=float(sum(x is not None for x in model._upper_pending)),
+        bootstrap_samples=float(len(indices)), bootstrap_seconds=bootstrap_seconds,
         **reward_monitor.counts(model)))
     mean_count = stats['count']
     out = dict(samples=mean_count * world_size, updates=0., kl=0., policy_loss=0.,
         value_loss=0., entropy=0., censored=stats['censored'] * world_size,
-        pending=stats['pending'] * world_size, **reward_monitor.metrics(stats, world_size))
+        pending=stats['pending'] * world_size,
+        bootstrap_samples=stats['bootstrap_samples'] * world_size,
+        bootstrap_seconds=stats['bootstrap_seconds'], bootstrap_precision_bits=32.,
+        gae_precision_bits=64., target_precision_version=1.,
+        **reward_monitor.metrics(stats, world_size))
     if not mean_count:
         return out
     mean = stats['advantage_sum'] / mean_count
@@ -168,13 +186,7 @@ def update_upper(model, *, world_size=1, average=lambda values: values, synchron
     out.update(advantage_mean=mean, advantage_std=std, grad_norm=0., parameter_l2_change=0.,
                clip_fraction=0., requested_updates=float(cfg.epochs), kl_stopped=0.)
     advantages = (advantages - mean) / (std + 1e-8)
-    # Advantages must be computed in trajectory order. Only the execution of
-    # the full-batch update is grouped: every sample keeps its target and weight.
-    # This avoids repeatedly launching all phase-specific encoders per chunk.
-    order = np.argsort([int(r['observation']['phase'][0]) for r in records], kind='stable')
-    training_records = [records[int(i)] for i in order]
-    advantages, returns = advantages[order], returns[order]
-    batches = list(_training_batches(training_records, cfg.micro_batch_size))
+    batches = list(_training_batches(records, cfg.micro_batch_size))
     parameters = list(model.policy.core.upper_parameters())
     before = [p.detach().clone() for p in parameters]
     norms = []

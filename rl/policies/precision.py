@@ -1,5 +1,32 @@
 """CUDA arithmetic shared by policy inference and learning."""
+from contextlib import contextmanager
+
 import torch
+
+
+@contextmanager
+def full_precision(device):
+    """Bounded FP32 inference, including inside an outer autocast scope.
+
+    Call only in the trainer's serial inference path: TF32 controls are process
+    wide. Restore the caller's settings even when inference fails.
+    """
+    device = torch.device(device)
+    precision = torch.get_float32_matmul_precision()
+    matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+    cudnn_tf32 = torch.backends.cudnn.allow_tf32
+    try:
+        if device.type == 'cuda':
+            torch.set_float32_matmul_precision('highest')
+            torch.backends.cuda.matmul.allow_tf32 = False
+            torch.backends.cudnn.allow_tf32 = False
+        with torch.autocast(device.type, enabled=False):
+            yield
+    finally:
+        if device.type == 'cuda':
+            torch.set_float32_matmul_precision(precision)
+            torch.backends.cuda.matmul.allow_tf32 = matmul_tf32
+            torch.backends.cudnn.allow_tf32 = cudnn_tf32
 
 
 def bf16_autocast(*, enabled=True, cache_enabled=True):

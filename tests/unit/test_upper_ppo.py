@@ -80,19 +80,20 @@ def test_lambda_one_returns_real_rewards_and_retains_only_truncation_bootstrap()
                dict(env=0, episode=0, terminal=True, reward=.3, value=.2),
                dict(env=1, episode=0, terminal=False, reward=.2, value=.4),
                dict(env=0, episode=1, terminal=True, reward=0., value=.7)]
-    advantages, returns = macro_advantages(records, [.2, .4, 99., .6, 99.], 1., 1.)
+    advantages, returns = macro_advantages(records, [float("nan"), -123., 99., .6, 99.], 1., 1.)
     np.testing.assert_allclose(returns, [.32, .9, .3, .8, 0.], atol=1e-7)
     np.testing.assert_allclose(advantages, [-.48, 0., .1, .4, -.7], atol=1e-7)
 
 @pytest.mark.parametrize('micro', [2, 4, 16])
-@pytest.mark.parametrize('multi_step', [False, True])
-def test_upper_grouped_execution_preserves_global_sample_weights_and_targets(micro, multi_step):
+@pytest.mark.parametrize('multi_step', [False, True, 'tail'])
+def test_upper_execution_preserves_global_sample_weights_and_targets(micro, multi_step):
     import copy
     from contextlib import nullcontext
     import torch
     from rl.algorithms.upper_ppo import update_upper
     from rl.policies.entity_joint import UpperConfig
 
+    predicted_rows = []
     class Policy(torch.nn.Module):
         def __init__(self):
             super().__init__()
@@ -104,6 +105,8 @@ def test_upper_grouped_execution_preserves_global_sample_weights_and_targets(mic
         def set_training_mode(self, training):
             self.train(training)
         def predict_values(self, observations):
+            assert not torch.is_autocast_enabled('cpu')
+            predicted_rows.append(len(observations['x']))
             return observations['x'].float() @ self.weight
         def evaluate_actions(self, observations, actions, action_masks):
             values = observations['x'].float() @ self.weight
@@ -125,6 +128,12 @@ def test_upper_grouped_execution_preserves_global_sample_weights_and_targets(mic
             if not record['terminal']:
                 record['next_observation'] = records[i + 2]['observation']
         targets = np.array([sum(targets[i::2]) for i in range(len(records))], dtype=np.float32)
+        if multi_step == 'tail':
+            for env in range(2):
+                last = max(i for i, r in enumerate(records) if r['env'] == env)
+                records[last]['terminal'] = False
+                records[last]['next_observation'] = records[last]['observation']
+                targets[env::2] += records[last]['value']
     original = copy.deepcopy(records)
     expected_gradient = 2 * torch.as_tensor(x).T @ (torch.as_tensor(x) @ policy.weight.detach() - torch.as_tensor(targets)) / len(records)
     seen = []
@@ -134,6 +143,8 @@ def test_upper_grouped_execution_preserves_global_sample_weights_and_targets(mic
     result = update_upper(model, synchronize=lambda epoch: seen.append(policy.weight.grad.detach().clone()))
     torch.testing.assert_close(seen[0], expected_gradient, rtol=2e-6, atol=2e-7)
     assert result['samples'] == 7 and result['updates'] == 1
+    assert sum(predicted_rows) == result['bootstrap_samples'] == (2 if multi_step == 'tail' else 0)
+    assert result['bootstrap_precision_bits'] == 32 and result['gae_precision_bits'] == 64
     assert model._upper_completed == []
     # The caller's chronological records are neither reordered nor rewritten.
     for before, after in zip(original, records):
@@ -141,47 +152,44 @@ def test_upper_grouped_execution_preserves_global_sample_weights_and_targets(mic
         np.testing.assert_array_equal(before['observation']['x'], after['observation']['x'])
 
 
-def test_upper_checkpoint_layer_preserves_forward_backward_across_shapes():
-    import copy
-    import torch
-    from rl.policies.split_policy import _CheckpointEncoderLayer
-    torch.manual_seed(413)
-    original = _CheckpointEncoderLayer(16, 4, dim_feedforward=32, dropout=0.,
-                                       batch_first=True, norm_first=True)
-    candidate = copy.deepcopy(original)
-    candidate.checkpoint_training = True
-    for batch, length in [(2, 7), (3, 11), (1, 4)]:
-        x = torch.randn(batch, length, 16)
-        mask = torch.zeros(batch, length, dtype=torch.bool)
-        mask[:, -1] = True
-        original.zero_grad(set_to_none=True)
-        candidate.zero_grad(set_to_none=True)
-        old = original(x, src_key_padding_mask=mask)
-        new = candidate(x.clone(), src_key_padding_mask=mask)
-        torch.testing.assert_close(new, old, rtol=0, atol=0)
-        old.square().mean().backward()
-        new.square().mean().backward()
-        for before, after in zip(original.parameters(), candidate.parameters()):
-            torch.testing.assert_close(after.grad, before.grad, rtol=0, atol=0)
-        with torch.no_grad():
-            for before, after in zip(original.parameters(), candidate.parameters()):
-                before.add_(before.grad, alpha=-.01)
-                after.add_(after.grad, alpha=-.01)
+
+def test_tail_selection_and_fp64_reward_sum_ignore_intermediate_value_noise():
+    from rl.algorithms.upper_ppo import bootstrap_indices
+    records = [dict(env=0, episode=0, terminal=False, reward=1e-6,
+                    value=(i % 5) * .1234567) for i in range(10000)]
+    bootstrap = np.full(len(records), np.nan)
+    bootstrap[-1] = .6
+    assert bootstrap_indices(records) == [9999]
+    advantages, returns = macro_advantages(records, bootstrap, 1., 1.)
+    assert advantages.dtype == returns.dtype == np.float64
+    np.testing.assert_allclose(returns, .6 + np.arange(10000, 0, -1) * 1e-6,
+                               rtol=0, atol=2e-12)
+    records[-1]['terminal'] = True
+    assert bootstrap_indices(records) == []
+    _, returns = macro_advantages(records, bootstrap, 1., 1.)
+    np.testing.assert_allclose(returns, np.arange(10000, 0, -1) * 1e-6,
+                               rtol=0, atol=2e-12)
 
 
-def test_upper_training_scope_restores_recomputation_and_gradient_flags_on_error():
+def test_tail_selection_isolated_across_envs_episodes_and_true_ends():
+    from rl.algorithms.upper_ppo import bootstrap_indices
+    records = [dict(env=0, episode=0, terminal=False),
+               dict(env=1, episode=0, terminal=False),
+               dict(env=0, episode=0, terminal=True),
+               dict(env=0, episode=1, terminal=False),
+               dict(env=1, episode=0, terminal=False)]
+    assert bootstrap_indices(records) == [3, 4]
+
+
+def test_full_precision_disables_nested_autocast_and_restores_on_error():
     import torch
-    from rl.algorithms.upper_ppo import train_phase
-    from rl.policies.split_policy import _CheckpointEncoderLayer
-    layer = _CheckpointEncoderLayer(8, 2, dropout=0., batch_first=True)
-    policy = torch.nn.Module()
-    policy.add_module('layer', layer)
-    policy.core = SimpleNamespace(joint_upper=True, upper_parameters=layer.parameters,
-        overworld=SimpleNamespace(encoder=SimpleNamespace(transformer=SimpleNamespace(layers=[layer]))))
-    assert not layer.checkpoint_training
-    with pytest.raises(RuntimeError, match='intentional'):
-        with train_phase(SimpleNamespace(policy=policy), upper=True):
-            assert layer.checkpoint_training
-            raise RuntimeError('intentional')
-    assert not layer.checkpoint_training
-    assert all(p.requires_grad for p in policy.parameters())
+    from rl.policies.precision import full_precision
+    with torch.autocast('cpu', dtype=torch.bfloat16):
+        assert torch.is_autocast_enabled('cpu')
+        with pytest.raises(RuntimeError, match='intentional'):
+            with full_precision('cpu'):
+                assert not torch.is_autocast_enabled('cpu')
+                x = torch.ones(2, 2)
+                assert (x @ x).dtype == torch.float32
+                raise RuntimeError('intentional')
+        assert torch.is_autocast_enabled('cpu')

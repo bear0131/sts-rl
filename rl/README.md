@@ -445,3 +445,14 @@ MC搜索尺度由两部分共同决定：根/叶保持raw V/M，Full-Gumbel再�
 policy_probability_sum；跨 rank 先聚合计数再除，无分母时省略比例，旧日志不补零。
 当前支持 joint-upper 的 NOSL/小网整局采样入口；计数不参与损失、动作或 RNG，
 无需新增 pending 状态，尚未处理的奖励通过原环境保存恢复。
+
+Strategic targets use the `fp32-tail-fp64-gae-v1` numerical contract. Within an
+observed trajectory, GAE reuses the following record's behavior value so adjacent
+terms cancel at lambda=1. Only an unfinished trajectory tail is evaluated again,
+in FP32 with autocast and TF32 disabled. GAE/return accumulation and global
+advantage moments use FP64; loss inputs are cast to FP32. This does not change
+reward, gamma/lambda, sampling length, optimizer or update count. The configured
+AMP mode still applies to collection and training forward/backward. Runtime
+`upper/bootstrap_samples`, `bootstrap_seconds`, `bootstrap_precision_bits`,
+`gae_precision_bits` and `target_precision_version` identify the executed path.
+Existing checkpoints remain loadable; completed upper rows are not replayed.
