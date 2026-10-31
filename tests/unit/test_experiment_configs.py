@@ -25,6 +25,20 @@ def test_aux768_continuous_preserves_current_training_configuration(monkeypatch)
     assert new.upper_auxiliary_search == 'public-v1'
 
 
+def test_upper15_noaux768_only_changes_authorized_upper_settings(monkeypatch):
+    monkeypatch.chdir(ROOT)
+    parser = build_parser()
+    prefix = ['--rank', '0', '--world-size', '4']
+    previous = vars(parser.parse_args(prefix + ['@configs/train/small_playout_upper_aux_768.args']))
+    current = vars(parser.parse_args(prefix + ['@configs/train/small_playout_upper15_noaux_768.args']))
+    assert {key: (value, current[key]) for key, value in previous.items()
+            if value != current[key]} == {
+        'upper_epochs': (10, 15), 'upper_auxiliary_search': ('public-v1', 'off')}
+    assert current['n_steps'] == 768 and current['n_envs'] == 384
+    assert current['continuous'] and current['total_steps'] is None
+    assert current['completed_game_budget'] is None
+
+
 def test_boss_normalized_q_experiment_only_changes_requested_search_parameters(monkeypatch):
     from rl.search.native import NativeSearchConfig, apply_strict_training_settings
     from rl.tasks import TASKS

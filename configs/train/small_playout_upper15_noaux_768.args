@@ -1,0 +1,5 @@
+@configs/train/small_playout_upper_aux_768.args
+--upper-epochs
+15
+--upper-auxiliary-search
+off

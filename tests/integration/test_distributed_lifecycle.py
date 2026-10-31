@@ -818,8 +818,10 @@ def test_campfire_monitor_real_collection_and_plain_resume(
 
 @pytest.mark.timeout(300)
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
+@pytest.mark.parametrize('fork_epochs,fork_auxiliary', [(10, 'public-v1'), (15, 'off')])
 def test_joint_continuous_longer_rollout_fork_and_resume(
-        tmp_path, monkeypatch, capsys, short_combat_env_type, campfire_env_type, device):
+        tmp_path, monkeypatch, capsys, short_combat_env_type, campfire_env_type, device,
+        fork_epochs, fork_auxiliary):
     import random
     import numpy as np
     from rl.training.checkpoints import read_bundle
@@ -870,6 +872,7 @@ def test_joint_continuous_longer_rollout_fork_and_resume(
     monkeypatch.setattr(sys.modules['wandb'], 'log', publish)
     argv = [*setup['argv'], '--continuous', '--updates', '1', '--learning-rate', '.0003',
             '--n-steps', '24', '--run-id', 'ci-longer', '--wandb-id', 'ci-longer',
+            '--upper-epochs', str(fork_epochs), '--upper-auxiliary-search', fork_auxiliary,
             '--wandb-step-base', '4', '--wandb-step-base-timesteps', '128',
             '--fork-state', str(source), '--training-state-dir', str(root),
             '--stop-file', str(stop), '--output', str(output)]
@@ -881,15 +884,29 @@ def test_joint_continuous_longer_rollout_fork_and_resume(
     assert manifest['config']['fork_source_global_step'] == 128
     assert manifest['config']['completed_game_budget'] is None
     assert manifest['config']['total_steps'] is None
+    assert manifest['config']['upper_config']['epochs'] == fork_epochs
+    if fork_auxiliary == 'off':
+        assert manifest['config']['upper_auxiliary_config'] is None
     assert [p['global_step'] for p in payloads[4:]] == [176, 224]
     stop.unlink()
     index = argv.index('--fork-state')
     argv[index:index+2] = ['--resume-state', str(bundle)]
+    # Both values must survive ordinary resume without any CLI override.
+    for flag in ('--upper-epochs', '--upper-auxiliary-search'):
+        while flag in argv:
+            index = argv.index(flag)
+            del argv[index:index+2]
     monkeypatch.setattr(sys, 'argv', argv)
     distributed_sb3.main()
     assert restored_steps == [128, 224]
     assert [p['global_step'] for p in payloads[4:]] == [176, 224, 272, 320]
     assert [p['legacy_step'] for p in payloads[4:]] == [5, 6, 7, 8]
-    assert all(p['upper/updates'] == 10 or p['upper/kl_stopped'] for p in payloads[4:])
+    assert all(p['upper/requested_updates'] == fork_epochs for p in payloads[4:])
+    assert all(p['upper/updates'] == fork_epochs or p['upper/kl_stopped'] for p in payloads[4:])
+    if fork_auxiliary == 'off':
+        assert all(not any(key.startswith('upper/aux_') for key in p) for p in payloads[4:])
+        final = AccumulatingMaskablePPO.load(output, device='cpu')
+        assert final.policy.upper_auxiliary_config is None
+        assert final.policy_kwargs['upper_auxiliary_config'] is None
     assert all(p['upper/campfire_decisions'] > 0 for p in payloads[4:])
     assert read_bundle(root/'rank0/step-000000000320', rank=0, world_size=1)['config']['continuous']
