@@ -187,6 +187,10 @@ state.rows=[old];state.comparisons=[];render();
 assert.equal($('win').textContent,'—');assert.equal($('floor').textContent,'—');
 assert.equal($('winavg').textContent,'暂无完整轮次统计');
 assert.equal($('chart0').previousElementSibling.textContent,'暂无同口径数据');
+state.rollout_mode='fixed_steps';state.iteration_steps=1;render();
+assert.equal($('win').textContent,'100.00%');assert.equal($('floor').textContent,'99');
+assert.equal($('win-label').textContent,'最近400个完成局胜率');
+assert.ok($('winavg').textContent.includes('连续补局滚动窗口'));
 `,context);
 '''.replace('SCRIPT', json.dumps(script))
     path = tmp_path / 'dashboard.cjs'

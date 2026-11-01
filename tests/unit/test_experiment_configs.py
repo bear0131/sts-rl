@@ -832,3 +832,24 @@ def test_full960_lambda_comparison_changes_only_upper_lambda(monkeypatch):
     assert candidate.pop('upper_gae_lambda') == 1.
     assert baseline.pop('upper_gae_lambda') is None
     assert candidate == baseline
+
+
+def test_c23_lambda097_fp32_preserves_original10_configuration(monkeypatch):
+    monkeypatch.chdir(ROOT)
+    common = ['--rank', '0', '--world-size', '4', '--checkpoint', 'unused.zip']
+    baseline = vars(build_parser().parse_args([*common,
+        '@configs/train/small_playout_distributed.args', '--upper-epochs', '10']))
+    candidate = vars(build_parser().parse_args([*common,
+        '@configs/train/small_playout_c23_lambda097_fp32.args']))
+    assert candidate['continuous'] and not candidate['episode_rollout']
+    assert candidate['total_steps'] is None and candidate['completed_game_budget'] is None
+    assert candidate['n_envs'] == 384 and candidate['n_steps'] == 512
+    assert candidate['upper_epochs'] == 10 and candidate['upper_micro_batch_size'] == 2048
+    assert candidate['upper_gae_lambda'] == .97 and candidate['amp_mode'] == 'off'
+    assert candidate['upper_auxiliary_search'] == 'off'
+    differences = {k: (baseline[k], v) for k, v in candidate.items() if baseline[k] != v}
+    assert differences == {
+        'continuous': (False, True), 'updates': (10000, 1),
+        'completed_game_budget': (400000, None), 'amp_mode': ('bf16', 'off'),
+        'upper_gae_lambda': (1., .97), 'upper_auxiliary_search': (None, 'off'),
+    }
