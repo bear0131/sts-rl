@@ -508,9 +508,9 @@
 
 | TRAIN46 | 按用户要求暂停；147轮全状态只读保护 | 切换模型搜索前正常停在共同115605504/147轮，四rank完整read_bundle/SHA、跨rank模型双Adam通过，upper Adam1470/lower Adam空。终点只读snapshot及STOP保留，旧38轮29884416锚点保持；终点窗口157/400=39.25%、开箱99%、条件领取97.25%（非独立评测）。小时automation train46-1已迁移TRAIN47，禁止自动恢复46；native-build-rulefast是47共享固定依赖不得删除。见worklog/2026-10-09.md#train47-source-stop-and-runtime-preset。 |
 
-| COMBAT29-C23-LAMBDA097 | 第1轮已保存，第2轮FP32 micro2048 OOM，恢复资格中 | 保留原db688起点与完整786432包；将显存分块降1024，保持全批样本、10次Adam、FP32/λ.97和其余预算。从第1轮同点恢复，不能fresh/reset；需有界语义/真实保存恢复/四机容量验证及后续两完整轮刷新。证据c23-lambda097-20261101/oom-micro；不称bitwise或等价提速。 |
+| COMBAT29-C23-LAMBDA097 | 运行中，micro1024恢复后第2/3轮完整验收通过 | 原db688全fresh起点，FP32/λ.97/10全批Adam、384×512；micro2048第二轮OOM后保留完整786432同点恢复，1536环境/两Adam/RNG/pending保持。最新2359296/10304自然局，2/3文件模型双Adam与前轮小网刷新通过，continuous无总限；不重跑watch/资格或fresh。证据c23-lambda097-20261101/oom-micro/production-summary.json，生产20704683；micro改变累积顺序不称bitwise/等价提速。 |
 
-| COMBAT29-RELIC-MONITOR | 已部署，待首两生产payload验收 | 奖励页遗物实际领取份数率+合法领取动作概率，宝箱/蓝钥匙交换/重复观察/保存恢复覆盖；不混商店、Boss必选、未开箱或事件直接赠送。34语义+2真实CPU/CUDA四轮通过，历史不回填；四机及首两生产payload/API待验。 |
+| COMBAT29-RELIC-MONITOR | 已部署，真实第1/2/3轮与HTTP/API通过 | 奖励页遗物实际领取份数率+合法领取动作概率，宝箱/蓝钥匙交换/重复观察/保存恢复覆盖；不混商店、Boss必选、未开箱或事件直送。语义/真实CPU-CUDA生命周期/四机通过；新19图和6旧历史保留，历史不回填。IAB已看实际遗物曲线，不等于用户Edge/VPN403解决。 |
 
 | DIAGNOSTIC-SHORT-PREFIX | 持续执行：复现先短前缀、发现异常即导出停止 | 用户明确禁止用大上限持续浪费；生产安全上限不等于诊断预算。先读已有进展定位最早异常，保存阶段现场/动作journal，短段+墙钟硬限、先CPU已有journal；确需延长需记录缺失证据与小增量预算，不默认全240槽到6000。 |
 
