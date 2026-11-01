@@ -5,13 +5,13 @@
 </style></head><body>
 <header><div><h1>训练实时曲线</h1><p id="run">正在连接远端日志…</p><p id="connection">等待首次同步</p></div><div><label class="label">横轴 <select id="axis"><option value="absolute">累计训练轮次</option><option value="relative">分支后轮次</option></select></label> <label class="label">查看范围 <select id="range"><option value="0">全部轮次</option><option value="30">最近30轮</option><option value="60">最近60轮</option></select></label></div></header>
 <section id="cards"><div class="card"><div class="label">已完成轮次</div><div class="value" id="round">—</div><div class="sub" id="ongoing">—</div></div><div class="card"><div class="label">本轮完整游戏胜率</div><div class="value" id="win">—</div><div class="sub" id="winavg">—</div></div><div class="card"><div class="label">累计自然完整游戏</div><div class="value" id="games">—</div><div class="sub">训练轨迹统计</div></div><div class="card"><div class="label">本轮完整游戏平均楼层</div><div class="value" id="floor">—</div><div class="sub" id="seconds">—</div></div></section>
-<div id="ranks"></div><section id="comparison-status" class="card" style="margin-bottom:18px"></section><section id="charts"></section><div id="notice">每30秒读取远端日志；曲线在每轮完成后增加。胜率与楼层仅统计每轮全部自然结束的游戏，不是独立评测。历史分支保留在下方对照清单中；有相同口径的数据就叠加曲线，没有的明确标注缺失、不补造。上层 loss/KL 使用最后一遍按样本加权的汇总；提前停止时仅含该遍实际完成更新的样本，不使用最后一个小批次代替。COMBAT27（λ=0.97）与COMBAT28（λ=1）使用相同随机初始权重和种子安排，从第0轮对齐。更早分支来自215保存点，与全新960局分支不是同起点实验。不同采样方式下，一轮的样本量可以不同。W&B上传受限不影响此窗口。金币按奖励份数、药水按瓶统计：实际领取率＝领取／（领取＋离开时留下）；满栏无法领取也计为留下。模型概率只统计能领取时当前这一步的拿取概率；无样本不显示，旧轮次不补造数据。</div><div id="tooltip"></div>
+<div id="ranks"></div><details class="card" style="margin-bottom:18px"><summary>历史数据说明</summary><section id="comparison-status"></section></details><section id="charts"></section><div id="notice">每30秒读取远端日志；曲线在每轮完成后增加。COMBAT27及后续完整批次分支：胜率、楼层使用本批全部960局；旧COMBAT23–26连续补局分支：保留原来最近400个完成局的滚动统计（虚线）。旧分支没有固定批次末尾长局集中的同种偏差，但滚动窗口仍会波动、重叠，和960局批次不是完全相同的统计口径。两种都是训练统计，不是独立评测。上层 loss/KL 使用最后一遍按样本加权的汇总；提前停止时仅含该遍实际完成更新的样本，不使用最后一个小批次代替。COMBAT27（λ=0.97）与COMBAT28（λ=1）使用相同随机初始权重和种子安排，从第0轮对齐。更早分支来自215保存点，与全新960局分支不是同起点实验。不同采样方式下，一轮的样本量可以不同。W&B上传受限不影响此窗口。金币按奖励份数、药水按瓶统计：实际领取率＝领取／（领取＋离开时留下）；满栏无法领取也计为留下。模型概率只统计能领取时当前这一步的拿取概率；无样本不显示，旧轮次不补造数据。</div><div id="tooltip"></div>
 <script>
 'use strict';
 const colors=['#56baf0','#b09af9','#f5bc69'];
 const specs=[
- ['本轮完整游戏胜率',['episode_rollout/win_rate'],['本轮全部游戏'],true],
- ['本轮完整游戏楼层',['episode_rollout/floor_mean'],['本轮全部游戏'],false],
+ ['训练游戏胜率 · 统计口径见图例',['display/game_win_rate'],['胜率'],true],
+ ['训练游戏楼层 · 统计口径见图例',['display/game_floor_mean'],['平均楼层'],false],
  ['上层 policy loss · 末遍汇总',['display/upper_policy_loss'],['按样本加权'],false],
  ['上层 value loss · 末遍汇总',['display/upper_value_loss'],['按样本加权'],false],
  ['金币领取',['upper/reward_gold_pickup_rate','upper/reward_gold_policy_probability'],['实际领取率','模型当前拿取概率'],true],
@@ -44,38 +44,38 @@ function lastEpochMetric(row,metric){
  const prefix='upper/'+metric+'_epoch_',epochs=Object.keys(row).filter(k=>k.startsWith(prefix)&&/^[1-9][0-9]*$/.test(k.slice(prefix.length))).map(k=>Number(k.slice(prefix.length)));
  return epochs.length?row[prefix+Math.max(...epochs)]:undefined;
 }
-function displayRow(row){
- const cohort=completeCohort(row);
- return {...row,'episode_rollout/win_rate':cohort?.win,'episode_rollout/floor_mean':cohort?.floor,
+function displayRow(row,run={}){
+ const cohort=completeCohort(row),rolling=run.rollout_mode!=='complete_games'&&finite(run.iteration_steps)&&run.iteration_steps>0&&!Object.keys(row).some(k=>k.startsWith('episode_rollout/'));
+ return {...row,'display/game_win_rate':cohort?.win??(rolling?row['game/win_rate']:undefined),'display/game_floor_mean':cohort?.floor??(rolling?row['game/floor_mean']:undefined),'episode_rollout/win_rate':cohort?.win,'episode_rollout/floor_mean':cohort?.floor,
   ...Object.fromEntries(['policy_loss','value_loss','kl'].map(k=>['display/upper_'+k,lastEpochMetric(row,k)]))};
 }
 for(const [i,s] of specs.entries()){let el=document.createElement('article');el.className='chart';el.innerHTML=`<h2>${s[0]}</h2><div class="legend">${s[2].map((v,j)=>`<span style="color:${colors[j]}">● ${v}</span>`).join('')}</div><svg role="img" aria-label="${s[0]}" id="chart${i}"></svg>`;$('charts').append(el)}
 function roundAt(run,step){if(run.rollout_mode==='complete_games')return (run.rows||[]).find(r=>r.global_timesteps===step)?.rollout_round??0;return (run.branch_round??((run.branch_step||0)/run.iteration_steps))+(step-(run.branch_step||0))/run.iteration_steps}
 function datasets(){
  const relative=$('axis').value==='relative', n=Number($('range').value);
- return [...(state.comparisons||[]),state].map((run,j)=>{let rows=(run.rows||[]).map(displayRow);if(relative)rows=rows.filter(r=>r.global_timesteps>=run.branch_step);if(n)rows=rows.slice(-n);return {label:run.label||run.run_id,rows,color:runColors[j%runColors.length],x:r=>relative?roundAt(run,r.global_timesteps)-(run.branch_round||0):roundAt(run,r.global_timesteps),branch:(relative?0:roundAt(run,run.branch_step||0))}});
+ return [...(state.comparisons||[]),state].map((run,j)=>{let rows=(run.rows||[]).map(r=>displayRow(r,run));if(relative)rows=rows.filter(r=>r.global_timesteps>=run.branch_step);if(n)rows=rows.slice(-n);return {label:run.label||run.run_id,gameScope:run.rollout_mode==='complete_games'?'本批全部960局':'最近400个完成局 · 连续补局',rolling:run.rollout_mode!=='complete_games',rows,color:runColors[j%runColors.length],x:r=>relative?roundAt(run,r.global_timesteps)-(run.branch_round||0):roundAt(run,r.global_timesteps),branch:(relative?0:roundAt(run,run.branch_step||0))}});
 }
 function plot(i,sets){const [title,keys,names,pct]=specs[i],svg=$('chart'+i),w=svg.clientWidth,h=230,left=64,right=18,top=12,bottom=33;svg.setAttribute('viewBox',`0 0 ${w} ${h}`);svg.replaceChildren();
  const visible=sets.filter(run=>run.rows.some(row=>keys.some(k=>finite(row[k]))));
  const entries=visible.flatMap(run=>run.rows.map(row=>({run,row,x:run.x(row)}))),xs=entries.map(e=>e.x),vals=entries.flatMap(e=>keys.map(k=>e.row[k])).filter(finite);
- const legend=svg.previousElementSibling;legend.replaceChildren();svg.onpointermove=null;svg.onpointerleave=null;if(!vals.length||w<100){legend.textContent='暂无同口径数据';return;}visible.forEach(run=>keys.forEach((key,j)=>{const span=document.createElement('span');span.style.color=run.color;span.textContent=`${j?'┄':'━'} ${run.label} · ${names[j]}`;legend.append(span)}));
+ const legend=svg.previousElementSibling;legend.replaceChildren();svg.onpointermove=null;svg.onpointerleave=null;if(!vals.length||w<100){legend.textContent='暂无同口径数据';return;}visible.forEach(run=>keys.forEach((key,j)=>{const span=document.createElement('span');span.style.color=run.color;span.textContent=`${j||i<2&&run.rolling?'┄':'━'} ${run.label} · ${i<2?run.gameScope:names[j]}`;legend.append(span)}));
  let ymin=Math.min(...vals),ymax=Math.max(...vals),pad=(ymax-ymin)*.12||Math.max(Math.abs(ymax)*.1,.01);ymin-=pad;ymax+=pad;if(pct){ymin=Math.max(0,ymin);ymax=Math.min(1,ymax)}const xmin=Math.min(...xs),xmax=Math.max(...xs),x=v=>left+(v-xmin)/(xmax-xmin||1)*(w-left-right),y=v=>h-bottom-(v-ymin)/(ymax-ymin)*(h-top-bottom);
  function add(tag,attrs,txt){let n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);if(txt!==undefined)n.textContent=txt;svg.append(n);return n}
  for(let t=0;t<=4;t++){let v=ymin+(ymax-ymin)*t/4,yy=y(v);add('line',{x1:left,x2:w-right,y1:yy,y2:yy,stroke:'#2a364b'});add('text',{x:left-9,y:yy+4,'text-anchor':'end',fill:'#96a7bf','font-size':11},fmt(v,pct))}
  for(let t=0;t<=4;t++){let v=xmin+(xmax-xmin)*t/4;add('text',{x:x(v),y:h-13,'text-anchor':'middle',fill:'#96a7bf','font-size':11},Math.round(v))}
  add('text',{x:w-right,y:h,'text-anchor':'end',fill:'#96a7bf','font-size':11},$('axis').value==='relative'?'分支后轮次':'累计训练轮次');
  visible.forEach(run=>{if(run.branch>0&&run.branch>=xmin&&run.branch<=xmax){add('line',{x1:x(run.branch),x2:x(run.branch),y1:top,y2:h-bottom,stroke:run.color,'stroke-dasharray':'2 5',opacity:.5});add('text',{x:x(run.branch)-3,y:top+11,'text-anchor':'end',fill:run.color,'font-size':10},`分支 ${run.branch}`)}
- keys.forEach((k,j)=>{let d='',gap=true;run.rows.forEach(r=>{if(!finite(r[k])){gap=true;return}d+=(gap?'M':'L')+x(run.x(r))+','+y(r[k]);gap=false});add('path',{d,fill:'none',stroke:run.color,'stroke-width':2,'stroke-dasharray':j===0?'none':j===1?'6 3':'2 3'});let last=run.rows.at(-1);if(last&&finite(last[k]))add('circle',{cx:x(run.x(last)),cy:y(last[k]),r:3,fill:run.color})})});
+ keys.forEach((k,j)=>{let d='',gap=true;run.rows.forEach(r=>{if(!finite(r[k])){gap=true;return}d+=(gap?'M':'L')+x(run.x(r))+','+y(r[k]);gap=false});add('path',{d,fill:'none',stroke:run.color,'stroke-width':2,'stroke-dasharray':i<2&&run.rolling?'6 3':j===0?'none':j===1?'6 3':'2 3'});let last=run.rows.at(-1);if(last&&finite(last[k]))add('circle',{cx:x(run.x(last)),cy:y(last[k]),r:3,fill:run.color})})});
  const guide=add('line',{x1:0,x2:0,y1:top,y2:h-bottom,stroke:'#a6b6cc','stroke-dasharray':'3 3',visibility:'hidden'});
- svg.onpointermove=e=>{let rect=svg.getBoundingClientRect(),target=xmin+(e.clientX-rect.left-left)/(w-left-right)*(xmax-xmin);const closest=entries.reduce((a,b)=>Math.abs(b.x-target)<Math.abs(a.x-target)?b:a);guide.setAttribute('x1',x(closest.x));guide.setAttribute('x2',x(closest.x));guide.setAttribute('visibility','visible');let tip=$('tooltip');tip.textContent=`${$('axis').value==='relative'?'分支后':'累计'}第 ${closest.x} 轮\n`+visible.map(run=>{const row=run.rows.find(r=>run.x(r)===closest.x);return run.label+'\n'+keys.map((k,j)=>`${names[j]}  ${fmt(row?.[k],pct)}`).join('\n')}).join('\n');tip.style.display='block';tip.style.left=Math.max(5,Math.min(e.clientX+14,innerWidth-tip.offsetWidth-12))+'px';tip.style.top=Math.max(5,Math.min(e.clientY+14,innerHeight-tip.offsetHeight-12))+'px'};svg.onpointerleave=()=>{guide.setAttribute('visibility','hidden');$('tooltip').style.display='none'};
+ svg.onpointermove=e=>{let rect=svg.getBoundingClientRect(),target=xmin+(e.clientX-rect.left-left)/(w-left-right)*(xmax-xmin);const closest=entries.reduce((a,b)=>Math.abs(b.x-target)<Math.abs(a.x-target)?b:a);guide.setAttribute('x1',x(closest.x));guide.setAttribute('x2',x(closest.x));guide.setAttribute('visibility','visible');let tip=$('tooltip');tip.textContent=`${$('axis').value==='relative'?'分支后':'累计'}第 ${closest.x} 轮\n`+visible.map(run=>{const row=run.rows.find(r=>run.x(r)===closest.x);return run.label+'\n'+keys.map((k,j)=>`${i<2?run.gameScope:names[j]}  ${fmt(row?.[k],pct)}`).join('\n')}).join('\n');tip.style.display='block';tip.style.left=Math.max(5,Math.min(e.clientX+14,innerWidth-tip.offsetWidth-12))+'px';tip.style.top=Math.max(5,Math.min(e.clientY+14,innerHeight-tip.offsetHeight-12))+'px'};svg.onpointerleave=()=>{guide.setAttribute('visibility','hidden');$('tooltip').style.display='none'};
 }
 function renderComparisons(){
  const box=$('comparison-status');box.replaceChildren();
- const title=document.createElement('strong');title.textContent='历史对照 · 保留原始曲线';box.append(title);
+
  for(const run of [...(state.comparisons||[]),state]){
   const rows=run.rows||[],cohorts=rows.filter(r=>completeCohort(r)),loss=rows.filter(r=>finite(lastEpochMetric(r,'policy_loss')));
   const line=document.createElement('p');
-  line.textContent=(run.label||run.run_id)+' · '+(cohorts.length?'完整游戏曲线 '+cohorts.length+' 轮':'未记录完整游戏统计；不能重建同口径胜率/楼层')+' · '+(loss.length?'上层汇总曲线 '+loss.length+' 轮':'上层汇总数据缺失')+' · 原始历史 '+rows.length+' 轮保留';
+  line.textContent=(run.label||run.run_id)+' · '+(cohorts.length?'完整游戏曲线 '+cohorts.length+' 轮':run.rollout_mode==='complete_games'?'暂无已完成批次':'连续补局：保留最近400个完成局的原始胜率/楼层')+' · '+(loss.length?'上层汇总曲线 '+loss.length+' 轮':'上层汇总数据缺失')+' · 原始历史 '+rows.length+' 轮保留';
   box.append(line);
  }
 }
