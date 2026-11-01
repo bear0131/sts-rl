@@ -95,8 +95,9 @@ class Monitor:
         self.state['label'] = config.get('label', config['run_id'])
         self.state['branch_step'] = config.get('branch_step', 0)
         self.state['iteration_steps'] = config['iteration_steps']
+        self.state['rollout_mode'] = config.get('rollout_mode', 'fixed_steps')
         self.state['branch_round'] = config.get('branch_round',
-            self.state['branch_step'] / config['iteration_steps'])
+            self.state['branch_step'] / (config['iteration_steps'] or 1))
         self.state['comparisons'] = []
         for reference in config.get('comparisons', []):
             saved = json.loads(Path(reference['history_file']).read_text(encoding='utf-8'))
@@ -104,9 +105,9 @@ class Monitor:
                 raise ValueError('comparison history belongs to a different run')
             self.state['comparisons'].append(dict(run_id=saved['run_id'],
                 label=reference.get('label', saved['run_id']), rows=saved['rows'],
-                iteration_steps=saved['iteration_steps'], branch_step=reference.get('branch_step', 0),
+                iteration_steps=saved['iteration_steps'], rollout_mode=saved.get('rollout_mode', 'fixed_steps'), branch_step=reference.get('branch_step', 0),
                 branch_round=reference.get('branch_round', saved.get('branch_round',
-                    reference.get('branch_step', 0) / saved['iteration_steps']))))
+                    reference.get('branch_step', 0) / (saved['iteration_steps'] or 1)))))
 
     def read_rank(self, rank):
         with self.lock:
@@ -181,7 +182,7 @@ def main():
     if args.poll_seconds < 10 or args.max_hours <= 0:
         parser.error('poll-seconds >= 10 and max-hours > 0 required')
     config = json.loads(args.config.read_text(encoding='utf-8'))
-    if config['iteration_steps'] <= 0 or not config['ports']:
+    if (config.get('rollout_mode') != 'complete_games' and (config.get('iteration_steps') or 0) <= 0) or not config['ports']:
         parser.error('positive iteration_steps and at least one rank required')
     monitor = Monitor(config, args.output, args.poll_seconds)
     html = Path(__file__).with_name('dashboard_static') / 'training.html'

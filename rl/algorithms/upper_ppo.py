@@ -63,6 +63,8 @@ def capture_step(model, obs, actions, masks, values, log_probs, new_obs, dones, 
     def row(source, index):
         return {k: np.array(v[index], copy=True) for k, v in source.items() if k in UPPER_KEYS}
     for index in range(count):
+        if infos[index].get('episode_cohort_hold'):
+            continue
         if int(obs['phase'][index, 0]) != COMBAT_PHASE:
             if model._upper_pending[index] is not None:
                 raise RuntimeError('unresolved strategic action before next strategic decision')
@@ -144,7 +146,7 @@ def _training_batches(records, micro_batch_size):
         )
 
 
-def update_upper(model, *, world_size=1, average=lambda values: values, synchronize=None):
+def update_upper(model, *, rank=0, world_size=1, average=lambda values: values, synchronize=None):
     """Configured full-batch PPO epochs, weighted by actual global row count.
 
     Microbatches only bound memory. Unequal/empty ranks use the same collective
@@ -196,6 +198,11 @@ def update_upper(model, *, world_size=1, average=lambda values: values, synchron
     out.update(advantage_mean=mean, advantage_std=std, grad_norm=0., parameter_l2_change=0.,
                clip_fraction=0., requested_updates=float(cfg.epochs), kl_stopped=0.)
     advantages = (advantages - mean) / (std + 1e-8)
+    if cfg.minibatch_size:
+        if auxiliary or aux_stats:
+            raise ValueError('strategic minibatch PPO currently requires auxiliary search off')
+        return _update_minibatches(model, records, advantages, returns, out,
+                                  rank, world_size, average, synchronize)
     batches = list(_training_batches(records, cfg.micro_batch_size))
     parameters = list(model.policy.core.upper_parameters())
     before = [p.detach().clone() for p in parameters]
@@ -247,6 +254,88 @@ def update_upper(model, *, world_size=1, average=lambda values: values, synchron
                 synchronize(epoch)
             norms.append(optimizer_step(model, optimizer=model.policy.upper_optimizer, max_grad_norm=cfg.max_grad_norm))
             out['updates'] += 1
+    out['grad_norm'] = float(torch.stack(norms).mean()) if norms else 0.
+    out['parameter_l2_change'] = float(torch.stack([
+        (p.detach() - old).float().square().sum() for p, old in zip(parameters, before)]).sum().sqrt())
+    model._upper_completed = []
+    for name, value in out.items():
+        model.logger.record('upper/' + name, value)
+    return out
+
+
+def _update_minibatches(model, records, advantages, returns, out, rank, world_size, average, synchronize):
+    """Shuffle once per pass, consume each real row once, pad only collectives.
+
+    Each rank contributes at most minibatch_size rows to an Adam update. Empty
+    ranks send zero gradients, never duplicate observations. Weighting before
+    the mean gradient reduction makes the result a global *sample* mean.
+    """
+    cfg = model.policy.core.upper_config
+    counts = average({f'rank_{i}': float(len(records)) if i == rank else 0.
+                      for i in range(world_size)})
+    sizes = [int(round(counts[f'rank_{i}'] * world_size)) for i in range(world_size)]
+    batches_per_epoch = max((n + cfg.minibatch_size - 1) // cfg.minibatch_size for n in sizes)
+    out.update(requested_updates=float(cfg.epochs * batches_per_epoch),
+               requested_epochs=float(cfg.epochs), epochs_completed=0., samples_used=0.,
+               effective_batch_size_global=float(sum(min(n, cfg.minibatch_size) for n in sizes)))
+    parameters = list(model.policy.core.upper_parameters())
+    before = [p.detach().clone() for p in parameters]
+    norms = []
+    model.policy.set_training_mode(True)
+    with train_phase(model, upper=True):
+        for epoch in range(cfg.epochs):
+            order = np.random.permutation(len(records))
+            epoch_totals = dict(count=0., kl=0., policy_loss=0., value_loss=0., entropy=0., clip_fraction=0.)
+            for batch_index in range(batches_per_epoch):
+                indices = order[batch_index * cfg.minibatch_size:(batch_index + 1) * cfg.minibatch_size]
+                mean_count = sum(max(0, min(cfg.minibatch_size, n - batch_index * cfg.minibatch_size))
+                                 for n in sizes) / world_size
+                model.policy.upper_optimizer.zero_grad(set_to_none=True)
+                totals = {key: 0. for key in epoch_totals}
+                for start in range(0, len(indices), cfg.micro_batch_size):
+                    selected = indices[start:start + cfg.micro_batch_size]
+                    batch = next(_training_batches([records[i] for i in selected], cfg.micro_batch_size))
+                    observations = observation_as_tensor(batch['observations'], model.device)
+                    tensor = lambda x: torch.as_tensor(x, device=model.device, dtype=torch.float32)
+                    with model.autocast_context():
+                        values, log_prob, entropy = model.policy.evaluate_actions(observations,
+                            torch.as_tensor(batch['actions'], device=model.device), action_masks=batch['masks'])
+                    c = ppo_loss_components(hierarchical=True, normalize_advantage=False,
+                        observations=observations, advantages=tensor(advantages[selected]),
+                        returns=tensor(returns[selected]), old_values=tensor(batch['old_values']),
+                        old_log_prob=tensor(batch['old_log_prob']), values=values.flatten(),
+                        log_prob=log_prob, entropy=entropy, clip_range=cfg.clip, clip_range_vf=None,
+                        skip_combat=True)
+                    loss = c.policy_loss + cfg.value_coef * c.value_loss + cfg.entropy_coef * c.entropy_loss
+                    (loss * (len(selected) / mean_count)).backward()
+                    totals['count'] += len(selected)
+                    for name, value in (('kl', c.approx_kl), ('policy_loss', c.policy_loss),
+                                        ('value_loss', c.value_loss), ('entropy', -c.entropy_loss),
+                                        ('clip_fraction', c.clip_fraction)):
+                        totals[name] += float(value.detach()) * len(selected)
+                reduced = average(totals)
+                if not all(np.isfinite(v) for v in reduced.values()):
+                    raise FloatingPointError('nonfinite strategic minibatch PPO statistics')
+                if not np.isclose(reduced['count'], mean_count):
+                    raise RuntimeError('strategic minibatch collective row count mismatch')
+                out.update({k: v / mean_count for k, v in reduced.items() if k != 'count'})
+                if out['kl'] > 1.5 * cfg.target_kl:
+                    out['kl_stopped'] = 1.
+                    break
+                if synchronize is not None:
+                    synchronize(epoch * batches_per_epoch + batch_index)
+                norms.append(optimizer_step(model, optimizer=model.policy.upper_optimizer,
+                                            max_grad_norm=cfg.max_grad_norm))
+                out['updates'] += 1
+                out['samples_used'] += reduced['count'] * world_size
+                for k, v in reduced.items():
+                    epoch_totals[k] += v
+            if epoch_totals['count']:
+                for name in ('policy_loss', 'value_loss', 'kl', 'clip_fraction'):
+                    out[f'{name}_epoch_{epoch + 1}'] = epoch_totals[name] / epoch_totals['count']
+            if out['kl_stopped']:
+                break
+            out['epochs_completed'] += 1
     out['grad_norm'] = float(torch.stack(norms).mean()) if norms else 0.
     out['parameter_l2_change'] = float(torch.stack([
         (p.detach() - old).float().square().sum() for p, old in zip(parameters, before)]).sum().sqrt())

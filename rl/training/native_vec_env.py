@@ -78,13 +78,19 @@ class NativeSearchVecEnv(DummyVecEnv):
                 and not current._combat_language)
 
     def step_wait(self):
-        if self.native_root_observations is None:
+        cohort = getattr(self, 'episode_rollout_active', None)
+        if self.native_root_observations is None and cohort is None:
             return super().step_wait()
         pending = []
         for index, env in enumerate(self.envs):
+            if cohort is not None and not cohort[index]:
+                self.buf_rews[index] = 0.
+                self.buf_dones[index] = False
+                self.buf_infos[index] = dict(episode_cohort_hold=True, simulator_transition=False)
+                continue
             base = env.unwrapped
             base._combat_observation_pending = False
-            base._defer_combat_observation = True
+            base._defer_combat_observation = self.native_root_observations is not None
             try:
                 obs, self.buf_rews[index], terminated, truncated, self.buf_infos[index] = env.step(self.actions[index])
             finally:
@@ -93,6 +99,8 @@ class NativeSearchVecEnv(DummyVecEnv):
             base._combat_observation_pending = False
             self.buf_dones[index] = terminated or truncated
             self.buf_infos[index]['TimeLimit.truncated'] = truncated and not terminated
+            if cohort is not None and (truncated or self.buf_infos[index].get('dead_screen')):
+                raise RuntimeError(f'censored whole-game cohort slot {index}; refusing partial-game training')
             if self.buf_dones[index]:
                 if deferred:
                     # TimeLimit may truncate outside the base environment.
@@ -100,7 +108,11 @@ class NativeSearchVecEnv(DummyVecEnv):
                     full = base._obs()
                     obs = {key: full[key] for key in self.keys}
                 self.buf_infos[index]['terminal_observation'] = obs
-                obs, self.reset_infos[index] = env.reset()
+                if cohort is None:
+                    obs, self.reset_infos[index] = env.reset()
+                else:
+                    cohort[index] = False
+                    self.episode_rollout_finished[index] = True
             elif deferred:
                 pending.append(index)
                 continue
@@ -113,6 +125,30 @@ class NativeSearchVecEnv(DummyVecEnv):
             for key in self.keys:
                 self.buf_obs[key][indices] = observations[key]
         return (self._obs_from_buf(), np.copy(self.buf_rews), np.copy(self.buf_dones), _copy_step_infos(self.buf_infos))
+
+    def begin_episode_rollout(self, first_seed):
+        active = getattr(self, 'episode_rollout_active', None)
+        if active is not None and active.any():
+            raise RuntimeError('cannot reset an unfinished whole-game cohort')
+        self.episode_rollout_active = np.ones(self.num_envs, dtype=bool)
+        self.episode_rollout_finished = np.zeros(self.num_envs, dtype=bool)
+        self.seed(int(first_seed))
+        return self.reset()
+
+    def env_method(self, method_name, *method_args, indices=None, **method_kwargs):
+        active = getattr(self, 'episode_rollout_active', None)
+        if method_name == 'action_masks' and active is not None:
+            rows = []
+            for index in self._get_indices(indices):
+                if active[index]:
+                    rows.extend(super().env_method(method_name, *method_args, indices=index, **method_kwargs))
+                else:
+                    # The collector never sends this placeholder to the simulator.
+                    mask = np.zeros(self.action_space.n, dtype=bool)
+                    mask[0] = True
+                    rows.append(mask)
+            return rows
+        return super().env_method(method_name, *method_args, indices=indices, **method_kwargs)
 
     def close(self):
         self.__dict__.pop('small_playout_batch', None)

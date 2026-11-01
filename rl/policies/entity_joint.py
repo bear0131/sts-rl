@@ -27,14 +27,23 @@ class UpperConfig:
     value_coef: float = 0.5
     max_grad_norm: float = 0.5
     target_kl: float = 0.02
+    minibatch_size: int = 0
+    optimizer: str = 'inherit'
+    value_learning_rate: float = 0.
+    weight_decay: float = 0.
+    adam_eps: float = 1e-8
 
     def __post_init__(self):
-        if (not all(math.isfinite(value) for value in asdict(self).values())
+        if (not all(math.isfinite(value) for key, value in asdict(self).items() if key != 'optimizer')
                 or min(self.width, self.layers, self.heads, self.epochs, self.micro_batch_size) < 1
                 or self.width % self.heads or self.learning_rate <= 0
                 or not 0 <= self.gamma <= 1 or not 0 <= self.gae_lambda <= 1
                 or not 0 < self.clip < 1 or self.target_kl <= 0
-                or self.max_grad_norm <= 0 or min(self.entropy_coef, self.value_coef) < 0):
+                or self.max_grad_norm <= 0 or min(self.entropy_coef, self.value_coef) < 0
+                or type(self.minibatch_size) is not int or self.minibatch_size < 0
+                or self.optimizer not in ('inherit', 'adamw') or self.adam_eps <= 0
+                or min(self.weight_decay, self.value_learning_rate) < 0
+                or (self.optimizer == 'inherit' and (self.weight_decay or self.value_learning_rate))):
             raise ValueError('invalid strategic PPO configuration')
 
 
@@ -111,8 +120,17 @@ class EntityJointPolicy(EntityCombatPolicy):
                                     EntityCombatConfig(**self.entity_config), cfg)
         self.optimizer = self.optimizer_class(self.core.combat.parameters(),
             lr=lr_schedule(1), **self.optimizer_kwargs)
-        self.upper_optimizer = self.optimizer_class(self.core.upper_parameters(),
-            lr=cfg.learning_rate, **self.optimizer_kwargs)
+        if cfg.optimizer == 'inherit':
+            self.upper_optimizer = self.optimizer_class(self.core.upper_parameters(),
+                lr=cfg.learning_rate, **self.optimizer_kwargs)
+        else:
+            value_parameters = list(self.core.overworld.value_mlp.parameters()) + list(self.core.overworld.value_head.parameters())
+            value_ids = {id(p) for p in value_parameters}
+            self.upper_optimizer = torch.optim.AdamW([
+                dict(params=[p for p in self.core.upper_parameters() if id(p) not in value_ids],
+                     lr=cfg.learning_rate),
+                dict(params=value_parameters, lr=cfg.value_learning_rate or cfg.learning_rate),
+            ], weight_decay=cfg.weight_decay, eps=cfg.adam_eps)
         if self.small_playout_config is not None:
             from rl.policies.small_playout import SmallPlayoutPolicy
             self.small_playout = SmallPlayoutPolicy(self.small_playout_config['key_count'])

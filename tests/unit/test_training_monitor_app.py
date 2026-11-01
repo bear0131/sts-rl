@@ -101,3 +101,14 @@ def test_rollout_length_change_keeps_common_branch_round_after_reload(tmp_path):
     assert state['comparisons'][0]['branch_round'] == 215
     assert state['comparisons'][0]['iteration_steps'] == 786432
     assert state['rows'][0]['global_timesteps'] == 170262528  # Never rewrite samples.
+
+
+def test_complete_game_rollouts_preserve_variable_actions_and_explicit_rounds(tmp_path):
+    config = dict(run_id='fresh960', iteration_steps=None, rollout_mode='complete_games',
+                  branch_round=0, branch_step=0, ports=[2200])
+    output = tmp_path/'state.json'
+    rows = [dict(global_timesteps=12003, rollout_round=1), dict(global_timesteps=26001, rollout_round=2)]
+    output.write_text(json.dumps(dict(run_id='fresh960', rows=rows)))
+    state = json.loads(Monitor(config, output, 30).snapshot())
+    assert state['iteration_steps'] is None and state['rollout_mode'] == 'complete_games'
+    assert state['rows'] == rows

@@ -472,3 +472,24 @@ AMP mode still applies to collection and training forward/backward. Runtime
 `upper/bootstrap_samples`, `bootstrap_seconds`, `bootstrap_precision_bits`,
 `gae_precision_bits` and `target_precision_version` identify the executed path.
 Existing checkpoints remain loadable; completed upper rows are not replayed.
+
+完整游戏 cohort 使用 `--episode-rollout` 和 native vector：每个环境每轮只运行
+一个自然完整游戏，结束后保持终局；全部结束才更新，下一轮用新种子重新初始化。
+种子为 `seed + completed_rollouts * world_size * n_envs + rank * n_envs + slot`。
+`--episode-rollout-max-steps/seconds` 只作失败看门狗，超限报错，不能把未结束局
+算死亡、替换或训练。`--n-steps` 此时仅决定未使用的 SB3 scratch buffer 大小。
+`global_timesteps` 累加实际执行的动作（含原子选择前缀，不含终局等待），
+`rollout_round` 为显式完成批次数；不能用固定 stride 换算。恢复保留模型、双
+Adam、RNG、完成批次和已结束环境的严格日志回放（terminal journal schema 2）。
+旧进行中环境 journal schema 1 继续支持。此模式目前仅支持 FP32 joint-upper、
+small-playout、无辅助/旧 replay；不改变动作、公开观测、奖励或战斗预算。
+
+`UpperConfig.minibatch_size > 0` 启用每 rank 小批 PPO；0 保留旧整批实现。
+完整轨迹先计算 FP64 GAE，再全局标准化优势，每遍独立打乱并使用每条记录一次。
+四 rank 每步各贡献最多指定数量，末尾不足时按真实全局条数加权；空 rank 只
+参加零梯度归约，绝不重复/丢弃样本。每次归约后统一 clip/Adam，KL 保护保留。
+`epochs` 是数据遍历次数，不再等于 Adam 次数；`requested_updates`、`updates`、
+`samples_used` 和 `epochs_completed` 报告实际工作量。AdamW 可独立设置 value
+MLP/head 的学习率，其他上层参数用主学习率；默认 `optimizer=inherit` 保持旧
+checkpoint 行为。完整960局实验使用 `small_playout_full960_fresh.args` 生成随机
+初始模型，四机启动使用 `small_playout_full960_distributed.args`。

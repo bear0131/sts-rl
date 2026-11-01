@@ -73,6 +73,10 @@ class RolloutProgressCallback(NoopCallback):
         if self.completed % 128 == 0 or self.completed == self.steps:
             record = dict(rank=self.rank, vector_steps=self.completed, target_steps=self.steps,
                           seconds=time.perf_counter()-self.started, at=time.time())
+            if getattr(self.model, 'episode_rollout_config', None):
+                record.update(target_steps=None,
+                    completed_games=int(self.model.env.episode_rollout_finished.sum()),
+                    target_games=self.model.env.num_envs)
             runtime = getattr(self.model, '_rollout_inference', None)
             if runtime is not None:
                 record['inference'] = runtime.statistics()
@@ -392,6 +396,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--boss-opening-dataset', type=Path,
                         help='Opening-only Act 2 Boss curriculum; 2:1:1 Champ/Automaton/Collector actors')
     parser.add_argument("--n-steps", type=int, default=256)
+    parser.add_argument('--episode-rollout', action='store_true',
+                        help='One complete fresh game per environment per rollout; no auto-replacement.')
+    parser.add_argument('--episode-rollout-max-steps', type=int, default=6000)
+    parser.add_argument('--episode-rollout-max-seconds', type=float, default=1800.)
     parser.add_argument(
         "--startup-stagger-steps",
         type=int,
@@ -2652,6 +2660,22 @@ def main() -> None:
         args.nosl_is_az_update_schedule or getattr(model, 'nosl_is_az_update_schedule', None))
     update_schedule.validate_model(model)
     args.nosl_is_az_update_schedule = model.nosl_is_az_update_schedule = update_schedule.config()
+    from rl.training import episode_rollout
+    episode_config = (dict(games_per_rank=args.n_envs, seed=args.seed,
+                          max_steps=args.episode_rollout_max_steps,
+                          max_seconds=args.episode_rollout_max_seconds) if args.episode_rollout else
+                      getattr(model, 'episode_rollout_config', None))
+    if episode_config is not None:
+        if args.total_steps is not None or args.startup_stagger_steps or args.boss_opening_dataset:
+            raise ValueError('whole-game cohorts reject fixed-step targets, stagger and opening-only datasets')
+        if model.amp_mode != 'off' or not model.policy.core.upper_config.minibatch_size:
+            raise ValueError('whole-game cohorts require FP32 strategic minibatch PPO')
+        th.set_float32_matmul_precision('highest')
+        th.backends.cuda.matmul.allow_tf32 = False
+        th.backends.cudnn.allow_tf32 = False
+        args.episode_rollout = True
+        episode_rollout.configure(model, episode_config, rank=args.rank, world_size=args.world_size)
+    args.episode_rollout_config = episode_config
     continuous_joint = (args.continuous and joint_upper(model)
         and getattr(model, 'nosl_is_az_combat_strategy', None) == 'small-playout'
         and hasattr(model.policy, 'small_playout')
@@ -2964,6 +2988,7 @@ def main() -> None:
 
     start_timesteps = int(model.num_timesteps)
     global_rollout_size = rollout_size * args.world_size
+    cumulative_global_steps = start_timesteps
     if args.total_steps is not None:
         remaining = args.total_steps - start_timesteps
         if remaining <= 0:
@@ -3293,7 +3318,7 @@ def main() -> None:
                         remote_root=args.remote_root, run_id=run_id,
                         tag=f'u{update:06d}_upper{epoch:03d}', ring_transport=ring_transport,
                         barrier_timeout=args.barrier_timeout)
-                upper_update = update_upper(model, world_size=args.world_size,
+                upper_update = update_upper(model, rank=args.rank, world_size=args.world_size,
                     average=lambda values: average_scalar_dict(values, ring_transport),
                     synchronize=sync_upper)
             upper_seconds = time.perf_counter() - upper_started if joint_upper(model) else 0.0
@@ -3415,19 +3440,24 @@ def main() -> None:
                 sum(row["sampled_samples"] for row in reasoning_records)
             )
 
+            actual_rollout_size = (int(model.episode_rollout_stats['transitions'])
+                                   if episode_config is not None else rollout_size)
+            global_actions = int(round(average_scalar_dict(
+                {'actions': float(actual_rollout_size)}, ring_transport)['actions'] * args.world_size))
+            cumulative_global_steps += global_actions
             record = {
                 "rank": args.rank,
                 "world_size": args.world_size,
                 "gradient_transport": args.gradient_transport,
                 "update": update,
                 "start_timesteps": start_timesteps,
-                "global_timesteps": start_timesteps + (update + 1) * global_rollout_size,
-                "transitions_local": rollout_size,
-                "transitions_global": rollout_size * args.world_size,
+                "global_timesteps": cumulative_global_steps,
+                "transitions_local": actual_rollout_size,
+                "transitions_global": global_actions,
                 "rollout_sec": rollout_sec,
                 "leaf_graph_release_sec": graph_release_sec,
                 "leaf_graph_release_memory": graph_release_memory,
-                "rollout_steps_per_sec_local": rollout_size / rollout_sec,
+                "rollout_steps_per_sec_local": actual_rollout_size / rollout_sec,
                 "loss_mean": float(np.mean(losses)) if losses else 0.0,
                 "optimizer_steps": optimizer_steps,
                 "sync_sec": sync_seconds,
@@ -3629,8 +3659,20 @@ def main() -> None:
                 record['completed_game_budget'] = args.completed_game_budget
             if joint_upper(model):
                 record['upper/total_sec_rank'] = upper_seconds
-                record['upper/effective_batch_size_global'] = upper_update.get('samples', 0.)
+                record['upper/effective_batch_size_global'] = upper_update.get('effective_batch_size_global', upper_update.get('samples', 0.))
                 record['upper/micro_batch_size'] = model.policy.upper_config['micro_batch_size']
+            if episode_config is not None:
+                record['episode_scope'] = 'complete-game-cohort'
+                record['rollout_round'] = model.episode_rollouts_completed
+                record['episode_rollout_rank'] = dict(model.episode_rollout_stats)
+                record['games_per_rollout_global'] = args.n_envs * args.world_size
+                cohort_means = average_scalar_dict({k: float(model.episode_rollout_stats[k])
+                    for k in ('completed_games', 'wins', 'floor_sum')}, ring_transport)
+                record['episode_rollout/win_rate'] = cohort_means['wins'] / cohort_means['completed_games']
+                record['episode_rollout/floor_mean'] = cohort_means['floor_sum'] / cohort_means['completed_games']
+                record['episode_rollout/completed_games_global'] = int(round(cohort_means['completed_games'] * args.world_size))
+                if record['episode_rollout/completed_games_global'] != args.n_envs * args.world_size:
+                    raise RuntimeError('global full-game cohort size mismatch')
             if args.boss_opening_dataset:
                 record['episode_scope'] = 'boss-opening'
 
@@ -3845,17 +3887,23 @@ def main() -> None:
                     key: record[key]
                     for key in _DISTRIBUTED_NOSL_METRIC_KEYS
                 })
-                legacy_step = wandb_step_for_timesteps(
-                    global_timesteps=global_timesteps,
-                    global_rollout_size=global_rollout_size,
-                    base_step=args.wandb_step_base,
-                    base_timesteps=args.wandb_step_base_timesteps,
-                    step_per_update=args.wandb_step_per_update,
-                )
-                if legacy_step is None:
-                    # Use a monotonic global update index for fresh runs.  An
-                    # explicit anchor still takes precedence above.
-                    legacy_step = global_timesteps // global_rollout_size
+                if episode_config is not None:
+                    legacy_step = model.episode_rollouts_completed
+                    wandb_payload['episode_rollout/round'] = legacy_step
+                    wandb_payload['episode_rollout/games_global'] = args.n_envs * args.world_size
+                    wandb_payload.update({k: v for k, v in record.items() if k.startswith('episode_rollout/')})
+                else:
+                    legacy_step = wandb_step_for_timesteps(
+                        global_timesteps=global_timesteps,
+                        global_rollout_size=global_rollout_size,
+                        base_step=args.wandb_step_base,
+                        base_timesteps=args.wandb_step_base_timesteps,
+                        step_per_update=args.wandb_step_per_update,
+                    )
+                    if legacy_step is None:
+                        # Use a monotonic global update index for fresh runs.  An
+                        # explicit anchor still takes precedence above.
+                        legacy_step = global_timesteps // global_rollout_size
                 # W&B's internal _step is append-only and cannot be moved
                 # backwards when resuming an existing run. A custom step
                 # metric preserves the legacy chart axis without changing
@@ -3883,7 +3931,7 @@ def main() -> None:
             prune_bundles(args.training_state_dir, rank=args.rank, keep=args.max_checkpoints)
         if args.rank == 0 and args.checkpoint_dir is not None and args.training_state_dir is None:
             args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-            final_step = start_timesteps + completed_updates * global_rollout_size
+            final_step = cumulative_global_steps
             model.num_timesteps = final_step
             path = (
                 args.checkpoint_dir

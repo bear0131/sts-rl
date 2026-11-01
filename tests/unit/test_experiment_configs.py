@@ -807,3 +807,16 @@ def test_public_scenario_presets_preserve_original_card_order():
     expected = json.loads((ROOT / "tests/fixtures/configs/nosl_scenarios.json").read_text())
     actual = {name: getattr(nosl_scenarios, name) for name in expected}
     assert json.loads(json.dumps(actual)) == expected
+
+
+def test_full960_uses_complete_games_without_finite_training_caps():
+    args = build_parser().parse_args(['--rank', '0', '--world-size', '4', '--checkpoint', 'unused.zip',
+                                     f'@{ROOT / "configs/train/small_playout_full960_distributed.args"}'])
+    assert args.episode_rollout and args.n_envs * args.world_size == 960
+    assert args.continuous and args.total_steps is None and args.completed_game_budget is None
+    assert args.amp_mode == 'off' and args.upper_auxiliary_search == 'off'
+    assert not args.nosl_is_az_replay_enabled and args.nosl_is_az_combat_strategy == 'small-playout'
+    lines = (ROOT/'configs/train/small_playout_full960_fresh.args').read_text().splitlines()
+    cfg = json.loads(lines[lines.index('--upper-config') + 1])
+    assert cfg['minibatch_size'] == 192 and cfg['epochs'] == 2 and cfg['gae_lambda'] == .97
+    assert cfg['optimizer'] == 'adamw' and cfg['learning_rate'] == 3e-5 and cfg['value_learning_rate'] == 1e-4

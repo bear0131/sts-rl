@@ -515,7 +515,8 @@ class SlayTheSpireEnv(gym.Env):
         if pending_native is not None:
             pending_native = (int(pending_native[0]), int(pending_native[1]))
         return {
-            "schema_version": 1,
+            "schema_version": 2 if self.thick.is_over else 1,
+            "terminal": bool(self.thick.is_over),
             "combat_action_contract": self.combat_action_contract,
             "outer_return_context": self.outer_return_context,
             "outer_return_objective": self.outer_return_objective,
@@ -542,8 +543,11 @@ class SlayTheSpireEnv(gym.Env):
 
     def restore_training_state(self, state):
         """Rebuild one live episode and reject any replay divergence."""
-        if state.get("schema_version") != 1:
+        if state.get("schema_version") not in (1, 2):
             raise ValueError("unsupported environment state schema")
+        terminal = state.get('schema_version') == 2 and state.get('terminal') is True
+        if state.get('schema_version') == 2 and not terminal:
+            raise ValueError('terminal environment schema requires an explicit terminal state')
         if state.get("combat_action_contract") != self.combat_action_contract:
             raise ValueError("environment combat action contract mismatch")
         if state.get('outer_return_context', False) != self.outer_return_context:
@@ -579,10 +583,13 @@ class SlayTheSpireEnv(gym.Env):
                 result = self._step_native_combat_impl(int(record["action_bits"]))
             else:
                 raise ValueError(f"invalid environment journal record at {position}")
-            if result[2] or result[3]:
+            if result[3] or (result[2] and not (terminal and position == len(state['actions']) - 1)):
                 raise ValueError(
                     f"environment journal terminated before live state at {position}"
                 )
+
+        if bool(self.thick.is_over) != terminal:
+            raise ValueError('environment journal terminal status mismatch')
 
         self.np_random.bit_generator.state = copy.deepcopy(state["np_random_state"])
         pending_native = state.get("nosl_cpp_pending")

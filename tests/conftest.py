@@ -192,6 +192,38 @@ def replayable_selection_env():
 
 
 @pytest.fixture
+def short_natural_game_env_type():
+    """Replayable strategic entry followed by a genuine early combat loss.
+
+    Controlled HP/strength keep lifecycle tests short. The simulator still
+    owns termination; these are not quality-evaluation games.
+    """
+    from functools import partial
+    from env.core.game_env import SimGameEnv
+    class Backend(SimGameEnv):
+        def reset(self, *, seed=None):
+            super().reset(seed=seed)
+            for _ in range(16):
+                if self.phase() == 'map':
+                    break
+                self.step(self.legal_semantic_actions()[0])
+            assert self.phase() == 'map'
+            return self._canonical(), self._info()
+
+        def _settle(self):
+            super()._settle()
+            if self.bc is not None:
+                self.bc.apply_custom_state({'player': {'hp': 1, 'powers': [('STRENGTH', -999)]}})
+
+    class Env(SlayTheSpireEnv):
+        def __init__(self, **kwargs):
+            super().__init__(backend_factory=partial(Backend,
+                global_map_view=kwargs.get('global_map_view', False),
+                upper_public_context=kwargs.get('upper_public_context', False)), **kwargs)
+    return Env
+
+
+@pytest.fixture
 def act3_boss_map_root():
     """Controlled final boss entry; the native victory callback advances the act."""
     def configure(env):

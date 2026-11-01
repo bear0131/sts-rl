@@ -1,0 +1,157 @@
+"""Natural native terminal cohorts through production training and recovery."""
+import json
+import sys
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+import torch
+from stable_baselines3.common.vec_env import VecMonitor
+
+from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+from rl.policies.entity_joint import EntityJointPolicy
+from rl.training import distributed_sb3
+from rl.training.checkpoints import read_bundle
+from rl.training.environments import TrainingStateWrapper
+from rl.training.native_vec_env import NativeSearchVecEnv
+from rl.training.reward import ShapedRewardWrapper
+
+pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(240)]
+
+
+def test_finished_slots_wait_and_terminal_journal_fails_closed(short_natural_game_env_type):
+    import copy
+    env = NativeSearchVecEnv([lambda: short_natural_game_env_type(global_map_view=True,
+        upper_public_context=True, event_option_observation=True,
+        combat_action_contract='autoregressive-v2')] * 2, threads=1)
+    try:
+        env.begin_episode_rollout(42)
+        seen = np.zeros(2, dtype=int)
+        for _ in range(200):
+            masks = env.env_method('action_masks')
+            actions = [int(np.flatnonzero(mask)[0]) for mask in masks]
+            _, _, dones, _ = env.step(actions)
+            seen += dones
+            if not env.episode_rollout_active.any():
+                break
+        assert seen.tolist() == [1, 1]
+        before = env.env_method('export_training_state')
+        _, rewards, dones, infos = env.step([0, 0])
+        assert not dones.any() and not rewards.any()
+        assert all(info['episode_cohort_hold'] for info in infos)
+        assert [s['actions'] for s in env.env_method('export_training_state')] == [s['actions'] for s in before]
+        restored = short_natural_game_env_type(global_map_view=True,
+            upper_public_context=True, event_option_observation=True,
+            combat_action_contract='autoregressive-v2')
+        try:
+            restored.restore_training_state(before[0])
+            malformed = copy.deepcopy(before[0]); malformed['actions'] += malformed['actions'][-1:]
+            with pytest.raises(ValueError, match='terminated before live state'):
+                restored.restore_training_state(malformed)
+            malformed = copy.deepcopy(before[0]); malformed['schema_version'] = 1
+            with pytest.raises(ValueError, match='terminated before live state'):
+                restored.restore_training_state(malformed)
+        finally:
+            restored.close()
+        env.begin_episode_rollout(44)
+        assert env.episode_rollout_active.all() and not env.episode_rollout_finished.any()
+    finally:
+        env.close()
+
+
+def test_censored_cohort_is_error_not_a_finished_game(short_natural_game_env_type):
+    from gymnasium.wrappers import TimeLimit
+    env = NativeSearchVecEnv([lambda: TimeLimit(short_natural_game_env_type(global_map_view=True,
+        combat_action_contract='autoregressive-v2'), max_episode_steps=1)], threads=1)
+    try:
+        env.begin_episode_rollout(42)
+        with pytest.raises(RuntimeError, match='censored whole-game cohort'):
+            env.step([int(np.flatnonzero(env.env_method('action_masks')[0])[0])])
+        assert not env.episode_rollout_finished.any()
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+@pytest.mark.parametrize('natural_start', [False, True])
+def test_complete_cohort_two_rounds_and_ordinary_resume(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start):
+    if device == 'cuda':
+        assert torch.cuda.is_available(), 'explicit CUDA qualification requires CUDA'
+    def make_env(*args):
+        def factory():
+            from env.core.run_env import SlayTheSpireEnv
+            kind = SlayTheSpireEnv if natural_start else short_natural_game_env_type
+            return TrainingStateWrapper(ShapedRewardWrapper(kind(
+                global_map_view=True, upper_public_context=True, event_option_observation=True,
+                card_language=True, combat_action_contract='autoregressive-v2')))
+        return VecMonitor(NativeSearchVecEnv([factory, factory], threads=1))
+    env = make_env()
+    model = AccumulatingMaskablePPO(EntityJointPolicy, env, n_steps=2, batch_size=2, n_epochs=1,
+        policy_kwargs=dict(entity_config=dict(width=32, layers=1, heads=4, quantiles=8),
+            upper_config=dict(width=32, layers=1, heads=4, epochs=2, minibatch_size=4,
+                micro_batch_size=2, gae_lambda=.97, optimizer='adamw', learning_rate=3e-5,
+                value_learning_rate=1e-4, weight_decay=1e-4, max_grad_norm=5),
+            small_playout_config=dict(epochs=2, batch_size=8, micro_batch_size=4,
+                target_mix=.2, optimizer='adamw', learning_rate=.003, weight_decay=.0001, max_grad_norm=0)),
+        seed=42, device=device, amp_mode='off', nosl_is_az=True, nosl_is_az_cpp=True,
+        nosl_is_az_inner_only=True, nosl_is_az_combat_strategy='small-playout',
+        nosl_is_az_simulations=4, nosl_is_az_replay_enabled=False, hierarchical_combat_hp=True)
+    initial = tmp_path/'initial.zip'
+    model.save(initial)
+    env.close()
+    assert not model.policy.upper_optimizer.state
+    assert not model.policy.small_playout_optimizer.state
+    payloads = []
+    monkeypatch.setitem(sys.modules, 'wandb', SimpleNamespace(init=lambda **kw: SimpleNamespace(finish=lambda **kw: None),
+        config=SimpleNamespace(update=lambda *a, **kw: None), define_metric=lambda *a, **kw: None,
+        log=lambda p: payloads.append(json.loads(json.dumps(p, allow_nan=False)))))
+    monkeypatch.setattr(distributed_sb3, 'make_env', make_env)
+    argv = ['train', '--checkpoint', str(initial), '--rank', '0', '--world-size', '1',
+        '--updates', '2', '--n-envs', '2', '--n-steps', '2', '--batch-size', '2',
+        '--gradient-accumulation-steps', '1', '--n-epochs', '1', '--device', device,
+        '--amp', 'off', '--vec', 'native', '--episode-rollout', '--episode-rollout-max-steps', '6000',
+        '--episode-rollout-max-seconds', '120', '--seed', '42', '--nosl-is-az-combat-strategy', 'small-playout',
+        '--no-nosl-is-az-replay', '--nosl-is-az-train-shared-embeddings', '--reasoning-updates', '0',
+        '--reasoning-coef', '0', '--no-interactive-reasoning', '--learning-rate', '.0003',
+        '--remote-root', str(tmp_path/'transport'), '--ssh-control-dir', str(tmp_path/'ssh'),
+        '--run-id', 'cohort-test', '--wandb', '--wandb-id', 'cohort-test',
+        '--training-state-dir', str(tmp_path/'state'), '--save-every-updates', '1', '--max-checkpoints', '4',
+        '--stop-file', str(tmp_path/'STOP'), '--output', str(tmp_path/'latest.zip')]
+    monkeypatch.setattr(sys, 'argv', argv)
+    distributed_sb3.main()
+    first = sorted((tmp_path/'state/rank0').glob('step-*'))[-1]
+    saved = AccumulatingMaskablePPO.load(first/'model.zip', device='cpu')
+    assert saved.episode_rollouts_completed == 2 and saved.small_playout_games_local == 4
+    assert not any(torch.load(first/'learner.pt', weights_only=False)['upper_pending'])
+    original_restore = distributed_sb3.restore_learner
+    def restore(model, path, **kwargs):
+        expected = AccumulatingMaskablePPO.load(path/'model.zip', device='cpu')
+        result = original_restore(model, path, **kwargs)
+        assert model._recovery_environment_restored and result['schema_version'] == 2
+        for a, b in ((model.policy.state_dict(), expected.policy.state_dict()),
+                     (model.policy.upper_optimizer.state_dict(), expected.policy.upper_optimizer.state_dict()),
+                     (model.policy.small_playout_optimizer.state_dict(), expected.policy.small_playout_optimizer.state_dict())):
+            torch.testing.assert_close(a, b, rtol=0, atol=0, check_device=False)
+        learner = torch.load(path/'learner.pt', weights_only=False)
+        np.testing.assert_equal(np.random.get_state(), learner['numpy_rng'])
+        assert torch.equal(torch.get_rng_state(), learner['torch_rng'])
+        assert model.episode_rollouts_completed == 2
+        return result
+    monkeypatch.setattr(distributed_sb3, 'restore_learner', restore)
+    monkeypatch.setattr(sys, 'argv', [*argv, '--resume-state', str(first)])
+    distributed_sb3.main()
+    assert [p['legacy_step'] for p in payloads] == [1, 2, 3, 4]
+    assert [p['game/completed_full_games_global'] for p in payloads] == [2, 4, 6, 8]
+    bundles = sorted((tmp_path/'state/rank0').glob('step-*'))
+    assert len(bundles) == 4
+    for i, bundle in enumerate(bundles):
+        manifest = read_bundle(bundle, rank=0, world_size=1)
+        current = AccumulatingMaskablePPO.load(bundle/'model.zip', device='cpu')
+        stats = current.episode_rollout_stats
+        assert stats['first_seed'] == 42 + i * 2 and stats['last_seed'] == 43 + i * 2
+        assert stats['completed_games'] == 2 and stats['unfinished_games'] == 0
+        assert stats['transitions'] > 0 and stats['vector_steps'] > 2  # scratch n_steps never limits cohort
+        assert manifest['config']['episode_rollout_config']['games_per_rank'] == 2
+        assert payloads[i]['upper/pending'] == payloads[i]['upper/censored'] == payloads[i]['upper/bootstrap_samples'] == 0
+        assert payloads[i]['upper/samples_used'] == 2 * payloads[i]['upper/samples'] or payloads[i]['upper/kl_stopped']
+

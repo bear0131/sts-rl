@@ -1117,6 +1117,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 self, "nosl_is_az_inference_max_wait_ms", 0.5
             )) / 1000.0,
         }
+        from rl.training import episode_rollout
+        cohort = episode_rollout.begin(self, env)
+        executed_actions = 0
         n_steps = 0
         action_masks = None
         startup_paused: set[int] = set()
@@ -1160,7 +1163,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 for index, (args, kwargs) in calls.items()
             }
 
-        while n_steps < n_rollout_steps:
+        while (env.episode_rollout_active.any() if cohort is not None else n_steps < n_rollout_steps):
+            if cohort is not None:
+                episode_rollout.check_budget(cohort, n_steps)
+                startup_paused = set(np.flatnonzero(~env.episode_rollout_active).tolist())
+            active_count = env.num_envs - len(startup_paused) if cohort is not None else env.num_envs
             policy_started = time.perf_counter()
             forced = np.zeros(env.num_envs, dtype=bool)
             with th.inference_mode():
@@ -1195,10 +1202,14 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 eligible = np.ones(env.num_envs, dtype=bool) if mixed_raw else ~forced
                 if rulebase_lower:
                     rulebase_roots = phase_now == combat_phase
+                    if cohort is not None:
+                        rulebase_roots &= env.episode_rollout_active
                     eligible = eligible & ~rulebase_roots
                     rulebase_lower_roots += int(rulebase_roots.sum())
                 if getattr(core, 'combat_only', False):
                     eligible = eligible & (phase_now == combat_phase)
+                if cohort is not None:
+                    eligible &= env.episode_rollout_active
                 active = np.flatnonzero(eligible)
                 if len(active) < env.num_envs:
                     # These buffer values are unused by inner-only training.
@@ -1644,6 +1655,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             if self._outer_return:
                 outer.stamp_roots(self, active_combat_samples)
             new_obs, rewards, dones, infos = env.step(actions_np)
+            if cohort is not None:
+                episode_rollout.record_terminals(cohort, dones, infos)
             if self._outer_return:
                 completed, discarded, fights = outer.finish_step(self, self._last_obs,
                     new_obs, dones, infos, active_combat_samples)
@@ -1656,9 +1669,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 reward_monitor.record_step(self, self._last_obs, actions_np, action_masks,
                     reward_probabilities, infos)
                 campfire_monitor.record_step(self, actions_np, action_masks, campfire_probabilities, infos)
-            prefix_steps = sum(info.get('simulator_transition') is False for info in infos)
+            prefix_steps = sum(info.get('simulator_transition') is False
+                               and not info.get('episode_cohort_hold') for info in infos)
             nosl_timings['selection_prefix_decisions'] += prefix_steps
-            nosl_timings['simulator_transitions'] += env.num_envs - prefix_steps
+            nosl_timings['simulator_transitions'] += active_count - prefix_steps
             if getattr(self, "_startup_occupancy_sampling", False):
                 startup_paused.update(
                     index for index, info in enumerate(infos)
@@ -1678,7 +1692,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             nosl_timings["env_step_seconds"] += (
                 time.perf_counter() - env_started
             )
-            self.num_timesteps += env.num_envs
+            self.num_timesteps += active_count
+            executed_actions += active_count
 
             next_phases, next_hp, interrupted = self._next_phase_hp(
                 new_obs, dones, infos
@@ -1813,15 +1828,16 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     )
                     rewards[idx] += self.gamma * terminal_value_scalar
 
-            rollout_buffer.add(
-                self._last_obs,
-                actions_for_buffer,
-                rewards,
-                self._last_episode_starts,
-                values,
-                log_probs,
-                action_masks=action_masks,
-            )
+            if cohort is None:
+                rollout_buffer.add(
+                    self._last_obs,
+                    actions_for_buffer,
+                    rewards,
+                    self._last_episode_starts,
+                    values,
+                    log_probs,
+                    action_masks=action_masks,
+                )
             self._last_obs = new_obs
             self._last_episode_starts = dones
 
@@ -1839,8 +1855,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
             rollout_buffer.returns.fill(np.nan)
             rollout_buffer.advantages.fill(0.)
             outer.finish_collection(self)
-        else:
+        elif cohort is None:
             rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
+        if cohort is not None:
+            episode_rollout.finish(self, env, cohort, n_steps)
         if self._frozen_upper:
             self.policy.core.teacher.assert_integrity()
             self.logger.record('frozen_upper/upper_updates', 0)
@@ -1993,8 +2011,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 "mask": 0.0,
                 "overhead": 0.0,
                 "total": total,
-                "transitions": n_rollout_steps * env.num_envs,
-                "calls": {"policy": n_rollout_steps, "env": n_rollout_steps, "mask": 0},
+                "transitions": executed_actions,
+                "calls": {"policy": n_steps, "env": n_steps, "mask": 0},
             }
         self.logger.record("nosl_is_az/combat_roots", len(self._nosl_is_az_samples))
         self.logger.record(
