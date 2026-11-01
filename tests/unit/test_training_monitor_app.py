@@ -168,8 +168,16 @@ assert.equal(displayRow(old)['display/upper_policy_loss'],undefined);
 assert.equal(displayRow(old)['episode_rollout/win_rate'],undefined);
 assert.equal(completeCohort({...last,'episode_rollout/completed_games_global':900}),null);
 assert.equal(cohortSummary([old]),null);
+assert.ok($('comparison-status').children.some(n=>n.textContent.includes('legacy')&&n.textContent.includes('未记录完整游戏统计')));
 assert.equal(JSON.stringify(state),before); // Display must not rewrite raw/history data.
 assert.ok(!specs.flatMap(s=>s[1]).some(k=>['game/win_rate','game/floor_mean','upper/policy_loss','upper/value_loss','upper/kl'].includes(k)));
+const reference={...first,global_timesteps:8,rollout_round:1};
+state.comparisons.push({run_id:'lambda-reference',label:'lambda-reference',rollout_mode:'complete_games',branch_step:0,branch_round:0,rows:[reference]});
+render();
+assert.equal($('chart0').previousElementSibling.children.length,2);
+assert.ok($('chart0').previousElementSibling.children.some(n=>n.textContent.includes('lambda-reference')));
+assert.equal(datasets().find(s=>s.label==='lambda-reference').x(reference),1); // Explicit rounds, different action counts.
+state.comparisons.pop();
 state.rows=[old];render();
 assert.equal($('win').textContent,'—');assert.equal($('floor').textContent,'—');
 assert.equal($('winavg').textContent,'暂无完整轮次统计');

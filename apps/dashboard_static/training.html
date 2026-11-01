@@ -5,7 +5,7 @@
 </style></head><body>
 <header><div><h1>训练实时曲线</h1><p id="run">正在连接远端日志…</p><p id="connection">等待首次同步</p></div><div><label class="label">横轴 <select id="axis"><option value="absolute">累计训练轮次</option><option value="relative">分支后轮次</option></select></label> <label class="label">查看范围 <select id="range"><option value="0">全部轮次</option><option value="30">最近30轮</option><option value="60">最近60轮</option></select></label></div></header>
 <section id="cards"><div class="card"><div class="label">已完成轮次</div><div class="value" id="round">—</div><div class="sub" id="ongoing">—</div></div><div class="card"><div class="label">本轮完整游戏胜率</div><div class="value" id="win">—</div><div class="sub" id="winavg">—</div></div><div class="card"><div class="label">累计自然完整游戏</div><div class="value" id="games">—</div><div class="sub">训练轨迹统计</div></div><div class="card"><div class="label">本轮完整游戏平均楼层</div><div class="value" id="floor">—</div><div class="sub" id="seconds">—</div></div></section>
-<div id="ranks"></div><section id="charts"></section><div id="notice">每30秒读取远端日志；曲线在每轮完成后增加。胜率与楼层仅统计每轮全部自然结束的游戏，不是独立评测。旧分支没有相同口径的数据时不显示、不补造。上层 loss/KL 使用最后一遍按样本加权的汇总；提前停止时仅含该遍实际完成更新的样本，不使用最后一个小批次代替。旧分支来自共同215保存点；全新960局分支从随机模型第0轮开始，不能当作同起点效果对照。不同采样方式下，一轮的样本量可以不同。W&B上传受限不影响此窗口。金币按奖励份数、药水按瓶统计：实际领取率＝领取／（领取＋离开时留下）；满栏无法领取也计为留下。模型概率只统计能领取时当前这一步的拿取概率；无样本不显示，旧轮次不补造数据。</div><div id="tooltip"></div>
+<div id="ranks"></div><section id="comparison-status" class="card" style="margin-bottom:18px"></section><section id="charts"></section><div id="notice">每30秒读取远端日志；曲线在每轮完成后增加。胜率与楼层仅统计每轮全部自然结束的游戏，不是独立评测。历史分支保留在下方对照清单中；有相同口径的数据就叠加曲线，没有的明确标注缺失、不补造。上层 loss/KL 使用最后一遍按样本加权的汇总；提前停止时仅含该遍实际完成更新的样本，不使用最后一个小批次代替。COMBAT27（λ=0.97）与COMBAT28（λ=1）使用相同随机初始权重和种子安排，从第0轮对齐。更早分支来自215保存点，与全新960局分支不是同起点实验。不同采样方式下，一轮的样本量可以不同。W&B上传受限不影响此窗口。金币按奖励份数、药水按瓶统计：实际领取率＝领取／（领取＋离开时留下）；满栏无法领取也计为留下。模型概率只统计能领取时当前这一步的拿取概率；无样本不显示，旧轮次不补造数据。</div><div id="tooltip"></div>
 <script>
 'use strict';
 const colors=['#56baf0','#b09af9','#f5bc69'];
@@ -26,7 +26,7 @@ const specs=[
 ];
 let state=null;
 document.getElementById('notice').append(' 火堆仅从启用监控后的轮次记录：只统计主选择，升级/删牌后的选牌不重复计数；每项以其可选次数为分母，模型概率在合法火堆选项内归一化（排除药水操作）。未解锁或无样本不显示，各项条件比例不必相加为100%。');
-const runColors=['#56baf0','#f5bc69','#b09af9','#58d3ab','#f08094'];
+const runColors=['#56baf0','#f5bc69','#b09af9','#58d3ab','#f08094','#d9e477','#e791ec','#88c8c0'];
 const $=id=>document.getElementById(id), finite=x=>typeof x==='number'&&Number.isFinite(x);
 const fmt=(x,pct=false)=>!finite(x)?'—':pct?(x*100).toFixed(2)+'%':Math.abs(x)<0.01&&x!==0?x.toPrecision(3):x.toLocaleString('zh-CN',{maximumFractionDigits:3});
 function completeCohort(row){
@@ -69,7 +69,17 @@ function plot(i,sets){const [title,keys,names,pct]=specs[i],svg=$('chart'+i),w=s
  const guide=add('line',{x1:0,x2:0,y1:top,y2:h-bottom,stroke:'#a6b6cc','stroke-dasharray':'3 3',visibility:'hidden'});
  svg.onpointermove=e=>{let rect=svg.getBoundingClientRect(),target=xmin+(e.clientX-rect.left-left)/(w-left-right)*(xmax-xmin);const closest=entries.reduce((a,b)=>Math.abs(b.x-target)<Math.abs(a.x-target)?b:a);guide.setAttribute('x1',x(closest.x));guide.setAttribute('x2',x(closest.x));guide.setAttribute('visibility','visible');let tip=$('tooltip');tip.textContent=`${$('axis').value==='relative'?'分支后':'累计'}第 ${closest.x} 轮\n`+visible.map(run=>{const row=run.rows.find(r=>run.x(r)===closest.x);return run.label+'\n'+keys.map((k,j)=>`${names[j]}  ${fmt(row?.[k],pct)}`).join('\n')}).join('\n');tip.style.display='block';tip.style.left=Math.max(5,Math.min(e.clientX+14,innerWidth-tip.offsetWidth-12))+'px';tip.style.top=Math.max(5,Math.min(e.clientY+14,innerHeight-tip.offsetHeight-12))+'px'};svg.onpointerleave=()=>{guide.setAttribute('visibility','hidden');$('tooltip').style.display='none'};
 }
-function render(){if(!state)return;$('run').textContent=state.run_id;let rows=state.rows,latest=rows.at(-1),ranks=state.ranks||[],bad=ranks.some(r=>r.connection_error),age=state.updated_at?Date.now()/1000-state.updated_at:Infinity;
+function renderComparisons(){
+ const box=$('comparison-status');box.replaceChildren();
+ const title=document.createElement('strong');title.textContent='历史对照 · 保留原始曲线';box.append(title);
+ for(const run of [...(state.comparisons||[]),state]){
+  const rows=run.rows||[],cohorts=rows.filter(r=>completeCohort(r)),loss=rows.filter(r=>finite(lastEpochMetric(r,'policy_loss')));
+  const line=document.createElement('p');
+  line.textContent=(run.label||run.run_id)+' · '+(cohorts.length?'完整游戏曲线 '+cohorts.length+' 轮':'未记录完整游戏统计；不能重建同口径胜率/楼层')+' · '+(loss.length?'上层汇总曲线 '+loss.length+' 轮':'上层汇总数据缺失')+' · 原始历史 '+rows.length+' 轮保留';
+  box.append(line);
+ }
+}
+function render(){if(!state)return;renderComparisons();$('run').textContent=state.run_id;let rows=state.rows,latest=rows.at(-1),ranks=state.ranks||[],bad=ranks.some(r=>r.connection_error),age=state.updated_at?Date.now()/1000-state.updated_at:Infinity;
  $('connection').className=bad||age>90?'bad':'';$('connection').textContent=state.updated_at?`${bad?'部分机器连接异常，保留已同步数据':age>90?'数据已过期，请检查本地采集进程':'已连接'} · 最近同步 ${new Date(state.updated_at*1000).toLocaleTimeString()}${state.polling_ended?' · 采集时限已到':''}`:'等待首次同步';
  $('ranks').replaceChildren();ranks.forEach(r=>{let n=document.createElement('div');n.className='rank'+(r.connection_error||!r.alive?' bad':'');let phase=r.progress?.vector_steps;n.textContent=`机器 ${r.rank+1} · ${r.connection_error?'连接失败':r.alive?'运行中':'已停止'} · 已保存 ${r.step?Math.floor(roundAt(state,r.step)):0}轮${r.progress?.target_games?' · 本轮完成 '+r.progress.completed_games+'/'+r.progress.target_games+'局':phase?' · 最近采样 '+phase+'/'+(r.progress.target_steps||'?'):''}`;$('ranks').append(n)});
  if(latest){let round=roundAt(state,latest.global_timesteps);$('round').textContent=round;$('ongoing').textContent=ranks.length&&ranks.every(r=>!r.connection_error&&r.alive)?`正在进行第 ${round+1} 轮`:'以机器状态为准';const cohort=completeCohort(latest),summary=cohortSummary(rows.slice(-5));$('win').textContent=fmt(cohort?.win,true);$('winavg').textContent=summary?`最近${summary.rounds}个完整轮次 · ${fmt(summary.games)}局 · ${fmt(summary.win,true)}`:'暂无完整轮次统计';$('games').textContent=fmt(latest.completed_full_games_global);$('floor').textContent=fmt(cohort?.floor);$('seconds').textContent=`上一轮 ${fmt(latest.iteration_wall_sec)} 秒`}
