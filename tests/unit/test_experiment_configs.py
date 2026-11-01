@@ -844,7 +844,7 @@ def test_c23_lambda097_fp32_preserves_original10_configuration(monkeypatch):
     assert candidate['continuous'] and not candidate['episode_rollout']
     assert candidate['total_steps'] is None and candidate['completed_game_budget'] is None
     assert candidate['n_envs'] == 384 and candidate['n_steps'] == 512
-    assert candidate['upper_epochs'] == 10 and candidate['upper_micro_batch_size'] == 2048
+    assert candidate['upper_epochs'] == 10 and candidate['upper_micro_batch_size'] == 1024
     assert candidate['upper_gae_lambda'] == .97 and candidate['amp_mode'] == 'off'
     assert candidate['upper_auxiliary_search'] == 'off'
     differences = {k: (baseline[k], v) for k, v in candidate.items() if baseline[k] != v}
@@ -852,4 +852,5 @@ def test_c23_lambda097_fp32_preserves_original10_configuration(monkeypatch):
         'continuous': (False, True), 'updates': (10000, 1),
         'completed_game_budget': (400000, None), 'amp_mode': ('bf16', 'off'),
         'upper_gae_lambda': (1., .97), 'upper_auxiliary_search': (None, 'off'),
+        'upper_micro_batch_size': (2048, 1024),  # FP32 activation capacity; full batch unchanged.
     }

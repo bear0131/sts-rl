@@ -281,6 +281,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
             assert restored.policy.small_playout_config['batch_size'] == 12
             assert restored.policy_kwargs['small_playout_config']['micro_batch_size'] == 6
             expected_upper = dict(model.policy.upper_config)
+            if upper_micro_override is not None:
+                expected_upper['micro_batch_size'] = upper_micro_override
             if upper_lambda_override is not None:
                 expected_upper['gae_lambda'] = upper_lambda_override
             if upper_epochs_override is not None:
@@ -927,7 +929,7 @@ def test_c23_lambda097_fp32_collection_update_and_plain_resume(
         nosl=True, upper='model', combat_arch='entity', contract='autoregressive-v2',
         device=device, amp='off', vector='native', joint=True,
         fixed_lower='small-playout', online_small='reference-ce',
-        upper_epochs_override=10, upper_lambda_override=.97,
+        upper_epochs_override=10, upper_lambda_override=.97, upper_micro_override=4,
         campfire_env_type=campfire_env_type, return_setup=True)
     assert len(setup['payloads']) == 4
     assert sum(p['upper/reward_relic_resolved'] for p in setup['payloads']) > 0

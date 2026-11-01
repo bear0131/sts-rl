@@ -28,7 +28,7 @@ model
 --rollout-resource-interval
 1
 --upper-micro-batch-size
-2048
+1024
 --upper-gae-lambda
 0.97
 --upper-epochs
