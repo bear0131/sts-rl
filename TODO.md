@@ -508,7 +508,7 @@
 
 | TRAIN46 | 按用户要求暂停；147轮全状态只读保护 | 切换模型搜索前正常停在共同115605504/147轮，四rank完整read_bundle/SHA、跨rank模型双Adam通过，upper Adam1470/lower Adam空。终点只读snapshot及STOP保留，旧38轮29884416锚点保持；终点窗口157/400=39.25%、开箱99%、条件领取97.25%（非独立评测）。小时automation train46-1已迁移TRAIN47，禁止自动恢复46；native-build-rulefast是47共享固定依赖不得删除。见worklog/2026-10-09.md#train47-source-stop-and-runtime-preset。 |
 
-| COMBAT29-C23-LAMBDA097 | 运行中，micro1024恢复后第2/3轮完整验收通过 | 原db688全fresh起点，FP32/λ.97/10全批Adam、384×512；micro2048第二轮OOM后保留完整786432同点恢复，1536环境/两Adam/RNG/pending保持。最新2359296/10304自然局，2/3文件模型双Adam与前轮小网刷新通过，continuous无总限；不重跑watch/资格或fresh。证据c23-lambda097-20261101/oom-micro/production-summary.json，生产20704683；micro改变累积顺序不称bitwise/等价提速。 |
+| COMBAT29-C23-LAMBDA097 | 运行中，00:29共同12轮完整核验通过 | 原db688全fresh起点，FP32/λ.97/10全批Adam、384×512；micro2048第二轮OOM后同786432点以1024恢复，2/3完整验收已完成不重做。最新12/global9437184/34610自然局，11/12文件模型双Adam及12沿11小网刷新一致，原恢复PID持续无新错；continuous无总限。首两个5轮训练窗口楼层均值17.885→20.9255，400窗口均值非独立cohort评测；证据c23-lambda097-20261101/hourly0029-summary.json，生产20704683。不重跑watch/资格/fresh，不称micro bitwise或等价提速。 |
 
 | COMBAT29-RELIC-MONITOR | 已部署，真实第1/2/3轮与HTTP/API通过 | 奖励页遗物实际领取份数率+合法领取动作概率，宝箱/蓝钥匙交换/重复观察/保存恢复覆盖；不混商店、Boss必选、未开箱或事件直送。语义/真实CPU-CUDA生命周期/四机通过；新19图和6旧历史保留，历史不回填。IAB已看实际遗物曲线，不等于用户Edge/VPN403解决。 |
 
