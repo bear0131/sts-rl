@@ -508,10 +508,10 @@
 
 | TRAIN46 | 按用户要求暂停；147轮全状态只读保护 | 切换模型搜索前正常停在共同115605504/147轮，四rank完整read_bundle/SHA、跨rank模型双Adam通过，upper Adam1470/lower Adam空。终点只读snapshot及STOP保留，旧38轮29884416锚点保持；终点窗口157/400=39.25%、开箱99%、条件领取97.25%（非独立评测）。小时automation train46-1已迁移TRAIN47，禁止自动恢复46；native-build-rulefast是47共享固定依赖不得删除。见worklog/2026-10-09.md#train47-source-stop-and-runtime-preset。 |
 
-| COMBAT29-C23-LAMBDA097 | 进行中：同COMBAT23初始、10更新、λ.97及FP32 | 用户选择同db688随机初始，从0全fresh，384×512/原上下层与搜索，continuous无总限；本机/四机真实资格、旧28轮末保留、新run一次启动及两完整轮刷新验收。独立args与c23-lambda097-20261101证据；只改λ及用户另指定的上层FP32，不宣称单因素或等价加速。 |
+| COMBAT29-C23-LAMBDA097 | 已启动，首两轮验收中：同COMBAT23初始、10更新、λ.97及FP32 | 用户选择同db688随机初始，从0全fresh，384×512/原上下层与搜索，continuous无总限；本机/四机真实资格、旧28轮末保留、新run一次启动及两完整轮刷新验收。独立args与c23-lambda097-20261101证据；只改λ及用户另指定的上层FP32，不宣称单因素或等价加速。 |
 
-| COMBAT29-RELIC-MONITOR | 本机通过，待随新分支部署 | 奖励页遗物实际领取份数率+合法领取动作概率，宝箱/蓝钥匙交换/重复观察/保存恢复覆盖；不混商店、Boss必选、未开箱或事件直接赠送。34语义+2真实CPU/CUDA四轮通过，历史不回填；四机及首两生产payload/API待验。 |
+| COMBAT29-RELIC-MONITOR | 已部署，待首两生产payload验收 | 奖励页遗物实际领取份数率+合法领取动作概率，宝箱/蓝钥匙交换/重复观察/保存恢复覆盖；不混商店、Boss必选、未开箱或事件直接赠送。34语义+2真实CPU/CUDA四轮通过，历史不回填；四机及首两生产payload/API待验。 |
 
 | DIAGNOSTIC-SHORT-PREFIX | 持续执行：复现先短前缀、发现异常即导出停止 | 用户明确禁止用大上限持续浪费；生产安全上限不等于诊断预算。先读已有进展定位最早异常，保存阶段现场/动作journal，短段+墙钟硬限、先CPU已有journal；确需延长需记录缺失证据与小增量预算，不默认全240槽到6000。 |
 
-| TRAIN-FAILURE-SCENE | 实现待四机验收 | 异常关闭前保存故障槽canonical/战斗JSON与可回放journal；无明确槽最多4个在途槽。连续native截断reset前最多4次/进程留档，不改训练/保护语义；记录失败不遮蔽原异常。真实native截断可回放、生产生命周期异常钩子与普通保存恢复须过。 |
+| TRAIN-FAILURE-SCENE | 已部署：本机与四机真实资格通过 | 异常关闭前保存故障槽canonical/战斗JSON与可回放journal；无明确槽最多4个在途槽。连续native截断reset前最多4次/进程留档，不改训练/保护语义；记录失败不遮蔽原异常。真实native截断可回放、生产生命周期异常钩子与普通保存恢复须过。 |
