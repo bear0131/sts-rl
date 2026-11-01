@@ -834,6 +834,15 @@ def test_full960_lambda_comparison_changes_only_upper_lambda(monkeypatch):
     assert candidate == baseline
 
 
+def test_terminal_full960_keeps_training_settings_and_excludes_budget_games(monkeypatch):
+    monkeypatch.chdir(ROOT)
+    common=['--rank','0','--world-size','4','--checkpoint','unused.zip']
+    baseline=vars(build_parser().parse_args([*common,'@configs/train/small_playout_full960_distributed.args']))
+    candidate=vars(build_parser().parse_args([*common,'@configs/train/small_playout_terminal_full960_distributed.args']))
+    assert {k:(baseline[k],v) for k,v in candidate.items() if baseline[k]!=v}=={
+        'episode_rollout_max_steps':(6000,2424),'episode_rollout_censored':(None,'exclude')}
+
+
 def test_c23_lambda097_fp32_preserves_original10_configuration(monkeypatch):
     monkeypatch.chdir(ROOT)
     common = ['--rank', '0', '--world-size', '4', '--checkpoint', 'unused.zip']

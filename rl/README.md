@@ -47,22 +47,27 @@ Torch与原生有不同浮点归约顺序，以2e-5绝对/相对容差验证，�
 非目标动作不虚构敌人目标。Frozen Eye 保留完整可见牌序；Warcry/Headbutt 等已知牌顶
 随真实 transition 跟踪。Runic Dome 特征隐藏意图，整局采用纯 policy；尚未实现其意图信念搜索。
 
-在线随机起步时所有房间UCT；显式加载备用pair时普通UCT、精英/Boss独立先验PUCT（mix=.5，temperature=1）。一次policy playout、
-均值回传，根选最高Q，.02区间内按访问数决定，并保留格挡/免费动作保护。
+在线随机起步时所有房间UCT；显式加载备用pair时普通UCT、精英/Boss独立先验PUCT（mix=.5，temperature=1）。叶子由小网执行policy playout。
+当前搜索目标版本为`terminal-hp-boss-win-turn128-v1`。根选最高保守回报值，精确平局按显式nonce均匀选择，不按动作类别或访问数覆盖。
 每个叶后最多200个完整原子动作，树深另限1024。真实胜/负/玩家逃跑与两类截断独立计数。
-手工分数借鉴参考RichBoth：胜利HP/药水/回合奖励，败局敌人受损/剩余HP/存活回合塑形，
-逃跑及未追回偷金单列；未结束叶用既有BattleScumSearcher2人工分数的tanh。
+普通/精英只使用真实战斗终局剩余HP，搜索内除以同根固定初始maxHP作尺度；Boss仅胜1、其他真实终局0。
+不附加药水、金币、回合、敌方HP等奖惩，普通逃跑亦按剩余HP。未结束模拟没有终局标签，trace的value为None；
+搜索回传sum(已观察的非负终局回报)/尝试数，终局观测次数与删失计数分列。
+这是保守下界统计，可能低估较长/难以模拟完的分支，不是已完成样本均值或无偏胜率，更不能把删失当作真实死亡。
 不存在876前向或学习的critic补尾。根与chance重放复用NOSL未来随机性重采样；
-EndTurn widening 23.148 / .436、抽牌4 / .5，其余1 / .5。探索系数按simulation预算
+所有动作使用同一渐进扩展ceil(sqrt(visits+1))，无零费/格挡/卡牌类别优先规则。探索系数按simulation预算
 <500 / <1000 / 其余分别为.8 / 1.41 / 2.5。完整状态和动作键采用逐字段强混合，
 避免已复现的Codex候选哈希碰撞；旧NOSL的历史键保持兼容，其碰撞修复另列TODO。
 当前整体实验上下层均随机起步，不预训练、不加载独立先验。每轮实际经过的多动作战斗根
-用参考项目搜索监督目标做在线CE：0.8×实际推荐动作one-hot + 0.2×visits分布；推荐动作保留Q-band及root guards，不能替换为argmax visits。8 epoch，AdamW 3e-3、weight decay 1e-4，按用户要求使用旧下层每rank有效batch102400（全局409600），GPU分块由`--small-playout-micro-batch-size`显式指定，FP32、无梯度裁剪。该有效batch已主动偏离参考CE的4096；epoch仍为8，不能宣称更新次数不变。旧checkpoint缺省仍为visits-only/Adam/clip1，加载不静默迁移。
+做在线CE：0.8×实际推荐动作one-hot + 0.2×visits分布；推荐动作按上述搜索统计选择，不能替换为argmax visits。8 epoch，AdamW 3e-3、weight decay 1e-4，按用户要求使用旧下层每rank有效batch102400（全局409600），GPU分块由`--small-playout-micro-batch-size`显式指定，FP32、无梯度裁剪。该有效batch已主动偏离参考CE的4096；epoch仍为8，不能宣称更新次数不变。
+新搜索版本独立写入模型、manifest和policy pair；旧训练checkpoint/旧pair拒绝静默切换目标，须使用其归档源码/native。仅num_timesteps=0原随机初始模型可以显式开始新实验。特征/参数布局保持不变，不代表搜索标签统计等价。
 在线小网的两项batch覆盖参数仅改变下层分批，保留已有Adam/权重/环境恢复；省略时沿用checkpoint。日志以`small_playout_train/batch_size_per_rank`、`batch_size_global`、`micro_batch_size`及`upper/effective_batch_size_global`、`upper/micro_batch_size`区分含义。小网路径不再上报已禁用普通PPO的`train/effective_batch_size*`占位值。
 按全局有效样本量平均梯度；空rank/末尾不等长仍参加相同同步。没有旧replay，单动作根和Dome无搜索标签。
 下层权重、Adam、累计更新数与整局环境/RNG一起保存恢复，下一轮重建原生权重。
-目标熵、CE减目标熵的KL、teacher top1、uniform CE与策略熵一同上报，避免把变化的标签难度误当学习进步。上层锁定实际TRAIN47/876生产存档（10次整批更新上限、GAE λ=1、LR1e-4/熵.02及其余配置保持），完整公开地图观测下4096分块已测显存溢出，仅此项经用户授权采用2048。不能只核对未含运行时覆盖的基础args，逐epoch policy loss/KL、clip fraction、梯度范数和参数变化用于诊断；不套参考上层超参数。
-这与参考的先离线CE、再REINFORCE、最终固定小网不同，是用户要求的无预训练在线实验；当前对齐的是搜索监督阶段，并未声称在线启用了后续REINFORCE。manual score仍只用于搜索，
+目标熵、CE减目标熵的KL、teacher top1、uniform CE与策略熵一同上报，避免把变化的标签难度误当学习进步。上层配置由实验args/checkpoint显式决定；当前完整游戏实验见`configs/train/small_playout_terminal_full960_distributed.args`，两遍192/rank小批、FP32和λ.97。历史全批设置不得当作当前入口默认值。
+用户授权的单回合保护使用引擎cardsPlayedThisTurn（含自动/重复打牌）：达到128后等待已开始的效果/选牌结算，只允许合法结束回合。实际搜索、模拟和Dome纯策略共用同一候选限制；这是预算约束，可能截短合法超长连招，不是特定卡牌偏好。
+完整游戏模式每rank启动240局，完成槽保持、不补局。新实验动作上限2424来自旧27/28共115200自然结束局观察最大1212的两倍，墙钟1800秒。`--episode-rollout-censored exclude`仅对这些预算超限剔除整局所有上下层样本并继续；不吞掉OOM、无效状态或一般异常。各槽种子/操作数/原因记录，有限现场快照单列；全删失批次零Adam、仍保存并推进下一批种子。自然结束+剔除=启动数，胜率分母仅自然结束，零分母省略，不能将删失当死亡或声称剔除无选择偏差。普通恢复必须保留该合同；历史error模式仍失败停止。
+这与参考的先离线CE、再REINFORCE、最终固定小网不同，是用户要求的无预训练在线实验；当前并未声称在线启用了后续REINFORCE。终局回报只用于搜索，
 没有给小网增加value监督。备用流程支持CE后独立同起点K条真实playout的leave-one-out REINFORCE，
 包含截断的组不提供终局监督；备用独立先验仅做CE，不随REINFORCE更新。
 StS1暂无参考项目的人类BC数据，备用先验使用模拟器搜索监督；未实现参考的证明求解和废牌清理保护，

@@ -1,6 +1,6 @@
 """Compact StS1 policy and the versioned, contiguous native weight contract.
 
-No critic: MCTS leaves use a policy playout and a hand-written battle score.
+No critic: MCTS uses policy playouts and explicit terminal outcome targets.
 The key table contains real StS1 card/upgrade and potion IDs, not StS2 padding.
 """
 from __future__ import annotations

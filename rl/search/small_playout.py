@@ -5,6 +5,7 @@ import env.core  # resolve the explicitly selected native build before import
 import slaythespire as sts
 
 from rl.policies.small_playout import CONTRACT
+from env.search.small_playout import SEARCH_CONTRACT
 
 
 @dataclass(frozen=True)
@@ -17,10 +18,11 @@ class SmallSearchConfig:
     use_prior: bool = False
     prior_mix: float = .5
     prior_temperature: float = 1.
-    tie_epsilon: float = .02
-    root_guards: bool = True
+    boss: bool = False
 
     def native(self):
+        if getattr(sts, 'small_playout_search_contract', None) != SEARCH_CONTRACT:
+            raise ValueError('incompatible native small playout search contract')
         config = sts.SmallPlayoutConfig()
         for key, value in asdict(self).items():
             setattr(config, key, value)
@@ -47,6 +49,7 @@ class SmallPlayoutSearch:
             else [self.config.native() for _ in roots], nonces, self.prior)
 
     def manifest(self):
-        return dict(contract=CONTRACT, config=asdict(self.config), native_threads=self.threads,
+        return dict(contract=CONTRACT, search_contract=SEARCH_CONTRACT,
+                    config=asdict(self.config), native_threads=self.threads,
                     value_head=False, training_objective='mcts-visit-cross-entropy',
-                    tree_selection='uct-or-separate-puct', root_selection='q-band-visits-guards')
+                    tree_selection='uct-or-separate-puct', root_selection='max-lower-bound-uniform-exact-ties')

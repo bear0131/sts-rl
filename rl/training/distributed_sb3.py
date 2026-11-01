@@ -400,6 +400,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help='One complete fresh game per environment per rollout; no auto-replacement.')
     parser.add_argument('--episode-rollout-max-steps', type=int, default=6000)
     parser.add_argument('--episode-rollout-max-seconds', type=float, default=1800.)
+    parser.add_argument('--episode-rollout-censored', choices=('error', 'exclude'), default=None)
     parser.add_argument(
         "--startup-stagger-steps",
         type=int,
@@ -2635,7 +2636,8 @@ def main() -> None:
         if combat_strategy == 'small-playout':
             from rl.training.small_playout import configure_collection
             configure_collection(model, model.get_env())
-            args.nosl_is_az_combat_strategy_version = ('sts1-small-playout-online-v1'
+            args.small_playout_search_contract = model.small_playout_search_contract
+            args.nosl_is_az_combat_strategy_version = ('sts1-small-playout-online-terminal-v2'
                 if hasattr(model.policy, 'small_playout') else 'sts1-small-playout-pair-v1')
             print(f'[rank {args.rank}] compact CPU search common/elite/boss=250/250/1000, '
                   'playout cap=200, tree cap=1024; legacy NOSL leaf settings are inactive', flush=True)
@@ -2663,7 +2665,9 @@ def main() -> None:
     from rl.training import episode_rollout
     episode_config = (dict(games_per_rank=args.n_envs, seed=args.seed,
                           max_steps=args.episode_rollout_max_steps,
-                          max_seconds=args.episode_rollout_max_seconds) if args.episode_rollout else
+                          max_seconds=args.episode_rollout_max_seconds,
+                          censored_games=args.episode_rollout_censored or
+                            (getattr(model, 'episode_rollout_config', None) or {}).get('censored_games','error')) if args.episode_rollout else
                       getattr(model, 'episode_rollout_config', None))
     if episode_config is not None:
         if args.total_steps is not None or args.startup_stagger_steps or args.boss_opening_dataset:
@@ -3655,6 +3659,9 @@ def main() -> None:
             record.update({'small_playout_train/' + key: value for key, value in small_update.items()})
             if combat_strategy == 'small-playout':
                 record['small_playout_stats_rank'] = dict(getattr(model, '_small_playout_stats', {}))
+                caps = average_scalar_dict({'turn_card_limit_decisions':sum(v for k,v in record['small_playout_stats_rank'].items()
+                    if k.endswith('turn_card_limit_decisions'))},ring_transport)
+                record['small_playout/turn_card_limit_decisions_global']=int(round(caps['turn_card_limit_decisions']*args.world_size))
                 record['small_playout_collection_sha256'] = getattr(model, 'small_playout_collection_sha256', None)
                 games = average_scalar_dict({'completed_games': float(getattr(model, 'small_playout_games_local', 0))}, ring_transport)
                 record['completed_full_games_global'] = int(round(games['completed_games']*args.world_size))
@@ -3667,13 +3674,17 @@ def main() -> None:
                 record['episode_scope'] = 'complete-game-cohort'
                 record['rollout_round'] = model.episode_rollouts_completed
                 record['episode_rollout_rank'] = dict(model.episode_rollout_stats)
+                record['episode_rollout_censored_slots_rank'] = model.episode_rollout_censored_slots
                 record['games_per_rollout_global'] = args.n_envs * args.world_size
                 cohort_means = average_scalar_dict({k: float(model.episode_rollout_stats[k])
-                    for k in ('completed_games', 'wins', 'floor_sum')}, ring_transport)
-                record['episode_rollout/win_rate'] = cohort_means['wins'] / cohort_means['completed_games']
-                record['episode_rollout/floor_mean'] = cohort_means['floor_sum'] / cohort_means['completed_games']
+                for k in ('completed_games', 'censored_games', 'excluded_upper_samples', 'excluded_lower_samples', 'wins', 'floor_sum')}, ring_transport)
+                if cohort_means['completed_games']:
+                    record['episode_rollout/win_rate'] = cohort_means['wins'] / cohort_means['completed_games']
+                    record['episode_rollout/floor_mean'] = cohort_means['floor_sum'] / cohort_means['completed_games']
                 record['episode_rollout/completed_games_global'] = int(round(cohort_means['completed_games'] * args.world_size))
-                if record['episode_rollout/completed_games_global'] != args.n_envs * args.world_size:
+                for key in ('censored_games','excluded_upper_samples','excluded_lower_samples'):
+                    record['episode_rollout/'+key+'_global'] = int(round(cohort_means[key] * args.world_size))
+                if record['episode_rollout/completed_games_global'] + record['episode_rollout/censored_games_global'] != args.n_envs * args.world_size:
                     raise RuntimeError('global full-game cohort size mismatch')
             if args.boss_opening_dataset:
                 record['episode_scope'] = 'boss-opening'
@@ -3878,6 +3889,7 @@ def main() -> None:
                     wandb_payload['game/completed_full_games_global'] = record['completed_full_games_global']
                     wandb_payload.update({'small_playout_rank0/'+key: value
                                           for key, value in record['small_playout_stats_rank'].items()})
+                    wandb_payload['small_playout/turn_card_limit_decisions_global']=record['small_playout/turn_card_limit_decisions_global']
                 wandb_payload.update({'upper/' + key: value for key, value in upper_update.items()})
                 wandb_payload.update({'small_playout_train/' + key: value for key, value in small_update.items()})
                 if joint_upper(model):

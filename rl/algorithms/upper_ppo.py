@@ -177,6 +177,8 @@ def update_upper(model, *, rank=0, world_size=1, average=lambda values: values, 
         **reward_monitor.counts(model), **campfire_monitor.counts(model), **aux_stats))
     mean_count = stats['count']
     out = dict(samples=mean_count * world_size, updates=0., kl=0., policy_loss=0.,
+        requested_epochs=float(cfg.epochs), requested_updates=0., samples_used=0., epochs_completed=0.,
+        kl_stopped=0., effective_batch_size_global=0.,
         value_loss=0., entropy=0., censored=stats['censored'] * world_size,
         pending=stats['pending'] * world_size,
         bootstrap_samples=stats['bootstrap_samples'] * world_size,

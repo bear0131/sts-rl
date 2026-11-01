@@ -3,11 +3,16 @@ import numpy as np
 import slaythespire as sts
 from env.core.boss_value import enum_name, is_boss_room
 
+SEARCH_CONTRACT = 'terminal-hp-boss-win-turn128-v1'
+
 
 class SmallPlayoutBatch:
     def __init__(self, envs, pool, pair):
         if pair['contract'] != 'sts1-small-playout-v1':
             raise ValueError('unknown small playout feature contract')
+        if (pair.get('search_contract') != SEARCH_CONTRACT
+                or getattr(sts, 'small_playout_search_contract', None) != SEARCH_CONTRACT):
+            raise ValueError('incompatible small playout search objective/native build')
         self.envs, self.pool, self.pair = envs, pool, pair
         self.net = sts.SmallPlayoutNet(pair['policy'])
         self.prior = sts.SmallPlayoutNet(pair['prior']) if pair.get('prior') is not None else None
@@ -42,11 +47,13 @@ class SmallPlayoutBatch:
                 bits = f['action_bits'][chosen]
                 out[index] = env._apply_rulebase_turn_decision(bits, {'small_dome_policy_decisions': 1})
                 self.stats['dome_policy_decisions'] = self.stats.get('dome_policy_decisions', 0)+1
+                self.stats['dome_turn_card_limit_decisions'] = self.stats.get('dome_turn_card_limit_decisions', 0)+int(sts.small_playout_turn_card_limit_reached(env.thick.bc))
                 continue
             cfg = sts.SmallPlayoutConfig()
             cfg.simulations = self.pair[tier+'_simulations']
             cfg.playout_depth = self.pair['playout_depth']
             cfg.tree_depth = self.pair['tree_depth']
+            cfg.boss = tier == 'boss'
             cfg.use_prior = self.prior is not None and tier in ('elite', 'boss')
             jobs.append((index, tier, cfg, nonce))
         # A public, cheap cost hint avoids sending the longest bosses last.
@@ -60,6 +67,7 @@ class SmallPlayoutBatch:
                         (('state', np.float32), ('actions', np.float32), ('keys', np.int32),
                          ('action_bits', np.uint32), ('visits', np.float32))})
                     self.samples[-1]['recommended_action'] = int(result['action'])
+                    self.samples[-1]['env'] = index
                 self.stats[tier+'/decisions'] = self.stats.get(tier+'/decisions', 0)+1
                 for key, value in result['stats'].items():
                     name = tier+'/'+key

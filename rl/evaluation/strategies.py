@@ -73,8 +73,11 @@ class SmallPlayoutStrategy:
         if any(getattr(getattr(r.env, 'unwrapped', r.env), 'combat_action_contract', None) != 'native-v1'
                for r in requests):
             raise ValueError('small playout strategy requires native-v1 complete-action environments')
+        from dataclasses import replace
+        from env.core.boss_value import is_boss_room
+        configs = [replace(self.search.config, boss=is_boss_room(r.env.thick.gc.cur_room)) for r in requests]
         results = self.search.search([r.env.thick.bc for r in requests],
-                                     [r.seed * 1000000007 + r.step for r in requests])
+                                     [r.seed * 1000000007 + r.step for r in requests], configs)
         check()
         return [Decision(None, self.name, result['stats'], native_action=result['action']) for result in results]
 

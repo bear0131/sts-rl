@@ -17,6 +17,8 @@ struct SmallFeatures {
     std::vector<SmallActionFeatures> actions;
 };
 SmallFeatures smallFeatures(const BattleContext &bc);
+constexpr int SMALL_MAX_CARDS_PER_TURN = 128;
+bool smallTurnCardLimitReached(const BattleContext &bc);
 // Parameter order is the versioned Python export contract, not a Torch ABI.
 class SmallPlayoutNet {
     std::vector<float> weights_;
@@ -29,8 +31,8 @@ public:
 struct SmallSearchConfig {
     int simulations = 250, playoutDepth = 200, treeDepth = 1024;
     double exploration = -1.0, temperature = 1.0;
-    bool usePrior = false, rootGuards = true;
-    double priorMix = .5, priorTemperature = 1., tieEpsilon = .02;
+    bool usePrior = false, boss = false;
+    double priorMix = .5, priorTemperature = 1.;
 };
 struct SmallSearchStats {
     std::uint64_t simulations = 0, treeTransitions = 0, playoutTransitions = 0;
@@ -38,6 +40,7 @@ struct SmallSearchStats {
     std::uint64_t depthCuts = 0, treeCuts = 0, chanceReplays = 0, nodes = 0;
     std::uint64_t policyCalls = 0, actionScores = 0;
     std::uint64_t priorCalls = 0, drawEdges = 0, guardTransitions = 0;
+    std::uint64_t turnCardLimitDecisions = 0, turnCardLimitSimulated = 0;
     std::array<std::uint64_t, 201> playoutLengths{};
     double seconds = 0;
 };
@@ -45,14 +48,15 @@ struct SmallSearchResult {
     std::uint32_t action;
     SmallFeatures features;
     std::vector<int> visits;
+    std::vector<int> terminalVisits;
     std::vector<double> values;
     SmallSearchStats stats;
 };
-double smallManualValue(const BattleContext &bc);
+// Undefined for unfinished simulations: they are censored, not losses.
+double smallTerminalValue(const BattleContext &bc, bool boss);
 void smallRedeterminize(BattleContext &bc, std::uint64_t nonce);
-int smallRootPick(const BattleContext &root, const std::vector<std::uint32_t> &actions,
-                  const std::vector<int> &visits, const std::vector<double> &values,
-                  double epsilon, bool guards);
+int smallRootPick(const std::vector<int> &visits, const std::vector<double> &values,
+                  std::uint64_t nonce);
 struct SmallPlayoutTrace {
     std::vector<SmallFeatures> features;
     std::vector<int> choices;

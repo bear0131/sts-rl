@@ -93,6 +93,8 @@ class NativeSearchVecEnv(DummyVecEnv):
             base._defer_combat_observation = self.native_root_observations is not None
             try:
                 obs, self.buf_rews[index], terminated, truncated, self.buf_infos[index] = env.step(self.actions[index])
+                if cohort is not None:
+                    self.episode_rollout_action_counts[index] += 1
             except BaseException:
                 self._step_failure = dict(slot=index, action=int(self.actions[index]), reason='step-exception')
                 raise
@@ -102,7 +104,17 @@ class NativeSearchVecEnv(DummyVecEnv):
             base._combat_observation_pending = False
             self.buf_dones[index] = terminated or truncated
             self.buf_infos[index]['TimeLimit.truncated'] = truncated and not terminated
-            if cohort is not None and (truncated or self.buf_infos[index].get('dead_screen')):
+            if cohort is not None and ((truncated and not terminated) or self.buf_infos[index].get('dead_screen')):
+                if truncated and not self.buf_infos[index].get('dead_screen') and self.episode_rollout_censor_policy=='exclude':
+                    self.exclude_episode_rollout_slots([index], reason='environment-time-limit')
+                    self.buf_rews[index] = 0.
+                    self.buf_dones[index] = False
+                    self.buf_infos[index].update(episode_cohort_hold=True, episode_cohort_censored=True)
+                    if deferred:
+                        full=base._obs()
+                        obs={key:full[key] for key in self.keys}
+                    self._save_obs(index,obs)
+                    continue
                 self._step_failure = dict(slot=index, action=int(self.actions[index]),
                                           reason='censored-cohort', truncated=bool(truncated),
                                           dead_screen=bool(self.buf_infos[index].get('dead_screen')))
@@ -136,14 +148,33 @@ class NativeSearchVecEnv(DummyVecEnv):
                 self.buf_obs[key][indices] = observations[key]
         return (self._obs_from_buf(), np.copy(self.buf_rews), np.copy(self.buf_dones), _copy_step_infos(self.buf_infos))
 
-    def begin_episode_rollout(self, first_seed):
+    def begin_episode_rollout(self, first_seed, *, censored_games='error'):
+        if censored_games not in ('error', 'exclude'):
+            raise ValueError('invalid censored-game policy')
         active = getattr(self, 'episode_rollout_active', None)
         if active is not None and active.any():
             raise RuntimeError('cannot reset an unfinished whole-game cohort')
         self.episode_rollout_active = np.ones(self.num_envs, dtype=bool)
         self.episode_rollout_finished = np.zeros(self.num_envs, dtype=bool)
+        self.episode_rollout_censored = np.zeros(self.num_envs, dtype=bool)
+        self.episode_rollout_action_counts = np.zeros(self.num_envs, dtype=np.int64)
+        self.episode_rollout_censor_policy = censored_games
+        self.episode_rollout_censor_reasons = {}
         self.seed(int(first_seed))
         return self.reset()
+
+    def exclude_episode_rollout_slots(self, indices, *, reason):
+        if self.episode_rollout_censor_policy != 'exclude':
+            raise RuntimeError('censored-game exclusion was not configured')
+        for index in indices:
+            if not self.episode_rollout_active[index]:
+                raise ValueError('only active games can be censored')
+            recorder = getattr(self, 'failure_scene_recorder', None)
+            if recorder is not None:
+                recorder(dict(slot=int(index), reason=reason, censored_game_excluded=True))
+            self.episode_rollout_active[index] = False
+            self.episode_rollout_censored[index] = True
+            self.episode_rollout_censor_reasons[int(index)] = reason
 
     def env_method(self, method_name, *method_args, indices=None, **method_kwargs):
         active = getattr(self, 'episode_rollout_active', None)

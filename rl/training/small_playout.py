@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 
 from rl.algorithms.small_playout import load_policy_pair
+from env.search.small_playout import SEARCH_CONTRACT
 
 
 def install_policy_pair(model, path):
@@ -17,12 +18,18 @@ def install_policy_pair(model, path):
     policy, prior, provenance = load_policy_pair(path)
     model.small_playout_pair = dict(
         sha256=hashlib.sha256(Path(path).read_bytes()).hexdigest(),
-        contract='sts1-small-playout-v1', policy=policy.export(), prior=prior.export(),
+        contract='sts1-small-playout-v1', search_contract=SEARCH_CONTRACT,
+        policy=policy.export(), prior=prior.export(),
         provenance=provenance, common_simulations=250, elite_simulations=250,
         boss_simulations=1000, playout_depth=200, tree_depth=1024)
 
 
 def configure_collection(model, env):
+    saved_contract = getattr(model, 'small_playout_search_contract', None)
+    if saved_contract != SEARCH_CONTRACT:
+        if saved_contract is not None or model.num_timesteps != 0:
+            raise ValueError('trained compact checkpoint has a different search objective; use its saved source')
+        model.small_playout_search_contract = SEARCH_CONTRACT
     if hasattr(model.policy, 'small_playout'):
         import slaythespire as sts
         if (model.policy.small_playout.key_count != sts.small_playout_key_count()
@@ -31,7 +38,8 @@ def configure_collection(model, env):
             raise ValueError('online compact policy needs its own vocabulary and fresh whole-run objective')
         weights = model.policy.small_playout.export()
         pair = dict(sha256=hashlib.sha256(weights.tobytes()).hexdigest(),
-            contract='sts1-small-playout-v1', online=True, policy=weights, prior=None,
+            contract='sts1-small-playout-v1', search_contract=SEARCH_CONTRACT,
+            online=True, policy=weights, prior=None,
             common_simulations=250, elite_simulations=250, boss_simulations=1000,
             playout_depth=200, tree_depth=1024)
         model.small_playout_collection_sha256 = pair['sha256']
@@ -104,7 +112,8 @@ def pretrain(protocol_path):
     learner = SmallPlayoutLearner(seed=cfg['seed'], threads=cfg['threads'],
         device=cfg.get('device', 'cpu'), learning_rate=cfg.get('learning_rate', 3e-4))
     roots, tiers, ids = _battle_bank(cfg['bank'])
-    provenance = dict(protocol=cfg, bank_sha256=hashlib.sha256(Path(cfg['bank']).read_bytes()).hexdigest(),
+    provenance = dict(protocol=cfg, search_contract=SEARCH_CONTRACT,
+        bank_sha256=hashlib.sha256(Path(cfg['bank']).read_bytes()).hexdigest(),
         bank_indices=ids, native_sha256=hashlib.sha256(Path(sts.__file__).read_bytes()).hexdigest(),
         prior_source='StS1 simulator search visits; no human BC or historical model weights',
         reference='tfriedel/spire-mentor@c60ce39e060e5180139eaf380e90b1dfcead4aee')
@@ -122,7 +131,8 @@ def pretrain(protocol_path):
             while len(samples) < cfg['samples']:
                 check_budget()
                 count = min(len(active), cfg['samples']-len(samples))
-                configs = [SmallSearchConfig(simulations=1000 if tiers[i]=='boss' else 250) for i in indices[:count]]
+                configs = [SmallSearchConfig(simulations=1000 if tiers[i]=='boss' else 250,
+                                             boss=tiers[i]=='boss') for i in indices[:count]]
                 nonces = [cfg['seed']*1000000007+cfg['rank']*100000000+len(samples)+i for i in range(count)]
                 try:
                     results = learner.search.search(active[:count], nonces, configs)
@@ -151,19 +161,22 @@ def pretrain(protocol_path):
             samples, shards = [], []
             for name in cfg['shards']:
                 shard = torch.load(name, map_location='cpu', weights_only=False)
-                if shard['provenance']['bank_sha256'] != provenance['bank_sha256']:
-                    raise ValueError('pretraining shards use different source banks')
+                if (shard['provenance']['bank_sha256'] != provenance['bank_sha256']
+                        or shard['provenance'].get('search_contract') != SEARCH_CONTRACT):
+                    raise ValueError('pretraining shards use different source banks or search objectives')
                 samples.extend(shard['samples']); shards.append(hashlib.sha256(Path(name).read_bytes()).hexdigest())
             prior = SmallPlayoutLearner(seed=cfg['seed']+1, device=learner.device, threads=1)
             for epoch in range(cfg['ce_epochs']):
                 check_budget()
                 progress(dict(stage='playout_ce', epoch=epoch, **learner.update(samples, batch_size=cfg['batch_size'])))
                 progress(dict(stage='prior_ce', epoch=epoch, **prior.update(samples, batch_size=cfg['batch_size'])))
-            hold, _, hold_ids = _battle_bank(cfg['bank'], heldout=True)
+            hold, hold_tiers, hold_ids = _battle_bank(cfg['bank'], heldout=True)
             def evaluate():
-                traces = sts.small_playout_collect_batch(learner.search.pool, learner.search.net,
-                    [r for r in hold for _ in range(8)], SmallSearchConfig().native(),
-                    [900000000+i for i in range(len(hold)*8)])
+                traces = []
+                for i, (root, tier) in enumerate(zip(hold, hold_tiers, strict=True)):
+                    traces.extend(sts.small_playout_collect_batch(learner.search.pool, learner.search.net,
+                        [root]*8, SmallSearchConfig(boss=tier=='boss').native(),
+                        [900000000+i*8+j for j in range(8)]))
                 natural = [t for t in traces if not t['censored']]
                 return dict(playouts=len(traces), censored=len(traces)-len(natural),
                     terminal_score_mean=float(np.mean([t['value'] for t in natural])) if natural else None)
@@ -173,6 +186,7 @@ def pretrain(protocol_path):
                 check_budget()
                 selected = rng.integers(len(roots), size=cfg['rf_starts'])
                 result = learner.reinforce([roots[i] for i in selected],
+                    configs=[SmallSearchConfig(boss=tiers[i]=='boss') for i in selected],
                     nonces=[1000000000+update*100000+i*100 for i in range(len(selected))],
                     k=cfg['rf_k'], batch_size=cfg['batch_size'], entropy_coef=cfg['entropy_coef'])
                 progress(dict(stage='reinforce', update=update, **result))

@@ -76,16 +76,30 @@ def test_censored_cohort_is_error_not_a_finished_game(short_natural_game_env_typ
 @pytest.mark.parametrize('natural_start', [False, True])
 @pytest.mark.parametrize('lambda_override', [None, 1.])
 def test_complete_cohort_two_rounds_and_ordinary_resume(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override):
+    _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override)
+
+
+@pytest.mark.parametrize('device',['cpu','cuda'])
+@pytest.mark.parametrize('censor_case',['mixed','all'])
+def test_budget_exclusion_two_rounds_and_ordinary_resume(tmp_path, monkeypatch, short_natural_game_env_type, device, censor_case):
+    _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, False, None, censor_case)
+
+
+def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override, censor_case=None):
     if device == 'cuda':
         assert torch.cuda.is_available(), 'explicit CUDA qualification requires CUDA'
     def make_env(*args):
-        def factory():
+        def factory(index):
             from env.core.run_env import SlayTheSpireEnv
             kind = SlayTheSpireEnv if natural_start else short_natural_game_env_type
-            return TrainingStateWrapper(ShapedRewardWrapper(kind(
+            wrapped=ShapedRewardWrapper(kind(
                 global_map_view=True, upper_public_context=True, event_option_observation=True,
-                card_language=True, combat_action_contract='autoregressive-v2')))
-        return VecMonitor(NativeSearchVecEnv([factory, factory], threads=1))
+                card_language=True, combat_action_contract='autoregressive-v2'))
+            if censor_case=='mixed' and index==1:
+                from gymnasium.wrappers import TimeLimit
+                wrapped=TimeLimit(wrapped,max_episode_steps=1)
+            return TrainingStateWrapper(wrapped)
+        return VecMonitor(NativeSearchVecEnv([lambda:factory(0),lambda:factory(1)], threads=1))
     env = make_env()
     model = AccumulatingMaskablePPO(EntityJointPolicy, env, n_steps=2, batch_size=2, n_epochs=1,
         policy_kwargs=dict(entity_config=dict(width=32, layers=1, heads=4, quantiles=8),
@@ -121,8 +135,27 @@ def test_complete_cohort_two_rounds_and_ordinary_resume(tmp_path, monkeypatch, s
         '--stop-file', str(tmp_path/'STOP'), '--output', str(tmp_path/'latest.zip')]
     if lambda_override is not None:
         argv += ['--upper-gae-lambda', str(lambda_override)]
+    if censor_case:
+        argv += ['--episode-rollout-censored','exclude']
+        if censor_case=='all':
+            argv += ['--episode-rollout-max-steps','1']
+    from rl.training import episode_rollout
+    original_exclude=episode_rollout.exclude_samples
+    excluded_checks=[]
+    def exclude(model, env):
+        excluded=set(np.flatnonzero(env.episode_rollout_censored).tolist())
+        before_upper=[r for r in model._upper_completed if r['env'] in excluded]
+        before_lower=[r for r in model._small_playout_samples if r['env'] in excluded]
+        original_exclude(model,env)
+        assert all(r['env'] not in excluded for r in model._upper_completed)
+        assert all(r['env'] not in excluded for r in model._small_playout_samples)
+        assert not any(model._upper_pending)
+        excluded_checks.append((len(excluded),len(before_upper),len(before_lower)))
+    monkeypatch.setattr(episode_rollout,'exclude_samples',exclude)
+    natural_count=0 if censor_case=='all' else 1 if censor_case=='mixed' else 2
     original_learn = AccumulatingMaskablePPO.learn
     def learn(self, *args, **kwargs):
+        assert self.small_playout_search_contract == 'terminal-hp-boss-win-turn128-v1'
         if not getattr(self, 'episode_rollouts_completed', 0):
             torch.testing.assert_close(self.policy.state_dict(), initial_policy,
                                        rtol=0, atol=0, check_device=False)
@@ -134,7 +167,7 @@ def test_complete_cohort_two_rounds_and_ordinary_resume(tmp_path, monkeypatch, s
     distributed_sb3.main()
     first = sorted((tmp_path/'state/rank0').glob('step-*'))[-1]
     saved = AccumulatingMaskablePPO.load(first/'model.zip', device='cpu')
-    assert saved.episode_rollouts_completed == 2 and saved.small_playout_games_local == 4
+    assert saved.episode_rollouts_completed == 2 and getattr(saved,'small_playout_games_local',0) == 2*natural_count
     assert not any(torch.load(first/'learner.pt', weights_only=False)['upper_pending'])
     original_restore = distributed_sb3.restore_learner
     def restore(model, path, **kwargs):
@@ -158,19 +191,28 @@ def test_complete_cohort_two_rounds_and_ordinary_resume(tmp_path, monkeypatch, s
     monkeypatch.setattr(sys, 'argv', [*resume_argv, '--resume-state', str(first)])
     distributed_sb3.main()
     assert [p['legacy_step'] for p in payloads] == [1, 2, 3, 4]
-    assert [p['game/completed_full_games_global'] for p in payloads] == [2, 4, 6, 8]
+    assert [p['game/completed_full_games_global'] for p in payloads] == [i*natural_count for i in (1,2,3,4)]
+    assert [x[0] for x in excluded_checks]==[2-natural_count]*4
     bundles = sorted((tmp_path/'state/rank0').glob('step-*'))
     assert len(bundles) == 4
     for i, bundle in enumerate(bundles):
         manifest = read_bundle(bundle, rank=0, world_size=1)
         current = AccumulatingMaskablePPO.load(bundle/'model.zip', device='cpu')
+        assert current.small_playout_search_contract == 'terminal-hp-boss-win-turn128-v1'
+        assert manifest['config']['small_playout_search_contract'] == 'terminal-hp-boss-win-turn128-v1'
         assert current.policy.core.upper_config.gae_lambda == (lambda_override or .97)
         assert manifest['config']['upper_config']['gae_lambda'] == (lambda_override or .97)
         stats = current.episode_rollout_stats
         assert stats['first_seed'] == 42 + i * 2 and stats['last_seed'] == 43 + i * 2
-        assert stats['completed_games'] == 2 and stats['unfinished_games'] == 0
-        assert stats['transitions'] > 0 and stats['vector_steps'] > 2  # scratch n_steps never limits cohort
+        assert stats['completed_games'] == natural_count and stats['unfinished_games'] == 0
+        assert stats['censored_games']==2-natural_count
+        assert stats['transitions'] > 0
+        assert stats['vector_steps']==1 if censor_case=='all' else stats['vector_steps']>2
         assert manifest['config']['episode_rollout_config']['games_per_rank'] == 2
         assert payloads[i]['upper/pending'] == payloads[i]['upper/censored'] == payloads[i]['upper/bootstrap_samples'] == 0
         assert payloads[i]['upper/samples_used'] == 2 * payloads[i]['upper/samples'] or payloads[i]['upper/kl_stopped']
+        if censor_case=='all':
+            assert payloads[i]['upper/updates']==payloads[i]['small_playout_train/updates']==0
+            assert not current.policy.upper_optimizer.state and not current.policy.small_playout_optimizer.state
+            torch.testing.assert_close(current.policy.state_dict(),initial_policy,rtol=0,atol=0,check_device=False)
 

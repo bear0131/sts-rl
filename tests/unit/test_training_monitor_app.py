@@ -170,6 +170,9 @@ assert.equal(lastEpochMetric({'upper/kl_epoch_9':9,'upper/kl_epoch_10':10},'kl')
 assert.equal(displayRow(old)['display/upper_policy_loss'],undefined);
 assert.equal(displayRow(old)['episode_rollout/win_rate'],undefined);
 assert.equal(completeCohort({...last,'episode_rollout/completed_games_global':900}),null);
+assert.equal(completeCohort({...last,'episode_rollout/completed_games_global':900,'episode_rollout/censored_games_global':60}).games,900);
+assert.equal(completeCohort({...last,'episode_rollout/completed_games_global':900,'episode_rollout/censored_games_global':60}).win,.75);
+assert.equal(completeCohort({...last,'episode_rollout/completed_games_global':900,'episode_rollout/censored_games_global':59}),null);
 assert.equal(cohortSummary([old]),null);
 assert.equal(displayRow(old,state)['display/game_win_rate'],undefined);
 assert.equal(displayRow(old,state.comparisons[0])['display/game_win_rate'],1);

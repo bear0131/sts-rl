@@ -164,7 +164,12 @@ def test_playout_trace_keeps_independent_features_across_selection_and_hand_chan
         replay.execute(sts.Action(step['action_bits'][step['choice']]))
     assert len(sizes) > 1
     assert len(trace['steps']) == trace['transitions']
-    assert sts.small_playout_value(replay) == trace['value']
+    if trace['censored']:
+        assert trace['value'] is None
+        with pytest.raises(ValueError, match='unfinished'):
+            sts.small_playout_value(replay)
+    else:
+        assert sts.small_playout_value(replay) == trace['value']
 
 
 def test_caps_are_not_terminal_and_invalid_budgets_fail():
@@ -174,9 +179,14 @@ def test_caps_are_not_terminal_and_invalid_budgets_fail():
     assert stats['depth_cuts'] > 0
     assert stats['terminal_wins'] == 0
     cfg = replace(learner.search.config, tree_depth=1).native()
-    stats = learner.search.net.search(root, cfg, 4)['stats']
+    result = learner.search.net.search(root, cfg, 4)
+    stats = result['stats']
     assert stats['tree_cuts'] == 16
     assert stats['policy_calls'] == 0
+    assert sum(result['terminal_visits']) == 0
+    assert all(value == 0 for value in result['values'])
+    assert result['value_statistic'] == 'terminal-return-lower-bound'
+    assert stats['terminal_losses'] == stats['terminal_wins'] == stats['terminal_escapes'] == 0
     cfg.playout_depth = 201
     with pytest.raises(ValueError, match='budget'):
         learner.search.net.search(root, cfg, 4)
@@ -325,7 +335,7 @@ def test_frozen_eye_and_placed_top_survive_resampling(combat_factory):
     assert all(top == tops[0] for top in tops)
 
 
-def test_separate_prior_root_q_band_and_real_reinforce(tmp_path):
+def test_separate_prior_strict_root_value_and_real_reinforce(tmp_path):
     from rl.algorithms.small_playout import leave_one_out_advantages, save_policy_pair, load_policy_pair
     learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=20), threads=2)
     prior = SmallPlayoutLearner(seed=7).policy
@@ -336,9 +346,13 @@ def test_separate_prior_root_q_band_and_real_reinforce(tmp_path):
         learner.search.net.search(root, config, 42)
     result = learner.search.net.search(root, config, 42, native_prior)
     assert result['stats']['prior_calls'] > 0
-    bits = result['action_bits'][:2]
-    assert sts.small_playout_root_pick(root, bits, [50, 2], [.1, .4], .02, False) == 1
-    assert sts.small_playout_root_pick(root, bits, [50, 2], [.39, .4], .02, False) == 0
+    assert sts.small_playout_root_pick([50, 2], [.1, .4], 42) == 1
+    assert sts.small_playout_root_pick([50, 2], [.39, .4], 42) == 1
+    ties = [sts.small_playout_root_pick([50, 2], [.4, .4], nonce) for nonce in range(100)]
+    assert 30 < sum(ties) < 70
+    assert sts.small_playout_root_pick([50, 0], [.4, .8], 42) == 0
+    with pytest.raises(ValueError, match='visited'):
+        sts.small_playout_root_pick([0, 0], [0., 0.], 42)
     a = leave_one_out_advantages([[1., 0., 0.], [-2., -2., -2.]])
     assert a[0, 0] > 0 and np.all(a[0, 1:] < 0) and np.all(a[1] == 0)
     before = prior.export().copy()
@@ -354,7 +368,7 @@ def test_separate_prior_root_q_band_and_real_reinforce(tmp_path):
 
 
 @pytest.mark.parametrize('escape', [False, True])
-def test_manual_value_distinguishes_recovered_and_lost_gold(run_combat_factory, escape):
+def test_terminal_value_uses_only_hp_or_boss_victory(run_combat_factory, escape):
     root = run_combat_factory(potions=['Smoke Bomb'])
     bc = root.bc
     bc.set_player_block(999)
@@ -368,10 +382,8 @@ def test_manual_value_distinguishes_recovered_and_lost_gold(run_combat_factory, 
         bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
     assert bc.is_battle_over
     raw = bc.to_dict()
-    hp = np.clip((raw['player']['hp'] + 4*sum(p not in ('EMPTY_POTION_SLOT', 'INVALID') for p in raw['potions'])
-                  - .01*raw['turn'])/200, 0, 1)
-    expected = (.5 + .49*hp - stolen/1000) if escape else (1 + .5*hp)
-    assert sts.small_playout_value(bc) == pytest.approx(expected)
+    assert sts.small_playout_value(bc) == raw['player']['hp']
+    assert sts.small_playout_value(bc, True) == (0 if escape else 1)
 
 
 def test_chance_widening_and_worker_failure_recovery(combat_factory):
@@ -418,7 +430,7 @@ def test_codex_generated_choices_do_not_merge_colliding_legacy_keys():
         env.close()
 
 
-def test_escaped_thief_gold_is_penalized(run_combat_factory):
+def test_escaped_thief_gold_does_not_change_terminal_hp_value(run_combat_factory):
     bc = run_combat_factory().bc
     for _ in range(10):
         if bc.is_battle_over:
@@ -429,5 +441,63 @@ def test_escaped_thief_gold_is_penalized(run_combat_factory):
     raw = bc.to_dict()
     stolen = 99 - raw['player']['gold']
     assert stolen > 0
-    hp = (raw['player']['hp'] - .01*raw['turn']) / 200
-    assert sts.small_playout_value(bc) == pytest.approx(1 + .5*hp - stolen/1000)
+    assert sts.small_playout_value(bc) == raw['player']['hp']
+
+
+def test_legacy_search_checkpoint_and_pair_fail_closed(tmp_path):
+    from rl.algorithms.small_playout import save_policy_pair, load_policy_pair
+    learner = SmallPlayoutLearner(seed=42)
+    path = tmp_path/'pair.pt'
+    save_policy_pair(path, learner.policy, learner.policy, provenance={})
+    payload = torch.load(path, weights_only=True)
+    payload.pop('search_contract')
+    torch.save(payload, path)
+    with pytest.raises(ValueError, match='incompatible'):
+        load_policy_pair(path)
+    learner.save(tmp_path/'learner.pt', BattleCollector(n_envs=1))
+    payload = torch.load(tmp_path/'learner.pt', weights_only=True)
+    payload.pop('search_contract')
+    torch.save(payload, tmp_path/'learner.pt')
+    with pytest.raises(ValueError, match='incompatible'):
+        learner.load(tmp_path/'learner.pt')
+
+
+def test_real_free_damage_combo_remains_searchable(combat_factory):
+    bc = combat_factory(['ANGER']*5, relics=['Unceasing Top']).thick.bc
+    bc.apply_custom_state({'hand': ['ANGER'], 'draw': [], 'discard': [],
+                           'monsters': [{'hp': 7}]})
+    learner = SmallPlayoutLearner(seed=42, config=SmallSearchConfig(simulations=32))
+    result = learner.search.search([bc], [91])[0]
+    assert sum(result['terminal_visits']) > 0
+    assert int(sts.Action(result['action']).action_type) == int(sts.ActionType.CARD)
+    for _ in range(4):
+        if bc.is_battle_over:
+            break
+        result = learner.search.search([bc], [91])[0]
+        bc.execute(sts.Action(result['action']))
+    assert bc.is_battle_over and int(bc.outcome) == 1
+
+
+def test_turn_card_budget_finishes_pending_selection_then_ends_turn(combat_factory):
+    bc = combat_factory(['PURITY', 'STRIKE_RED', 'DEFEND_RED']*3).thick.bc
+    bc.apply_custom_state({'hand':['PURITY', 'STRIKE_RED', 'DEFEND_RED'],
+                           'player':{'counters':{'cards_played':127}}})
+    assert not sts.small_playout_turn_card_limit_reached(bc)
+    assert any(sts.Action(b).action_type == sts.ActionType.CARD for b in sts.small_playout_features(bc)['action_bits'])
+    bc.execute(sts.Action(sts.ActionType.CARD,0,0))
+    # The 128th card may request a choice; never End Turn through that choice.
+    assert not sts.small_playout_turn_card_limit_reached(bc)
+    choices=sts.small_playout_features(bc)['action_bits']
+    assert choices and all(sts.Action(b).action_type==sts.ActionType.MULTI_CARD_SELECT for b in choices)
+    bc.execute(sts.Action(next(b for b in choices if not sts.Action(b).selected_indices)))
+    assert sts.small_playout_turn_card_limit_reached(bc)
+    limited = sts.small_playout_features(bc)['action_bits']
+    assert len(limited)==1 and sts.Action(limited[0]).action_type==sts.ActionType.END_TURN
+    learner=SmallPlayoutLearner(seed=42,config=SmallSearchConfig(simulations=8))
+    before=bc.to_dict()['turn']
+    result=learner.search.search([bc],[42])[0]
+    assert result['stats']['turn_card_limit_decisions']==1
+    assert result['stats']['turn_card_limit_simulated']>=8
+    bc.execute(sts.Action(result['action']))
+    assert bc.to_dict()['turn']>before and not sts.small_playout_turn_card_limit_reached(bc)
+    assert any(sts.Action(b).action_type==sts.ActionType.CARD for b in sts.small_playout_features(bc)['action_bits'])

@@ -1,0 +1,5 @@
+@configs/train/small_playout_full960_distributed.args
+--episode-rollout-max-steps
+2424
+--episode-rollout-censored
+exclude

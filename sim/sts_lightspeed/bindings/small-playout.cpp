@@ -4,6 +4,7 @@
 #include "sim/search/SmallPlayout.h"
 #include "sim/search/NeuralSearchBatch.h"
 #include <cstring>
+#include <cmath>
 namespace py = pybind11;
 using namespace sts::search;
 namespace {
@@ -25,6 +26,8 @@ py::dict features(const SmallFeatures &f) {
 }
 py::dict result(const SmallSearchResult &r) {
     auto d=features(r.features);d["action"]=r.action;d["visits"]=r.visits;d["values"]=r.values;
+    d["terminal_visits"]=r.terminalVisits;
+    d["value_statistic"]="terminal-return-lower-bound";
     const auto &s=r.stats;py::dict st;
     st["simulations"]=s.simulations;st["tree_transitions"]=s.treeTransitions;
     st["playout_transitions"]=s.playoutTransitions;st["terminal_wins"]=s.terminalWins;
@@ -33,13 +36,18 @@ py::dict result(const SmallSearchResult &r) {
     st["nodes"]=s.nodes;st["policy_calls"]=s.policyCalls;st["action_scores"]=s.actionScores;
     st["prior_calls"]=s.priorCalls;st["draw_edges"]=s.drawEdges;
     st["guard_transitions"]=s.guardTransitions;
+    st["turn_card_limit_decisions"]=s.turnCardLimitDecisions;
+    st["turn_card_limit_simulated"]=s.turnCardLimitSimulated;
     st["playout_lengths"]=s.playoutLengths;st["search_seconds"]=s.seconds;d["stats"]=st;return d;
 }
 }
 void bindSmallPlayout(py::module_ &m) {
+    m.attr("small_playout_search_contract")="terminal-hp-boss-win-turn128-v1";
+    m.attr("small_playout_max_cards_per_turn")=SMALL_MAX_CARDS_PER_TURN;
+    m.def("small_playout_turn_card_limit_reached",&smallTurnCardLimitReached);
     m.def("small_playout_key_count",&smallKeyCount);
     m.def("small_playout_features",[](const sts::BattleContext &bc){return features(smallFeatures(bc));});
-    m.def("small_playout_value",&smallManualValue);
+    m.def("small_playout_value",&smallTerminalValue,py::arg("battle"),py::arg("boss")=false);
     m.def("small_playout_redeterminize",&smallRedeterminize);
     m.def("small_playout_known_top",[](const sts::BattleContext &bc){return bc.cards.knownDrawTop;});
     m.def("small_playout_root_pick",&smallRootPick);
@@ -52,8 +60,7 @@ void bindSmallPlayout(py::module_ &m) {
         .def_readwrite("use_prior",&SmallSearchConfig::usePrior)
         .def_readwrite("prior_mix",&SmallSearchConfig::priorMix)
         .def_readwrite("prior_temperature",&SmallSearchConfig::priorTemperature)
-        .def_readwrite("tie_epsilon",&SmallSearchConfig::tieEpsilon)
-        .def_readwrite("root_guards",&SmallSearchConfig::rootGuards);
+        .def_readwrite("boss",&SmallSearchConfig::boss);
     py::class_<SmallPlayoutNet,std::shared_ptr<SmallPlayoutNet>>(m,"SmallPlayoutNet")
         .def(py::init([](py::array_t<float,py::array::c_style|py::array::forcecast> w){
             if(w.ndim()!=1) throw std::invalid_argument("weights must be flat");
@@ -93,7 +100,9 @@ void bindSmallPlayout(py::module_ &m) {
         for(const auto &t:traces){
             py::dict d;py::list steps;
             for(std::size_t i=0;i<t.features.size();++i){auto f=features(t.features[i]);f["choice"]=t.choices[i];steps.append(f);}
-            d["steps"]=steps;d["value"]=t.value;d["outcome"]=t.outcome;d["censored"]=t.stats.depthCuts>0;
+            d["steps"]=steps;
+            d["value"]=std::isfinite(t.value) ? py::cast(t.value) : py::none();
+            d["outcome"]=t.outcome;d["censored"]=t.stats.depthCuts>0;
             d["transitions"]=t.stats.playoutTransitions;out.append(d);
         }
         return out;

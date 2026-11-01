@@ -2,10 +2,10 @@
 #include "sim/search/CombatChoices.h"
 #include "sim/search/Nosl.h"
 #include "sim/search/NoslCombatTrainer.h"
-#include "sim/search/BattleScumSearcher2.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -34,6 +34,19 @@ void addCard(SmallActionFeatures &f, const CardInstance &c) {
 }
 int smallKeyCount() { return 3 + CARD_KEYS + POTION_KEYS; }
 
+bool smallTurnCardLimitReached(const BattleContext &bc) {
+    return bc.outcome==Outcome::UNDECIDED && bc.inputState==InputState::PLAYER_NORMAL &&
+        bc.player.cardsPlayedThisTurn >= SMALL_MAX_CARDS_PER_TURN;
+}
+namespace {
+std::vector<Action> budgetActions(const BattleContext &bc) {
+    auto actions=completePolicyCombatActions(bc);
+    if(!smallTurnCardLimitReached(bc)) return actions;
+    for(auto action:actions) if(action.getActionType()==ActionType::END_TURN) return {action};
+    throw std::logic_error("turn card budget reached without a legal End Turn");
+}
+}
+
 SmallFeatures smallFeatures(const BattleContext &bc) {
     SmallFeatures f;
     auto &s = f.state;
@@ -56,7 +69,7 @@ SmallFeatures smallFeatures(const BattleContext &bc) {
         s[18 + 3*i] = incoming(bc, m) / 50;
     }
     s[31] = bc.inputState == InputState::CARD_SELECT ? 1.f : 0.f;
-    const auto actions = completePolicyCombatActions(bc);
+    const auto actions = budgetActions(bc);
     f.actions.reserve(actions.size());
     const auto choices = bc.inputState == InputState::CARD_SELECT ? combatChoices(bc) : CombatChoices{};
     for (const auto &action : actions) {
@@ -157,27 +170,11 @@ std::vector<float> SmallPlayoutNet::logits(const SmallFeatures &f) const {
     return scores;
 }
 
-double smallManualValue(const BattleContext &bc) {
-    double removed=0, maximum=0, loot=0;
-    for (const auto &m:bc.monsters.arr) {
-        maximum+=std::max(0,m.maxHp); removed+=std::max(0,m.maxHp-m.curHp);
-        // Match exitBattle's unrecovered gold, not an escape intent on a killed thief.
-        const bool escaped = m.curHp > 0 && (m.moveHistory[0] == MMID::LOOTER_ESCAPE ||
-                                            m.moveHistory[0] == MMID::MUGGER_ESCAPE);
-        if ((m.id==MonsterId::LOOTER || m.id==MonsterId::MUGGER) &&
-            (escaped || bc.outcome==Outcome::PLAYER_ESCAPE))
-            loot+=std::max(0,m.miscInfo);
-    }
-    if (bc.outcome==Outcome::PLAYER_LOSS) {
-        double quality=.6*(maximum>0?removed/maximum:0)+
-            .25*std::max(0,bc.player.curHp)/std::max(1,bc.player.maxHp)+.15*bc.turn/(bc.turn+8.);
-        return -1.45+.4*std::clamp(quality,0.,.999);
-    }
-    const double hp=std::clamp((bc.player.curHp+4.*bc.potionCount-.01*bc.turn)/200.,0.,1.);
-    const double penalty=std::clamp(loot/1000.,0.,.45);
-    if (bc.outcome==Outcome::PLAYER_VICTORY) return 1.+.5*hp-penalty;
-    if (bc.outcome==Outcome::PLAYER_ESCAPE) return .5+.49*hp-penalty;
-    return std::clamp(std::tanh(BattleScumSearcher2::evaluateEndState(bc)/20.)-penalty,-.999,.999);
+double smallTerminalValue(const BattleContext &bc, bool boss) {
+    if (bc.outcome==Outcome::UNDECIDED)
+        throw std::invalid_argument("unfinished battle has no terminal value");
+    if (boss) return bc.outcome==Outcome::PLAYER_VICTORY ? 1. : 0.;
+    return std::max(0,bc.player.curHp);
 }
 
 namespace {
@@ -210,12 +207,12 @@ struct Edge {
     double sum=0;
     std::vector<OutcomeNode> outcomes;
     double prior=0;
-    bool draws=false;
+    int terminalVisits=0;
 };
 struct Node { int visits=0; std::vector<Edge> edges; };
 void expand(Node &node,const BattleContext &s,SmallSearchStats &stats,
             const SmallSearchConfig &cfg,const SmallPlayoutNet *prior) {
-    for (auto a:completePolicyCombatActions(s))
+    for (auto a:budgetActions(s))
         node.edges.push_back({a,NoslCombatTrainer::strongActionKey(s,a),0,0,{}});
     if(node.edges.empty()) throw std::runtime_error("nonterminal has no legal compact action");
     if(cfg.usePrior) {
@@ -227,7 +224,7 @@ void expand(Node &node,const BattleContext &s,SmallSearchStats &stats,
 }
 Action resolve(const Edge &e,const BattleContext &s) {
     if(e.action.isValidAction(s) && NoslCombatTrainer::strongActionKey(s,e.action)==e.semantic) return e.action;
-    for(auto a:completePolicyCombatActions(s))
+    for(auto a:budgetActions(s))
         if(NoslCombatTrainer::strongActionKey(s,a)==e.semantic) return a;
     std::ostringstream detail; detail << s;
     throw std::logic_error("compact search action cannot be remapped: turn="+std::to_string(s.turn)+
@@ -238,6 +235,7 @@ double playout(BattleContext &s,const SmallPlayoutNet &net,const SmallSearchConf
                std::mt19937_64 &rng,SmallSearchStats &stats,SmallPlayoutTrace *trace=nullptr) {
     int steps=0;
     while(s.outcome==Outcome::UNDECIDED && steps<cfg.playoutDepth) {
+        stats.turnCardLimitSimulated += smallTurnCardLimitReached(s);
         auto f=smallFeatures(s); auto logits=net.logits(f);
         if(logits.empty()) throw std::runtime_error("nonterminal playout without actions");
         ++stats.policyCalls; stats.actionScores+=logits.size();
@@ -250,7 +248,8 @@ double playout(BattleContext &s,const SmallPlayoutNet &net,const SmallSearchConf
         ++steps; ++stats.playoutTransitions;
     }
     ++stats.playoutLengths[steps];
-    return smallManualValue(s);
+    return s.outcome==Outcome::UNDECIDED ? std::numeric_limits<double>::quiet_NaN() :
+        smallTerminalValue(s,cfg.boss);
 }
 }
 
@@ -283,48 +282,22 @@ SmallPlayoutTrace smallCollectPlayout(const BattleContext &root,const SmallPlayo
     return trace;
 }
 
-static int rootPick(const BattleContext &root,const std::vector<std::uint32_t> &actions,
-                  const std::vector<int> &visits,const std::vector<double> &values,
-                  double epsilon,bool guards,std::uint64_t *transitions=nullptr) {
-    if(actions.empty() || actions.size()!=visits.size() || actions.size()!=values.size())
+int smallRootPick(const std::vector<int> &visits,const std::vector<double> &values,
+                  std::uint64_t nonce) {
+    if(visits.empty() || visits.size()!=values.size())
         throw std::invalid_argument("root statistics shape mismatch");
     double top=-1e100;
-    for(std::size_t i=0;i<visits.size();++i) if(visits[i]>0) top=std::max(top,values[i]);
-    int best=-1;
-    auto inBand=[&](int i){return visits[i]>0 && values[i]>=top-std::max(0.,epsilon);};
-    for(int i=0;i<int(actions.size());++i)
-        if(inBand(i) && (best<0 || visits[i]>visits[best])) best=i;
-    if(best<0) throw std::invalid_argument("root needs at least one visited action");
-    if(guards && Action(actions[best]).getActionType()==ActionType::END_TURN) {
-        double damage=0;for(const auto &m:root.monsters.arr) damage+=incoming(root,m);
-        // StS1 has dynamic block (Second Wind, Body Slam, etc.); inspect an
-        // independent transition only to classify the in-band guard.
-        int block=-1,free=-1;
-        for(int i=0;i<int(actions.size());++i) if(inBand(i)) {
-            Action a(actions[i]);if(a.getActionType()!=ActionType::CARD) continue;
-            const auto &card=root.cards.hand[a.getSourceIdx()];
-            if((card.costForTurn==0 || card.isFreeToPlay(root)) && (free<0 || visits[i]>visits[free])) free=i;
-            if(damage>root.player.block) {
-                BattleContext s(root);
-#ifdef STS_ENABLE_RULE_TRACE
-                s.atomicStepObserver={};
-#endif
-                // No sampled result is backed up or used as a value/proof.
-                smallRedeterminize(s,0x424c4f434bULL);
-                a.execute(s);
-                if(transitions) ++*transitions;
-                if(s.player.block>root.player.block && (block<0 || visits[i]>visits[block])) block=i;
-            }
-        }
-        if(block>=0) best=block;else if(free>=0) best=free;
+    std::vector<int> ties;
+    for(int i=0;i<int(visits.size());++i) {
+        if(visits[i]<0 || !std::isfinite(values[i]))
+            throw std::invalid_argument("invalid root statistic");
+        if(!visits[i]) continue;
+        if(values[i]>top){top=values[i];ties.clear();}
+        if(values[i]==top) ties.push_back(i);
     }
-    return best;
-}
-
-int smallRootPick(const BattleContext &root,const std::vector<std::uint32_t> &actions,
-                  const std::vector<int> &visits,const std::vector<double> &values,
-                  double epsilon,bool guards) {
-    return rootPick(root,actions,visits,values,epsilon,guards);
+    if(ties.empty()) throw std::invalid_argument("root needs at least one visited action");
+    std::mt19937_64 rng(noslMix(nonce));
+    return ties[std::uniform_int_distribution<int>(0,int(ties.size())-1)(rng)];
 }
 
 SmallSearchResult smallSearch(const BattleContext &root,const SmallPlayoutNet &net,
@@ -335,12 +308,13 @@ SmallSearchResult smallSearch(const BattleContext &root,const SmallPlayoutNet &n
        cfg.treeDepth>1024 || !std::isfinite(cfg.exploration) || cfg.exploration < -1 ||
        !std::isfinite(cfg.temperature) || cfg.temperature<=0 ||
        !std::isfinite(cfg.priorMix) || cfg.priorMix<0 || cfg.priorMix>1 ||
-       !std::isfinite(cfg.priorTemperature) || cfg.priorTemperature<=0 ||
-       !std::isfinite(cfg.tieEpsilon) || cfg.tieEpsilon<0 || (cfg.usePrior && !prior))
+       !std::isfinite(cfg.priorTemperature) || cfg.priorTemperature<=0 || (cfg.usePrior && !prior))
         throw std::invalid_argument("invalid compact search budget");
     if(root.outcome!=Outcome::UNDECIDED) throw std::invalid_argument("search requires live combat");
     const auto started=std::chrono::steady_clock::now();
     SmallSearchResult result; result.features=smallFeatures(root);
+    result.stats.turnCardLimitDecisions=smallTurnCardLimitReached(root);
+    const double scale=cfg.boss ? 1. : std::max(1,root.player.maxHp);
     const double exploration=cfg.exploration>=0?cfg.exploration:(cfg.simulations<500?.8:cfg.simulations<1000?1.41:2.5);
     Node tree; expand(tree,root,result.stats,cfg,prior);
     std::mt19937_64 rng(noslMix(nonce));
@@ -353,29 +327,29 @@ SmallSearchResult smallSearch(const BattleContext &root,const SmallPlayoutNet &n
         Node *node=&tree; std::vector<Node*> nodes{node}; std::vector<Edge*> edges;
         double value=0; bool newLeaf=false; int depth=0;
         while(state.outcome==Outcome::UNDECIDED && depth<cfg.treeDepth) {
+            result.stats.turnCardLimitSimulated += smallTurnCardLimitReached(state);
             std::vector<int> unvisited;
             for(int i=0;i<int(node->edges.size());++i) if(!node->edges[i].visits) unvisited.push_back(i);
             int chosen=0;
             if(!cfg.usePrior && !unvisited.empty()) chosen=unvisited[std::uniform_int_distribution<int>(0,int(unvisited.size())-1)(rng)];
             else {
-                double best=-1e100;
+                double best=-1e100; int ties=0;
                 for(int i=0;i<int(node->edges.size());++i) {
                     const auto &e=node->edges[i];
                     const double q=e.visits?e.sum/e.visits:0.;
                     const double score=q+exploration*(cfg.usePrior ?
                         e.prior*std::sqrt(double(node->visits)+1)/(1+e.visits) :
                         std::sqrt(std::log(double(node->visits)+1)/e.visits));
-                    if(score>best){best=score;chosen=i;}
+                    if(score>best){best=score;chosen=i;ties=1;}
+                    else if(score==best && std::uniform_int_distribution<int>(1,++ties)(rng)==1) chosen=i;
                 }
             }
             auto &edge=node->edges[chosen]; edges.push_back(&edge);
-            const bool end=edge.action.getActionType()==ActionType::END_TURN;
-            const int cap=int(std::ceil((end?23.148:edge.draws?4.:1.)*std::pow(edge.visits+1.,end?.436:.5)));
+            // The same progressive-widening rule for every action type.
+            const int cap=int(std::ceil(std::sqrt(edge.visits+1.)));
             OutcomeNode *outcome=nullptr;
             if(int(edge.outcomes.size())<cap) {
-                const auto draws=state.cards.drawEvents;
                 resolve(edge,state).execute(state); ++result.stats.treeTransitions;
-                if(!end && !edge.draws && state.cards.drawEvents>draws){edge.draws=true;++result.stats.drawEdges;}
                 const auto key=beliefKey(state);
                 for(auto &o:edge.outcomes) if(o.key==key){
                     if(state.inputState==InputState::CARD_SELECT && o.state.cardSelectInfo.cards!=state.cardSelectInfo.cards) {
@@ -400,24 +374,30 @@ SmallSearchResult smallSearch(const BattleContext &root,const SmallPlayoutNet &n
             if(state.outcome!=Outcome::UNDECIDED) break;
             if(newLeaf){expand(*node,state,result.stats,cfg,prior);break;}
         }
-        if(state.outcome!=Outcome::UNDECIDED) value=smallManualValue(state);
-        else if(depth>=cfg.treeDepth){++result.stats.treeCuts;value=smallManualValue(state);}
+        if(state.outcome!=Outcome::UNDECIDED) value=smallTerminalValue(state,cfg.boss);
+        else if(depth>=cfg.treeDepth){++result.stats.treeCuts;value=std::numeric_limits<double>::quiet_NaN();}
         else value=playout(state,net,cfg,rng,result.stats);
         if(state.outcome==Outcome::PLAYER_VICTORY) ++result.stats.terminalWins;
         else if(state.outcome==Outcome::PLAYER_LOSS) ++result.stats.terminalLosses;
         else if(state.outcome==Outcome::PLAYER_ESCAPE) ++result.stats.terminalEscapes;
         else if(depth<cfg.treeDepth) ++result.stats.depthCuts;
         for(auto *n:nodes) ++n->visits;
-        for(auto *e:edges){++e->visits;e->sum+=value;}
+        // Censored simulations supply no terminal observation. The backed-up
+        // statistic is a conservative lower bound for nonnegative returns,
+        // sum(observed terminal returns)/attempts, not a completed-only mean
+        // or an assertion that an unfinished simulation was a loss.
+        for(auto *e:edges){
+            ++e->visits;
+            if(std::isfinite(value)){e->sum+=value/scale;++e->terminalVisits;}
+        }
         ++result.stats.simulations;
     }
-    std::vector<std::uint32_t> bits;
     for(int i=0;i<int(tree.edges.size());++i){
         const auto &e=tree.edges[i]; result.visits.push_back(e.visits);
+        result.terminalVisits.push_back(e.terminalVisits);
         result.values.push_back(e.visits?e.sum/e.visits:0.);
-        bits.push_back(e.action.bits);
     }
-    const int best=rootPick(root,bits,result.visits,result.values,cfg.tieEpsilon,cfg.rootGuards,&result.stats.guardTransitions);
+    const int best=smallRootPick(result.visits,result.values,nonce);
     result.action=tree.edges[best].action.bits;
     result.stats.seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count();
     return result;

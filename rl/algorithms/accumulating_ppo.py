@@ -1165,7 +1165,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
         while (env.episode_rollout_active.any() if cohort is not None else n_steps < n_rollout_steps):
             if cohort is not None:
-                episode_rollout.check_budget(cohort, n_steps)
+                if not episode_rollout.check_budget(cohort, n_steps, env):
+                    break
                 startup_paused = set(np.flatnonzero(~env.episode_rollout_active).tolist())
             active_count = env.num_envs - len(startup_paused) if cohort is not None else env.num_envs
             policy_started = time.perf_counter()
@@ -1847,6 +1848,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
         if small_lower:
             self._small_playout_stats = env.small_playout_stats()
             self._small_playout_samples = env.take_small_playout_samples()
+            if cohort is not None:
+                episode_rollout.exclude_samples(self, env)
             for key, value in self._small_playout_stats.items():
                 self.logger.record('small_playout/'+key, value)
         if self._outer_return:

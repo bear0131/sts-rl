@@ -155,7 +155,7 @@ class BattleCollector:
                 if terminal or capped:
                     battles.append(dict(seed=self.journals[i]['seed'], outcome=int(root.outcome),
                                         actions=len(self.journals[i]['actions']), censored=not terminal,
-                                        score=sts.small_playout_value(root)))
+                                        score=sts.small_playout_value(root, search.config.boss) if terminal else None))
                     self._reset(i)
             self.steps += len(self.roots)
         counts['playout_lengths'] = counts['playout_lengths'].tolist()
@@ -236,9 +236,10 @@ class SmallPlayoutLearner:
                     updates=self.updates, optimizer_steps=self.optimizer_steps, samples=len(samples))
 
     def save(self, path, collector):
+        from env.search.small_playout import SEARCH_CONTRACT
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = dict(contract=CONTRACT, key_count=self.policy.key_count,
+        payload = dict(contract=CONTRACT, search_contract=SEARCH_CONTRACT, key_count=self.policy.key_count,
                        native_sha256=hashlib.sha256(Path(sts.__file__).read_bytes()).hexdigest(),
                        policy=self.policy.state_dict(), optimizer=self.policy.optimizer.state_dict(),
                        rng=self.rng.bit_generator.state, config=asdict(self.search.config),
@@ -247,7 +248,7 @@ class SmallPlayoutLearner:
         torch.save(payload, temporary)
         temporary.replace(path)
 
-    def reinforce(self, roots, *, nonces, k=8, batch_size=2048, entropy_coef=.01):
+    def reinforce(self, roots, *, nonces, k=8, batch_size=2048, entropy_coef=.01, configs=None):
         """Independent on-policy playouts with a leave-one-out start baseline.
 
         This is a separate stage after visit distillation, not CE on MCTS actions
@@ -256,9 +257,13 @@ class SmallPlayoutLearner:
         if k < 2 or len(roots) != len(nonces) or not roots:
             raise ValueError('REINFORCE needs nonempty starts and at least two playouts each')
         began = time.perf_counter()
-        traces = sts.small_playout_collect_batch(self.search.pool, self.search.net,
-            [root for root in roots for _ in range(k)], self.search.config.native(),
-            [(int(nonce) + i) & ((1 << 64)-1) for nonce in nonces for i in range(k)])
+        configs = configs or [self.search.config] * len(roots)
+        if len(configs) != len(roots):
+            raise ValueError('one playout objective is required per root')
+        traces = []
+        for root, nonce, config in zip(roots, nonces, configs, strict=True):
+            traces.extend(sts.small_playout_collect_batch(self.search.pool, self.search.net,
+                [root] * k, config.native(), [(int(nonce) + i) & ((1 << 64)-1) for i in range(k)]))
         usable = [traces[i:i+k] for i in range(0, len(traces), k)
                   if not any(t['censored'] for t in traces[i:i+k])]
         stats = dict(playouts=len(traces), transitions=sum(t['transitions'] for t in traces),
@@ -301,8 +306,10 @@ class SmallPlayoutLearner:
 
     @classmethod
     def load(cls, path, *, device='cpu', threads=1):
+        from env.search.small_playout import SEARCH_CONTRACT
         payload = torch.load(path, map_location=device, weights_only=True)
-        if payload['contract'] != CONTRACT or payload['key_count'] != sts.small_playout_key_count():
+        if (payload['contract'] != CONTRACT or payload['key_count'] != sts.small_playout_key_count()
+                or payload.get('search_contract') != SEARCH_CONTRACT):
             raise ValueError('incompatible small policy checkpoint contract')
         if payload['native_sha256'] != hashlib.sha256(Path(sts.__file__).read_bytes()).hexdigest():
             raise ValueError('battle journal restore requires the same native build')
@@ -327,7 +334,8 @@ def save_policy_pair(path, policy, prior, *, provenance):
     """Freeze independent playout/PUCT parameters after their own pretraining."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = dict(kind='sts1-small-playout-pair-v1', contract=CONTRACT,
+    from env.search.small_playout import SEARCH_CONTRACT
+    payload = dict(kind='sts1-small-playout-pair-v1', contract=CONTRACT, search_contract=SEARCH_CONTRACT,
                    key_count=policy.key_count,
                    policy={k: v.detach().cpu() for k, v in policy.state_dict().items()},
                    prior={k: v.detach().cpu() for k, v in prior.state_dict().items()},
@@ -338,9 +346,11 @@ def save_policy_pair(path, policy, prior, *, provenance):
 
 
 def load_policy_pair(path):
+    from env.search.small_playout import SEARCH_CONTRACT
     payload = torch.load(path, map_location='cpu', weights_only=True)
     if (payload.get('kind') != 'sts1-small-playout-pair-v1' or payload['contract'] != CONTRACT
-            or payload['key_count'] != sts.small_playout_key_count()):
+            or payload['key_count'] != sts.small_playout_key_count()
+            or payload.get('search_contract') != SEARCH_CONTRACT):
         raise ValueError('incompatible compact policy pair')
     nets = [SmallPlayoutPolicy(payload['key_count']) for _ in range(2)]
     for net, key in zip(nets, ('policy', 'prior'), strict=True):

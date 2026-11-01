@@ -85,7 +85,7 @@ def install_truncation_recorder(model, root, *, rank):
         if captured < 4:
             captured += 1
             save_failure_scene(model, root, rank=rank,
-                               error=RuntimeError('environment truncated before auto-reset'),
+                               error=RuntimeError('environment limit: '+str(context.get('reason','truncated'))),
                                context=context)
 
     env.failure_scene_recorder = record
