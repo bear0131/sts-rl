@@ -74,7 +74,8 @@ def test_censored_cohort_is_error_not_a_finished_game(short_natural_game_env_typ
 
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 @pytest.mark.parametrize('natural_start', [False, True])
-def test_complete_cohort_two_rounds_and_ordinary_resume(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start):
+@pytest.mark.parametrize('lambda_override', [None, 1.])
+def test_complete_cohort_two_rounds_and_ordinary_resume(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override):
     if device == 'cuda':
         assert torch.cuda.is_available(), 'explicit CUDA qualification requires CUDA'
     def make_env(*args):
@@ -98,6 +99,7 @@ def test_complete_cohort_two_rounds_and_ordinary_resume(tmp_path, monkeypatch, s
         nosl_is_az_simulations=4, nosl_is_az_replay_enabled=False, hierarchical_combat_hp=True)
     initial = tmp_path/'initial.zip'
     model.save(initial)
+    initial_policy = {k: v.detach().cpu().clone() for k, v in model.policy.state_dict().items()}
     env.close()
     assert not model.policy.upper_optimizer.state
     assert not model.policy.small_playout_optimizer.state
@@ -117,6 +119,17 @@ def test_complete_cohort_two_rounds_and_ordinary_resume(tmp_path, monkeypatch, s
         '--run-id', 'cohort-test', '--wandb', '--wandb-id', 'cohort-test',
         '--training-state-dir', str(tmp_path/'state'), '--save-every-updates', '1', '--max-checkpoints', '4',
         '--stop-file', str(tmp_path/'STOP'), '--output', str(tmp_path/'latest.zip')]
+    if lambda_override is not None:
+        argv += ['--upper-gae-lambda', str(lambda_override)]
+    original_learn = AccumulatingMaskablePPO.learn
+    def learn(self, *args, **kwargs):
+        if not getattr(self, 'episode_rollouts_completed', 0):
+            torch.testing.assert_close(self.policy.state_dict(), initial_policy,
+                                       rtol=0, atol=0, check_device=False)
+            assert not self.policy.upper_optimizer.state and not self.policy.small_playout_optimizer.state
+        assert self.policy.core.upper_config.gae_lambda == (lambda_override or .97)
+        return original_learn(self, *args, **kwargs)
+    monkeypatch.setattr(AccumulatingMaskablePPO, 'learn', learn)
     monkeypatch.setattr(sys, 'argv', argv)
     distributed_sb3.main()
     first = sorted((tmp_path/'state/rank0').glob('step-*'))[-1]
@@ -138,7 +151,11 @@ def test_complete_cohort_two_rounds_and_ordinary_resume(tmp_path, monkeypatch, s
         assert model.episode_rollouts_completed == 2
         return result
     monkeypatch.setattr(distributed_sb3, 'restore_learner', restore)
-    monkeypatch.setattr(sys, 'argv', [*argv, '--resume-state', str(first)])
+    resume_argv = list(argv)
+    if lambda_override is not None:
+        index = resume_argv.index('--upper-gae-lambda')
+        del resume_argv[index:index+2]
+    monkeypatch.setattr(sys, 'argv', [*resume_argv, '--resume-state', str(first)])
     distributed_sb3.main()
     assert [p['legacy_step'] for p in payloads] == [1, 2, 3, 4]
     assert [p['game/completed_full_games_global'] for p in payloads] == [2, 4, 6, 8]
@@ -147,6 +164,8 @@ def test_complete_cohort_two_rounds_and_ordinary_resume(tmp_path, monkeypatch, s
     for i, bundle in enumerate(bundles):
         manifest = read_bundle(bundle, rank=0, world_size=1)
         current = AccumulatingMaskablePPO.load(bundle/'model.zip', device='cpu')
+        assert current.policy.core.upper_config.gae_lambda == (lambda_override or .97)
+        assert manifest['config']['upper_config']['gae_lambda'] == (lambda_override or .97)
         stats = current.episode_rollout_stats
         assert stats['first_seed'] == 42 + i * 2 and stats['last_seed'] == 43 + i * 2
         assert stats['completed_games'] == 2 and stats['unfinished_games'] == 0

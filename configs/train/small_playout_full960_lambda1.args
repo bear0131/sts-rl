@@ -1,0 +1,3 @@
+@configs/train/small_playout_full960_distributed.args
+--upper-gae-lambda
+1.0

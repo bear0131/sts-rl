@@ -820,3 +820,15 @@ def test_full960_uses_complete_games_without_finite_training_caps():
     cfg = json.loads(lines[lines.index('--upper-config') + 1])
     assert cfg['minibatch_size'] == 192 and cfg['epochs'] == 2 and cfg['gae_lambda'] == .97
     assert cfg['optimizer'] == 'adamw' and cfg['learning_rate'] == 3e-5 and cfg['value_learning_rate'] == 1e-4
+
+
+def test_full960_lambda_comparison_changes_only_upper_lambda(monkeypatch):
+    monkeypatch.chdir(ROOT)
+    common = ['--rank', '0', '--world-size', '4', '--checkpoint', 'unused.zip']
+    baseline = vars(build_parser().parse_args([*common,
+        '@configs/train/small_playout_full960_distributed.args']))
+    candidate = vars(build_parser().parse_args([*common,
+        '@configs/train/small_playout_full960_lambda1.args']))
+    assert candidate.pop('upper_gae_lambda') == 1.
+    assert baseline.pop('upper_gae_lambda') is None
+    assert candidate == baseline
