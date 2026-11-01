@@ -4,22 +4,20 @@
 :root{color-scheme:dark;font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif;background:#10141d;color:#e3e9f2}*{box-sizing:border-box}body{margin:0;padding:26px;max-width:1600px;margin-inline:auto}header{display:flex;align-items:flex-start;justify-content:space-between;gap:20px}h1{font-size:24px;margin:0 0 8px;font-weight:650}p{margin:6px 0;color:#9caac0;font-size:13px}#connection{color:#58d3ab}select{background:#1c2434;color:#e3e9f2;border:1px solid #334158;border-radius:7px;padding:8px 12px}#cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:22px 0}.card,.chart{background:#18202e;border:1px solid #283449;border-radius:12px}.card{padding:18px}.label{font-size:12px;color:#a8b5c8}.value{font-size:30px;font-weight:600;margin-top:8px;font-variant-numeric:tabular-nums}.sub{font-size:12px;color:#93a2b9;margin-top:8px}#ranks{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0 22px}.rank{background:#1c2738;border-radius:6px;padding:7px 10px;font-size:12px}#charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.chart{padding:16px;min-width:0}.chart h2{font-size:15px;font-weight:500;margin:0 0 5px}.legend{font-size:12px;color:#9caac0;min-height:20px}.legend span{margin-right:14px}svg{display:block;width:100%;height:230px;overflow:visible}#tooltip{display:none;position:fixed;pointer-events:none;background:#07101f;border:1px solid #52617b;border-radius:7px;padding:10px 12px;font-size:12px;line-height:1.8;z-index:2;white-space:pre}#notice{color:#e2bb72;font-size:12px;margin-top:15px}.bad{color:#f49f9f!important}@media(max-width:750px){body{padding:14px}#cards{grid-template-columns:repeat(2,1fr)}#charts{grid-template-columns:1fr}header{display:block}select{margin-top:10px}.value{font-size:25px}}
 </style></head><body>
 <header><div><h1>训练实时曲线</h1><p id="run">正在连接远端日志…</p><p id="connection">等待首次同步</p></div><div><label class="label">横轴 <select id="axis"><option value="absolute">累计训练轮次</option><option value="relative">分支后轮次</option></select></label> <label class="label">查看范围 <select id="range"><option value="0">全部轮次</option><option value="30">最近30轮</option><option value="60">最近60轮</option></select></label></div></header>
-<section id="cards"><div class="card"><div class="label">已完成轮次</div><div class="value" id="round">—</div><div class="sub" id="ongoing">—</div></div><div class="card"><div class="label">整局胜率 · 最近400局</div><div class="value" id="win">—</div><div class="sub" id="winavg">—</div></div><div class="card"><div class="label">累计自然完整游戏</div><div class="value" id="games">—</div><div class="sub">训练轨迹统计</div></div><div class="card"><div class="label">平均到达楼层 · 最近400局</div><div class="value" id="floor">—</div><div class="sub" id="seconds">—</div></div></section>
-<div id="ranks"></div><section id="charts"></section><div id="notice">每30秒读取远端日志；曲线在每轮完成后增加。胜率是训练窗口统计，不是独立评测胜率。旧分支来自共同215保存点；全新960局分支从随机模型第0轮开始，不能当作同起点效果对照。不同采样方式下，一轮的样本量可以不同。W&B上传受限不影响此窗口。金币按奖励份数、药水按瓶统计：实际领取率＝领取／（领取＋离开时留下）；满栏无法领取也计为留下。模型概率只统计能领取时当前这一步的拿取概率；无样本不显示，旧轮次不补造数据。</div><div id="tooltip"></div>
+<section id="cards"><div class="card"><div class="label">已完成轮次</div><div class="value" id="round">—</div><div class="sub" id="ongoing">—</div></div><div class="card"><div class="label">本轮完整游戏胜率</div><div class="value" id="win">—</div><div class="sub" id="winavg">—</div></div><div class="card"><div class="label">累计自然完整游戏</div><div class="value" id="games">—</div><div class="sub">训练轨迹统计</div></div><div class="card"><div class="label">本轮完整游戏平均楼层</div><div class="value" id="floor">—</div><div class="sub" id="seconds">—</div></div></section>
+<div id="ranks"></div><section id="charts"></section><div id="notice">每30秒读取远端日志；曲线在每轮完成后增加。胜率与楼层仅统计每轮全部自然结束的游戏，不是独立评测。旧分支没有相同口径的数据时不显示、不补造。上层 loss/KL 使用最后一遍按样本加权的汇总；提前停止时仅含该遍实际完成更新的样本，不使用最后一个小批次代替。旧分支来自共同215保存点；全新960局分支从随机模型第0轮开始，不能当作同起点效果对照。不同采样方式下，一轮的样本量可以不同。W&B上传受限不影响此窗口。金币按奖励份数、药水按瓶统计：实际领取率＝领取／（领取＋离开时留下）；满栏无法领取也计为留下。模型概率只统计能领取时当前这一步的拿取概率；无样本不显示，旧轮次不补造数据。</div><div id="tooltip"></div>
 <script>
 'use strict';
 const colors=['#56baf0','#b09af9','#f5bc69'];
 const specs=[
- ['整局胜率',['game/win_rate'],['最近400局'],true],
- ['本轮完整游戏胜率',['episode_rollout/win_rate'],['本轮全部960局'],true],
- ['本轮完整游戏楼层',['episode_rollout/floor_mean'],['本轮全部960局'],false],
- ['上层 policy loss',['upper/policy_loss'],['policy loss'],false],
- ['上层 value loss',['upper/value_loss'],['value loss'],false],
+ ['本轮完整游戏胜率',['episode_rollout/win_rate'],['本轮全部游戏'],true],
+ ['本轮完整游戏楼层',['episode_rollout/floor_mean'],['本轮全部游戏'],false],
+ ['上层 policy loss · 末遍汇总',['display/upper_policy_loss'],['按样本加权'],false],
+ ['上层 value loss · 末遍汇总',['display/upper_value_loss'],['按样本加权'],false],
  ['金币领取',['upper/reward_gold_pickup_rate','upper/reward_gold_policy_probability'],['实际领取率','模型当前拿取概率'],true],
  ['药水领取',['upper/reward_potion_pickup_rate','upper/reward_potion_policy_probability'],['实际领取率','模型当前拿取概率'],true],
- ['上层 KL',['upper/kl'],['KL'],false],
+ ['上层 KL · 末遍汇总',['display/upper_kl'],['按样本加权'],false],
  ['下层监督损失',['small_playout_train/loss','small_playout_train/target_entropy','small_playout_train/target_kl'],['交叉熵','目标熵','目标 KL'],false],
- ['平均到达楼层',['game/floor_mean'],['楼层'],false],
  ['每轮耗时（秒）',['rollout_sec','upper/total_sec_rank','small_playout_train/seconds'],['采样','上层更新','下层更新'],false],
  ['下层 teacher top1',['small_playout_train/teacher_top1'],['动作匹配率'],true],
  ['上层参数变化',['upper/parameter_l2_change'],['参数变化 L2'],false],
@@ -31,29 +29,50 @@ document.getElementById('notice').append(' 火堆仅从启用监控后的轮次�
 const runColors=['#56baf0','#f5bc69','#b09af9','#58d3ab','#f08094'];
 const $=id=>document.getElementById(id), finite=x=>typeof x==='number'&&Number.isFinite(x);
 const fmt=(x,pct=false)=>!finite(x)?'—':pct?(x*100).toFixed(2)+'%':Math.abs(x)<0.01&&x!==0?x.toPrecision(3):x.toLocaleString('zh-CN',{maximumFractionDigits:3});
+function completeCohort(row){
+ const games=row['episode_rollout/completed_games_global'],win=row['episode_rollout/win_rate'],floor=row['episode_rollout/floor_mean'];
+ if(!Number.isInteger(games)||games<=0||!finite(win)||win<0||win>1||!finite(floor))return null;
+ if(finite(row.games_per_rollout_global)&&games!==row.games_per_rollout_global)return null;
+ return {games,wins:win*games,win,floor};
+}
+function cohortSummary(rows){
+ const cohorts=rows.map(completeCohort).filter(Boolean);if(!cohorts.length)return null;
+ const games=cohorts.reduce((n,c)=>n+c.games,0);
+ return {rounds:cohorts.length,games,win:cohorts.reduce((n,c)=>n+c.wins,0)/games};
+}
+function lastEpochMetric(row,metric){
+ const prefix='upper/'+metric+'_epoch_',epochs=Object.keys(row).filter(k=>k.startsWith(prefix)&&/^[1-9][0-9]*$/.test(k.slice(prefix.length))).map(k=>Number(k.slice(prefix.length)));
+ return epochs.length?row[prefix+Math.max(...epochs)]:undefined;
+}
+function displayRow(row){
+ const cohort=completeCohort(row);
+ return {...row,'episode_rollout/win_rate':cohort?.win,'episode_rollout/floor_mean':cohort?.floor,
+  ...Object.fromEntries(['policy_loss','value_loss','kl'].map(k=>['display/upper_'+k,lastEpochMetric(row,k)]))};
+}
 for(const [i,s] of specs.entries()){let el=document.createElement('article');el.className='chart';el.innerHTML=`<h2>${s[0]}</h2><div class="legend">${s[2].map((v,j)=>`<span style="color:${colors[j]}">● ${v}</span>`).join('')}</div><svg role="img" aria-label="${s[0]}" id="chart${i}"></svg>`;$('charts').append(el)}
 function roundAt(run,step){if(run.rollout_mode==='complete_games')return (run.rows||[]).find(r=>r.global_timesteps===step)?.rollout_round??0;return (run.branch_round??((run.branch_step||0)/run.iteration_steps))+(step-(run.branch_step||0))/run.iteration_steps}
 function datasets(){
  const relative=$('axis').value==='relative', n=Number($('range').value);
- return [...(state.comparisons||[]),state].map((run,j)=>{let rows=run.rows||[];if(relative)rows=rows.filter(r=>r.global_timesteps>=run.branch_step);if(n)rows=rows.slice(-n);return {label:run.label||run.run_id,rows,color:runColors[j%runColors.length],x:r=>relative?roundAt(run,r.global_timesteps)-(run.branch_round||0):roundAt(run,r.global_timesteps),branch:(relative?0:roundAt(run,run.branch_step||0))}});
+ return [...(state.comparisons||[]),state].map((run,j)=>{let rows=(run.rows||[]).map(displayRow);if(relative)rows=rows.filter(r=>r.global_timesteps>=run.branch_step);if(n)rows=rows.slice(-n);return {label:run.label||run.run_id,rows,color:runColors[j%runColors.length],x:r=>relative?roundAt(run,r.global_timesteps)-(run.branch_round||0):roundAt(run,r.global_timesteps),branch:(relative?0:roundAt(run,run.branch_step||0))}});
 }
 function plot(i,sets){const [title,keys,names,pct]=specs[i],svg=$('chart'+i),w=svg.clientWidth,h=230,left=64,right=18,top=12,bottom=33;svg.setAttribute('viewBox',`0 0 ${w} ${h}`);svg.replaceChildren();
- const entries=sets.flatMap(run=>run.rows.map(row=>({run,row,x:run.x(row)}))),xs=entries.map(e=>e.x),vals=entries.flatMap(e=>keys.map(k=>e.row[k])).filter(finite);if(!vals.length||w<100)return;
- const legend=svg.previousElementSibling;legend.replaceChildren();sets.forEach(run=>keys.forEach((key,j)=>{const span=document.createElement('span');span.style.color=run.color;span.textContent=`${j?'┄':'━'} ${run.label} · ${names[j]}`;legend.append(span)}));
- let ymin=Math.min(...vals),ymax=Math.max(...vals),pad=(ymax-ymin)*.12||Math.max(Math.abs(ymax)*.1,.01);ymin-=pad;ymax+=pad;const xmin=Math.min(...xs),xmax=Math.max(...xs),x=v=>left+(v-xmin)/(xmax-xmin||1)*(w-left-right),y=v=>h-bottom-(v-ymin)/(ymax-ymin)*(h-top-bottom);
+ const visible=sets.filter(run=>run.rows.some(row=>keys.some(k=>finite(row[k]))));
+ const entries=visible.flatMap(run=>run.rows.map(row=>({run,row,x:run.x(row)}))),xs=entries.map(e=>e.x),vals=entries.flatMap(e=>keys.map(k=>e.row[k])).filter(finite);
+ const legend=svg.previousElementSibling;legend.replaceChildren();svg.onpointermove=null;svg.onpointerleave=null;if(!vals.length||w<100){legend.textContent='暂无同口径数据';return;}visible.forEach(run=>keys.forEach((key,j)=>{const span=document.createElement('span');span.style.color=run.color;span.textContent=`${j?'┄':'━'} ${run.label} · ${names[j]}`;legend.append(span)}));
+ let ymin=Math.min(...vals),ymax=Math.max(...vals),pad=(ymax-ymin)*.12||Math.max(Math.abs(ymax)*.1,.01);ymin-=pad;ymax+=pad;if(pct){ymin=Math.max(0,ymin);ymax=Math.min(1,ymax)}const xmin=Math.min(...xs),xmax=Math.max(...xs),x=v=>left+(v-xmin)/(xmax-xmin||1)*(w-left-right),y=v=>h-bottom-(v-ymin)/(ymax-ymin)*(h-top-bottom);
  function add(tag,attrs,txt){let n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);if(txt!==undefined)n.textContent=txt;svg.append(n);return n}
  for(let t=0;t<=4;t++){let v=ymin+(ymax-ymin)*t/4,yy=y(v);add('line',{x1:left,x2:w-right,y1:yy,y2:yy,stroke:'#2a364b'});add('text',{x:left-9,y:yy+4,'text-anchor':'end',fill:'#96a7bf','font-size':11},fmt(v,pct))}
  for(let t=0;t<=4;t++){let v=xmin+(xmax-xmin)*t/4;add('text',{x:x(v),y:h-13,'text-anchor':'middle',fill:'#96a7bf','font-size':11},Math.round(v))}
  add('text',{x:w-right,y:h,'text-anchor':'end',fill:'#96a7bf','font-size':11},$('axis').value==='relative'?'分支后轮次':'累计训练轮次');
- sets.forEach(run=>{if(run.branch>0&&run.branch>=xmin&&run.branch<=xmax){add('line',{x1:x(run.branch),x2:x(run.branch),y1:top,y2:h-bottom,stroke:run.color,'stroke-dasharray':'2 5',opacity:.5});add('text',{x:x(run.branch)-3,y:top+11,'text-anchor':'end',fill:run.color,'font-size':10},`分支 ${run.branch}`)}
+ visible.forEach(run=>{if(run.branch>0&&run.branch>=xmin&&run.branch<=xmax){add('line',{x1:x(run.branch),x2:x(run.branch),y1:top,y2:h-bottom,stroke:run.color,'stroke-dasharray':'2 5',opacity:.5});add('text',{x:x(run.branch)-3,y:top+11,'text-anchor':'end',fill:run.color,'font-size':10},`分支 ${run.branch}`)}
  keys.forEach((k,j)=>{let d='',gap=true;run.rows.forEach(r=>{if(!finite(r[k])){gap=true;return}d+=(gap?'M':'L')+x(run.x(r))+','+y(r[k]);gap=false});add('path',{d,fill:'none',stroke:run.color,'stroke-width':2,'stroke-dasharray':j===0?'none':j===1?'6 3':'2 3'});let last=run.rows.at(-1);if(last&&finite(last[k]))add('circle',{cx:x(run.x(last)),cy:y(last[k]),r:3,fill:run.color})})});
  const guide=add('line',{x1:0,x2:0,y1:top,y2:h-bottom,stroke:'#a6b6cc','stroke-dasharray':'3 3',visibility:'hidden'});
- svg.onpointermove=e=>{let rect=svg.getBoundingClientRect(),target=xmin+(e.clientX-rect.left-left)/(w-left-right)*(xmax-xmin);const closest=entries.reduce((a,b)=>Math.abs(b.x-target)<Math.abs(a.x-target)?b:a);guide.setAttribute('x1',x(closest.x));guide.setAttribute('x2',x(closest.x));guide.setAttribute('visibility','visible');let tip=$('tooltip');tip.textContent=`${$('axis').value==='relative'?'分支后':'累计'}第 ${closest.x} 轮\n`+sets.map(run=>{const row=run.rows.find(r=>run.x(r)===closest.x);return run.label+'\n'+keys.map((k,j)=>`${names[j]}  ${fmt(row?.[k],pct)}`).join('\n')}).join('\n');tip.style.display='block';tip.style.left=Math.max(5,Math.min(e.clientX+14,innerWidth-tip.offsetWidth-12))+'px';tip.style.top=Math.max(5,Math.min(e.clientY+14,innerHeight-tip.offsetHeight-12))+'px'};svg.onpointerleave=()=>{guide.setAttribute('visibility','hidden');$('tooltip').style.display='none'};
+ svg.onpointermove=e=>{let rect=svg.getBoundingClientRect(),target=xmin+(e.clientX-rect.left-left)/(w-left-right)*(xmax-xmin);const closest=entries.reduce((a,b)=>Math.abs(b.x-target)<Math.abs(a.x-target)?b:a);guide.setAttribute('x1',x(closest.x));guide.setAttribute('x2',x(closest.x));guide.setAttribute('visibility','visible');let tip=$('tooltip');tip.textContent=`${$('axis').value==='relative'?'分支后':'累计'}第 ${closest.x} 轮\n`+visible.map(run=>{const row=run.rows.find(r=>run.x(r)===closest.x);return run.label+'\n'+keys.map((k,j)=>`${names[j]}  ${fmt(row?.[k],pct)}`).join('\n')}).join('\n');tip.style.display='block';tip.style.left=Math.max(5,Math.min(e.clientX+14,innerWidth-tip.offsetWidth-12))+'px';tip.style.top=Math.max(5,Math.min(e.clientY+14,innerHeight-tip.offsetHeight-12))+'px'};svg.onpointerleave=()=>{guide.setAttribute('visibility','hidden');$('tooltip').style.display='none'};
 }
 function render(){if(!state)return;$('run').textContent=state.run_id;let rows=state.rows,latest=rows.at(-1),ranks=state.ranks||[],bad=ranks.some(r=>r.connection_error),age=state.updated_at?Date.now()/1000-state.updated_at:Infinity;
  $('connection').className=bad||age>90?'bad':'';$('connection').textContent=state.updated_at?`${bad?'部分机器连接异常，保留已同步数据':age>90?'数据已过期，请检查本地采集进程':'已连接'} · 最近同步 ${new Date(state.updated_at*1000).toLocaleTimeString()}${state.polling_ended?' · 采集时限已到':''}`:'等待首次同步';
  $('ranks').replaceChildren();ranks.forEach(r=>{let n=document.createElement('div');n.className='rank'+(r.connection_error||!r.alive?' bad':'');let phase=r.progress?.vector_steps;n.textContent=`机器 ${r.rank+1} · ${r.connection_error?'连接失败':r.alive?'运行中':'已停止'} · 已保存 ${r.step?Math.floor(roundAt(state,r.step)):0}轮${r.progress?.target_games?' · 本轮完成 '+r.progress.completed_games+'/'+r.progress.target_games+'局':phase?' · 最近采样 '+phase+'/'+(r.progress.target_steps||'?'):''}`;$('ranks').append(n)});
- if(latest){let round=roundAt(state,latest.global_timesteps);$('round').textContent=round;$('ongoing').textContent=ranks.length&&ranks.every(r=>!r.connection_error&&r.alive)?`正在进行第 ${round+1} 轮`:'以机器状态为准';$('win').textContent=fmt(latest['game/win_rate'],true);let wins=rows.slice(-5).map(r=>r['game/win_rate']).filter(finite);$('winavg').textContent=`最近${wins.length}轮窗口胜率均值 ${fmt(wins.reduce((a,b)=>a+b,0)/wins.length,true)}`;$('games').textContent=fmt(latest.completed_full_games_global);$('floor').textContent=fmt(latest['game/floor_mean']);$('seconds').textContent=`上一轮 ${fmt(latest.iteration_wall_sec)} 秒`}
+ if(latest){let round=roundAt(state,latest.global_timesteps);$('round').textContent=round;$('ongoing').textContent=ranks.length&&ranks.every(r=>!r.connection_error&&r.alive)?`正在进行第 ${round+1} 轮`:'以机器状态为准';const cohort=completeCohort(latest),summary=cohortSummary(rows.slice(-5));$('win').textContent=fmt(cohort?.win,true);$('winavg').textContent=summary?`最近${summary.rounds}个完整轮次 · ${fmt(summary.games)}局 · ${fmt(summary.win,true)}`:'暂无完整轮次统计';$('games').textContent=fmt(latest.completed_full_games_global);$('floor').textContent=fmt(cohort?.floor);$('seconds').textContent=`上一轮 ${fmt(latest.iteration_wall_sec)} 秒`}
  const sets=datasets();specs.forEach((s,i)=>plot(i,sets));}
 async function refresh(){try{let r=await fetch('/api/state',{cache:'no-store'});if(!r.ok)throw Error(r.status);state=await r.json();render()}catch(e){$('connection').textContent='本地连接断开，页面保留已有数据';$('connection').className='bad'}}
 $('range').onchange=render;$('axis').onchange=render;new ResizeObserver(()=>render()).observe($('charts'));refresh();setInterval(refresh,5000);

@@ -112,3 +112,70 @@ def test_complete_game_rollouts_preserve_variable_actions_and_explicit_rounds(tm
     state = json.loads(Monitor(config, output, 30).snapshot())
     assert state['iteration_steps'] is None and state['rollout_mode'] == 'complete_games'
     assert state['rows'] == rows
+
+
+def test_dashboard_uses_complete_cohorts_and_epoch_summaries(tmp_path):
+    """Render conflicting legacy/complete metrics without a browser dependency."""
+    from pathlib import Path
+    import subprocess
+
+    page = Path('apps/dashboard_static/training.html').read_text(encoding='utf-8')
+    assert '最近400局' not in page
+    script = page.split('<script>', 1)[1].split('</script>', 1)[0]
+    harness = r'''
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const nodes = new Map();
+function element() {
+ return {textContent:'',style:{},clientWidth:600,value:'0',children:[],
+  setAttribute(){},append(...values){this.children.push(...values)},
+  replaceChildren(){this.children=[];this.textContent=''}};
+}
+const document = {
+ getElementById(id){if(!nodes.has(id)){const e=element();e.previousElementSibling=element();nodes.set(id,e)}return nodes.get(id)},
+ createElement:element,createElementNS:element
+};
+document.getElementById('axis').value='absolute';
+const context = vm.createContext({document,assert,ResizeObserver:class{observe(){}},
+ fetch:()=>new Promise(()=>{}),setInterval(){}});
+vm.runInContext(SCRIPT,context);
+vm.runInContext(`
+const old={global_timesteps:1,'game/win_rate':1,'game/floor_mean':99,
+ 'upper/policy_loss':-100,'upper/value_loss':100,'upper/kl':1};
+const first={global_timesteps:10,rollout_round:1,games_per_rollout_global:240,
+ 'episode_rollout/completed_games_global':240,'episode_rollout/win_rate':.25,'episode_rollout/floor_mean':10};
+const last={...old,global_timesteps:20,rollout_round:2,games_per_rollout_global:960,
+ 'episode_rollout/completed_games_global':960,'episode_rollout/win_rate':.75,'episode_rollout/floor_mean':40,
+ 'upper/epochs_completed':1,'upper/kl_stopped':1,
+ 'upper/policy_loss_epoch_1':.02,'upper/policy_loss_epoch_2':-.001,
+ 'upper/value_loss_epoch_1':.3,'upper/value_loss_epoch_2':.1,
+ 'upper/kl_epoch_1':.003,'upper/kl_epoch_2':.005};
+state={run_id:'current',rollout_mode:'complete_games',branch_step:0,branch_round:0,
+ updated_at:Date.now()/1000,rows:[first,last],ranks:[],
+ comparisons:[{run_id:'legacy',iteration_steps:1,branch_step:0,rows:[old]}]};
+const before=JSON.stringify(state);
+render();
+assert.equal($('win').textContent,'75.00%');
+assert.equal($('floor').textContent,'40');
+assert.equal($('winavg').textContent,'最近2个完整轮次 · 1,200局 · 65.00%');
+assert.equal($('chart0').previousElementSibling.children.length,1);
+assert.equal($('chart0').previousElementSibling.children[0].textContent.includes('legacy'),false);
+assert.equal(displayRow(last)['display/upper_policy_loss'],-.001);
+assert.equal(displayRow(last)['display/upper_value_loss'],.1);
+assert.equal(displayRow(last)['display/upper_kl'],.005);
+assert.equal(lastEpochMetric({'upper/kl_epoch_9':9,'upper/kl_epoch_10':10},'kl'),10);
+assert.equal(displayRow(old)['display/upper_policy_loss'],undefined);
+assert.equal(displayRow(old)['episode_rollout/win_rate'],undefined);
+assert.equal(completeCohort({...last,'episode_rollout/completed_games_global':900}),null);
+assert.equal(cohortSummary([old]),null);
+assert.equal(JSON.stringify(state),before); // Display must not rewrite raw/history data.
+assert.ok(!specs.flatMap(s=>s[1]).some(k=>['game/win_rate','game/floor_mean','upper/policy_loss','upper/value_loss','upper/kl'].includes(k)));
+state.rows=[old];render();
+assert.equal($('win').textContent,'—');assert.equal($('floor').textContent,'—');
+assert.equal($('winavg').textContent,'暂无完整轮次统计');
+assert.equal($('chart0').previousElementSibling.textContent,'暂无同口径数据');
+`,context);
+'''.replace('SCRIPT', json.dumps(script))
+    path = tmp_path / 'dashboard.cjs'
+    path.write_text(harness, encoding='utf-8')
+    subprocess.run(['node', str(path)], check=True, capture_output=True, timeout=15)
