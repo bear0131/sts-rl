@@ -12,14 +12,16 @@ REWARD_PHASE = V.PHASE_VOCAB_INDEX['combat_reward']
 KINDS = {
     'gold': ('reward_gold', A.seg_base('REWARD_GOLD'), A.REWARD_GOLD),
     'potion': ('reward_potion_ids', A.seg_base('REWARD_POTION'), A.REWARD_POTION),
+    'relic': ('reward_relic_ids', A.seg_base('REWARD_RELIC'), A.REWARD_RELIC),
 }
 FIELDS = ('resolved', 'taken', 'unavailable_left', 'policy_decisions', 'policy_probability_sum')
 
 
 def counts(model):
     saved = getattr(model, '_upper_reward_counts', {})
-    return {f'reward_{kind}_{field}': float(saved.get(f'reward_{kind}_{field}', 0.))
-            for kind in KINDS for field in FIELDS}
+    return {**{f'reward_{kind}_{field}': float(saved.get(f'reward_{kind}_{field}', 0.))
+               for kind in KINDS for field in FIELDS},
+            'reward_relic_key_exchanged': float(saved.get('reward_relic_key_exchanged', 0.))}
 
 
 def begin_collection(model):
@@ -63,6 +65,13 @@ def record_step(model, observations, actions, masks, policy, infos):
                 remaining = np.asarray(observations[key][index]) > 0
                 current[prefix + 'resolved'] += int(remaining.sum())
                 current[prefix + 'unavailable_left'] += int((remaining & ~legal).sum())
+            elif (kind == 'relic' and action == A.seg_base('REWARD_KEY')
+                  and masks[index, action] and observations['reward_keys'][index, 1] > 0
+                  and np.any(np.asarray(observations[key][index]) > 0)):
+                # Sapphire consumes one linked relic, including a Matryoshka
+                # chest's last offer. The remaining relics are still undecided.
+                current[prefix + 'resolved'] += 1
+                current['reward_relic_key_exchanged'] += 1
     model._upper_reward_counts = current
 
 
@@ -70,6 +79,7 @@ def metrics(reduced_counts, world_size=1):
     """Reduce sums/counts together; never average rank-local percentages."""
     result = {f'reward_{kind}_{field}': reduced_counts[f'reward_{kind}_{field}'] * world_size
               for kind in KINDS for field in FIELDS}
+    result['reward_relic_key_exchanged'] = reduced_counts['reward_relic_key_exchanged'] * world_size
     for kind in KINDS:
         prefix = f'reward_{kind}_'
         if result[prefix + 'resolved']:

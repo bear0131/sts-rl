@@ -8,13 +8,17 @@ from env.core import action_space as A, vocab as V
 from rl.training import reward_monitor as M
 
 
-def scene(gold=(.1, .2), potions=(3, 3), *, potion_legal=True):
+def scene(gold=(.1, .2), potions=(3, 3), *, potion_legal=True, relics=(), sapphire=False):
     obs = dict(phase=np.array([[M.REWARD_PHASE]]),
+               reward_relic_ids=np.array([list(relics)+[0]*(3-len(relics))]),
+               reward_keys=np.array([[0,int(sapphire)]]),
                reward_gold=np.array([list(gold) + [0] * (2-len(gold))]),
                reward_potion_ids=np.array([list(potions) + [0] * (5-len(potions))]))
     mask = np.zeros((1, A.N_ACTIONS), dtype=bool)
     mask[0, A.seg_base('PROCEED')] = True
     mask[0, A.seg_base('REWARD_GOLD'):A.seg_base('REWARD_GOLD')+len(gold)] = True
+    mask[0,A.seg_base('REWARD_RELIC'):A.seg_base('REWARD_RELIC')+len(relics)] = True
+    mask[0,A.seg_base('REWARD_KEY')] = sapphire
     if potion_legal:
         mask[0, A.seg_base('REWARD_POTION'):A.seg_base('REWARD_POTION')+len(potions)] = True
     return obs, mask
@@ -23,7 +27,7 @@ def scene(gold=(.1, .2), potions=(3, 3), *, potion_legal=True):
 def step(model, state, action, info=None):
     obs, mask = state
     M.record_step(model, obs, np.array([action]), mask,
-                  (np.array([0]), np.array([[.3, .2]])), [info or {}])
+                  (np.array([0]), np.array([[.3, .2, .4]])), [info or {}])
 
 
 def test_repeated_reward_decisions_count_each_resolved_item_once():
@@ -93,12 +97,37 @@ def test_existing_masked_distribution_is_read_without_forward_or_rng():
     probs = torch.zeros((2, A.N_ACTIONS))
     probs[0, A.seg_base('REWARD_GOLD'):A.seg_base('REWARD_GOLD')+2] = torch.tensor([.1, .2])
     probs[0, A.seg_base('REWARD_POTION')] = .4
-    probs[0, A.seg_base('PROCEED')] = .3
+    probs[0, A.seg_base('REWARD_RELIC')] = .2
+    probs[0, A.seg_base('PROCEED')] = .1
     probs[1, A.seg_base('PROCEED')] = 1
     distribution = SimpleNamespace(distribution=SimpleNamespace(probs=probs))
     rng = torch.get_rng_state().clone()
     indices, values = M.policy_probabilities(distribution, {
         'phase': np.array([[M.REWARD_PHASE], [V.PHASE_VOCAB_INDEX['map']]])})
     np.testing.assert_array_equal(indices, [0])
-    np.testing.assert_allclose(values, [[.3, .4]])
+    np.testing.assert_allclose(values, [[.3, .4, .2]])
     assert torch.equal(torch.get_rng_state(), rng)
+
+
+def test_relic_claim_key_exchange_and_leave_resolve_each_offer_once():
+    model = SimpleNamespace()
+    step(model, scene(relics=(1, 2), sapphire=True), A.seg_base('REWARD_GOLD'))
+    assert M.counts(model)['reward_relic_resolved'] == 0
+    step(model, scene(relics=(1, 2), sapphire=True), A.seg_base('REWARD_KEY'))
+    step(model, scene(relics=(1,)), A.seg_base('REWARD_RELIC'))
+    step(model, scene(), A.seg_base('PROCEED'))
+    out = M.metrics(M.counts(model))
+    assert out['reward_relic_taken'] == 1 and out['reward_relic_resolved'] == 2
+    assert out['reward_relic_key_exchanged'] == 1 and out['reward_relic_pickup_rate'] == .5
+    assert out['reward_relic_policy_probability'] == pytest.approx(.4)
+    assert out['reward_relic_policy_decisions'] == 3
+    M.begin_collection(model)
+    step(model, scene(relics=(1, 1)), A.seg_base('PROCEED'))
+    assert M.metrics(M.counts(model))['reward_relic_resolved'] == 2
+
+
+@pytest.mark.parametrize('phase', ['shop', 'boss_relic', 'chest', 'event'])
+def test_other_relic_acquisition_phases_are_not_free_reward_claims(phase):
+    distribution = SimpleNamespace(distribution=SimpleNamespace(probs=torch.zeros((1,A.N_ACTIONS))))
+    indices,masses=M.policy_probabilities(distribution,{'phase':np.array([[V.PHASE_VOCAB_INDEX[phase]]])})
+    assert len(indices)==0 and masses.shape==(0,3)

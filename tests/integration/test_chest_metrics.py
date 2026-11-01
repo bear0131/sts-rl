@@ -100,3 +100,38 @@ def test_multiple_or_empty_chest_counts_at_most_once(chest_env_type, relic, offe
             assert 'chest_relic_taken' not in env.thick.step(ga.proceed())[-1]
     finally:
         env.close()
+
+
+@pytest.mark.parametrize('choice', ['relic', 'key', 'leave'])
+def test_reward_relic_monitor_real_chest_and_restore(chest_env_type, choice):
+    import numpy as np
+    from types import SimpleNamespace
+    from rl.training import reward_monitor as monitor
+    env, restored = chest_env_type(), chest_env_type()
+    try:
+        env.reset(seed=0); env.step(A._CHEST)
+        gold = next(i for i in np.flatnonzero(env.action_masks())
+                    if env.describe_action(i).startswith('claim gold'))
+        env.step(gold)
+        saved = env.export_training_state(); restored.restore_training_state(saved)
+        outcomes = []
+        for current in (env, restored):
+            model = SimpleNamespace()
+            def step(action):
+                obs = {k:v[None] for k,v in current._obs().items()}
+                mask = current.action_masks()[None]
+                info = current.step(action)[-1]
+                monitor.record_step(model,obs,[action],mask,
+                    (np.array([0]),np.array([[0.,0.,.6]])),[info])
+            offers = len(current.thick.gc.get_reward_info()['relics'])
+            assert offers == 1
+            step({'relic':A._RRELIC,'key':A._RKEY,'leave':A._PROCEED}[choice])
+            if choice != 'leave': step(A._PROCEED)
+            metrics = monitor.metrics(monitor.counts(model));outcomes.append(metrics)
+            assert metrics['reward_relic_resolved'] == offers
+            assert metrics['reward_relic_taken'] == (choice == 'relic')
+            assert metrics['reward_relic_key_exchanged'] == (choice == 'key')
+            assert metrics['reward_relic_policy_probability'] == pytest.approx(.6)
+        assert outcomes[0] == outcomes[1]
+    finally:
+        env.close();restored.close()

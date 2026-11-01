@@ -121,6 +121,8 @@ def test_dashboard_uses_complete_cohorts_and_epoch_summaries(tmp_path):
 
     page = Path('apps/dashboard_static/training.html').read_text(encoding='utf-8')
     assert '<summary>历史数据说明</summary>' in page
+    assert 'upper/reward_relic_pickup_rate' in page and 'upper/reward_relic_policy_probability' in page
+    assert '蓝钥匙换掉的那一件记为未领取' in page
     assert '<details open' not in page
     script = page.split('<script>', 1)[1].split('</script>', 1)[0]
     harness = r'''

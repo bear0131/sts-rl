@@ -509,3 +509,5 @@
 | TRAIN46 | 按用户要求暂停；147轮全状态只读保护 | 切换模型搜索前正常停在共同115605504/147轮，四rank完整read_bundle/SHA、跨rank模型双Adam通过，upper Adam1470/lower Adam空。终点只读snapshot及STOP保留，旧38轮29884416锚点保持；终点窗口157/400=39.25%、开箱99%、条件领取97.25%（非独立评测）。小时automation train46-1已迁移TRAIN47，禁止自动恢复46；native-build-rulefast是47共享固定依赖不得删除。见worklog/2026-10-09.md#train47-source-stop-and-runtime-preset。 |
 
 | COMBAT29-C23-LAMBDA097 | 进行中：同COMBAT23初始、10更新、λ.97及FP32 | 用户选择同db688随机初始，从0全fresh，384×512/原上下层与搜索，continuous无总限；本机/四机真实资格、旧28轮末保留、新run一次启动及两完整轮刷新验收。独立args与c23-lambda097-20261101证据；只改λ及用户另指定的上层FP32，不宣称单因素或等价加速。 |
+
+| COMBAT29-RELIC-MONITOR | 本机通过，待随新分支部署 | 奖励页遗物实际领取份数率+合法领取动作概率，宝箱/蓝钥匙交换/重复观察/保存恢复覆盖；不混商店、Boss必选、未开箱或事件直接赠送。34语义+2真实CPU/CUDA四轮通过，历史不回填；四机及首两生产payload/API待验。 |

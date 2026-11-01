@@ -81,7 +81,7 @@ def test_reward_monitor_counts_real_claim_and_leaving_without_repeated_offers(re
         mask = env.action_masks()[None]
         _, _, _, _, info = env.step(action)
         monitor.record_step(model, obs, [action], mask,
-                            (np.array([0]), np.array([[.25, .25]])), [info])
+                            (np.array([0]), np.array([[.25, .25, .25]])), [info])
 
     take(A.seg_base('REWARD_GOLD'))
     first = monitor.counts(model)

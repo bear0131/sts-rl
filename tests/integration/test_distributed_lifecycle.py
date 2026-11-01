@@ -373,7 +373,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
                     assert prefix + 'policy_probability' not in p
         if campfire_env_type:
             assert all(p['upper/campfire_decisions'] > 0 for p in payloads)
-        for kind in ('gold', 'potion'):
+        for kind in ('gold', 'potion', 'relic'):
             prefix = 'upper/reward_' + kind + '_'
             assert all(prefix + 'resolved' in p and prefix + 'policy_decisions' in p for p in payloads)
             for p in payloads:
@@ -917,19 +917,21 @@ def test_joint_continuous_longer_rollout_fork_and_resume(
 @pytest.mark.timeout(300)
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 def test_c23_lambda097_fp32_collection_update_and_plain_resume(
-        tmp_path, monkeypatch, capsys, campfire_env_type, device):
+        tmp_path, monkeypatch, capsys, campfire_env_type, chest_env_type, device):
     from rl.training.checkpoints import read_bundle
     if device == 'cuda':
         assert torch.cuda.is_available(), 'explicit CUDA lifecycle requires CUDA'
     torch.set_float32_matmul_precision('highest')
     setup = test_training_reaches_wandb_and_checkpoint(
-        tmp_path, monkeypatch, capsys, campfire_env_type,
+        tmp_path, monkeypatch, capsys, chest_env_type,
         nosl=True, upper='model', combat_arch='entity', contract='autoregressive-v2',
         device=device, amp='off', vector='native', joint=True,
         fixed_lower='small-playout', online_small='reference-ce',
         upper_epochs_override=10, upper_lambda_override=.97,
         campfire_env_type=campfire_env_type, return_setup=True)
     assert len(setup['payloads']) == 4
+    assert sum(p['upper/reward_relic_resolved'] for p in setup['payloads']) > 0
+    assert sum(p['upper/reward_relic_policy_decisions'] for p in setup['payloads']) > 0
     for step in (64, 128):
         folder = tmp_path / f'state/rank0/step-{step:012d}'
         manifest = read_bundle(folder, rank=0, world_size=1)
