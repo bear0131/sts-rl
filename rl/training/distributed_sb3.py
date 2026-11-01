@@ -3112,6 +3112,8 @@ def main() -> None:
     last_bundle_step = None
     training_failed = False
     resource_stack = ExitStack()
+    from rl.training.failure_snapshot import install_truncation_recorder, save_failure_scene
+    install_truncation_recorder(model, args.training_state_dir, rank=args.rank)
     try:
         for update in (count() if args.continuous else range(args.updates)):
             if model.device.type == "cuda":
@@ -3943,8 +3945,9 @@ def main() -> None:
                 args.checkpoint_prefix,
                 args.max_checkpoints,
             )
-    except BaseException:
+    except BaseException as error:
         training_failed = True
+        save_failure_scene(model, args.training_state_dir, rank=args.rank, error=error)
         raise
     finally:
         try:

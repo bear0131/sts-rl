@@ -93,6 +93,9 @@ class NativeSearchVecEnv(DummyVecEnv):
             base._defer_combat_observation = self.native_root_observations is not None
             try:
                 obs, self.buf_rews[index], terminated, truncated, self.buf_infos[index] = env.step(self.actions[index])
+            except BaseException:
+                self._step_failure = dict(slot=index, action=int(self.actions[index]), reason='step-exception')
+                raise
             finally:
                 base._defer_combat_observation = False
             deferred = base._combat_observation_pending
@@ -100,7 +103,14 @@ class NativeSearchVecEnv(DummyVecEnv):
             self.buf_dones[index] = terminated or truncated
             self.buf_infos[index]['TimeLimit.truncated'] = truncated and not terminated
             if cohort is not None and (truncated or self.buf_infos[index].get('dead_screen')):
+                self._step_failure = dict(slot=index, action=int(self.actions[index]),
+                                          reason='censored-cohort', truncated=bool(truncated),
+                                          dead_screen=bool(self.buf_infos[index].get('dead_screen')))
                 raise RuntimeError(f'censored whole-game cohort slot {index}; refusing partial-game training')
+            if truncated and cohort is None:
+                recorder = getattr(self, 'failure_scene_recorder', None)
+                if recorder is not None:
+                    recorder(dict(slot=index, action=int(self.actions[index]), reason='truncated'))
             if self.buf_dones[index]:
                 if deferred:
                     # TimeLimit may truncate outside the base environment.

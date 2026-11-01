@@ -942,3 +942,18 @@ def test_c23_lambda097_fp32_collection_update_and_plain_resume(
         state = torch.load(folder / 'environment.pt', weights_only=False)
         assert manifest['schema_version'] == 2
         assert state['schema_version'] == 1 and len(state['states']) == 2
+    # A collector error must leave readable environment evidence before main
+    # closes the vector. No additional rollout or optimizer step is performed.
+    original_error = RuntimeError('diagnostic lifecycle sentinel')
+    def fail_collection(self, *args, **kwargs):
+        raise original_error
+    monkeypatch.setattr(AccumulatingMaskablePPO, 'collect_rollouts', fail_collection)
+    setup['stop_file'].unlink(missing_ok=True)
+    monkeypatch.setattr(sys, 'argv', setup['argv'])
+    with pytest.raises(RuntimeError) as failure:
+        distributed_sb3.main()
+    assert failure.value is original_error
+    reports = list((tmp_path/'state/failure-scenes/rank0').glob('*/manifest.json'))
+    evidence = [json.loads(p.read_text()) for p in reports]
+    assert any(p['error'] == str(original_error) and len(p['slots']) == 2
+               and all('scene' in s and 'journal' in s for s in p['slots']) for p in evidence)

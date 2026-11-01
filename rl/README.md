@@ -16,6 +16,13 @@
 新代码使用 canonical 包路径。`_compat/` 仅保留历史 checkpoint 所需的 20 个库别名；旧 CLI 包装已删除。不会导入两套类，不在这里实现新功能。映射/退役说明见 ../tools/validation/migrations.json。
 训练/评估参数放 ../configs；启动环境放 ../experiments/launchers；输出放 ../runs/local。不要在 rl 根目录增加实验脚本或测试。
 
+训练异常在关闭 resident 环境前，将现场 JSON 与单槽环境 journal 写入
+`training_state_dir/failure-scenes/rankN/`。有明确故障槽时只保存该槽；否则最多保存
+4个在途槽，并列出全部在途索引。native 连续采样的截断在自动 reset 前留档，
+每进程最多4次；正常步骤不导出完整现场。`manifest.json`记录各项导出成功或失败，
+记录失败不掩盖原异常。这些材料用于直接读敌人/牌堆或短 CPU journal 回放，
+不是 learner 完整恢复包，不能拿来恢复训练或将删失局计为死亡。
+
 ### 小型下层 playout policy
 
 `policies/small_playout.py` / `algorithms/small_playout.py` 提供独立下层闭环；
