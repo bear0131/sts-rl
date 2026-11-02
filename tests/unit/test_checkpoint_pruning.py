@@ -1,5 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
+import json
+import zipfile
 
 import pytest
 
@@ -27,6 +29,60 @@ def test_prune_bundles_can_leave_one_fallback_before_atomic_save(tmp_path):
 def test_prune_bundles_rejects_removing_every_fallback(tmp_path):
     with pytest.raises(ValueError, match="at least one"):
         prune_bundles(tmp_path, rank=0, keep=0)
+
+
+def _round_generation(root, round_value, *, legacy=False):
+    # Deliberately not divisible by the round number or retention interval.
+    path = _generation(root, round_value * 113 + 7)
+    if legacy:
+        with zipfile.ZipFile(path / 'model.zip', 'w') as archive:
+            archive.writestr('data', json.dumps({'episode_rollouts_completed': round_value}))
+    else:
+        (path / 'manifest.json').write_text(json.dumps({'rollout_round': round_value}), encoding='utf-8')
+    return path
+
+
+def test_round_retention_keeps_latest_five_anchor_and_current(tmp_path):
+    paths = {}
+    for round_value, expected in [(179,{179}),(180,{180}),(181,{180,181}),
+                                  (184,{180,184}),(185,{185}),(186,{185,186}),
+                                  (189,{185,189}),(190,{190})]:
+        paths[round_value] = _round_generation(tmp_path, round_value, legacy=round_value <= 180)
+        prune_bundles(tmp_path, rank=0, keep=2, round_multiple=5)
+        assert {r for r,p in paths.items() if p.exists()} == expected
+    unrelated = tmp_path / 'rank0' / 'step-manual-diagnostics'
+    unrelated.mkdir(); (unrelated / 'manifest.json').write_text('{}')
+    prune_bundles(tmp_path, rank=0, keep=2, round_multiple=5)
+    assert unrelated.is_dir()
+
+
+def test_failed_new_bundle_preserves_round_anchor_and_current(tmp_path):
+    anchor = _round_generation(tmp_path, 185)
+    current = _round_generation(tmp_path, 189)
+    def fail_save(path):
+        Path(path).write_bytes(b'partial')
+        raise OSError('simulated disk write failure')
+    model = SimpleNamespace(num_timesteps=190*113+7, get_env=lambda: None, save=fail_save)
+    with pytest.raises(OSError, match='simulated disk'):
+        checkpoints.save_bundle(model,tmp_path,rank=0,world_size=1,run_id='fixture',wandb_id=None,config={})
+    assert anchor.is_dir() and current.is_dir()
+    prune_bundles(tmp_path,rank=0,keep=2,round_multiple=5)
+    assert anchor.is_dir() and current.is_dir()
+
+
+def test_unknown_or_nonmonotonic_rounds_fail_before_deletion(tmp_path):
+    first = _round_generation(tmp_path, 185)
+    second = _round_generation(tmp_path, 186)
+    (second/'manifest.json').write_text(json.dumps({'rollout_round':184}))
+    with pytest.raises(ValueError, match='must increase'):
+        prune_bundles(tmp_path,rank=0,keep=2,round_multiple=5)
+    assert first.is_dir() and second.is_dir()
+
+
+@pytest.mark.parametrize('multiple', [-1, 1.5, True])
+def test_invalid_round_multiple_rejected(tmp_path, multiple):
+    with pytest.raises(ValueError,match='nonnegative integer'):
+        prune_bundles(tmp_path,rank=0,keep=2,round_multiple=multiple)
 
 
 def test_prune_bundles_bounds_incomplete_diagnostic_evidence(tmp_path):

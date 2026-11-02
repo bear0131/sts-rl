@@ -91,7 +91,14 @@ def test_disable_kl_on_resume_preserves_state_and_two_complete_epochs(tmp_path, 
                       False, None, resume_target_kl=0.)
 
 
-def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override, censor_case=None, resume_target_kl=None):
+@pytest.mark.parametrize('fork_resume', [False, True])
+def test_round_anchor_retention_survives_real_save_and_resume(tmp_path, monkeypatch, short_natural_game_env_type, fork_resume):
+    _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, 'cpu',
+                      False, None, resume_target_kl=0., keep_round_multiple=2,
+                      fork_resume=fork_resume)
+
+
+def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override, censor_case=None, resume_target_kl=None, keep_round_multiple=0, fork_resume=False):
     if device == 'cuda':
         assert torch.cuda.is_available(), 'explicit CUDA qualification requires CUDA'
     def make_env(*args):
@@ -141,6 +148,16 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
         '--stop-file', str(tmp_path/'STOP'), '--output', str(tmp_path/'latest.zip')]
     if lambda_override is not None:
         argv += ['--upper-gae-lambda', str(lambda_override)]
+    retained_before_save = []
+    if keep_round_multiple:
+        argv += ['--checkpoint-keep-round-multiple', str(keep_round_multiple)]
+        original_save = distributed_sb3.save_bundle
+        def save(model, root, **kwargs):
+            kept = sorted(json.loads(p.read_text())['rollout_round']
+                          for p in (tmp_path/'state/rank0').glob('step-*/manifest.json'))
+            retained_before_save.append(kept)
+            return original_save(model, root, **kwargs)
+        monkeypatch.setattr(distributed_sb3,'save_bundle',save)
     if censor_case:
         argv += ['--episode-rollout-censored','exclude']
         if censor_case=='all':
@@ -199,15 +216,29 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
         del resume_argv[index:index+2]
     if resume_target_kl is not None:
         resume_argv += ['--upper-target-kl', str(resume_target_kl)]
-    monkeypatch.setattr(sys, 'argv', [*resume_argv, '--resume-state', str(first)])
+    if fork_resume:
+        resume_argv += ['--run-id', 'checkpoint-retention-fork', '--wandb-id', 'retention-fork',
+                        '--fork-state', str(first)]
+    else:
+        resume_argv += ['--resume-state', str(first)]
+    monkeypatch.setattr(sys, 'argv', resume_argv)
     distributed_sb3.main()
     assert [p['legacy_step'] for p in payloads] == [1, 2, 3, 4]
     assert [p['game/completed_full_games_global'] for p in payloads] == [i*natural_count for i in (1,2,3,4)]
     assert [x[0] for x in excluded_checks]==[2-natural_count]*4
     bundles = sorted((tmp_path/'state/rank0').glob('step-*'))
-    assert len(bundles) == 4
-    for i, bundle in enumerate(bundles):
+    assert len(bundles) == (1 if keep_round_multiple else 4)
+    if keep_round_multiple:
+        assert retained_before_save == [[],[1],[2],[2,3]]
+    for bundle_index, bundle in enumerate(bundles):
         manifest = read_bundle(bundle, rank=0, world_size=1)
+        if fork_resume:
+            assert manifest['run_id'] == 'checkpoint-retention-fork'
+            assert manifest['config']['fork_source_global_step'] == saved.num_timesteps
+        i = manifest['rollout_round'] - 1
+        if not keep_round_multiple:
+            assert i == bundle_index
+        assert manifest['config']['checkpoint_keep_round_multiple'] == keep_round_multiple
         current = AccumulatingMaskablePPO.load(bundle/'model.zip', device='cpu')
         assert current.small_playout_search_contract == 'terminal-hp-boss-win-turn128-v1'
         assert manifest['config']['small_playout_search_contract'] == 'terminal-hp-boss-win-turn128-v1'

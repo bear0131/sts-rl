@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| COMBAT30-CHECKPOINT5 | 实施中：最近五轮倍数锚点+当前轮；核查182后退化 | 用户追加存档规则：显式rollout_round%5，保留最近锚点与最新完整包，同轮只一份；新四rank包共同发布后才清理，既有永久参考不动。已临时保护185，187已完整停止；用户随后要求回178，改为178完整状态保环境续训，旧179–187保留隔离。轮次/失败写入/两轮恢复与fork本机通过，待生产保留集合核验；只读核查182之后指标，不自动回滚或新评测。见worklog同ID。 |
 | COMBAT30-KL-ALIGN | 实施中：对齐sts2仅监测KL、不提前截停 | 用户明确要求当前训练对齐。仅关闭COMBAT30上层KL early stop，保留PPO/梯度裁剪与非有限值检查、两遍192小批及全部其余合同；旧配置默认仍有阈值。需高KL/空rank回归与真实CPU-CUDA两轮保存恢复，正常保存后原权重/双Adam/环境/RNG续训，验新完整包并更新source/ledger/巡检；不重训/补历史更新。见worklog同ID。 |
 | STS2-UPPER-ARCHITECTURE | 固定源码结构对照完成；现役训练不变 | 当前COMBAT30 dcaf与spire-mentor 86512aa3公开192/3/4配方对照：本方分界面实体编码、卡牌effect卷积、MapDAG双向GRU、指针/固定动作头、CLS价值MLP；对方统一观察/动作token、正余弦数值编码、RMSNorm/SwiGLU、动作线性头、全token均值value及目标房型辅助头。双方共享actor/critic主干；本方phase拆批也共享同一模型，不是重复算同一条；对方地图仍含人工特征。只读文件/固定公共源码核验，无新实验/参数变更，不把架构差异或既有短测量当训练收益。证据terminal-only-20261102/upper-architecture-comparison.json及worklog同ID。 |
 | COMBAT30-RESUME178 | 原配置恢复完成；179完整保存通过，持续训练 | 用户要求“这个训练继续，先把这个训练跑完”，撤销上一暂停。21:54从178/global81918338普通resume，四PID64956/41326/26519/81189，各240环境/RNG/模型两Adam接续，原source dcaf/nativeb3a/192小批/两遍/FP32/λ.97和下层保护不变，未启用6144或micro512。c30-resume-variance179核178/179完整包/模型双Adam/小网刷新、1945源码/原合同/CPU推进/HTTP和七历史通过，共同179/global82476691/171840自然局，本批153258样本/306516使用/404Adam/lower8，0删失、无新错OOM。暂停reference/日志/全部W&B/transport保留，最低磁盘.6510GB；恢复窗口非优化收益。调度已ACTIVE且常规健康安静；没有用户指定的新完成上限，沿原continuous合同，不重跑验收或新测量。证据terminal-only-20261102/resume-after-variance-20261102/summary.json、c30-resume-variance179-summary/source及worklog同ID。 |

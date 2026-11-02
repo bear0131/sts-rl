@@ -841,7 +841,8 @@ def test_terminal_full960_keeps_training_settings_and_excludes_budget_games(monk
     candidate=vars(build_parser().parse_args([*common,'@configs/train/small_playout_terminal_full960_distributed.args']))
     assert {k:(baseline[k],v) for k,v in candidate.items() if baseline[k]!=v}=={
         'episode_rollout_max_steps':(6000,2424),'episode_rollout_censored':(None,'exclude'),
-        'upper_target_kl':(None,0.)}  # User-authorized continuation: sts2 monitors KL without stopping.
+        'upper_target_kl':(None,0.),  # User-authorized continuation: monitor KL without stopping.
+        'checkpoint_keep_round_multiple':(0,5)}
 
 
 def test_c23_lambda097_fp32_preserves_original10_configuration(monkeypatch):

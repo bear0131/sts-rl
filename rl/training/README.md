@@ -123,5 +123,13 @@ KL 截停，保存为 `upper_config.target_kl=null`。不传参数则保留 chec
 PPO 裁剪、梯度裁剪、非有限 loss/梯度的故障检查保持。`upper/kl_early_stop_enabled`
 标记当前机制，旧配置默认目标 `.02` 不变。改变此项是训练行为变更，须记录恢复边界。
 
+完整自然局训练可设置 `--checkpoint-keep-round-multiple 5`：每轮仍保存，四rank共同
+发布后只保留最近一个 `rollout_round % 5 == 0` 的完整包和最新完整包；重合时只留一份。
+该模式要求 `--save-every-updates 1`，覆盖按 `--max-checkpoints` 计数的保留方式。
+写入期间不预删旧锚点/当前包，临时最多三份；空间不足或写入失败保留旧恢复点并报错。
+首次到第五轮前只有最新包，没有可用锚点。原永久 `references` 目录不参与轮转。
+新manifest记录显式 `rollout_round`；旧cohort包从model.zip数据读取该计数，不能对
+真实动作数global step取模代替轮次。
+
 
 `NativeSearchVecEnv` 在原生扩展提供 `pack_neural_roots` 时，可批量构造 AR 战斗的完整根观测；搜索叶与真实根复用同一原生 pack/decoder。仅已知训练包装栈（TrainingState、CheckpointObservationCompat、ShapedReward、TimeLimit）允许在单次同步 `step_wait` 内延后非终局观测，返回前全部补齐。非战斗、真实终局及外层 TimeLimit 截断保留完整观测与原 autoreset；未知 wrapper、旧扩展或其他观测合同沿用串行路径。此优化没有改变观测版本、搜索目标或保存状态格式。回归入口：`tests/integration/test_native_root_observation.py`，必须指定候选扩展构建。

@@ -7,6 +7,7 @@ import random
 import shutil
 import time
 import uuid
+import zipfile
 
 import numpy as np
 import torch
@@ -225,6 +226,7 @@ def save_bundle(model, root, *, rank, world_size, run_id, wandb_id, config):
             outer_return_contract=identity,
             rank=rank, world_size=world_size,
             global_step=step, run_id=run_id, wandb_id=wandb_id,
+            rollout_round=getattr(model, 'episode_rollouts_completed', None),
             environment_resume=(
                 'action-journal replay; live episodes restored'
                 if schema_version >= 2
@@ -359,12 +361,42 @@ def restore_learner(
     return manifest
 
 
-def prune_bundles(root, *, rank, keep):
+def _bundle_rollout_round(path):
+    manifest = json.loads((path / 'manifest.json').read_text(encoding='utf-8'))
+    round_value = manifest.get('rollout_round')
+    if round_value is None:
+        # Old complete-cohort bundles stored the explicit round in SB3 data.
+        # Do not infer it from variable-length environment action counts.
+        with zipfile.ZipFile(path / 'model.zip') as archive:
+            round_value = json.loads(archive.read('data')).get('episode_rollouts_completed')
+    if type(round_value) is not int or round_value < 1:
+        raise ValueError('checkpoint retention requires an explicit positive rollout round')
+    return round_value
+
+
+def prune_bundles(root, *, rank, keep, round_multiple=0):
+    """Keep newest generations, or latest round-multiple anchor plus current.
+
+    Round-based retention must only run AFTER all ranks publish a new bundle;
+    old anchor/current bundles remain available during the atomic write.
+    """
     if keep < 1:
         raise ValueError('keep at least one recovery generation')
+    if type(round_multiple) is not int or round_multiple < 0:
+        raise ValueError('round_multiple must be a nonnegative integer')
     directory = Path(root) / f'rank{rank}'
-    bundles = sorted(p for p in directory.glob('step-*') if (p/'manifest.json').is_file())
-    for path in bundles[:-keep]:
+    bundles = sorted(p for p in directory.glob('step-*')
+                     if _is_step_directory_name(p.name) and (p/'manifest.json').is_file())
+    retained = set(bundles[-keep:])
+    if round_multiple and bundles:
+        rounds = [_bundle_rollout_round(p) for p in bundles]
+        if any(a >= b for a, b in zip(rounds, rounds[1:])):
+            raise ValueError('checkpoint rollout rounds must increase with global steps')
+        anchors = [p for p, r in zip(bundles, rounds) if r % round_multiple == 0]
+        retained = {bundles[-1], *anchors[-1:]}
+    for path in bundles:
+        if path in retained:
+            continue
         # Only complete, owned generation directories under the explicit root.
         if path.resolve().parent != directory.resolve():
             raise ValueError('recovery generation escaped its directory')

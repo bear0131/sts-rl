@@ -543,6 +543,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stop-file", type=Path, help="Request a coordinated save and stop at the next update boundary")
     parser.add_argument("--checkpoint-prefix", default="maskable_ppo")
     parser.add_argument("--max-checkpoints", type=int, default=20)
+    parser.add_argument('--checkpoint-keep-round-multiple', type=int, default=0,
+                        help='For complete cohorts, retain latest divisible rollout round plus current; '
+                             '0 keeps the normal count-based policy. Requires saving every round.')
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--leaf-inference", choices=("eager", "cuda-graph"), default="eager",
                         help="Runtime combat leaf backend; search and update semantics are unchanged")
@@ -2173,6 +2176,10 @@ def main() -> None:
         raise ValueError('remove the previous stop request before resuming')
     if args.training_state_dir is not None and (args.save_every_updates < 1 or args.max_checkpoints < 2):
         raise ValueError('learner recovery requires save-every-updates >= 1 and max-checkpoints >= 2')
+    if args.checkpoint_keep_round_multiple < 0:
+        raise ValueError('--checkpoint-keep-round-multiple must be nonnegative')
+    if args.checkpoint_keep_round_multiple and (args.training_state_dir is None or args.save_every_updates != 1):
+        raise ValueError('round-multiple retention requires recovery bundles saved every round')
     if args.training_state_dir is not None and args.wandb and not args.wandb_id:
         raise ValueError('learner recovery with W&B requires an explicit --wandb-id')
     if args.stop_file is not None and args.world_size > 1 and args.gradient_transport != 'ssh-ring':
@@ -2691,6 +2698,8 @@ def main() -> None:
         args.episode_rollout = True
         episode_rollout.configure(model, episode_config, rank=args.rank, world_size=args.world_size)
     args.episode_rollout_config = episode_config
+    if args.checkpoint_keep_round_multiple and episode_config is None:
+        raise ValueError('round-multiple retention requires complete-game cohorts')
     continuous_joint = (args.continuous and joint_upper(model)
         and getattr(model, 'nosl_is_az_combat_strategy', None) == 'small-playout'
         and hasattr(model.policy, 'small_playout')
@@ -3736,19 +3745,25 @@ def main() -> None:
                     args.max_checkpoints,
                 )
             if args.training_state_dir is not None and (save_due or stop_requested):
-                # Keep one known-good generation while bounding peak disk use
-                # to max_checkpoints during the next atomic bundle write.
-                prune_bundles(
-                    args.training_state_dir,
-                    rank=args.rank,
-                    keep=max(args.max_checkpoints - 1, 1),
-                )
+                # Count-based retention bounds peak usage by pre-pruning.
+                # Round anchors instead survive until the new common save.
+                if not args.checkpoint_keep_round_multiple:
+                    prune_bundles(
+                        args.training_state_dir,
+                        rank=args.rank,
+                        keep=max(args.max_checkpoints - 1, 1),
+                    )
                 save_bundle(model, args.training_state_dir, rank=args.rank, world_size=args.world_size,
                     run_id=run_id, wandb_id=args.wandb_id, config=vars(args))
-                prune_bundles(args.training_state_dir, rank=args.rank, keep=args.max_checkpoints)
+                # Round retention keeps the old common anchor/current until
+                # every rank has published the replacement generation.
+                if args.checkpoint_keep_round_multiple:
+                    average_scalar_dict({'checkpoint_ready': 1.0}, ring_transport)
+                prune_bundles(args.training_state_dir, rank=args.rank, keep=args.max_checkpoints,
+                              round_multiple=args.checkpoint_keep_round_multiple)
+                if not args.checkpoint_keep_round_multiple:
+                    average_scalar_dict({'checkpoint_ready': 1.0}, ring_transport)
                 last_bundle_step = int(model.num_timesteps)
-                # Do not start the next collection until every rank published its generation.
-                average_scalar_dict({'checkpoint_ready': 1.0}, ring_transport)
             record['checkpoint_sec'] = time.perf_counter() - checkpoint_started
             if monitor is not None:
                 if model.device.type == "cuda":
@@ -3946,14 +3961,18 @@ def main() -> None:
         # before another idempotent save would discard a fallback without
         # creating a replacement, shrinking retention on every clean exit.
         if args.training_state_dir is not None and last_bundle_step != int(model.num_timesteps):
-            prune_bundles(
-                args.training_state_dir,
-                rank=args.rank,
-                keep=max(args.max_checkpoints - 1, 1),
-            )
+            if not args.checkpoint_keep_round_multiple:
+                prune_bundles(
+                    args.training_state_dir,
+                    rank=args.rank,
+                    keep=max(args.max_checkpoints - 1, 1),
+                )
             save_bundle(model, args.training_state_dir, rank=args.rank, world_size=args.world_size,
                 run_id=run_id, wandb_id=args.wandb_id, config=vars(args))
-            prune_bundles(args.training_state_dir, rank=args.rank, keep=args.max_checkpoints)
+            if args.checkpoint_keep_round_multiple:
+                average_scalar_dict({'checkpoint_ready': 1.0}, ring_transport)
+            prune_bundles(args.training_state_dir, rank=args.rank, keep=args.max_checkpoints,
+                          round_multiple=args.checkpoint_keep_round_multiple)
         if args.rank == 0 and args.checkpoint_dir is not None and args.training_state_dir is None:
             args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
             final_step = cumulative_global_steps
