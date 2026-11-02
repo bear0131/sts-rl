@@ -35,5 +35,30 @@
     "inconclusive": "Do not claim a winner from a rare-win fluctuation. Preserve all arms, diagnose optimization or representation and plan a separately bounded follow-up. Thirty rounds screen early learning, not final ceiling.",
     "capacity_interpretation": "B versus C changes width, depth and latent count together as a capacity package; it does not isolate width alone. A versus B preserves exact initial weights and changes only actor learning rate.",
     "limitations": "Single training replica per arm; matching game seeds does not imply matching future actions or RNG consumption. Historical COMBAT30 has a different lower initialization and is descriptive context, not the causal control."
+  },
+  "post_screen": {
+    "selected_operating_arm": "B",
+    "decision": "C did not clear the preregistered benefit gate; B resumes from full round30 state. This is an operating choice, not proof of long-run capacity inferiority.",
+    "continuous": true,
+    "total_round_limit": null,
+    "reference": "Preserve immutable trial30 full bundle before rolling recovery retention can remove it.",
+    "next_review_round": 60,
+    "review_is_not_a_stop_limit": true,
+    "conditional_followup": {
+      "trigger": "At or after round60, inspect three successive non-overlapping 10-round windows. If both adjacent windows improve average floor by less than 0.5 and win rate by less than 0.5 percentage points, or there is sustained regression, investigate data/optimization before launching this experiment. Do not trigger on a single bad cohort.",
+      "hypothesis": "Low realized actor KL and the A/B learning-rate response justify testing update magnitude before another capacity increase.",
+      "control": "Current B actor LR0.00012",
+      "candidate": "Same model, actor LR0.00024 only",
+      "initialization": "Both arms fork the same verified full checkpoint including upper/lower Adam, learner RNG, all 240 environments per rank and cohort counters; preserve native/source/reward/search and critic LR.",
+      "seed": 20261103,
+      "rounds_per_arm": 20,
+      "games_per_round": 960,
+      "maximum_round_seconds": 420,
+      "failure_deadline_seconds": 415,
+      "maximum_completed_round_wall_seconds_per_arm": 8400,
+      "execution": "Sequential four-rank paired continuation, separate run identities; do not compare candidate with an unrelated historical segment.",
+      "comparison": "Common completed-round wall budget and equal19200 starting games, last two5-round windows; same +0.5pp win or +2floor practical gate with no material win/common-time regression. A single training replica remains exploratory.",
+      "not_queued_now": true
+    }
   }
 }
