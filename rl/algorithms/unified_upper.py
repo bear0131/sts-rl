@@ -34,7 +34,7 @@ def update_unified_upper(model, *, rank=0, world_size=1, average=lambda x: x, sy
     total = int(round(stats['count'] * world_size))
     out = dict(samples=float(total), updates=0., critic_updates=0., samples_used=0., critic_samples_used=0.,
         requested_epochs=float(cfg.epochs), epochs_completed=0., critic_epochs_completed=0.,
-        kl_stopped=0., kl_early_stop_enabled=0., bootstrap_samples=0., pending=0.,
+        kl_stopped=0., kl_early_stop_enabled=0., bootstrap_samples=0., pending=0., censored=0.,
         gae_precision_bits=64., target_precision_version=2.,
         **reward_monitor.metrics(stats, world_size), **campfire_monitor.metrics(stats, world_size))
     if not total:
@@ -61,7 +61,7 @@ def update_unified_upper(model, *, rank=0, world_size=1, average=lambda x: x, sy
             for p in core.upper_parameters():
                 p.requires_grad_(id(p) in active)
                 p.grad = None
-            norms, changes = [], []
+            norms = []
             before = [p.detach().clone() for p in network.parameters()]
             started = time.perf_counter()
             for epoch in range(epochs):

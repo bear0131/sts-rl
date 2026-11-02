@@ -98,7 +98,12 @@ def test_round_anchor_retention_survives_real_save_and_resume(tmp_path, monkeypa
                       fork_resume=fork_resume)
 
 
-def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override, censor_case=None, resume_target_kl=None, keep_round_multiple=0, fork_resume=False):
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_unified_mc_cohort_update_payload_and_resume(tmp_path, monkeypatch, short_natural_game_env_type, device):
+    _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, False, None, unified=True)
+
+
+def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override, censor_case=None, resume_target_kl=None, keep_round_multiple=0, fork_resume=False, unified=False):
     if device == 'cuda':
         assert torch.cuda.is_available(), 'explicit CUDA qualification requires CUDA'
     def make_env(*args):
@@ -107,6 +112,7 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
             kind = SlayTheSpireEnv if natural_start else short_natural_game_env_type
             wrapped=ShapedRewardWrapper(kind(
                 global_map_view=True, upper_public_context=True, event_option_observation=True,
+                neow_observation=unified,
                 card_language=True, combat_action_contract='autoregressive-v2'))
             if censor_case=='mixed' and index==1:
                 from gymnasium.wrappers import TimeLimit
@@ -118,7 +124,9 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
         policy_kwargs=dict(entity_config=dict(width=32, layers=1, heads=4, quantiles=8),
             upper_config=dict(width=32, layers=1, heads=4, epochs=2, minibatch_size=4,
                 micro_batch_size=2, gae_lambda=.97, optimizer='adamw', learning_rate=3e-5,
-                value_learning_rate=1e-4, weight_decay=1e-4, max_grad_norm=5),
+                value_learning_rate=1e-4, weight_decay=1e-4, max_grad_norm=5,
+                **(dict(architecture='upper-latent-actions-v1', target_kl=None, latents=4,
+                        effective_batch_size=8, critic_epochs=3) if unified else {})),
             small_playout_config=dict(epochs=2, batch_size=8, micro_batch_size=4,
                 target_mix=.2, optimizer='adamw', learning_rate=.003, weight_decay=.0001, max_grad_norm=0)),
         seed=42, device=device, amp_mode='off', nosl_is_az=True, nosl_is_az_cpp=True,
