@@ -133,3 +133,9 @@ PPO 裁剪、梯度裁剪、非有限 loss/梯度的故障检查保持。`upper/
 
 
 `NativeSearchVecEnv` 在原生扩展提供 `pack_neural_roots` 时，可批量构造 AR 战斗的完整根观测；搜索叶与真实根复用同一原生 pack/decoder。仅已知训练包装栈（TrainingState、CheckpointObservationCompat、ShapedReward、TimeLimit）允许在单次同步 `step_wait` 内延后非终局观测，返回前全部补齐。非战斗、真实终局及外层 TimeLimit 截断保留完整观测与原 autoreset；未知 wrapper、旧扩展或其他观测合同沿用串行路径。此优化没有改变观测版本、搜索目标或保存状态格式。回归入口：`tests/integration/test_native_root_observation.py`，必须指定候选扩展构建。
+
+统一上层合同 `upper-latent-actions-v1` 使用相同公开观察/动作ABI，模型权重与旧上层不兼容，按 `UpperConfig.architecture` 显式分流；旧 checkpoint 默认 `legacy`。`configs/train/unified_upper.json` 固定新模型/更新配置。状态实体含公开地图有向边，少量latent交叉注意力汇聚，动作按操作类型和引用对象统一评分，实体候选不使用无意义的槽位偏好；保留药水槽和地图坐标。
+
+两套网络（含embedding）完全独立。actor使用采集旧V得到的GAE和旧logp，critic使用完整自然局实际奖励和；标签在任何更新前固定。仅支持完整自然局及整局排除语义，未完成轨迹拒绝更新。每遍按全局有效样本数均衡分块、逐micro按样本数累积，再同步/裁剪/Adam；不按界面等权、不复制/丢弃尾批。`upper/updates`为actor Adam，`upper/critic_updates`单列critic Adam；两个参数组共用保存容器但没有共享训练参数/动量。
+
+`configs/train/unified_upper_420.args` 是有限100轮候选。`--iteration-timeout-seconds 415`覆盖采样、学习、同步、保存和W&B上报；到期进程退出124，写round-timeout记录，不能把本轮当完成或自动循环重启。`ROUND_COMPLETE`记录上报之后的完整耗时；仅从四rank都有该标记且bundle校验完整的共同代恢复。硬限是异常保护，生产资格仍需测得正常完整轮≤420s并留余量；不是硬实时平台保证。每次启动/构建初始化不属于训练轮。

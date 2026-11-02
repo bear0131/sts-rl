@@ -154,6 +154,10 @@ def update_upper(model, *, rank=0, world_size=1, average=lambda values: values, 
     """
     if not enabled(model):
         return {}
+    if model.policy.core.upper_config.architecture != 'legacy':
+        from rl.algorithms.unified_upper import update_unified_upper
+        return update_unified_upper(model, rank=rank, world_size=world_size,
+                                    average=average, synchronize=synchronize)
     records = model._upper_completed
     cfg = model.policy.core.upper_config
     count = len(records)

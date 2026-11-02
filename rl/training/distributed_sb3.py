@@ -400,6 +400,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help='One complete fresh game per environment per rollout; no auto-replacement.')
     parser.add_argument('--episode-rollout-max-steps', type=int, default=6000)
     parser.add_argument('--episode-rollout-max-seconds', type=float, default=1800.)
+    parser.add_argument('--iteration-timeout-seconds', type=float, default=0.,
+                        help='Hard round wall limit; timeout exits 124, resume only prior common save.')
     parser.add_argument('--episode-rollout-censored', choices=('error', 'exclude'), default=None)
     parser.add_argument(
         "--startup-stagger-steps",
@@ -2120,6 +2122,8 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
 
 def main() -> None:
     args = build_parser().parse_args()
+    if not np.isfinite(args.iteration_timeout_seconds) or args.iteration_timeout_seconds < 0:
+        raise ValueError('iteration timeout must be finite and nonnegative')
     if args.leaf_amp_mode is not None and args.leaf_inference != 'cuda-graph':
         raise ValueError('--leaf-amp-mode requires --leaf-inference cuda-graph')
     if args.prepare_combat_outer is not None:
@@ -3138,8 +3142,12 @@ def main() -> None:
     resource_stack = ExitStack()
     from rl.training.failure_snapshot import install_truncation_recorder, save_failure_scene
     install_truncation_recorder(model, args.training_state_dir, rank=args.rank)
+    from rl.training.iteration_budget import IterationBudget
+    iteration_budget = IterationBudget(args.iteration_timeout_seconds, rank=args.rank,
+                                       directory=args.training_state_dir)
     try:
         for update in (count() if args.continuous else range(args.updates)):
+            iteration_budget.start(update)
             if model.device.type == "cuda":
                 th.cuda.synchronize(model.device)
             started = time.perf_counter()
@@ -3951,6 +3959,12 @@ def main() -> None:
                 wandb_payload["legacy_step"] = int(legacy_step)
                 wandb.log(wandb_payload)
 
+            if args.iteration_timeout_seconds:
+                print('ROUND_COMPLETE ' + json.dumps(dict(global_step=global_timesteps,
+                    round=getattr(model, 'episode_rollouts_completed', completed_updates),
+                    wall_seconds=time.perf_counter()-started,
+                    hard_limit_seconds=args.iteration_timeout_seconds)), flush=True)
+            iteration_budget.cancel()
             if stop_requested:
                 print(f'[rank {args.rank}] coordinated stop after {global_timesteps} global steps', flush=True)
                 break
@@ -3992,6 +4006,7 @@ def main() -> None:
         save_failure_scene(model, args.training_state_dir, rank=args.rank, error=error)
         raise
     finally:
+        iteration_budget.cancel()
         try:
             resource_stack.close()
         finally:

@@ -1,0 +1,10 @@
+{
+  "architecture": "upper-latent-actions-v1",
+  "width": 192, "layers": 3, "heads": 6, "latents": 16,
+  "learning_rate": 0.00006, "value_learning_rate": 0.0001,
+  "optimizer": "adamw", "weight_decay": 0.0001, "adam_eps": 1e-8,
+  "epochs": 2, "critic_epochs": 4,
+  "effective_batch_size": 6144, "minibatch_size": 1536, "micro_batch_size": 256,
+  "gamma": 1.0, "gae_lambda": 0.97, "clip": 0.2, "entropy_coef": 0.02,
+  "value_coef": 1.0, "max_grad_norm": 5.0, "target_kl": null
+}
