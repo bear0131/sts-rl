@@ -148,7 +148,7 @@ class Monitor:
             os.replace(tmp, self.output)
 
     def watch(self, max_hours):
-        deadline = time.monotonic() + max_hours * 3600
+        deadline = time.monotonic() + max_hours * 3600 if max_hours else math.inf
         while not self.stop.is_set() and time.monotonic() < deadline:
             self.poll()
             self.stop.wait(self.interval)
@@ -170,7 +170,8 @@ def main():
     parser.add_argument('--allow-subnet', action='append', default=[],
                         help='LAN CIDR allowed to read the dashboard; may be repeated.')
     parser.add_argument('--poll-seconds', type=float, default=30)
-    parser.add_argument('--max-hours', type=float, default=48)
+    parser.add_argument('--max-hours', type=float, default=48,
+                        help='Polling duration; 0 continues until the local service stops.')
     args = parser.parse_args()
     try:
         listen = ipaddress.ip_address(args.listen)
@@ -179,8 +180,8 @@ def main():
         parser.error(str(exc))
     if not listen.is_loopback and not networks:
         parser.error('non-loopback listener requires --allow-subnet')
-    if args.poll_seconds < 10 or args.max_hours <= 0:
-        parser.error('poll-seconds >= 10 and max-hours > 0 required')
+    if not math.isfinite(args.poll_seconds) or not math.isfinite(args.max_hours) or args.poll_seconds < 10 or args.max_hours < 0:
+        parser.error('finite poll-seconds >= 10 and max-hours >= 0 required')
     config = json.loads(args.config.read_text(encoding='utf-8'))
     if (config.get('rollout_mode') != 'complete_games' and (config.get('iteration_steps') or 0) <= 0) or not config['ports']:
         parser.error('positive iteration_steps and at least one rank required')

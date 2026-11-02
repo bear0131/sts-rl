@@ -9,7 +9,8 @@
 
 `python -m apps.training_monitor --config runs/local/monitor/config.json --output runs/local/monitor/state.json`
 提供只读的 `http://127.0.0.1:8773` 窗口，默认每30秒通过SSH同步各rank状态及rank0的完整轮次指标，
-48小时后停止采集并保留展示。`--poll-seconds` / `--max-hours` 可显式调整。
+默认48小时后停止采集并保留展示。`--poll-seconds` / `--max-hours` 可显式调整；
+`--max-hours 0` 持续采集，直到本地服务关闭。
 它与需要模拟器、Torch及checkpoint的交互dashboard分开，纯标准库运行，不加载模型或触发评测。
 配置示例（实际地址、run和密钥路径放本地配置，不写入页面）：
 
@@ -21,7 +22,11 @@
 远端使用已有`.venv/bin/python`读取日志、PID及保存目录。SSH需预先配置可信host key，
 所有远端操作只读。指标按global timesteps去重，半行留到下次读取；日志轮转从头读并保留已有历史。
 断连不会清空曲线，会显示连接异常；本地服务停止后页面会标记断开，不把缓存当实时状态。
-窗口中胜率沿用训练记录的400局窗口，五轮均值只是相关窗口的均值，不是独立评测。
+完整游戏模式按 `rollout_round` 显示轮次，胜率/楼层使用本批自然结束局，剔除数单列；
+历史固定步数模式保留原400局窗口，不能和完整批次混为同一统计口径。
+上层loss/KL取各自最后一遍按样本加权的汇总，支持actor两遍、独立critic四遍；
+actor与独立critic的Adam次数分别展示。整轮耗时取rank0的`iteration_wall_sec`
+（含保存、不含随后W&B客户端排队），不当作四rank最慢墙钟。以上都是训练统计，非独立评测。
 
 ### 战士选牌排名
 

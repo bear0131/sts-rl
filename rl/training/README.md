@@ -138,4 +138,4 @@ PPO 裁剪、梯度裁剪、非有限 loss/梯度的故障检查保持。`upper/
 
 两套网络（含embedding）完全独立。actor使用采集旧V得到的GAE和旧logp，critic使用完整自然局实际奖励和；标签在任何更新前固定。仅支持完整自然局及整局排除语义，未完成轨迹拒绝更新。每遍按全局有效样本数均衡分块、逐micro按样本数累积，再同步/裁剪/Adam；不按界面等权、不复制/丢弃尾批。`upper/updates`为actor Adam，`upper/critic_updates`单列critic Adam；两个参数组共用保存容器但没有共享训练参数/动量。
 
-`configs/train/unified_upper_420.args` 是有限100轮候选。`--iteration-timeout-seconds 415`覆盖采样、学习、同步、保存和W&B上报；到期进程退出124，写round-timeout记录，不能把本轮当完成或自动循环重启。`ROUND_COMPLETE`记录上报之后的完整耗时；仅从四rank都有该标记且bundle校验完整的共同代恢复。硬限是异常保护，生产资格仍需测得正常完整轮≤420s并留余量；不是硬实时平台保证。每次启动/构建初始化不属于训练轮。
+`configs/train/unified_upper_420.args` 按用户要求持续训练，没有总轮数上限。`--iteration-timeout-seconds 415`覆盖采样、学习、同步、保存和W&B上报；到期进程退出124，写round-timeout记录，不能把本轮当完成或自动循环重启。`ROUND_COMPLETE`记录上报之后的完整耗时；仅从四rank都有该标记且bundle校验完整的共同代恢复。硬限是异常保护，生产资格仍需测得正常完整轮≤420s并留余量；不是硬实时平台保证。每次启动/构建初始化不属于训练轮。

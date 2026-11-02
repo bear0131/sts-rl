@@ -1,5 +1,4 @@
---updates
-100
+--continuous
 --episode-rollout
 --episode-rollout-max-steps
 2424

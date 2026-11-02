@@ -114,6 +114,20 @@ def test_complete_game_rollouts_preserve_variable_actions_and_explicit_rounds(tm
     assert state['rows'] == rows
 
 
+def test_unbounded_polling_keeps_running_until_stopped(tmp_path):
+    monitor = Monitor(dict(run_id='continuous', iteration_steps=1, ports=[2200]),
+                      tmp_path/'state.json', 30)
+    polls = []
+    def poll():
+        polls.append(1)
+        if len(polls) == 2:
+            monitor.stop.set()
+    with patch.object(monitor, 'poll', side_effect=poll), patch.object(monitor.stop, 'wait'):
+        monitor.watch(0)
+    assert len(polls) == 2
+    assert monitor.state['polling_ended']
+
+
 def test_dashboard_uses_complete_cohorts_and_epoch_summaries(tmp_path):
     """Render conflicting legacy/complete metrics without a browser dependency."""
     from pathlib import Path
@@ -165,6 +179,7 @@ assert.equal($('chart0').previousElementSibling.children.length,2);
 assert.equal($('chart0').previousElementSibling.children[0].textContent.includes('legacy'),true);
 assert.equal(displayRow(last)['display/upper_policy_loss'],-.001);
 assert.equal(displayRow(last)['display/upper_value_loss'],.1);
+assert.equal(displayRow({...last,'upper/value_loss_epoch_3':.08,'upper/value_loss_epoch_4':.06})['display/upper_value_loss'],.06);
 assert.equal(displayRow(last)['display/upper_kl'],.005);
 assert.equal(lastEpochMetric({'upper/kl_epoch_9':9,'upper/kl_epoch_10':10},'kl'),10);
 assert.equal(displayRow(old)['display/upper_policy_loss'],undefined);

@@ -23,15 +23,29 @@
   },
   "budget": {
     "seed": 20261103,
-    "total_rounds": 100,
+    "total_rounds": null,
+    "continuous": true,
     "qualification_rounds": 2,
-    "continuation_rounds": 98,
-    "continuation_resume_step": 407300,
+    "continuation_resume_step": 5717291,
+    "continuation_resume_round": 24,
     "games_per_rank": 240,
     "world_size": 4,
     "maximum_completed_round_seconds": 420,
     "failure_deadline_seconds": 415,
     "automatic_restart": false
+  },
+  "runtime_overrides": {
+    "file": "material/continuous.args",
+    "sha256": "b44d310736b441f007290a3d250d1e0ad5b0a3ad052faffd02c8d089f18d0649",
+    "args": ["--updates", "1", "--continuous"]
+  },
+  "local_monitor": {
+    "entry_point": "apps.training_monitor",
+    "url": "http://127.0.0.1:8773",
+    "config": "runs/local/upper-unified/local-monitor/config.json",
+    "output": "runs/local/upper-unified/local-monitor/state.json",
+    "poll_seconds": 30,
+    "max_hours": 0
   },
   "execution": {
     "precision": "FP32, float32_matmul_precision=highest, AMP off",
@@ -44,5 +58,5 @@
     "telemetry_interval_seconds": 1,
     "barrier_timeout_seconds": 430
   },
-  "notice": "Deployment record for the existing launcher, not a new executable entry. Supply NOSL_* environment variables to that launcher. Initial qualification used material/qualification.args (--updates 2); ordinary resume uses material/continuation.args (--updates 98). Runtime source is pinned above; documentation commits do not replace running code. Only resume a common verified bundle with ROUND_COMPLETE on every rank."
+  "notice": "User requested continuous training after the original finite launch. Ordinary resume at round 24 uses NOSL_OVERRIDES_FILE=material/continuous.args over the pinned runtime source and its original args file; --updates 1 is the parser sentinel for continuous mode, not a one-round limit. Current checked-in training_args also selects continuous mode. No total-round/game budget or automatic restart. Only resume a common verified bundle with ROUND_COMPLETE on every rank. Existing launch_nosl_replay.sh remains the entry."
 }

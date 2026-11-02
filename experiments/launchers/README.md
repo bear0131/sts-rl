@@ -1,19 +1,21 @@
 # Four-Rank NOSL Startup: Authoritative Procedure
 
-## 统一上层的有限训练
+## 统一上层的持续训练
 
 `unified_upper_420.json` 记录 `combat31-unified-upper-420-r1` 的部署身份、初始化来源、
-主机与100轮预算，使用原有 `launch_nosl_replay.sh` 的 `NOSL_*` 环境变量入口；该JSON
+主机与持续训练合同，使用原有 `launch_nosl_replay.sh` 的 `NOSL_*` 环境变量入口；该JSON
 是部署记录，不是 `-CombatDeployment` 的COMBAT01 schema，也没有新增启动脚本。
 模型与训练参数分别在 `configs/train/unified_upper.json` 和
 `configs/train/unified_upper_420.args`。原生扩展、初始模型与部署源码须核对记录中的SHA。
 
-此训练已用两轮完成资格验证，再以 `NOSL_RESUME_STEP=407300` 普通恢复并追加98轮；
-各rank必须加载自己的完整bundle。资格和续跑的 `NOSL_OVERRIDES_FILE` 分别为远端
-`material/qualification.args`（`--updates 2`）与 `material/continuation.args`
-（`--updates 98`）。后续意外停止时应先核共同完整轮，再用100减去已完成轮数确定剩余
-预算，不能盲目再次追加98轮。超时轮不算完成，不自动重启。
-运行中源码固定为部署记录的commit；文档提交不替换运行中的代码。
+此训练两轮资格通过后曾设置有限100轮，用户随后明确取消总轮数上限。
+在第24轮/global5717291完整保存后普通恢复，`NOSL_OVERRIDES_FILE` 使用远端
+`material/continuous.args`（`--updates 1 --continuous`）；`updates=1`是已有持续模式
+的解析哨兵，不是一轮上限。各rank加载自己的完整bundle，模型/Adam/环境接续。
+每轮415s失败保护继续保留，超时轮不算完成，不自动重启。
+运行源码仍固定为部署记录commit，原args文件由已记录SHA的override覆盖；当前仓库
+的训练args也已改为continuous。监控使用 `--max-hours 0` 持续采集；新run及旧历史
+分别保存。文档和本地监控提交不替换远端运行代码。
 指标暂用W&B offline并保留远端本地日志；完整耗时与恢复约束见
 [训练合同](../../rl/training/README.md)，一次性验收证据位置见
 [UPPER-UNIFIED-420工作记录](../../worklog/2026-11-03.md#upper-unified-420实现与训练安排)。
