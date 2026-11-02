@@ -31,7 +31,7 @@ const specs=[
 let state=null;
 document.getElementById('notice').append(' COMBAT31使用全新独立actor/critic，下层继承旧203轮权重；每轮960起始局，actor两遍GAE优势、critic四遍实际完整回报监督，无上层分支续玩。value loss取critic最后一遍；与旧λ-return监督不是同一标签，不能直接比较数值判断模型优劣。整轮耗时图取机器1的iteration_wall_sec（含保存，未含随后W&B客户端排队），不是四机最慢值；阶段耗时不能替代整轮耗时。');
 document.getElementById('notice').append(' 火堆仅从启用监控后的轮次记录：只统计主选择，升级/删牌后的选牌不重复计数；每项以其可选次数为分母，模型概率在合法火堆选项内归一化（排除药水操作）。未解锁或无样本不显示，各项条件比例不必相加为100%。');
-const runColors=['#56baf0','#f5bc69','#b09af9','#58d3ab','#f08094','#d9e477','#e791ec','#88c8c0','#ff8b50','#f3edf7'];
+const runColors=['#56baf0','#f5bc69','#b09af9','#58d3ab','#f08094','#d9e477','#e791ec','#88c8c0','#ff8b50','#f3edf7','#b98b74','#60e5ff'];
 const $=id=>document.getElementById(id), finite=x=>typeof x==='number'&&Number.isFinite(x);
 const fmt=(x,pct=false)=>!finite(x)?'—':pct?(x*100).toFixed(2)+'%':Math.abs(x)<0.01&&x!==0?x.toPrecision(3):x.toLocaleString('zh-CN',{maximumFractionDigits:3});
 function completeCohort(row){

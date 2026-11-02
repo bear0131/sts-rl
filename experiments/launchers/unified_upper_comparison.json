@@ -1,0 +1,39 @@
+{
+  "protocol": "unified-upper-learning-efficiency-v1",
+  "runtime_source": "61f4f94d2709fe176e624c013546ae254997d178",
+  "remote_repo": "/root/upper-unified-20261103",
+  "seed": 20261103,
+  "rounds_per_trial": 30,
+  "games_per_round": 960,
+  "maximum_round_seconds": 420,
+  "failure_deadline_seconds": 415,
+  "initial_model": "material/unified-initial.zip",
+  "initial_model_sha256": "3c2462eafb7ee5aaf30d99d0587e8fe19ddc07a6cf70eb46261e56e05ca24658",
+  "lower_initialization": "Identical COMBAT30 round203 weights in all arms; fresh lower Adam, no warmup.",
+  "shared": {
+    "world_size": 4,
+    "environments_per_rank": 240,
+    "upper_epochs": 2,
+    "critic_epochs": 4,
+    "effective_batch_size": 6144,
+    "micro_batch_size": 256,
+    "critic_learning_rate": 0.0001,
+    "precision": "FP32 highest",
+    "reward_and_search": "unchanged",
+    "upper_branch_playouts": false
+  },
+  "arms": [
+    {"id": "A", "run_id": "combat31-unified-upper-420-r1", "width": 192, "layers": 3, "heads": 6, "latents": 16, "actor_learning_rate": 0.00006, "reuse_existing_first_30_rounds": true},
+    {"id": "B", "run_id": "combat32-unified-upper-lr12-r1", "width": 192, "layers": 3, "heads": 6, "latents": 16, "actor_learning_rate": 0.00012, "wandb_id": "combat32lr12a", "ring_port": 29932, "initial": "material/comparison-B.zip"},
+    {"id": "C", "run_id": "combat33-unified-upper-256-lr12-r1", "width": 256, "layers": 4, "heads": 8, "latents": 32, "actor_learning_rate": 0.00012, "wandb_id": "combat33big12a", "ring_port": 29933, "initial": "material/comparison-C.zip"}
+  ],
+  "execution": "Sequential four-rank trials using the existing launcher. B starts after A has at least 30 complete rounds and a verified boundary save. C starts after B completes 30 rounds or fails qualification; never overlap trial collectors. Every trial is finite; the selected long training remains continuous without a total-round limit.",
+  "comparison": {
+    "primary": "Compare complete-cohort win rate and floor progression at equal cumulative training wall time, using only fully finished rounds within the common time budget.",
+    "secondary": "Compare identical first 30 cohorts (28800 starting games), last 10 rounds and their two non-overlapping 5-round windows; report exclusions, actual upper samples, optimizer steps and KL.",
+    "practical_gate": "Prefer B over A only with consistent improvement across both final windows: at least +0.5 percentage points win rate or +2 floors with no material win regression, and no regression at the common training-time budget. C must clear the same comparison against B, not just run faster or fit a lower training loss.",
+    "inconclusive": "Do not claim a winner from a rare-win fluctuation. Preserve all arms, diagnose optimization or representation and plan a separately bounded follow-up. Thirty rounds screen early learning, not final ceiling.",
+    "capacity_interpretation": "B versus C changes width, depth and latent count together as a capacity package; it does not isolate width alone. A versus B preserves exact initial weights and changes only actor learning rate.",
+    "limitations": "Single training replica per arm; matching game seeds does not imply matching future actions or RNG consumption. Historical COMBAT30 has a different lower initialization and is descriptive context, not the causal control."
+  }
+}
