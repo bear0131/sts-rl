@@ -202,7 +202,8 @@ def update_upper(model, *, rank=0, world_size=1, average=lambda values: values, 
     mean = stats['advantage_sum'] / mean_count
     std = max(0., stats['advantage_square_sum'] / mean_count - mean * mean) ** .5
     out.update(advantage_mean=mean, advantage_std=std, grad_norm=0., parameter_l2_change=0.,
-               clip_fraction=0., requested_updates=float(cfg.epochs), kl_stopped=0.)
+               clip_fraction=0., requested_updates=float(cfg.epochs), kl_stopped=0.,
+               effective_batch_size_global=mean_count * world_size)
     advantages = (advantages - mean) / (std + 1e-8)
     if cfg.minibatch_size:
         if auxiliary or aux_stats:
