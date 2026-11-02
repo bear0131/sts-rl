@@ -178,7 +178,7 @@ def update_upper(model, *, rank=0, world_size=1, average=lambda values: values, 
     mean_count = stats['count']
     out = dict(samples=mean_count * world_size, updates=0., kl=0., policy_loss=0.,
         requested_epochs=float(cfg.epochs), requested_updates=0., samples_used=0., epochs_completed=0.,
-        kl_stopped=0., effective_batch_size_global=0.,
+        kl_stopped=0., kl_early_stop_enabled=float(cfg.target_kl is not None), effective_batch_size_global=0.,
         value_loss=0., entropy=0., censored=stats['censored'] * world_size,
         pending=stats['pending'] * world_size,
         bootstrap_samples=stats['bootstrap_samples'] * world_size,
@@ -249,7 +249,7 @@ def update_upper(model, *, rank=0, world_size=1, average=lambda values: values, 
             out[f'clip_fraction_epoch_{epoch + 1}'] = out['clip_fraction']
             if not all(np.isfinite(v) for v in out.values()):
                 raise FloatingPointError('nonfinite strategic PPO statistics')
-            if out['kl'] > 1.5 * cfg.target_kl:
+            if cfg.target_kl is not None and out['kl'] > 1.5 * cfg.target_kl:
                 out['kl_stopped'] = 1.
                 break
             if synchronize is not None:
@@ -321,7 +321,7 @@ def _update_minibatches(model, records, advantages, returns, out, rank, world_si
                 if not np.isclose(reduced['count'], mean_count):
                     raise RuntimeError('strategic minibatch collective row count mismatch')
                 out.update({k: v / mean_count for k, v in reduced.items() if k != 'count'})
-                if out['kl'] > 1.5 * cfg.target_kl:
+                if cfg.target_kl is not None and out['kl'] > 1.5 * cfg.target_kl:
                     out['kl_stopped'] = 1.
                     break
                 if synchronize is not None:

@@ -438,8 +438,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--upper-epochs", type=int, default=None,
-        help="Maximum full-batch strategic PPO updates per collection; retains KL early stopping. "
+        help="Strategic PPO passes per collection; retains the configured KL stopping policy. "
              "Omission preserves the checkpoint value.",
+    )
+    parser.add_argument(
+        "--upper-target-kl", type=float, default=None,
+        help="Strategic PPO stops above 1.5 times this positive KL target; 0 disables KL early stopping. "
+             "Omission preserves the checkpoint value; KL and nonfinite checks remain active.",
     )
     parser.add_argument("--n-epochs", type=int, default=1)
     parser.add_argument('--upper-auxiliary-search', choices=('public-v1', 'off'), default=None,
@@ -2125,6 +2130,8 @@ def main() -> None:
         raise ValueError('--upper-epochs must be positive')
     if args.upper_gae_lambda is not None and not 0.0 <= args.upper_gae_lambda <= 1.0:
         raise ValueError('--upper-gae-lambda must be finite and between 0 and 1')
+    if args.upper_target_kl is not None and (not np.isfinite(args.upper_target_kl) or args.upper_target_kl < 0):
+        raise ValueError('--upper-target-kl must be finite and nonnegative (0 disables early stopping)')
     for name in ('small_playout_batch_size', 'small_playout_micro_batch_size'):
         if getattr(args, name) is not None and getattr(args, name) < 1:
             raise ValueError('--' + name.replace('_', '-') + ' must be positive')
@@ -2360,6 +2367,8 @@ def main() -> None:
         raise ValueError('--upper-epochs requires joint strategic PPO')
     if args.upper_gae_lambda is not None and not joint_upper(probe_model):
         raise ValueError('--upper-gae-lambda requires joint strategic PPO')
+    if args.upper_target_kl is not None and not joint_upper(probe_model):
+        raise ValueError('--upper-target-kl requires joint strategic PPO')
     small_overrides = {key: getattr(args, 'small_playout_' + key)
                        for key in ('batch_size', 'micro_batch_size')
                        if getattr(args, 'small_playout_' + key) is not None}
@@ -2392,6 +2401,8 @@ def main() -> None:
                 args.upper_config['epochs'] = args.upper_epochs
             if args.upper_gae_lambda is not None:
                 args.upper_config['gae_lambda'] = args.upper_gae_lambda
+            if args.upper_target_kl is not None:
+                args.upper_config['target_kl'] = args.upper_target_kl or None
             if args.world_size > 1 and args.gradient_transport != 'ssh-ring':
                 raise ValueError('joint strategic PPO requires ring gradient synchronization')
             if args.boss_opening_dataset:

@@ -85,7 +85,13 @@ def test_budget_exclusion_two_rounds_and_ordinary_resume(tmp_path, monkeypatch, 
     _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, False, None, censor_case)
 
 
-def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override, censor_case=None):
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_disable_kl_on_resume_preserves_state_and_two_complete_epochs(tmp_path, monkeypatch, short_natural_game_env_type, device):
+    _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device,
+                      False, None, resume_target_kl=0.)
+
+
+def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override, censor_case=None, resume_target_kl=None):
     if device == 'cuda':
         assert torch.cuda.is_available(), 'explicit CUDA qualification requires CUDA'
     def make_env(*args):
@@ -161,6 +167,9 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
                                        rtol=0, atol=0, check_device=False)
             assert not self.policy.upper_optimizer.state and not self.policy.small_playout_optimizer.state
         assert self.policy.core.upper_config.gae_lambda == (lambda_override or .97)
+        if resume_target_kl is not None:
+            expected_kl = None if getattr(self, 'episode_rollouts_completed', 0) else .02
+            assert self.policy.core.upper_config.target_kl == expected_kl
         return original_learn(self, *args, **kwargs)
     monkeypatch.setattr(AccumulatingMaskablePPO, 'learn', learn)
     monkeypatch.setattr(sys, 'argv', argv)
@@ -188,6 +197,8 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
     if lambda_override is not None:
         index = resume_argv.index('--upper-gae-lambda')
         del resume_argv[index:index+2]
+    if resume_target_kl is not None:
+        resume_argv += ['--upper-target-kl', str(resume_target_kl)]
     monkeypatch.setattr(sys, 'argv', [*resume_argv, '--resume-state', str(first)])
     distributed_sb3.main()
     assert [p['legacy_step'] for p in payloads] == [1, 2, 3, 4]
@@ -202,6 +213,18 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
         assert manifest['config']['small_playout_search_contract'] == 'terminal-hp-boss-win-turn128-v1'
         assert current.policy.core.upper_config.gae_lambda == (lambda_override or .97)
         assert manifest['config']['upper_config']['gae_lambda'] == (lambda_override or .97)
+        if resume_target_kl is not None:
+            expected_kl = .02 if i < 2 else None
+            assert current.policy.core.upper_config.target_kl == expected_kl
+            assert current.policy.upper_config['target_kl'] == expected_kl
+            assert current.policy_kwargs['upper_config']['target_kl'] == expected_kl
+            assert manifest['config']['upper_config']['target_kl'] == expected_kl
+            assert payloads[i]['upper/kl_early_stop_enabled'] == int(i < 2)
+            if i >= 2:
+                assert payloads[i]['upper/updates'] == payloads[i]['upper/requested_updates']
+                assert payloads[i]['upper/epochs_completed'] == 2
+                assert payloads[i]['upper/samples_used'] == 2 * payloads[i]['upper/samples']
+                assert payloads[i]['upper/kl_stopped'] == 0
         stats = current.episode_rollout_stats
         assert stats['first_seed'] == 42 + i * 2 and stats['last_seed'] == 43 + i * 2
         assert stats['completed_games'] == natural_count and stats['unfinished_games'] == 0

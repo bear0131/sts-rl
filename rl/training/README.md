@@ -116,5 +116,12 @@ learner/environment 使用 pickle protocol 5 保存 NumPy buffer，保持 bundle
 正常维护创建所有 rank 的 stop 文件并等待全部退出、核对同一恢复代数，再删除这些
 请求文件并恢复。不要在训练中直接 kill 后声称最后一轮已保存。
 
+战略上层的 `--upper-target-kl X` 可在普通恢复时覆盖 KL 提前截停目标：正数在
+当前更新批的近似 KL 超过 `1.5 * X` 时拒绝该批并停止本轮剩余更新；`0` 显式关闭
+KL 截停，保存为 `upper_config.target_kl=null`。不传参数则保留 checkpoint 设置。
+关闭只影响截停判断，仍记录原近似 KL、epoch 样本加权统计和实际更新覆盖；
+PPO 裁剪、梯度裁剪、非有限 loss/梯度的故障检查保持。`upper/kl_early_stop_enabled`
+标记当前机制，旧配置默认目标 `.02` 不变。改变此项是训练行为变更，须记录恢复边界。
+
 
 `NativeSearchVecEnv` 在原生扩展提供 `pack_neural_roots` 时，可批量构造 AR 战斗的完整根观测；搜索叶与真实根复用同一原生 pack/decoder。仅已知训练包装栈（TrainingState、CheckpointObservationCompat、ShapedReward、TimeLimit）允许在单次同步 `step_wait` 内延后非终局观测，返回前全部补齐。非战斗、真实终局及外层 TimeLimit 截断保留完整观测与原 autoreset；未知 wrapper、旧扩展或其他观测合同沿用串行路径。此优化没有改变观测版本、搜索目标或保存状态格式。回归入口：`tests/integration/test_native_root_observation.py`，必须指定候选扩展构建。

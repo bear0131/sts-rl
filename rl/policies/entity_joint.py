@@ -26,7 +26,7 @@ class UpperConfig:
     entropy_coef: float = 0.02
     value_coef: float = 0.5
     max_grad_norm: float = 0.5
-    target_kl: float = 0.02
+    target_kl: float | None = 0.02  # None records KL without early stopping.
     minibatch_size: int = 0
     optimizer: str = 'inherit'
     value_learning_rate: float = 0.
@@ -34,11 +34,14 @@ class UpperConfig:
     adam_eps: float = 1e-8
 
     def __post_init__(self):
-        if (not all(math.isfinite(value) for key, value in asdict(self).items() if key != 'optimizer')
+        if (not all(math.isfinite(value) for key, value in asdict(self).items()
+                    if key not in ('optimizer', 'target_kl'))
                 or min(self.width, self.layers, self.heads, self.epochs, self.micro_batch_size) < 1
                 or self.width % self.heads or self.learning_rate <= 0
                 or not 0 <= self.gamma <= 1 or not 0 <= self.gae_lambda <= 1
-                or not 0 < self.clip < 1 or self.target_kl <= 0
+                or not 0 < self.clip < 1
+                or (self.target_kl is not None and
+                    (not math.isfinite(self.target_kl) or self.target_kl <= 0))
                 or self.max_grad_norm <= 0 or min(self.entropy_coef, self.value_coef) < 0
                 or type(self.minibatch_size) is not int or self.minibatch_size < 0
                 or self.optimizer not in ('inherit', 'adamw') or self.adam_eps <= 0
