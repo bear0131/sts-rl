@@ -1,6 +1,24 @@
 # Four-Rank NOSL Startup: Authoritative Procedure
 
-## COMBAT01：新run开机入口
+## 统一上层的有限训练
+
+`unified_upper_420.json` 记录 `combat31-unified-upper-420-r1` 的部署身份、初始化来源、
+主机与100轮预算，使用原有 `launch_nosl_replay.sh` 的 `NOSL_*` 环境变量入口；该JSON
+是部署记录，不是 `-CombatDeployment` 的COMBAT01 schema，也没有新增启动脚本。
+模型与训练参数分别在 `configs/train/unified_upper.json` 和
+`configs/train/unified_upper_420.args`。原生扩展、初始模型与部署源码须核对记录中的SHA。
+
+此训练已用两轮完成资格验证，再以 `NOSL_RESUME_STEP=407300` 普通恢复并追加98轮；
+各rank必须加载自己的完整bundle。资格和续跑的 `NOSL_OVERRIDES_FILE` 分别为远端
+`material/qualification.args`（`--updates 2`）与 `material/continuation.args`
+（`--updates 98`）。后续意外停止时应先核共同完整轮，再用100减去已完成轮数确定剩余
+预算，不能盲目再次追加98轮。超时轮不算完成，不自动重启。
+运行中源码固定为部署记录的commit；文档提交不替换运行中的代码。
+指标暂用W&B offline并保留远端本地日志；完整耗时与恢复约束见
+[训练合同](../../rl/training/README.md)，一次性验收证据位置见
+[UPPER-UNIFIED-420工作记录](../../worklog/2026-11-03.md#upper-unified-420实现与训练安排)。
+
+## COMBAT01系列：876冻结上层的开机入口
 
 当前新目标使用同一manager的 `-CombatDeployment` 模式；本节参数优先于下文历史
 TRAIN47操作。它不会读取历史主机/HP模型/旧run默认值。训练profile保持876的

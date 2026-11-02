@@ -1,0 +1,48 @@
+{
+  "kind": "nosl-launch-environment-v1",
+  "launcher": "experiments/launchers/launch_nosl_replay.sh",
+  "source_commit": "61f4f94d2709fe176e624c013546ae254997d178",
+  "model_config": "configs/train/unified_upper.json",
+  "training_args": "configs/train/unified_upper_420.args",
+  "remote_repo": "/root/upper-unified-20261103",
+  "run_id": "combat31-unified-upper-420-r1",
+  "wandb_id": "combat31unified03a",
+  "wandb_mode": "offline",
+  "host": "connect.bjb2.seetacloud.com",
+  "rank_ports": [42228, 41309, 49038, 33203],
+  "ring_port": 29931,
+  "native_build_dir": "/root/autodl-tmp/combat-small-playout-20261030/sim/sts_lightspeed/build-small",
+  "native_sha256": "b3a058e42f4908fbb9a8027b31785395e0ab5ba1bbcf5d95420e5d7bdaa58e7e",
+  "initial_checkpoint": "material/unified-initial.zip",
+  "initial_sha256": "3c2462eafb7ee5aaf30d99d0587e8fe19ddc07a6cf70eb46261e56e05ca24658",
+  "initialization": {
+    "upper": "fresh",
+    "lower": "weights from COMBAT30 round 203",
+    "lower_source_model_sha256": "ef4f3f00d8f214c48d817812bd956bf0ab56fcc65c022a258baffc3012800b55",
+    "all_optimizers": "fresh"
+  },
+  "budget": {
+    "seed": 20261103,
+    "total_rounds": 100,
+    "qualification_rounds": 2,
+    "continuation_rounds": 98,
+    "continuation_resume_step": 407300,
+    "games_per_rank": 240,
+    "world_size": 4,
+    "maximum_completed_round_seconds": 420,
+    "failure_deadline_seconds": 415,
+    "automatic_restart": false
+  },
+  "execution": {
+    "precision": "FP32, float32_matmul_precision=highest, AMP off",
+    "native_search_threads": 16,
+    "upper_branch_playouts": false,
+    "lower_search_contract": "terminal-hp-boss-win-turn128-v1",
+    "leaf_inference": "eager",
+    "save_every_updates": 1,
+    "max_checkpoints": 2,
+    "telemetry_interval_seconds": 1,
+    "barrier_timeout_seconds": 430
+  },
+  "notice": "Deployment record for the existing launcher, not a new executable entry. Supply NOSL_* environment variables to that launcher. Initial qualification used material/qualification.args (--updates 2); ordinary resume uses material/continuation.args (--updates 98). Runtime source is pinned above; documentation commits do not replace running code. Only resume a common verified bundle with ROUND_COMPLETE on every rank."
+}
