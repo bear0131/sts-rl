@@ -2,7 +2,7 @@
 
 记录时间：2026-11-03 11:45（Asia/Shanghai）。用户要求“把当前的任务记录下来推上去，我交给其他会话”。本文件是交接快照；实时身份和下一复核点以本地 ledger 为准，TODO.md 仍是唯一任务清单。
 
-> **11月4日03:44续接：** 3/27两阶段各9臂/1920自然局测试已验收分析，无epoch候选通过门槛，保持2/4。native修复6a26d40e/f35674a6已过116回归、保留模型与两完整自然cohort；现原root/source b12c01d4/COMBAT37从保护27普通恢复，有限28/29生产资格运行，成功后普通恢复29 continuous。新PID及执行receipt以ledger为准，勿重复launch；失败日志/exit1/transport已归档，原native/source不改。
+> **11月4日03:54续接：** native修复28/29生产资格四机exit0、全状态验收通过（221.416/213.795秒、各1920自然局/0剔除）。已从保护29/global15251883普通恢复continuous，无总轮数上限；新PID及创建时间以ledger/native-capacity-continuous-launch.json为准。源Python b12c01d4、新native f35674a6保持；3/27的18臂整局留出测试无候选过门槛，仍actor2/critic4。下一普通恢复30完整包核验及固定30学习复核；禁止重复资格/launch。失败28与原26/27/3/B192/trial30证据保留。
 
 > **11月4日03:12故障更新（历史）：** COMBAT37第28轮采集遇HEADBUTT100种/172张超过固定96槽，四机exit1，未重启。完整26/27（最后global14073832）模型/上下层Adam/RNG/480环境已保护，3/B192/trial30仍保留。先处理TODO SIM-SMALL-NATIVE-CHOICE-CAPACITY，不执行旧31停界/launch；更新次数诊断源已在运行前修订为3/27。学习已复核20、固定30待完成。以下continuous状态为故障前历史。
 

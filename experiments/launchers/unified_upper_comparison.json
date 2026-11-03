@@ -693,7 +693,7 @@
       }
     },
     "native_capacity_recovery_qualification": {
-      "status": "launched once from full27 after both epoch diagnostics passed acceptance; finite28/29 in progress",
+      "status": "full28/29 state accepted; ordinary continuous resume29 launched, first complete30 audit pending",
       "issue": "SIM-SMALL-NATIVE-CHOICE-CAPACITY",
       "source_round": 27,
       "target_complete_rounds": [
@@ -708,7 +708,28 @@
       "contract": "Ordinary full-state resume27, 480/rank1920 natural games per round, original actor2/critic4 and LR/batches/micro/lower/search. No environment reset or new initial; native artifact selected explicitly, production Python/source and original binary unchanged. Archive failed28 exit/transport first, preserve raw failed log and complete26/27/3/B192/trial30.",
       "budget": "Two complete rounds only,415s fail protection/420s gate each,840s combined upper bound, seed continues20261103+(round-1)*1920+rank*480. Failure stops for diagnosis, never automatic retry.",
       "acceptance": "Four ranks match28/29 round/global_step;0excluded, actual sample uses2+4 and actor/critic/lower Adam, both complete bundles/environment/RNG/lower refresh and model/optimizer preservation. Audit only new launch segment for failures while retaining historical failed segment; no claim failed28 was complete.",
-      "after_pass": "Protect28/29 then ordinary continuous resume from29 with no total limit; validate complete30 and fixed1-10/11-20/21-30 review with explicit native boundary28. Epoch diagnostic candidates still need separate evidence/implementation/qualification before changing update counts."
+      "after_pass": "Protect28/29 then ordinary continuous resume from29 with no total limit; validate complete30 and fixed1-10/11-20/21-30 review with explicit native boundary28. Epoch diagnostic candidates still need separate evidence/implementation/qualification before changing update counts.",
+      "qualification_result": {
+        "evidence": "runs/local/upper-unified/candidates/native-capacity-qualification-accepted.json",
+        "rounds": [
+          28,
+          29
+        ],
+        "global_step": 15251883,
+        "maximum_round_seconds": [
+          221.41629586648196,
+          213.7945457044989
+        ],
+        "completed_games": 3840,
+        "excluded_games": 0,
+        "actual_adam_at29": {
+          "actor": 1366,
+          "critic": 556,
+          "lower": 232
+        },
+        "headroom_diagnosis_required": false,
+        "continuous_launch": "runs/local/upper-unified/candidates/native-capacity-continuous-launch.json"
+      }
     }
   },
   "monitor": {
@@ -720,7 +741,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "3/27两阶段共18臂整局留出测试完成，均无方案通过门槛，保持actor2/critic4。已从完整27恢复，正在进行新native的有限28/29完整生产资格；通过后续训，无总限目标不变。",
-    "updated_at": "2026-11-04T03:45:05.674018+08:00"
+    "note": "原生修复28/29完整生产资格及四机全状态验收通过，已普通恢复29 continuous；保持actor2/critic4、无总轮数上限，待完整30恢复验收和固定学习复核。",
+    "updated_at": "2026-11-04T03:54:10.765423+08:00"
   }
 }
