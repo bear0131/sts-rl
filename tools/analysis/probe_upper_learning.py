@@ -325,6 +325,44 @@ def compare_horizons(model, env, callback, args, panel, report, publish, check):
     publish()
 
 
+def measure_frozen_rollout(model, collect, *args, **kwargs):
+    """Time the real collector, including first-use work, without learner updates."""
+    from rl.algorithms.upper_probe import state_digest
+    from rl.training.resource_monitor import ResourceMonitor
+    def identity():
+        return dict(policy=state_digest(model.policy.state_dict()),
+                    upper=state_digest(model.policy.upper_optimizer.state_dict()),
+                    lower=state_digest(model.policy.small_playout_optimizer.state_dict()))
+    before = identity()
+    cuda = model.device.type == 'cuda'
+    if cuda:
+        torch.cuda.synchronize(model.device)
+        torch.cuda.reset_peak_memory_stats(model.device)
+    monitor = ResourceMonitor(interval=1., gpu=cuda, torch_device=model.device)
+    with monitor:
+        started = time.perf_counter()
+        ok = collect(model, *args, **kwargs)
+        if cuda:
+            torch.cuda.synchronize(model.device)
+        seconds = time.perf_counter() - started
+    after = identity()
+    if not ok or before != after:
+        raise AssertionError('frozen rollout failed or changed policy/Adam')
+    stats = dict(model.episode_rollout_stats)
+    if (stats['completed_games'] != model.env.num_envs or stats['censored_games']
+            or stats['unfinished_games'] or stats['games'] != model.env.num_envs):
+        raise ValueError('frozen rollout requires every natural complete game')
+    result = dict(cohort=stats, collector_wall_seconds=seconds,
+        upper_samples=len(model._upper_completed), lower_samples=len(model._small_playout_samples),
+        policy_and_adam_unchanged=True, state_digests=before, optimizer_updates=0,
+        resources=monitor.summary,
+        torch_max_allocated_bytes=torch.cuda.max_memory_allocated(model.device) if cuda else None,
+        torch_max_reserved_bytes=torch.cuda.max_memory_reserved(model.device) if cuda else None,
+        warmup='No discarded warmup cohort; first-use work is included in collector wall time.',
+        note='Frozen collection only, not a training round. No update/sync/save cost included in collector wall.')
+    return ok, result
+
+
 def unified_candidates():
     """Use the real four-rank restore/collector/transport, stop before saving.
 
@@ -346,7 +384,8 @@ def unified_candidates():
     if '--fork-state' not in remaining or '--continuous' in remaining:
         raise ValueError('candidate diagnosis requires an isolated finite full-state fork')
     protocol = json.loads(args.unified_candidate_protocol.read_text())
-    if protocol['protocol'] != 'unified-upper-candidate-screen-v1':
+    collection_only = protocol['protocol'] == 'unified-upper-rollout-scale-v1'
+    if protocol['protocol'] not in ('unified-upper-candidate-screen-v1', 'unified-upper-rollout-scale-v1'):
         raise ValueError('unknown candidate protocol')
     launch = trainer.build_parser().parse_args(remaining)
     limits = protocol['diagnostic']
@@ -360,6 +399,12 @@ def unified_candidates():
         raise ValueError('candidate launch must be finite, unsaved, fully restored and protocol-bounded')
     class ProbeComplete(BaseException):
         pass
+    collection = {}
+    original_collect = trainer.AccumulatingMaskablePPO.collect_rollouts
+    def collect(model, *a, **kw):
+        ok, result = measure_frozen_rollout(model, original_collect, *a, **kw)
+        collection.update(result)
+        return ok
     def diagnose(model, **kwargs):
         rank = kwargs['rank']
         if not model._recovery_environment_restored:
@@ -369,6 +414,15 @@ def unified_candidates():
         output = args.probe_output / f'rank{rank}'
         output.mkdir(parents=True, exist_ok=True)
         (output/'cohort.json').write_text(json.dumps(model.episode_rollout_stats, indent=2))
+        if collection_only:
+            if not collection:
+                raise AssertionError('missing measured collection')
+            (output/'rollout.json').write_text(json.dumps(collection, indent=2, allow_nan=False))
+            print('UPPER_ROLLOUT_BENCHMARK_COMPLETE ' + json.dumps(dict(
+                rank=rank, games=model.env.num_envs,
+                collector_wall_seconds=collection['collector_wall_seconds'],
+                policy_and_adam_unchanged=True)), flush=True)
+            raise ProbeComplete()
         result = run_probe(model, protocol, output_dir=output, **kwargs)
         print('UPPER_PROBE_COMPLETE ' + json.dumps(dict(rank=rank,
             source_state_restored=result['source_state_restored'],
@@ -384,12 +438,19 @@ def unified_candidates():
         import torch
         # Must precede the first CUDA BLAS handle used by the restored model.
         os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
-        torch.cuda.init()
-        resources = ResourceMonitor(interval=1., gpu=True, torch_device='cuda:0')
+        cuda = torch.device(launch.device).type == 'cuda'
+        if cuda:
+            torch.cuda.init()
+        resources = ResourceMonitor(interval=1., gpu=cuda, torch_device=launch.device)
         try:
             with resources:
-                with patch.object(trainer, 'update_upper', diagnose), patch.object(
-                        small_playout, 'update_online', lambda *a, **kw: {}):
+                from contextlib import ExitStack
+                with ExitStack() as stack:
+                    if collection_only:
+                        stack.enter_context(patch.object(trainer.AccumulatingMaskablePPO, 'collect_rollouts', collect))
+                    stack.enter_context(patch.object(trainer, 'update_upper', diagnose))
+                    stack.enter_context(patch.object(
+                        small_playout, 'update_online', lambda *a, **kw: {}))
                     try:
                         trainer.main()
                     except ProbeComplete:

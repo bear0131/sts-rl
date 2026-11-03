@@ -98,12 +98,14 @@ def test_round_anchor_retention_survives_real_save_and_resume(tmp_path, monkeypa
                       fork_resume=fork_resume)
 
 
+@pytest.mark.parametrize('critic_batch', [None, 3])
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
-def test_unified_mc_cohort_update_payload_and_resume(tmp_path, monkeypatch, short_natural_game_env_type, device):
-    _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, False, None, unified=True)
+def test_unified_mc_cohort_update_payload_and_resume(tmp_path, monkeypatch, short_natural_game_env_type, device, critic_batch):
+    _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, False, None,
+                      unified=True, critic_batch=critic_batch)
 
 
-def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override, censor_case=None, resume_target_kl=None, keep_round_multiple=0, fork_resume=False, unified=False):
+def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override, censor_case=None, resume_target_kl=None, keep_round_multiple=0, fork_resume=False, unified=False, critic_batch=None):
     if device == 'cuda':
         assert torch.cuda.is_available(), 'explicit CUDA qualification requires CUDA'
     def make_env(*args):
@@ -118,7 +120,8 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
                 from gymnasium.wrappers import TimeLimit
                 wrapped=TimeLimit(wrapped,max_episode_steps=1)
             return TrainingStateWrapper(wrapped)
-        return VecMonitor(NativeSearchVecEnv([lambda:factory(0),lambda:factory(1)], threads=1))
+        count = getattr(args[-1], 'n_envs', 2) if args else 2
+        return VecMonitor(NativeSearchVecEnv([lambda i=i: factory(i) for i in range(count)], threads=1))
     env = make_env()
     model = AccumulatingMaskablePPO(EntityJointPolicy, env, n_steps=2, batch_size=2, n_epochs=1,
         policy_kwargs=dict(entity_config=dict(width=32, layers=1, heads=4, quantiles=8),
@@ -154,6 +157,10 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
         '--run-id', 'cohort-test', '--wandb', '--wandb-id', 'cohort-test',
         '--training-state-dir', str(tmp_path/'state'), '--save-every-updates', '1', '--max-checkpoints', '4',
         '--stop-file', str(tmp_path/'STOP'), '--output', str(tmp_path/'latest.zip')]
+    if unified and not censor_case:
+        argv += ['--episode-rollout-censored', 'exclude']
+    if critic_batch is not None:
+        argv += ['--upper-critic-effective-batch-size', str(critic_batch)]
     if lambda_override is not None:
         argv += ['--upper-gae-lambda', str(lambda_override)]
     retained_before_save = []
@@ -219,6 +226,9 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
         return result
     monkeypatch.setattr(distributed_sb3, 'restore_learner', restore)
     resume_argv = list(argv)
+    if critic_batch is not None:
+        index = resume_argv.index('--upper-critic-effective-batch-size')
+        del resume_argv[index:index+2]
     if lambda_override is not None:
         index = resume_argv.index('--upper-gae-lambda')
         del resume_argv[index:index+2]
@@ -264,6 +274,16 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
                 assert payloads[i]['upper/epochs_completed'] == 2
                 assert payloads[i]['upper/samples_used'] == 2 * payloads[i]['upper/samples']
                 assert payloads[i]['upper/kl_stopped'] == 0
+        if unified:
+            import math
+            cfg = current.policy.core.upper_config
+            assert cfg.critic_effective_batch_size == (critic_batch or 0)
+            assert manifest['config']['upper_config']['critic_effective_batch_size'] == (critic_batch or 0)
+            samples = payloads[i]['upper/samples']
+            assert payloads[i]['upper/updates'] == 2 * math.ceil(samples / 8)
+            assert payloads[i]['upper/critic_updates'] == 3 * math.ceil(samples / (critic_batch or 8))
+            assert payloads[i]['upper/critic_samples_used'] == 3 * samples
+            assert payloads[i]['upper/requested_critic_effective_batch_size'] == (critic_batch or 8)
         stats = current.episode_rollout_stats
         assert stats['first_seed'] == 42 + i * 2 and stats['last_seed'] == 43 + i * 2
         assert stats['completed_games'] == natural_count and stats['unfinished_games'] == 0
@@ -278,3 +298,119 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
             assert not current.policy.upper_optimizer.state and not current.policy.small_playout_optimizer.state
             torch.testing.assert_close(current.policy.state_dict(),initial_policy,rtol=0,atol=0,check_device=False)
 
+    return dict(argv=argv, payloads=payloads, last_bundle=bundles[-1])
+
+
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_complete_cohort_growth_preserves_source_and_plain_resume(
+        tmp_path, monkeypatch, short_natural_game_env_type, device):
+    import random
+    from rl.training.checkpoints import restore_learner, _observation_sha256
+    from tests.integration.test_training_smoke import assert_nested_equal
+    setup = _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type,
+                              device, False, None, unified=True, critic_batch=3)
+    source = setup['last_bundle']
+    source_manifest = read_bundle(source, rank=0, world_size=1)
+    restored_counts = []
+    def observed_restore(model, path, **kwargs):
+        saved = torch.load(path/'environment.pt', weights_only=False)
+        learner = torch.load(path/'learner.pt', weights_only=False)
+        expected = AccumulatingMaskablePPO.load(path/'model.zip', device=device)
+        source_count = len(saved['states'])
+        result = restore_learner(model, path, **kwargs)
+        assert_nested_equal(model.policy.state_dict(), expected.policy.state_dict())
+        assert_nested_equal(model.policy.upper_optimizer.state_dict(), expected.policy.upper_optimizer.state_dict())
+        assert_nested_equal(model.policy.small_playout_optimizer.state_dict(), expected.policy.small_playout_optimizer.state_dict())
+        states = model.env.env_method('export_training_state')
+        assert_nested_equal(states[:source_count], saved['states'])
+        assert _observation_sha256({k:v[:source_count] for k,v in model._last_obs.items()}) == saved['last_observation_sha256']
+        np.testing.assert_array_equal(model._last_episode_starts[:source_count], learner['last_episode_starts'])
+        np.testing.assert_array_equal(model.env.episode_returns[:source_count], saved['episode_returns'])
+        np.testing.assert_array_equal(model.env.episode_lengths[:source_count], saved['episode_lengths'])
+        assert model.env.episode_count == saved['episode_count']
+        assert model._episode_num == learner['episode_num']
+        assert_nested_equal(model._upper_episode_ids[:source_count], learner['upper_episode_ids'])
+        assert_nested_equal(model._upper_pending[:source_count], learner['upper_pending'])
+        assert_nested_equal(model.ep_info_buffer, expected.ep_info_buffer)
+        np.testing.assert_equal(np.random.get_state(), learner['numpy_rng'])
+        assert random.getstate() == learner['python_rng']
+        assert torch.equal(torch.get_rng_state(), learner['torch_rng'])
+        if learner['cuda_rng'] is not None:
+            assert_nested_equal(torch.cuda.get_rng_state_all(), learner['cuda_rng'])
+        if kwargs['grow_environments']:
+            assert model._recovery_environment_growth['appended_first_seed'] == 52
+            assert len(states) == 3 and len(learner['upper_pending']) == 2
+            assert model._upper_pending[2:] == [None]
+            assert model._upper_episode_ids[2:] == [4]
+            assert model._last_episode_starts[2:].tolist() == [True]
+        restored_counts.append(source_count)
+        return result
+    monkeypatch.setattr(distributed_sb3, 'restore_learner', observed_restore)
+    args = [*setup['argv'], '--n-envs', '3', '--run-id', 'grown', '--wandb-id', 'grown',
+            '--training-state-dir', str(tmp_path/'grown-state')]
+    # Geometry changes are forbidden without the explicit migration option.
+    monkeypatch.setattr(sys, 'argv', [*args, '--fork-state', str(source)])
+    with pytest.raises(ValueError, match='ordinary resume'):
+        distributed_sb3.main()
+    monkeypatch.setattr(sys, 'argv', [*args, '--fork-state', str(source), '--fork-grow-environments'])
+    distributed_sb3.main()
+    boundary = sorted((tmp_path/'grown-state/rank0').glob('step-*'))[-1]
+    monkeypatch.setattr(sys, 'argv', [*args, '--resume-state', str(boundary)])
+    distributed_sb3.main()
+    assert restored_counts == [2, 3]
+    assert read_bundle(source, rank=0, world_size=1) == source_manifest
+    assert [p['game/completed_full_games_global'] for p in setup['payloads']] == [2,4,6,8,11,14,17,20]
+    for index, path in enumerate(sorted((tmp_path/'grown-state/rank0').glob('step-*'))):
+        saved = AccumulatingMaskablePPO.load(path/'model.zip', device=device)
+        assert saved.episode_rollouts_completed == 5 + index
+        assert saved.episode_rollout_seed_offset == -4
+        assert saved.episode_rollout_stats['first_seed'] == 50 + 3 * index
+        assert saved.episode_rollout_stats['last_seed'] == 52 + 3 * index
+        assert saved.episode_rollout_stats['completed_games'] == 3
+        assert saved.episode_rollout_stats['censored_games'] == saved.episode_rollout_stats['unfinished_games'] == 0
+        assert len(torch.load(path/'environment.pt', weights_only=False)['states']) == 3
+        assert saved.policy.core.upper_config.critic_effective_batch_size == 3
+
+
+def test_frozen_rollout_diagnostic_uses_real_collector_without_saving_updates(
+        tmp_path, monkeypatch, short_natural_game_env_type):
+    from rl.training.checkpoints import restore_learner
+    from rl.algorithms.upper_probe import state_digest
+    from tools.analysis.probe_upper_learning import unified_candidates
+    setup = _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type,
+                              'cpu', False, None, unified=True, critic_batch=3)
+    source = setup['last_bundle']
+    manifest = read_bundle(source, rank=0, world_size=1)
+    model = AccumulatingMaskablePPO.load(source/'model.zip', device='cpu')
+    expected = dict(policy=state_digest(model.policy.state_dict()),
+                    upper=state_digest(model.policy.upper_optimizer.state_dict()),
+                    lower=state_digest(model.policy.small_playout_optimizer.state_dict()))
+    protocol = tmp_path/'scale.json'
+    protocol.write_text(json.dumps(dict(protocol='unified-upper-rollout-scale-v1',
+        diagnostic=dict(games_per_rank=3, world_size=1, maximum_wall_seconds=60))))
+    argv, index = [], 1
+    while index < len(setup['argv']):
+        flag = setup['argv'][index]
+        if flag in ('--training-state-dir', '--output', '--wandb-id'):
+            index += 2
+        elif flag == '--wandb':
+            index += 1
+        else:
+            argv.append(flag)
+            index += 1
+    output = tmp_path/'rollout-probe'
+    monkeypatch.setattr(distributed_sb3, 'restore_learner', restore_learner)
+    monkeypatch.setattr(sys, 'argv', ['probe', '--unified-candidate-protocol', str(protocol),
+        '--probe-output', str(output), *argv, '--fork-state', str(source), '--fork-grow-environments',
+        '--n-envs', '3', '--updates', '1', '--run-id', 'frozen-rollout', '--iteration-timeout-seconds', '60'])
+    unified_candidates()
+    result = json.loads((output/'rank0/rollout.json').read_text())
+    assert result['cohort']['completed_games'] == 3
+    assert result['cohort']['first_seed'] == 50
+    assert result['collector_wall_seconds'] > 0
+    assert result['optimizer_updates'] == 0 and result['policy_and_adam_unchanged']
+    assert result['state_digests'] == expected
+    assert result['resources']['interval_seconds'] == 1.
+    assert result['torch_max_allocated_bytes'] is None  # CPU is not GPU qualification.
+    assert read_bundle(source, rank=0, world_size=1) == manifest
+    assert len(setup['payloads']) == 4  # Diagnostic never publishes a training update.

@@ -444,7 +444,7 @@ def build_parser() -> argparse.ArgumentParser:
              "Omission preserves the checkpoint value.",
     )
     for flag, kind in (('learning-rate', float), ('value-learning-rate', float),
-                       ('effective-batch-size', int), ('critic-epochs', int)):
+                       ('effective-batch-size', int), ('critic-effective-batch-size', int), ('critic-epochs', int)):
         parser.add_argument('--upper-' + flag, type=kind, default=None,
                             help='Unified upper override; omission preserves checkpoint configuration and Adam state.')
     parser.add_argument('--upper-critic-target', choices=('mc', 'frozen-lambda'), default=None,
@@ -543,8 +543,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--fork-reset-environments",
         action="store_true",
         help="With --fork-state, keep learner/replay/RNG state but reset the "
-        "freshly constructed VecEnv. Required when changing n_envs.",
+        "freshly constructed VecEnv. Complete natural cohorts can instead grow explicitly.",
     )
+    parser.add_argument('--fork-grow-environments', action='store_true',
+                        help='With --fork-state and --episode-rollout, preserve the complete natural '
+                             'unified cohort and append new seeded environments; never reset source slots.')
     parser.add_argument(
         "--resume-reset-environments",
         action="store_true",
@@ -2134,7 +2137,7 @@ def apply_unified_upper_update_overrides(model, args):
     """Apply explicit unified settings after loading Adam, without resetting moments."""
     from dataclasses import asdict, replace
     changes = {name: getattr(args, 'upper_' + name) for name in
-               ('learning_rate', 'value_learning_rate', 'effective_batch_size', 'critic_epochs')
+               ('learning_rate', 'value_learning_rate', 'effective_batch_size', 'critic_effective_batch_size', 'critic_epochs')
                if getattr(args, 'upper_' + name, None) is not None}
     if any(not np.isfinite(v) or v <= 0 for v in changes.values()):
         raise ValueError('upper optimization overrides must be finite and positive')
@@ -2194,6 +2197,10 @@ def main() -> None:
         raise ValueError("--fork-reset-environments requires --fork-state")
     if args.resume_reset_environments and args.resume_state is None:
         raise ValueError("--resume-reset-environments requires --resume-state")
+    if args.fork_grow_environments and (
+            args.fork_state is None or not args.episode_rollout
+            or args.fork_reset_environments or args.resume_reset_environments):
+        raise ValueError('--fork-grow-environments requires --fork-state/--episode-rollout without environment reset')
     recovery_state = args.resume_state or args.fork_state
     if recovery_state is not None:
         manifest = read_bundle(recovery_state, rank=args.rank, world_size=args.world_size)
@@ -2753,8 +2760,12 @@ def main() -> None:
         th.backends.cuda.matmul.allow_tf32 = False
         th.backends.cudnn.allow_tf32 = False
         args.episode_rollout = True
-        episode_rollout.configure(model, episode_config, rank=args.rank, world_size=args.world_size)
+        episode_rollout.configure(model, episode_config, rank=args.rank, world_size=args.world_size,
+                                  grow_environments=args.fork_grow_environments)
     args.episode_rollout_config = episode_config
+    if episode_config is not None:
+        args.episode_rollout_seed_offset = getattr(model, 'episode_rollout_seed_offset', 0)
+        args.episode_rollout_growth = getattr(model, 'episode_rollout_growth', None)
     if args.checkpoint_keep_round_multiple and episode_config is None:
         raise ValueError('round-multiple retention requires complete-game cohorts')
     continuous_joint = (args.continuous and joint_upper(model)
@@ -3143,7 +3154,11 @@ def main() -> None:
             world_size=args.world_size,
             restore_environment=not bool(
                 args.fork_reset_environments or args.resume_reset_environments),
+            grow_environments=args.fork_grow_environments,
         )
+        if args.fork_grow_environments:
+            print('ENVIRONMENT_EXPANDED_ON_FORK ' + json.dumps(
+                model._recovery_environment_growth, sort_keys=True), flush=True)
         if args.fork_reset_environments or args.resume_reset_environments:
             print(
                 ("ENVIRONMENT_RESET_ON_FORK " if args.fork_reset_environments

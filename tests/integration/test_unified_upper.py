@@ -87,11 +87,17 @@ def test_mc_return_is_separate_from_frozen_gae():
         complete_returns(rows[:1])
 
 
+@pytest.mark.parametrize('critic_batch', [0, 8])
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
-def test_two_updates_save_load_and_old_value_freezing(unified_env, tmp_path, device):
+def test_two_updates_save_load_and_old_value_freezing(unified_env, tmp_path, device, critic_batch):
     if device == 'cuda' and not torch.cuda.is_available():
         pytest.fail('selected CUDA qualification requires an available device')
+    from dataclasses import asdict, replace
     model = make_model(unified_env, device)
+    cfg = replace(model.policy.core.upper_config, critic_effective_batch_size=critic_batch)
+    model.policy.core.upper_config = cfg
+    model.policy.upper_config = model.policy_kwargs['upper_config'] = asdict(cfg)
+    critic_steps_per_round = 3 if critic_batch == 8 else 6
     model.set_logger(configure(str(tmp_path), []))
     obs, _ = unified_env.reset(seed=41)
     model._upper_pending = [None]
@@ -106,7 +112,10 @@ def test_two_updates_save_load_and_old_value_freezing(unified_env, tmp_path, dev
         model._upper_completed = rows
         frozen = [(r['value'], r['log_prob']) for r in rows]
         result = update_upper(model)
-        assert result['updates'] == 4 and result['critic_updates'] == 6
+        assert result['updates'] == 4 and result['critic_updates'] == critic_steps_per_round
+        assert result['requested_critic_updates'] == critic_steps_per_round
+        assert result['requested_critic_effective_batch_size'] == (critic_batch or 4)
+        assert result['critic_effective_batch_size_global'] == (7 if critic_batch == 8 else 3.5)
         assert result['samples_used'] == 14 and result['critic_samples_used'] == 21
         assert frozen == [(r['value'], r['log_prob']) for r in rows]
         path = tmp_path / f'round{iteration}.zip'
@@ -118,17 +127,23 @@ def test_two_updates_save_load_and_old_value_freezing(unified_env, tmp_path, dev
                        if any(p is q for q in loaded.policy.core.upper_actor.parameters())}
         critic_steps = {int(s['step']) for p, s in loaded.policy.upper_optimizer.state.items()
                         if any(p is q for q in loaded.policy.core.upper_critic.parameters())}
-        assert actor_steps == {4 * (iteration+1)} and critic_steps == {6 * (iteration+1)}
+        assert actor_steps == {4 * (iteration+1)} and critic_steps == {critic_steps_per_round * (iteration+1)}
+        assert loaded.policy.core.upper_config.critic_effective_batch_size == critic_batch
         model = loaded
         model.set_logger(configure(str(tmp_path), []))
 
 
+@pytest.mark.parametrize('critic_batch', [0, 4])
 @pytest.mark.parametrize('measure', [False, True])
-def test_unequal_empty_ranks_match_global_weighted_update(unified_env, tmp_path, measure):
+def test_unequal_empty_ranks_match_global_weighted_update(unified_env, tmp_path, measure, critic_batch, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
     from dataclasses import replace
     from rl.training.distributed_sb3 import pack_gradients, install_flat_gradients
+    if critic_batch:
+        # All samples on one rank retain the reference partition boundaries;
+        # deterministic order isolates weighted reduction from thread RNG order.
+        monkeypatch.setattr(np.random, 'permutation', lambda n: np.arange(n))
     obs, _ = unified_env.reset(seed=53)
     reference = make_model(unified_env)
     state = copy.deepcopy(reference.policy.state_dict())
@@ -147,13 +162,14 @@ def test_unequal_empty_ranks_match_global_weighted_update(unified_env, tmp_path,
     def ready(model, samples):
         model.policy.load_state_dict(state)
         model.policy.core.upper_config = replace(model.policy.core.upper_config,
-            effective_batch_size=64, measure_value_loss=measure)
+            effective_batch_size=64, critic_effective_batch_size=critic_batch, measure_value_loss=measure)
         model.set_logger(configure(str(tmp_path), []))
         model._upper_completed, model._upper_pending = copy.deepcopy(samples), []
         return model
     ready(reference, rows)
     reference_result = update_upper(reference)
-    models = [ready(make_model(unified_env), samples) for samples in ([], rows[:3], rows[3:])]
+    partitions = ([], rows, []) if critic_batch else ([], rows[:3], rows[3:])
+    models = [ready(make_model(unified_env), samples) for samples in partitions]
     barrier, slots = Barrier(3, timeout=40), [None]*3
     def average(rank, values):
         slots[rank] = values
@@ -170,6 +186,7 @@ def test_unequal_empty_ranks_match_global_weighted_update(unified_env, tmp_path,
         results = list(pool.map(train, range(3)))
     for model, result in zip(models, results):
         assert result['samples_used'] == 14 and result['critic_samples_used'] == 21
+        assert result['updates'] == 2 and result['critic_updates'] == (6 if critic_batch else 3)
         if measure:
             assert result['value_measurement_samples'] == 7
             for when in ('pre', 'post'):
@@ -208,7 +225,7 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
     before = state_digest(dict(policy=model.policy.state_dict(),
         optimizer=model.policy.upper_optimizer.state_dict()))
     protocol = dict(seed=31, diagnostic=dict(world_size=1, games_per_rank=7,
-        holdout_games_per_rank=2, max_probe_decisions_per_split_per_rank=10, full_critic_mse=True),
+        holdout_games_per_rank=2, max_probe_decisions_per_split_per_rank=10, full_critic_mse=True, profile_updates=True),
         arms=[dict(id='control', changes={}),
               dict(id='lambda1', changes={}, critic_target='frozen_lambda_return', critic_lambda=1.),
               dict(id='room_half', changes={}, critic_target='frozen_lambda_return', critic_lambda=.5, lambda_scope='room'),
@@ -227,6 +244,8 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
     assert result['rng_restored'] and result['lower_optimizer_unchanged']
     assert result['training_games'] == 5-calibration_games and result['holdout_games'] == 2
     assert result['calibration_games'] == calibration_games
+    assert all(a['resources']['interval_seconds'] == 1. for a in result['arms'])
+    assert all((a['torch_max_allocated_bytes'] is not None) == (device == 'cuda') for a in result['arms'])
     for split, count in [('train', 5-calibration_games), ('holdout', 2)]:
         pre = result['full_critic_pre_update'][split]
         assert pre['samples'] == count
@@ -322,7 +341,8 @@ def test_frozen_lambda_critic_preserves_actor_and_adam_resume(unified_env, tmp_p
         UpperConfig(critic_target='frozen-lambda')
 
 
-def test_fewer_updates_small_lr_preserves_adam_and_survives_resume(unified_env, tmp_path):
+@pytest.mark.parametrize('critic_batch', [None, 4])
+def test_fewer_updates_small_lr_preserves_adam_and_survives_resume(unified_env, tmp_path, critic_batch):
     from rl.algorithms.upper_probe import state_digest
     from rl.training.distributed_sb3 import build_parser, apply_unified_upper_update_overrides
     model = make_model(unified_env)
@@ -343,6 +363,9 @@ def test_fewer_updates_small_lr_preserves_adam_and_survives_resume(unified_env, 
     args = build_parser().parse_args(['--rank', '0', '--world-size', '1', '--upper-learning-rate', '0.00003',
         '--upper-value-learning-rate', '0.00005', '--upper-effective-batch-size', '8',
         '--upper-critic-epochs', '2'])
+    if critic_batch is not None:
+        args.upper_critic_effective_batch_size = critic_batch
+    critic_steps_per_round = 4 if critic_batch == 4 else 2
     apply_unified_upper_update_overrides(candidate, args)
     assert state_digest(candidate.policy.state_dict()) == policy_digest
     assert state_digest(candidate.policy.upper_optimizer.state_dict()['state']) == adam_digest
@@ -351,12 +374,12 @@ def test_fewer_updates_small_lr_preserves_adam_and_survives_resume(unified_env, 
         candidate.set_logger(configure(str(tmp_path), []))
         candidate._upper_completed = copy.deepcopy(rows)
         result = update_upper(candidate)
-        assert result['updates'] == result['critic_updates'] == 2
+        assert result['updates'] == 2 and result['critic_updates'] == critic_steps_per_round
         assert result['samples_used'] == result['critic_samples_used'] == 14
         assert result['critic_target_version'] == 1
         assert result['actor_learning_rate'] == 3e-5 and result['critic_learning_rate'] == 5e-5
         for network, expected in [(candidate.policy.core.upper_actor, 4+2*(iteration+1)),
-                                  (candidate.policy.core.upper_critic, 6+2*(iteration+1))]:
+                                  (candidate.policy.core.upper_critic, 6+critic_steps_per_round*(iteration+1))]:
             assert {int(candidate.policy.upper_optimizer.state[p]['step']) for p in network.parameters()} == {expected}
         saved = tmp_path/f'candidate{iteration}.zip'; candidate.save(saved)
         restored = AccumulatingMaskablePPO.load(saved, device='cpu')
@@ -365,6 +388,7 @@ def test_fewer_updates_small_lr_preserves_adam_and_survives_resume(unified_env, 
         cfg = restored.policy.core.upper_config
         assert cfg.learning_rate == 3e-5 and cfg.value_learning_rate == 5e-5
         assert cfg.effective_batch_size == 8 and cfg.critic_epochs == 2
+        assert cfg.critic_effective_batch_size == (critic_batch or 0)
         candidate = restored
     args.upper_learning_rate = float('nan')
     with pytest.raises(ValueError, match='finite and positive'):
@@ -481,3 +505,24 @@ def test_frozen_measurement_failure_restores_modes_and_rng(unified_env, monkeypa
     assert [m.training for m in modules] == modes
     assert before == state_digest((random.getstate(), np.random.get_state(), torch.get_rng_state()))
     assert policy == state_digest(model.policy.state_dict())
+
+
+@pytest.mark.parametrize('value', [-1, 1.5, True])
+def test_critic_batch_rejects_invalid_configuration(value):
+    from rl.policies.entity_joint import UpperConfig
+    with pytest.raises(ValueError, match='critic effective batch'):
+        UpperConfig(architecture='upper-latent-actions-v1', optimizer='adamw',
+                    target_kl=None, critic_effective_batch_size=value)
+
+
+def test_critic_batch_requires_unified_and_cli_positive():
+    from rl.policies.entity_joint import UpperConfig
+    from rl.training.distributed_sb3 import build_parser, apply_unified_upper_update_overrides
+    assert UpperConfig().critic_effective_batch_size == 0
+    with pytest.raises(ValueError, match='unified'):
+        UpperConfig(critic_effective_batch_size=8)
+    for value in ('0', '-1'):
+        args = build_parser().parse_args(['--rank', '0', '--world-size', '1',
+                                         '--upper-critic-effective-batch-size', value])
+        with pytest.raises(ValueError, match='finite and positive'):
+            apply_unified_upper_update_overrides(None, args)

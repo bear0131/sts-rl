@@ -487,7 +487,8 @@ Existing checkpoints remain loadable; completed upper rows are not replayed.
 
 完整游戏 cohort 使用 `--episode-rollout` 和 native vector：每个环境每轮只运行
 一个自然完整游戏，结束后保持终局；全部结束才更新，下一轮用新种子重新初始化。
-种子为 `seed + completed_rollouts * world_size * n_envs + rank * n_envs + slot`。
+种子为 `seed + seed_offset + completed_rollouts * world_size * n_envs + rank * n_envs + slot`，
+旧包 `seed_offset=0`。
 `--episode-rollout-max-steps/seconds` 只作失败看门狗，超限报错，不能把未结束局
 算死亡、替换或训练。`--n-steps` 此时仅决定未使用的 SB3 scratch buffer 大小。
 `global_timesteps` 累加实际执行的动作（含原子选择前缀，不含终局等待），
@@ -495,6 +496,17 @@ Existing checkpoints remain loadable; completed upper rows are not replayed.
 Adam、RNG、完成批次和已结束环境的严格日志回放（terminal journal schema 2）。
 旧进行中环境 journal schema 1 继续支持。此模式目前仅支持 FP32 joint-upper、
 small-playout、无辅助/旧 replay；不改变动作、公开观测、奖励或战斗预算。
+
+仅统一上层、零删失且完整自然终局的保存边界允许显式扩容：
+`--fork-state <完整包> --fork-grow-environments --episode-rollout --n-envs <更多局数>`。
+必须新 run/W&B 身份，不可与任何 reset-environments 参数合用；普通 resume 仍拒绝改变
+cohort 几何，world size、seed 和采集预算也不得同时改。源环境逐槽恢复并核观测摘要，
+仅追加的槽按下一cohort中对应seed初始化；源模型、Adam、计数、历史窗口和learner RNG保留。
+下一轮仍走正常的完整cohort begin：旧终局槽和新槽一起采集新游戏，禁止丢弃未完成源游戏。
+迁移将 `seed_offset` 减去 `已完成轮数 × world_size × 新增局数`，下一全局seed连续、
+后续stride采用新局数。offset和扩容来源随模型及manifest保存，普通恢复不再施加迁移。
+`ENVIRONMENT_EXPANDED_ON_FORK`区分恢复数和追加数，并记录seed范围；不能将新增槽称作源恢复。
+扩大cohort改变统计样本和每局更新频率，须独立有界资格、完整墙钟及学习效果评测。
 
 `UpperConfig.minibatch_size > 0` 启用每 rank 小批 PPO；0 保留旧整批实现。
 完整轨迹先计算 FP64 GAE，再全局标准化优势，每遍独立打乱并使用每条记录一次。
@@ -518,10 +530,16 @@ actor 的冻结 GAE、奖励、终局定义、搜索、样本遍数和上下层 
 
 统一上层有界优化实验可在现有分布式入口使用 `--upper-learning-rate`、
 `--upper-value-learning-rate`、`--upper-effective-batch-size` 和 `--upper-critic-epochs`。
+`--upper-critic-effective-batch-size` 可独立设置 critic 的正整数全局目标 batch；
+旧包配置默认为0，表示随 `effective_batch_size`，保持原共享 batch 行为。
+省略 CLI 时保留已保存的独立设置；actor 的有效 batch/遍数不会因此改变。
 省略时保留 checkpoint；显式覆盖在 Adam 加载之后更新对应配置/参数组，保留所有动量和步数。
 全局目标 batch 不再乘 rank 数，实际每遍更新 `ceil(全局上层样本数 / 目标batch)` 次，
 所有完整游戏样本均使用；micro batch 只控制执行分块。日志记录实际 actor/critic LR、
 目标及实际平均有效 batch、更新次数和样本使用，资格仍须完成多机生产采集与保存恢复。
+其中既有 `requested_effective_batch_size` / `effective_batch_size_global` / `requested_updates`
+保留 actor 口径；critic 对应 `requested_critic_effective_batch_size` /
+`critic_effective_batch_size_global` / `requested_critic_updates`，实际计数仍为 `critic_updates`。
 
 统一上层的 `--upper-measure-value-loss` 启用同一完整训练 cohort 的冻结前后测量；
 默认关闭，省略参数时沿用 checkpoint，`--no-upper-measure-value-loss` 显式关闭。
@@ -545,3 +563,12 @@ actor 的冻结 GAE、奖励、终局定义、搜索、样本遍数和上下层 
 共同源权重，逐臂 `full_critic_post_update` 为更新后的权重。它复用同一测量原语。
 原 `probes` 仍受 `max_probe_decisions_per_split_per_rank` 限制，是另一个采样分母；
 不要将 probe MSE 与全 split MSE 混用，或将有界诊断的总成本混入生产单轮吞吐。
+
+`tools.analysis.probe_upper_learning --unified-candidate-protocol <协议> --probe-output <目录>`
+也接受 `unified-upper-rollout-scale-v1`：沿同一分布式恢复与完整采集入口，在上下层更新前
+结束，逐rank输出 `rollout.json`、自然局/动作/决策分母、CUDA同步采集时间、资源和源参数/Adam摘要。
+允许显式完整边界扩容fork；禁止continuous、reset、W&B训练记录或模型保存。
+测量包括首次使用开销，不丢弃warmup局；启动/恢复与总进程时间另记，采集时间不含更新/同步/保存。
+`unified-upper-candidate-screen-v1` 的 `diagnostic.profile_updates: true` 为每个临时更新臂
+记录1秒资源采样及精确Torch峰值；固定有效batch/样本顺序时可比较microbatch执行分块。
+CPU资源缺GPU项填null；单次诊断吞吐不是完整训练资格，也不能证明同墙钟学习收益。

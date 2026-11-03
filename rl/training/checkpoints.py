@@ -125,6 +125,8 @@ def _capture_environment(model):
 
 
 def _restore_environment_states(env, states):
+    if len(states) != env.num_envs:
+        raise ValueError('environment recovery count mismatch; explicit complete-cohort growth required')
     try:
         restore_many = env.restore_training_states
     except AttributeError:
@@ -142,6 +144,65 @@ def _restore_environment_states(env, states):
             }
         return np.stack(observations)
     return restore_many(states)
+
+
+def _grow_complete_cohort(model, manifest, state, environment, *, rank, world_size):
+    """Append seeded slots while retaining every source slot and learner field.
+
+    configure() validates the complete natural-game boundary before this call.
+    Here the saved bundle, per-slot learner arrays and live geometry must agree
+    with that explicit migration. Caller restores learner RNG after replay.
+    """
+    env = model.get_env()
+    growth = getattr(model, 'episode_rollout_growth', None)
+    old_count = len(environment['states'])
+    if (env is None or not growth or old_count != growth['source_games_per_rank']
+            or env.num_envs != growth['games_per_rank'] or env.num_envs <= old_count
+            or manifest.get('rollout_round') != growth['source_round']
+            or manifest['config'].get('episode_rollout_config', {}).get('games_per_rank') != old_count
+            or getattr(model, 'episode_rollout_world_size', None) != world_size
+            or getattr(model, 'episode_rollout_rank', None) != rank
+            or getattr(model, '_outer_return', False) or state['replay'] is not None
+            or any(state.get('upper_pending') or ())
+            or any(state.get('nosl_is_az_pending_fights') or ())):
+        raise ValueError('environment growth source/geometry/boundary mismatch')
+    extra = env.num_envs - old_count
+    # Copy only per-slot data; source files and loaded optimizer state are never edited.
+    state = dict(state)
+    environment = dict(environment)
+    for name, fill, dtype, owner in (
+            ('last_episode_starts', True, bool, state),
+            ('episode_returns', 0., np.float32, environment),
+            ('episode_lengths', 0, np.int32, environment)):
+        values = np.asarray(owner[name], dtype=dtype)
+        if values.shape != (old_count,):
+            raise ValueError('environment growth source array mismatch: ' + name)
+        owner[name] = np.concatenate((values, np.full(extra, fill, dtype=dtype)))
+    for name, fill in (('upper_pending', None), ('nosl_is_az_pending_fights', []),
+                       ('upper_episode_ids', growth['source_round'])):
+        values = state.get(name)
+        if values is not None:
+            if len(values) != old_count:
+                raise ValueError('environment growth source slot mismatch: ' + name)
+            state[name] = copy.deepcopy(list(values)) + [copy.deepcopy(fill) for _ in range(extra)]
+    if state.get('outer_pending_rewards') is not None:
+        values = np.asarray(state['outer_pending_rewards'])
+        if values.shape != (old_count,) or np.any(values):
+            raise ValueError('environment growth cannot discard pending outer rewards')
+        state['outer_pending_rewards'] = np.concatenate((values, np.zeros(extra, dtype=values.dtype)))
+    first_seed = growth['next_global_seed'] + rank * env.num_envs + old_count
+    for index in range(old_count, env.num_envs):
+        env.env_method('reset', seed=first_seed + index - old_count, indices=index)
+    appended = env.env_method('export_training_state', indices=list(range(old_count, env.num_envs)))
+    if len(appended) != extra:
+        raise ValueError('environment growth export count mismatch')
+    environment['states'] = environment['states'] + appended
+    model._recovery_environment_growth = dict(
+        **growth, source_global_step=manifest['global_step'], restored_environments=old_count,
+        appended_environments=extra, appended_first_seed=first_seed,
+        appended_last_seed=first_seed + extra - 1,
+        source_observation_sha256=environment['last_observation_sha256'])
+    return state, environment, old_count
 
 
 def read_bundle(path, *, rank, world_size):
@@ -248,7 +309,7 @@ def save_bundle(model, root, *, rank, world_size, run_id, wandb_id, config):
 
 
 def restore_learner(
-    model, path, *, rank, world_size, restore_environment: bool = True,
+    model, path, *, rank, world_size, restore_environment: bool = True, grow_environments: bool = False,
 ):
     """Restore learner state, optionally replacing the live environment.
 
@@ -258,6 +319,8 @@ def restore_learner(
     environment episodes and their pending fight labels are reset.
     """
     manifest = read_bundle(path, rank=rank, world_size=world_size)
+    if grow_environments and (not restore_environment or manifest['schema_version'] < 2):
+        raise ValueError('environment growth requires complete environment restoration')
     identity = getattr(model, 'outer_return_contract', None)
     if manifest.get('outer_return_contract') != identity:
         raise ValueError('recovery objective/teacher/context/native contract mismatch')
@@ -289,13 +352,21 @@ def restore_learner(
             Path(path) / 'environment.pt', map_location='cpu', weights_only=False
         )
         env = model.get_env()
+        if grow_environments and env is None:
+            raise ValueError('environment growth requires a live VecEnv')
         if env is not None:
             if environment.get('schema_version') != 1:
                 raise ValueError('invalid environment recovery state')
+            source_count = len(environment['states'])
+            if grow_environments:
+                state, environment, source_count = _grow_complete_cohort(
+                    model, manifest, state, environment, rank=rank, world_size=world_size)
             observations = _restore_environment_states(
                 env, environment['states']
             )
-            if _observation_sha256(observations) != environment[
+            source_observations = ({key: value[:source_count] for key, value in observations.items()}
+                                   if isinstance(observations, dict) else observations[:source_count])
+            if _observation_sha256(source_observations) != environment[
                 'last_observation_sha256'
             ]:
                 raise ValueError('learner/environment observation mismatch')
@@ -327,6 +398,8 @@ def restore_learner(
                 ))
             model._episode_num = int(state['episode_num'])
             model._recovery_environment_restored = True
+            if grow_environments:
+                restore_rng()
     elif manifest['schema_version'] >= 2:
         # Incompatible journals cannot be replayed under changed simulator
         # rules. Reset every environment and discard source-local pending

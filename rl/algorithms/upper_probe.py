@@ -4,6 +4,7 @@ Game-level holdout and exact old-to-final categorical KL supplement the
 production updater's changing-minibatch sampled-action statistics.
 """
 import copy
+from contextlib import nullcontext
 from dataclasses import asdict, replace
 import hashlib
 import json
@@ -349,8 +350,14 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
                     group['lr'] = candidate.learning_rate
             np.random.seed(protocol['seed'] + rank)
             model._upper_completed = train_rows
+            monitor = None
+            if limits.get('profile_updates', False):
+                from rl.training.resource_monitor import ResourceMonitor
+                monitor = ResourceMonitor(interval=1., gpu=model.device.type == 'cuda', torch_device=model.device)
             if model.device.type == 'cuda':
                 torch.cuda.synchronize(model.device)
+                if monitor is not None:
+                    torch.cuda.reset_peak_memory_stats(model.device)
             started = time.perf_counter()
             target = U.complete_returns
             if arm.get('critic_target') == 'frozen_lambda_return':
@@ -358,9 +365,11 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
                 scope = arm.get('lambda_scope', 'decision')
                 target = lambda rows: critic_lambda_returns(rows, coefficient, scope, calibration)
             arm_targets = target(records)
-            with patch.object(U, 'complete_returns', target):
+            with monitor if monitor is not None else nullcontext(), patch.object(U, 'complete_returns', target):
                 stats = U.update_unified_upper(model, rank=rank, world_size=world_size,
                     average=average, synchronize=synchronize)
+                if model.device.type == 'cuda':
+                    torch.cuda.synchronize(model.device)
             if model.device.type == 'cuda':
                 torch.cuda.synchronize(model.device)
             result = dict(id=arm['id'], config=asdict(candidate), stats=stats,
@@ -368,6 +377,12 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
                 update_seconds=time.perf_counter() - started,
                 final_digest=state_digest(dict(policy=model.policy.state_dict(),
                     optimizer=model.policy.upper_optimizer.state_dict())), probes={})
+            if monitor is not None:
+                result['resources'] = monitor.summary
+                result['torch_max_allocated_bytes'] = (torch.cuda.max_memory_allocated(model.device)
+                                                       if model.device.type == 'cuda' else None)
+                result['torch_max_reserved_bytes'] = (torch.cuda.max_memory_reserved(model.device)
+                                                      if model.device.type == 'cuda' else None)
             if limits.get('full_critic_mse', False):
                 result['full_critic_post_update'] = full_critic_measurement()
             for name, indices in probes.items():

@@ -36,6 +36,7 @@ class UpperConfig:
     latents: int = 16
     critic_epochs: int = 4
     effective_batch_size: int = 6144
+    critic_effective_batch_size: int = 0  # 0 inherits effective_batch_size for old checkpoints.
     critic_target: str = 'mc'
     measure_value_loss: bool = False
 
@@ -62,6 +63,9 @@ class UpperConfig:
         if type(self.measure_value_loss) is not bool or (
                 self.measure_value_loss and self.architecture == 'legacy'):
             raise ValueError('value loss measurement requires unified upper and a boolean option')
+        if (type(self.critic_effective_batch_size) is not int or self.critic_effective_batch_size < 0
+                or (self.architecture == 'legacy' and self.critic_effective_batch_size)):
+            raise ValueError('critic effective batch requires unified upper and a nonnegative integer')
         if self.architecture != 'legacy' and (
                 self.gamma != 1 or self.target_kl is not None or self.optimizer != 'adamw'
                 or min(self.latents, self.critic_epochs, self.effective_batch_size) < 1):

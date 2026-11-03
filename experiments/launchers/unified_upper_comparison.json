@@ -369,6 +369,129 @@
       "decision": "Report alongside all registered online windows and common-complete-wall cost; do not automatically promote from frozen score or loss. If trajectory gate fails or independent evidence is inconclusive, retain originalB default and preserve candidate for later bounded confirmation. After decision, resume chosen accepted endpoint continuous with no total-round cap.",
       "original_low_lr_candidate": "C35 protected163 remains available; this endpoint protocol does not falsely compare its earlier163 against later192 as equal-training evidence.",
       "execution_status": "Deferred with critic1 candidate. Runtime adapter remains useful; do not automatically execute this paired192 plan against a new larger-cohort lineage."
+    },
+    "rollout_scale_diagnostic": {
+      "protocol": "unified-upper-rollout-scale-v1",
+      "status": "preregistered; implementation CPU tests in progress; not launched",
+      "user_message": "USER-ce1e8fc7-7c7a-4637-9c53-377888849c11",
+      "seed": 20261103,
+      "source": "OriginalB192 protected complete model/upper+lower Adam/RNG and240 environments/rank, only after all4 stopped/exit0/full-state acceptance. Source files remain unchanged.",
+      "world_size": 4,
+      "games_per_rank_sequence": [
+        240,
+        360,
+        480,
+        600,
+        720,
+        240
+      ],
+      "arm_ids": [
+        "scale1",
+        "scale1p5",
+        "scale2",
+        "scale2p5",
+        "scale3",
+        "scale1_repeat"
+      ],
+      "global_games_sequence": [
+        960,
+        1440,
+        1920,
+        2400,
+        2880,
+        960
+      ],
+      "limits": {
+        "iteration_wall_seconds_per_arm": 900,
+        "external_rank_process_seconds_per_arm": 1080,
+        "max_total_external_seconds": 6480,
+        "source_cohort_max_steps": 2424,
+        "source_cohort_max_seconds": 1800,
+        "natural_only": true,
+        "required_excluded_games": 0,
+        "updates": 0,
+        "model_updates_persisted": false
+      },
+      "fixed": "Same source frozen weights and original upper micro256, lower export and250/250/1000 search, FP32, native threads16, seed20261103; each arm cold process with no discarded warmup. Explicit cohort-growth fork only for >240; retain old240 states and all learner state. Normal next complete cohort starts at same next unused global seed; new partition/shape can change random trajectories.",
+      "report": "All4 complete natural games/0excluded; maximum rank collector wall (CUDA synchronized), cohort internal seconds, process total including restore/startup and monitoring, atomic transitions, upper/lower decisions, real per-rank resource samples1s and exact Torch peaks. No optimizer/sync/save time inside collection. Compare games/sec and transitions/sec with explicit denominators, repeat1x drift, all raw outcomes including failed/timed-out arms.",
+      "failure": "Any timeout/OOM/incomplete/changed policy or Adam stops the schedule for diagnosis; no automatic retry. Diagnostic900 is not production420 eligibility; collector below420 alone cannot qualify a full training round.",
+      "next": "Choose feasible cohort after measured curve and full2-round GPU qualification including updates/sync/save;1440 is provisional, not committed winner."
+    },
+    "microbatch_diagnostic": {
+      "protocol": "unified-upper-candidate-screen-v1",
+      "status": "preregistered; not launched",
+      "seed": 20261103,
+      "user_message": "USER-ce1e8fc7-7c7a-4637-9c53-377888849c11",
+      "source": "Same protected B192 full state; fresh960 complete cohort from that source, no lower update or persisted upper update.",
+      "diagnostic": {
+        "world_size": 4,
+        "games_per_rank": 240,
+        "new_complete_games": 960,
+        "holdout_games_per_rank": 60,
+        "max_probe_decisions_per_split_per_rank": 4096,
+        "full_critic_mse": true,
+        "profile_updates": true,
+        "maximum_wall_seconds": 1200,
+        "rank_process_timeout_seconds": 1260,
+        "training_round": false,
+        "model_updates_persisted": false,
+        "lower_updates": 0,
+        "repeat_tolerances": {
+          "kl": 1e-05,
+          "value": 0.0001,
+          "surrogate_gain": 1e-05,
+          "relative_l2": 3e-05
+        }
+      },
+      "arms": [
+        {
+          "id": "control",
+          "changes": {
+            "micro_batch_size": 256,
+            "effective_batch_size": 6144,
+            "critic_effective_batch_size": 32768,
+            "epochs": 2,
+            "critic_epochs": 4,
+            "measure_value_loss": true
+          }
+        },
+        {
+          "id": "micro512",
+          "changes": {
+            "micro_batch_size": 512,
+            "effective_batch_size": 6144,
+            "critic_effective_batch_size": 32768,
+            "epochs": 2,
+            "critic_epochs": 4,
+            "measure_value_loss": true
+          }
+        },
+        {
+          "id": "micro1024",
+          "changes": {
+            "micro_batch_size": 1024,
+            "effective_batch_size": 6144,
+            "critic_effective_batch_size": 32768,
+            "epochs": 2,
+            "critic_epochs": 4,
+            "measure_value_loss": true
+          }
+        },
+        {
+          "id": "control_repeat",
+          "changes": {
+            "micro_batch_size": 256,
+            "effective_batch_size": 6144,
+            "critic_effective_batch_size": 32768,
+            "epochs": 2,
+            "critic_epochs": 4,
+            "measure_value_loss": true
+          }
+        }
+      ],
+      "fixed": "Same720 training/240 heldout whole games, actorLR1.2e-4/criticLR1e-4, fixedMC/frozenGAE.97. Every arm restores identical weights/Adam/RNG and permutation seed. Only execution micro size differs; effective batches/epochs remain fixed. Full960 online update has a different decision denominator and needs separate qualification.",
+      "report": "Per-arm max4rank synchronized update wall, complete diagnostic wall, CPU/RSS/available memory/Torch allocator exact and sampled peak/VRAM/GPU util, actual Adam/sampleuses. Compare final fixed-probe value/KL/surrogate arrays with stated absolute/relative tolerances and source restoration, not byte equality across micro sizes. Control-repeat is separately checked; first-use and allocator warm state are reported, not silently excluded.",
+      "failure": "No retry on timeout/OOM/nonfinite/source-restore failure; no automatic promotion from MSE or speed alone. Larger micro must pass numerical comparison and full production-length qualification."
     }
   }
 }

@@ -100,7 +100,8 @@ def update_unified_upper(model, *, rank=0, world_size=1, average=lambda x: x, sy
     out.update(advantage_mean=mean, advantage_std=std,
                actor_learning_rate=float(model.policy.upper_optimizer.param_groups[0]['lr']),
                critic_learning_rate=float(model.policy.upper_optimizer.param_groups[1]['lr']),
-               requested_effective_batch_size=float(cfg.effective_batch_size))
+               requested_effective_batch_size=float(cfg.effective_batch_size),
+               requested_critic_effective_batch_size=float(cfg.critic_effective_batch_size or cfg.effective_batch_size))
     # Pack once on CPU. Missing inactive-screen fields are zeros, never old state.
     keys = set().union(*(r['observation'] for r in records)) if records else set()
     observations = {k: np.stack([r['observation'].get(k, np.zeros(model.observation_space[k].shape))
@@ -108,9 +109,12 @@ def update_unified_upper(model, *, rank=0, world_size=1, average=lambda x: x, sy
     actions = np.asarray([r['action'] for r in records], dtype=np.int64)
     old_logp = np.asarray([r['log_prob'] for r in records], dtype=np.float32)
     masks = np.stack([r['mask'] for r in records]) if records else np.zeros((0, model.action_space.n), bool)
-    batches = max(1, math.ceil(total / cfg.effective_batch_size))
-    out.update(requested_updates=float(cfg.epochs * batches),
-               effective_batch_size_global=total / batches)
+    actor_batches = max(1, math.ceil(total / cfg.effective_batch_size))
+    critic_batches = max(1, math.ceil(total / (cfg.critic_effective_batch_size or cfg.effective_batch_size)))
+    out.update(requested_updates=float(cfg.epochs * actor_batches),
+               requested_critic_updates=float(cfg.critic_epochs * critic_batches),
+               effective_batch_size_global=total / actor_batches,
+               critic_effective_batch_size_global=total / critic_batches)
     measurement_seconds = 0.
     if cfg.measure_value_loss:
         measured, measurement_seconds = measure_critic_mse(model, observations,
@@ -122,7 +126,9 @@ def update_unified_upper(model, *, rank=0, world_size=1, average=lambda x: x, sy
     model.policy.set_training_mode(True)
     serial = 0
     with train_phase(model, upper=True):
-        for name, network, epochs in [('actor', core.upper_actor, cfg.epochs), ('critic', core.upper_critic, cfg.critic_epochs)]:
+        for name, network, epochs, batches in [
+                ('actor', core.upper_actor, cfg.epochs, actor_batches),
+                ('critic', core.upper_critic, cfg.critic_epochs, critic_batches)]:
             active = {id(p) for p in network.parameters()}
             for p in core.upper_parameters():
                 p.requires_grad_(id(p) in active)

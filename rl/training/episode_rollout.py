@@ -28,8 +28,10 @@ class EpisodeRolloutConfig:
             raise ValueError('invalid full-game rollout budget')
 
 
-def configure(model, config, *, rank=0, world_size=1):
+def configure(model, config, *, rank=0, world_size=1, grow_environments=False):
     if config is None:
+        if grow_environments:
+            raise ValueError('environment growth requires a complete-game source')
         return
     cfg = EpisodeRolloutConfig(**config)
     if (not getattr(model.policy.core, 'joint_upper', False)
@@ -45,10 +47,31 @@ def configure(model, config, *, rank=0, world_size=1):
     old = getattr(model, 'episode_rollout_config', None)
     if old is not None:
         old = asdict(EpisodeRolloutConfig(**old))
-    if old is not None and old != asdict(cfg):
-        raise ValueError('ordinary resume cannot change the whole-game cohort contract')
     if old is not None and getattr(model, 'episode_rollout_world_size', world_size) != world_size:
         raise ValueError('ordinary resume cannot change cohort world size/seed allocation')
+    if grow_environments:
+        completed = getattr(model, 'episode_rollouts_completed', 0)
+        stats = getattr(model, 'episode_rollout_stats', {})
+        if (old is None or cfg.games_per_rank <= old['games_per_rank']
+                or {**old, 'games_per_rank': cfg.games_per_rank} != asdict(cfg)
+                or model.policy.core.upper_config.architecture != 'upper-latent-actions-v1'
+                or type(completed) is not int or completed < 1
+                or stats.get('rollout') != completed
+                or stats.get('games') != old['games_per_rank']
+                or stats.get('completed_games') != old['games_per_rank']
+                or stats.get('censored_games') != 0 or stats.get('unfinished_games') != 0):
+            raise ValueError('environment growth requires a complete natural unified cohort and only more games')
+        # Keep the next unused global seed; only the new rank partition and
+        # future cohort stride change. Never revisit games from the source.
+        offset = getattr(model, 'episode_rollout_seed_offset', 0)
+        next_seed = cfg.seed + offset + completed * world_size * old['games_per_rank']
+        model.episode_rollout_seed_offset = offset + completed * world_size * (old['games_per_rank'] - cfg.games_per_rank)
+        model.episode_rollout_growth = dict(
+            source_games_per_rank=old['games_per_rank'], games_per_rank=cfg.games_per_rank,
+            source_round=completed, next_global_seed=next_seed,
+            seed_offset=model.episode_rollout_seed_offset)
+    elif old is not None and old != asdict(cfg):
+        raise ValueError('ordinary resume cannot change the whole-game cohort contract')
     model.episode_rollout_config = asdict(cfg)
     model.episode_rollout_rank = rank
     model.episode_rollout_world_size = world_size
@@ -64,7 +87,8 @@ def begin(model, env):
     if any(getattr(model, '_nosl_is_az_pending_fights', None) or ()):
         raise RuntimeError('whole-game rollout cannot discard pending combat labels')
     iteration = int(getattr(model, 'episode_rollouts_completed', 0))
-    first_seed = (cfg.seed + iteration * model.episode_rollout_world_size * cfg.games_per_rank
+    first_seed = (cfg.seed + getattr(model, 'episode_rollout_seed_offset', 0)
+                  + iteration * model.episode_rollout_world_size * cfg.games_per_rank
                   + model.episode_rollout_rank * cfg.games_per_rank)
     model._last_obs = env.begin_episode_rollout(first_seed, censored_games=cfg.censored_games)
     # VecMonitor wraps the resident vector in production. All prior games
