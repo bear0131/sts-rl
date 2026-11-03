@@ -153,7 +153,7 @@
         }
       ],
       "confirmation_stage": {
-        "status": "Registered before164 outcomes; execution pending compatibility with newly requested pre/post loss measurement and heldout batch diagnostic. Do not automatically launch confirmation with unequal measurement workloads.",
+        "status": "Deferred, not executed: new production instrumentation changes earlier164–173 workload; latest game-heldout evidence prioritizes separately registered critic_reuse_comparison173–192. LowLR candidate163 preserved; do not auto-stop173 or launch old confirmation.",
         "registered_at": "2026-11-03T22:27:08.488140+08:00",
         "question": "Does the low-update candidate sustain its late advantage, rather than only improve the last observed window?",
         "source_endpoints": {
@@ -208,7 +208,110 @@
         "measurement_option": "--upper-measure-value-loss",
         "optimization_changes": "none; source/config/Adam/RNG/env preservation checked before launch"
       },
-      "execution": "After full four-rank stopped170 audit, use isolated committed runtime for one finite960-game diagnostic. Keep both originalB and candidate163 protected. Then deploy measurement at stopped originalB source and run two full rounds171–172; accept full saved states/metrics/LR/actual Adam/overhead before ordinary continuous resume. No failed automatic retry. Preserve B170 review; defer old164–173 confirmation until equal measured-workload design is preregistered."
+      "execution": "B170 protected and seven-arm diagnostic accepted; stopped deploymentadc46691 and production171–172 qualification underway. After accepted172, use ordinary finite20 control continuation173–192 for preregistered critic-reuse comparison, then candidate. Final selected long training remains continuous; do not execute old indefinite-resume helper or old164–173 confirmation blindly."
+    },
+    "critic_reuse_comparison": {
+      "status": "preregistered; wait for successful measurement171–172 qualification and accepted full172 source",
+      "registered_at": "2026-11-03T23:10:12.100489+08:00",
+      "user_intention": "Improve same-wall learning and stability; latest USER game-heldout diagnostic shows additional critic epochs erase first-epoch generalization gains. Test online before adoption.",
+      "source_boundary": {
+        "run_id": "combat32-unified-upper-lr12-r1",
+        "round": 172,
+        "global_step": "resolve only from full accepted172 bundle",
+        "state": "Identical model, upper/lower Adam, RNG and240 environments per rank; no initial reset or reset-env."
+      },
+      "runtime_commit": "adc46691",
+      "seed": 20261103,
+      "world_size": 4,
+      "games_per_round": 960,
+      "rounds_per_arm": 20,
+      "first_round": 173,
+      "last_round": 192,
+      "maximum_round_seconds": 420,
+      "failure_deadline_seconds": 415,
+      "maximum_completed_round_wall_seconds_per_arm": 8400,
+      "control": {
+        "run_id": "combat32-unified-upper-lr12-r1",
+        "root": "/root/upper-unified-20261103",
+        "critic_epochs": 4,
+        "execution": "Ordinary continuation from172 for20 finite comparison rounds, protect191/192 at exit0."
+      },
+      "candidate": {
+        "run_id": "combat36-upper-critic1-b172-r1",
+        "root": "/root/upper-value-diagnostic-20261103",
+        "critic_epochs": 1,
+        "execution": "After control192 full-stop acceptance, isolated full-state fork from protectedB172, first2 full rounds173–174 qualification then ordinary resume18 through192. No automatic failed-run restart."
+      },
+      "shared": {
+        "architecture": "upper-latent-actions-v1",
+        "width": 192,
+        "layers": 3,
+        "heads": 6,
+        "latents": 16,
+        "actor_learning_rate": 0.00012,
+        "critic_learning_rate": 0.0001,
+        "actor_epochs": 2,
+        "effective_batch_size": 6144,
+        "micro_batch_size": 256,
+        "critic_target": "mc",
+        "gae_lambda": 0.97,
+        "measure_value_loss": true,
+        "lower_updates_per_round": 8,
+        "search": [
+          250,
+          250,
+          1000
+        ],
+        "amp": "off",
+        "float32_matmul_precision": "highest"
+      },
+      "isolation": "Only critic_epochs4->1 differs. Both arms use identical instrumented source and full training pre/post MSE workload. Critic Adam per round changes4*ceil(N/6144)->ceil(N/6144); actor2*ceil(N/6144) unchanged. All natural games/samples retained.",
+      "comparison": {
+        "equal_games": 19200,
+        "ten_round_windows": [
+          [
+            173,
+            182
+          ],
+          [
+            183,
+            192
+          ]
+        ],
+        "five_round_windows": [
+          [
+            173,
+            177
+          ],
+          [
+            178,
+            182
+          ],
+          [
+            183,
+            187
+          ],
+          [
+            188,
+            192
+          ]
+        ],
+        "adoption_windows": [
+          [
+            183,
+            187
+          ],
+          [
+            188,
+            192
+          ]
+        ],
+        "practical_gate": "Same prior gate: at least+0.5 percentage points win or+2floor in EACH final5 window, no material win or common-complete-wall regression; report all windows and actual time/sample uses/Adam/KL. Prefer common-wall/equal-game learning, never fit loss alone.",
+        "wall": "Sum per-round maximum across4 ranks, common-wall only complete rounds; include measurement/save/collection cost. Also report end-to-end launch/qualification/pause spans separately.",
+        "uncertainty": "Single source/cohort-selection-informed exploratory replica, no independent causal endpoint win-rate claim. Game-heldout diagnostic is design evidence, not online acceptance. No automatic promotion."
+      },
+      "preservation": "Original lowLR/batch32768/2+2 candidate163 remains stopped/protected, route not rejected. A/C/oldCOMBAT30 remain stopped. Historical20 decision unchanged.",
+      "final_running_policy": "After final full-state audit and review, resume selected original or candidate continuously without a total-round cap; bounded20 only defines this experiment. No restart of failed runs."
     }
   }
 }
