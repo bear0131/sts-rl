@@ -408,6 +408,10 @@ def test_frozen_rollout_diagnostic_uses_real_collector_without_saving_updates(
     assert result['cohort']['completed_games'] == 3
     assert result['cohort']['first_seed'] == 50
     assert result['collector_wall_seconds'] > 0
+    assert result['setup_times']['entry_to_collection_seconds'] >= result['setup_times']['environment_learner_restore_seconds'] > 0
+    assert result['collector_metrics']['nosl_is_az/collection_seconds'] > 0
+    assert result['search_statistics']['common/simulations'] > 0
+    assert result['unisolated_timing']['upper_forward_seconds'] is None
     assert result['optimizer_updates'] == 0 and result['policy_and_adam_unchanged']
     assert result['state_digests'] == expected
     assert result['resources']['interval_seconds'] == 1.

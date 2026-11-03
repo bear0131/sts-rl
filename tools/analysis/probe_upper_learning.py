@@ -354,6 +354,11 @@ def measure_frozen_rollout(model, collect, *args, **kwargs):
         raise ValueError('frozen rollout requires every natural complete game')
     result = dict(cohort=stats, collector_wall_seconds=seconds,
         upper_samples=len(model._upper_completed), lower_samples=len(model._small_playout_samples),
+        search_statistics=dict(model._small_playout_stats),
+        collector_metrics={k: float(v) for k, v in model.logger.name_to_value.items()
+                           if k.startswith('nosl_is_az/') and isinstance(v, (int, float, np.number))},
+        unisolated_timing=dict(warmup_seconds=None, upper_forward_seconds=None, encoding_ipc_seconds=None,
+                              reason='Included in collector wall, but not separately instrumented by this path.'),
         policy_and_adam_unchanged=True, state_digests=before, optimizer_updates=0,
         resources=monitor.summary,
         torch_max_allocated_bytes=torch.cuda.max_memory_allocated(model.device) if cuda else None,
@@ -400,8 +405,17 @@ def unified_candidates():
     class ProbeComplete(BaseException):
         pass
     collection = {}
+    setup_times = {}
+    entry_started = time.perf_counter()
+    original_restore = trainer.restore_learner
+    def restore(*a, **kw):
+        started = time.perf_counter()
+        result = original_restore(*a, **kw)
+        setup_times['environment_learner_restore_seconds'] = time.perf_counter() - started
+        return result
     original_collect = trainer.AccumulatingMaskablePPO.collect_rollouts
     def collect(model, *a, **kw):
+        setup_times['entry_to_collection_seconds'] = time.perf_counter() - entry_started
         ok, result = measure_frozen_rollout(model, original_collect, *a, **kw)
         collection.update(result)
         return ok
@@ -417,6 +431,7 @@ def unified_candidates():
         if collection_only:
             if not collection:
                 raise AssertionError('missing measured collection')
+            collection['setup_times'] = dict(setup_times)
             (output/'rollout.json').write_text(json.dumps(collection, indent=2, allow_nan=False))
             print('UPPER_ROLLOUT_BENCHMARK_COMPLETE ' + json.dumps(dict(
                 rank=rank, games=model.env.num_envs,
@@ -448,6 +463,7 @@ def unified_candidates():
                 with ExitStack() as stack:
                     if collection_only:
                         stack.enter_context(patch.object(trainer.AccumulatingMaskablePPO, 'collect_rollouts', collect))
+                        stack.enter_context(patch.object(trainer, 'restore_learner', restore))
                     stack.enter_context(patch.object(trainer, 'update_upper', diagnose))
                     stack.enter_context(patch.object(
                         small_playout, 'update_online', lambda *a, **kw: {}))
