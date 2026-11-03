@@ -494,7 +494,7 @@
       "failure": "No retry on timeout/OOM/nonfinite/source-restore failure; no automatic promotion from MSE or speed alone. Larger micro must pass numerical comparison and full production-length qualification."
     },
     "fresh_lambda_training": {
-      "status": "Fresh30 full state and fixed1-10/11-20/21-30 learning review complete; no plateau trigger; continuous unchanged, next40. Same-game faster complete execution is not established strength.",
+      "status": "Fixed40 review complete, learning improves and common-wall recent level near historicalB; continuous unchanged, next50. Same-cohort critic spikes32/39 require registered isolated diagnostic after full51 boundary.",
       "user_message": "USER-b1cb9f48-083c-4bd1-8dba-8c38c0e5849d",
       "intent": "After tests start a genuinely new training run from the original unified initialization; prioritize complete-game frozen lambda-return critic with lambda0.97.",
       "initialization": {
@@ -757,6 +757,71 @@
         "excluded_games": 0,
         "continuous": true
       }
+    },
+    "critic_stability_diagnostic": {
+      "status": "registered after fixed40: protect source40 done; probe critic-LR fix/CPU-CUDA qualification and full51 boundary pending; no diagnostic launched",
+      "issue": "UPPER-CRITIC-UPDATE-STABILITY",
+      "registered_at": "2026-11-04T04:46:26.860726+08:00",
+      "motivation": "Fixed31-40 target MSE increased in32/36/37/39;32+18.697% and39+48.213%, with epoch4 worsening. Same-cohort optimization nonmonotonicity, not heldout-overfit proof; learning windows still improve, no production parameter change.",
+      "source_policy": {
+        "rounds": [
+          40,
+          51
+        ],
+        "source40_evidence": "runs/local/upper-unified/candidates/critic-stability-source40-protected.json",
+        "boundary_stop_round": 51,
+        "execution": "Keep continuous until fixed50 review. Only when all4 latest complete50, coordinate STOP after full51, protect50/51 and verify all4 exit0/model/upper+lower Adam/env/RNG/source/native/old references before tests or probes. Existing source40 was copied/verified while training, not a resume qualification."
+      },
+      "root": "/root/upper-critic-stability-20261104",
+      "production_source_commit": "b12c01d4",
+      "native_sha256": "f35674a6ab8f7a6d7b0851da6cf19e72ccce8bc2810f6fe79fba5ad8ff603a1e",
+      "prerequisite": "Fix run_probe so candidate value_learning_rate reaches the actual critic Adam group; test actual group LRs/parameter effects, nonempty Adam and RNG restoration, control repeat, CPU and CUDA. Prior registered probes did not override critic LR; original online low-LR override uses a separate already-verified path. Stage committed isolated source; never hotpatch production.",
+      "seed": 20261103,
+      "diagnostic": {
+        "world_size": 4,
+        "games_per_rank": 480,
+        "holdout_games_per_rank": 48,
+        "max_probe_decisions_per_split_per_rank": 4096,
+        "full_critic_mse": true,
+        "profile_updates": true,
+        "max_seconds": 900,
+        "external_timeout_seconds": 960
+      },
+      "arms": [
+        {
+          "id": "control",
+          "changes": {}
+        },
+        {
+          "id": "critic_half_lr",
+          "changes": {
+            "value_learning_rate": 5e-05
+          }
+        },
+        {
+          "id": "critic_two_epochs",
+          "changes": {
+            "critic_epochs": 2
+          }
+        },
+        {
+          "id": "critic_two_epochs_half_lr",
+          "changes": {
+            "critic_epochs": 2,
+            "value_learning_rate": 5e-05
+          }
+        },
+        {
+          "id": "control_repeat",
+          "changes": {}
+        }
+      ],
+      "workload": "Two sources, each one1920-natural-game cohort split1728train/192validation by whole games, total3840new games/10 temporary arms,0lower or persistent updates. Ordinary preserved-state source loading, next-cohort seeds derived from source round and original1920-game geometry. Actor2/6144/LR.00012, critic32768, micro1024, full-game frozen-lambda.97/search/labels constant within each source. Reset original model/Adam/RNG before each arm.",
+      "analysis": "Report full training/validation frozen actual-target and MC pre/post MSE, actual group LR/Adam/sample uses, per-epoch training MSE, fixed full-distribution actor KL, paired equal-game validation delta/bootstrap2000, all arms/process/update/measurement resource costs. Floating state/output checks use documented tolerances; counts/source integrity/RNG exact. Validation does not enter gradient or advantage normalization.",
+      "gate": "An arm must pass at BOTH source40 and51: validation target MSE at least5% lower than within-source control, paired equal-game target-delta95% bootstrap interval entirely below0, validation MC MSE no more than2% worse, and full training target post MSE no worse than its own pre MSE. Require correct actual critic LR and exact actor2 and candidate critic2-or-4 sample-use counts, no actor-side change beyond tolerance, zero excluded games and restored source/control repeat. These are exploratory screening gates, not policy-win evidence or automatic deployment.",
+      "limitations": "Holdout reduces training N to90%, potentially changing ceil(N/32768) critic batch counts compared with a full production cohort. Report both counts and do not call this an exact replay or rule out the production instability if it fails to recur. Single cohort per source, evolving labels/distributions, multiple arms and unadjusted bootstrap make this exploratory; independent online/frozen confirmation remains required before calling a winner.",
+      "after_screen": "Keep source51 and40 protected; deliberately ordinary-resume original unchanged production from51, continuous/no total cap, validate resumed52 and continue fixed60. If an arm passes both sources, prepare a separate bounded matched-state online comparison before adoption; do not switch directly on MSE. If none passes, retain original and keep the observed instability/limitations explicit.",
+      "failure": "Any missing prerequisite, timeout/nonfinite/source restore failure stops diagnostic acceptance and requires diagnosis; no automatic retry or failed-training restart. Production415/420 gates and all games/search remain unchanged."
     }
   },
   "monitor": {
@@ -768,7 +833,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "原生修复28/29及普通恢复30全状态验收通过；固定三10轮楼层19.32→22.47→24.23、胜局8→30→56，未触发停滞。保持2/4 continuous无总限，下一固定40；历史同局数更快但未证更强。",
-    "updated_at": "2026-11-04T04:00:27.009578+08:00"
+    "note": "固定40复核：三10窗楼层22.47→24.23→26.46、胜局30→56→145；同墙钟近期9600局与B接近，未证更优。保持2/4续训至固定50；critic32/39拟合波动已登记51完整边界后的隔离诊断，尚未暂停。",
+    "updated_at": "2026-11-04T04:46:26.860740+08:00"
   }
 }
