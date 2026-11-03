@@ -166,6 +166,7 @@ const last={...old,global_timesteps:20,rollout_round:2,games_per_rollout_global:
  'upper/epochs_completed':1,'upper/kl_stopped':1,
  'upper/policy_loss_epoch_1':.02,'upper/policy_loss_epoch_2':-.001,
  'upper/value_loss_epoch_1':.3,'upper/value_loss_epoch_2':.1,
+ 'upper/value_mc_mse_pre_update':.42,'upper/value_mc_mse_post_update':.05,
  'upper/kl_epoch_1':.003,'upper/kl_epoch_2':.005};
 state={run_id:'current',rollout_mode:'complete_games',branch_step:0,branch_round:0,
  updated_at:Date.now()/1000,rows:[first,last],ranks:[],
@@ -178,8 +179,10 @@ assert.equal($('winavg').textContent,'最近2个完整轮次 · 1,200局 · 65.0
 assert.equal($('chart0').previousElementSibling.children.length,2);
 assert.equal($('chart0').previousElementSibling.children[0].textContent.includes('legacy'),true);
 assert.equal(displayRow(last)['display/upper_policy_loss'],-.001);
-assert.equal(displayRow(last)['display/upper_value_loss'],.1);
-assert.equal(displayRow({...last,'upper/value_loss_epoch_3':.08,'upper/value_loss_epoch_4':.06})['display/upper_value_loss'],.06);
+assert.equal(displayRow(last)['display/upper_value_loss'],.42);
+assert.equal(displayRow(old)['display/upper_value_loss'],undefined);
+assert.equal(displayRow({'upper/value_loss_epoch_1':.3,'upper/value_loss_epoch_4':.06})['display/upper_value_loss'],undefined);
+assert.equal(displayRow({...last,'upper/value_loss_epoch_3':.08,'upper/value_loss_epoch_4':.06})['display/upper_value_loss'],.42);
 assert.equal(displayRow(last)['display/upper_kl'],.005);
 assert.equal(lastEpochMetric({'upper/kl_epoch_9':9,'upper/kl_epoch_10':10},'kl'),10);
 assert.equal(displayRow(old)['display/upper_policy_loss'],undefined);
