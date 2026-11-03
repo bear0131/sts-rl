@@ -759,7 +759,7 @@
       }
     },
     "critic_stability_diagnostic": {
-      "status": "Source40r2 complete/accepted/analyzed: all3 candidates failed registered gate. Source51r1 running; original51 protected/stopped, no parameter adoption.",
+      "status": "Both sources40r2 and51r1 accepted/analyzed; no candidate passed both gates. Original unchanged ordinary resume51 and full resumed52 state accepted; continuous, next fixed60.",
       "issue": "UPPER-CRITIC-UPDATE-STABILITY",
       "registered_at": "2026-11-04T04:46:26.860726+08:00",
       "motivation": "Fixed31-40 target MSE increased in32/36/37/39;32+18.697% and39+48.213%, with epoch4 worsening. Same-cohort optimization nonmonotonicity, not heldout-overfit proof; learning windows still improve, no production parameter change.",
@@ -843,7 +843,19 @@
       "startup_failure_evidence": "runs/local/upper-unified/candidates/critic-stability-40-startup-failure-logs.json",
       "schema_correction": "Add protocol discriminator and use canonical maximum_wall_seconds/rank_process_timeout_seconds; same900/960 budget, seed, cohort, arms and gates. Preserve failed40r1; corrected40r2 requires real CLI preflight and source integrity checks.",
       "active_launch_evidence": "runs/local/upper-unified/candidates/critic-stability-51-r1-launch.json",
-      "cli_preflight_evidence": "runs/local/upper-unified/candidates/critic-stability-cli-preflight-accepted.json"
+      "cli_preflight_evidence": "runs/local/upper-unified/candidates/critic-stability-cli-preflight-accepted.json",
+      "result_evidence": {
+        "40": {
+          "accepted": "runs/local/upper-unified/candidates/critic-stability-40-accepted.json",
+          "analysis": "runs/local/upper-unified/candidates/critic-stability-40-analysis.json"
+        },
+        "51": {
+          "accepted": "runs/local/upper-unified/candidates/critic-stability-51-accepted.json",
+          "analysis": "runs/local/upper-unified/candidates/critic-stability-51-analysis.json"
+        }
+      },
+      "continuous_launch_evidence": "runs/local/upper-unified/candidates/critic-stability-continuous-launch.json",
+      "resume_audit_evidence": "runs/local/upper-unified/candidates/critic-stability-resume52-accepted.json"
     }
   },
   "monitor": {
