@@ -2,6 +2,8 @@
 
 记录时间：2026-11-03 11:45（Asia/Shanghai）。用户要求“把当前的任务记录下来推上去，我交给其他会话”。本文件是交接快照；实时身份和下一复核点以本地 ledger 为准，TODO.md 仍是唯一任务清单。
 
+> **11月3日晚续接说明：下文是原Windows交接快照，不是当前启动指令。** 当前工作目录为Mac `/Users/xb.zhong/my/sts-rl`，同分支；source已在完整170停界后部署`adc46691`，严格前后MSE测量已完成171/172资格及173普通恢复验收，不重复执行。当前原B运行已预登记的173–192有限控制臂，之后才从同B172全状态启动仅critic4→1候选；最终选定训练恢复continuous。下一原B固定复核180/190，以ledger为准。原Windows监控未迁移，唯一Mac heartbeat `b`在用，旧Windows调度保持暂停。用户已直接授权读取共享worklog中“用户发言 · USER-…”并在日志完整回复。最新执行状态、候选协议、未完成事项分别以ledger、`unified_upper_comparison.json#post_screen.critic_reuse_comparison`和TODO为准；不得使用下文旧PID/source/恢复入口重启。
+
 ## 接手先做什么
 
 1. 在 `D:/sts-rl/runs/local/upper-unified-worktree` 工作，分支 `codex/upper-unified-420s`；原 `D:/sts-rl` 的用户改动不得动。先读根 `AGENTS.md`、`TODO.md` 的 `UPPER-UNIFIED-LEARNING`、`worklog/2026-11-03.md` 最近相关节和本文件。
