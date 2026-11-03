@@ -2,7 +2,7 @@
 
 记录时间：2026-11-03 11:45（Asia/Shanghai）。用户要求“把当前的任务记录下来推上去，我交给其他会话”。本文件是交接快照；实时身份和下一复核点以本地 ledger 为准，TODO.md 仍是唯一任务清单。
 
-> **11月4日03:54续接：** native修复28/29生产资格四机exit0、全状态验收通过（221.416/213.795秒、各1920自然局/0剔除）。已从保护29/global15251883普通恢复continuous，无总轮数上限；新PID及创建时间以ledger/native-capacity-continuous-launch.json为准。源Python b12c01d4、新native f35674a6保持；3/27的18臂整局留出测试无候选过门槛，仍actor2/critic4。下一普通恢复30完整包核验及固定30学习复核；禁止重复资格/launch。失败28与原26/27/3/B192/trial30证据保留。
+> **11月4日04:00续接：** native修复28/29生产资格及普通恢复30全状态均已验收；30/global15855593/累计Adam1422/580/240、各480环境/RNG通过，230.459秒、1920自然局/0剔除。COMBAT37仍continuous无总限，新PID以ledger/native-capacity-continuous-launch.json为准，Python b12c01d4/new native f35674a6。固定30三10窗楼层19.32354/22.46510/24.23323、胜局8/30/56，未触发停滞；新旧重叠字段已核。下一40固定11–20/21–30/31–40、六5/共同完整max4墙钟，按ledger推进。18臂整局留出无epoch候选过门槛，保持2/4；同57600局完整墙钟比B60少37.796%，但累计楼层/胜率仍落后，不能声称更强。各资格/启动/恢复/30报告均已有receipt，勿重复。原失败28与26/27/3/B192/trial30保留；heartbeat b已回读核验，旧Windows调度不恢复。
 
 > **11月4日03:12故障更新（历史）：** COMBAT37第28轮采集遇HEADBUTT100种/172张超过固定96槽，四机exit1，未重启。完整26/27（最后global14073832）模型/上下层Adam/RNG/480环境已保护，3/B192/trial30仍保留。先处理TODO SIM-SMALL-NATIVE-CHOICE-CAPACITY，不执行旧31停界/launch；更新次数诊断源已在运行前修订为3/27。学习已复核20、固定30待完成。以下continuous状态为故障前历史。
 

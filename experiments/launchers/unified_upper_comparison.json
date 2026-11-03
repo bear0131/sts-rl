@@ -494,7 +494,7 @@
       "failure": "No retry on timeout/OOM/nonfinite/source-restore failure; no automatic promotion from MSE or speed alone. Larger micro must pass numerical comparison and full production-length qualification."
     },
     "fresh_lambda_training": {
-      "status": "Fresh1-3 full state and descriptive20 review complete; continuous unchanged, next30 fixed1-10/11-20/21-30, six5 and common complete walls. Faster same-game execution is not established strength.",
+      "status": "Fresh30 full state and fixed1-10/11-20/21-30 learning review complete; no plateau trigger; continuous unchanged, next40. Same-game faster complete execution is not established strength.",
       "user_message": "USER-b1cb9f48-083c-4bd1-8dba-8c38c0e5849d",
       "intent": "After tests start a genuinely new training run from the original unified initialization; prioritize complete-game frozen lambda-return critic with lambda0.97.",
       "initialization": {
@@ -552,7 +552,7 @@
         "estimate_limitation": "Linear sample scaling of deterministic720-training-game MC diagnostic, not actual full1920-game lambda production timing; actual full rounds and mature limits govern."
       },
       "runtime_headroom_review": "Two successive complete rounds>=380s trigger workload/headroom diagnosis.415s abort unchanged; never cut games/search or automatically restart. A single noisy round is not a learning-plateau trigger.",
-      "execution": "Failure28 archived; explicit validated native repair qualification28/29 resumed from protected27, original2/4 unchanged. Await full-state acceptance before continuous resume29."
+      "execution": "Failure28 archived; native repair finite28/29 and ordinary continuous resumed30 full-state accepted. Original Python/2+4/settings unchanged; native boundary28 explicit. No total-round cap."
     },
     "early_update_diagnostic": {
       "status": "complete: both3/27 all9 accepted/analyzed, no arm passed preregistered gates; retain2/4, no dynamic deployment",
@@ -693,7 +693,7 @@
       }
     },
     "native_capacity_recovery_qualification": {
-      "status": "full28/29 state accepted; ordinary continuous resume29 launched, first complete30 audit pending",
+      "status": "complete: full28/29 qualification and ordinary resumed30 accepted; continuous",
       "issue": "SIM-SMALL-NATIVE-CHOICE-CAPACITY",
       "source_round": 27,
       "target_complete_rounds": [
@@ -729,6 +729,20 @@
         },
         "headroom_diagnosis_required": false,
         "continuous_launch": "runs/local/upper-unified/candidates/native-capacity-continuous-launch.json"
+      },
+      "ordinary_resume_result": {
+        "evidence": "runs/local/upper-unified/candidates/native-capacity-resume30-accepted.json",
+        "round": 30,
+        "global_step": 15855593,
+        "maximum_complete_seconds": 230.45879595912993,
+        "actual_adam": {
+          "actor": 1422,
+          "critic": 580,
+          "lower": 240
+        },
+        "completed_games": 1920,
+        "excluded_games": 0,
+        "continuous": true
       }
     }
   },
@@ -741,7 +755,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "原生修复28/29完整生产资格及四机全状态验收通过，已普通恢复29 continuous；保持actor2/critic4、无总轮数上限，待完整30恢复验收和固定学习复核。",
-    "updated_at": "2026-11-04T03:54:10.765423+08:00"
+    "note": "原生修复28/29及普通恢复30全状态验收通过；固定三10轮楼层19.32→22.47→24.23、胜局8→30→56，未触发停滞。保持2/4 continuous无总限，下一固定40；历史同局数更快但未证更强。",
+    "updated_at": "2026-11-04T04:00:27.009578+08:00"
   }
 }
