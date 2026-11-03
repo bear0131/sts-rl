@@ -115,7 +115,7 @@
       "limitations": "The cited mechanism was studied primarily in dense-reward domains with highly parallel simulation. Transfer to complete-game strategic learning with a changing lower policy is a hypothesis. More games, stronger regularisation and larger models are separate experiments; keep existing single-training-replica limitations. PPO-EWMA is not implemented or adopted here."
     },
     "autonomous_online_comparison": {
-      "status": "Original B control144-163 accepted; low-update candidate144-145 full-state qualification accepted, ordinary resume146-163 running; adoption pending paired20 results",
+      "status": "Initial paired20 accepted; low-update faster with late gain but fails both-final5 benefit gate. Original B retained as operating default, candidate163 protected; fixed10 confirmation preregistered but pending new measurement-workload compatibility.",
       "seed": 20261103,
       "rounds_per_arm": 20,
       "games_per_round": 960,
@@ -151,7 +151,48 @@
           "run_id": "combat34-upper-lambda097-b143-r1",
           "status": "Prepared but not launched; deferred by latest user priority. Requires separate future planning; do not mix into low-update first arm."
         }
-      ]
+      ],
+      "confirmation_stage": {
+        "status": "Registered before164 outcomes; execution pending compatibility with newly requested pre/post loss measurement and heldout batch diagnostic. Do not automatically launch confirmation with unequal measurement workloads.",
+        "registered_at": "2026-11-03T22:27:08.488140+08:00",
+        "question": "Does the low-update candidate sustain its late advantage, rather than only improve the last observed window?",
+        "source_endpoints": {
+          "control": {
+            "run_id": "combat32-unified-upper-lr12-r1",
+            "round": 163,
+            "global_step": 57547975
+          },
+          "candidate": {
+            "run_id": "combat35-upper-lowupdate-b143-r1",
+            "round": 163,
+            "global_step": 57432649
+          }
+        },
+        "first_round": 164,
+        "last_round": 173,
+        "rounds_per_arm": 10,
+        "games_per_arm": 9600,
+        "fixed_five_round_windows": [
+          [
+            164,
+            168
+          ],
+          [
+            169,
+            173
+          ]
+        ],
+        "maximum_completed_round_wall_seconds_per_arm": 4200,
+        "maximum_round_seconds": 420,
+        "failure_deadline_seconds": 415,
+        "seed": 20261103,
+        "configuration": "Continue each original arm unchanged with all model/upper+lower Adam/RNG/environment state from its protected163 endpoint; retain the same common B143 ancestry. No optimizer reset or fresh initial weights.",
+        "execution": "Pending measurement-workload compatibility: do not automatically stop173 or launch candidate10. The initial plan was original B complete173 boundary save/stop then candidate163 ordinary-resume10; preserve it only if work/timing remain comparable, otherwise explicitly revise and preregister new fixed windows before execution. Final selected training remains continuous without total-round cap; no failed-run automatic retry.",
+        "analysis": "Report new equal9600 games, two fixed5 windows, common complete-round wall within the new10 and cumulative30 from144–173; compare resources and startup/pause costs separately. Candidate adoption requires +0.5pp win OR +2floors in BOTH new5 windows, with no material win/common-wall regression; do not replace the original20 result or select windows after seeing them.",
+        "limitations": "Adaptive follow-up prompted by late20-round gain, single training replica per arm, not independent replication or frozen-policy evaluation. All initial20 outcomes and failed adoption gate remain reported.",
+        "termination": "If confirmation is inconclusive or candidate fails the unchanged practical gate, retain original B and diagnose before changing parameters. Both endpoints protected before choosing; never discard the candidate archive.",
+        "measurement_request_priority": "USER-dbf42ea3-bbdc-4c76-bc56-383267a18329 and USER-02bf4ed1-69d9-4573-b41c-3dd47c155abc request current frozen pre/post MSE and isolated batch heldout diagnostics. Keep original20 result; implement/qualify at a stopped boundary and revise/preregister confirmation if workload or timing comparison changes."
+      }
     }
   }
 }
