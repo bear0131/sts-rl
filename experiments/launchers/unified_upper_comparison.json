@@ -493,5 +493,17 @@
       "report": "Per-arm max4rank synchronized update wall, complete diagnostic wall, CPU/RSS/available memory/Torch allocator exact and sampled peak/VRAM/GPU util, actual Adam/sampleuses. Compare final fixed-probe value/KL/surrogate arrays with stated absolute/relative tolerances and source restoration, not byte equality across micro sizes. Control-repeat is separately checked; first-use and allocator warm state are reported, not silently excluded.",
       "failure": "No retry on timeout/OOM/nonfinite/source-restore failure; no automatic promotion from MSE or speed alone. Larger micro must pass numerical comparison and full production-length qualification."
     }
+  },
+  "monitor": {
+    "root": "/root/upper-unified-20261103",
+    "run_id": "combat32-unified-upper-lr12-r1",
+    "label": "B · 当前控制段173–192",
+    "branch_step": 0,
+    "branch_round": 0,
+    "iteration_steps": null,
+    "rollout_mode": "complete_games",
+    "status": "training",
+    "note": "原B已复核190，继续至192完整停界；之后冻结扩容与micro测量。",
+    "updated_at": "2026-11-04T00:39:59+08:00"
   }
 }
