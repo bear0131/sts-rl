@@ -85,6 +85,33 @@ def allowed_client(address, networks):
     return address.is_loopback or any(address in network for network in networks)
 
 
+def monitor_target(value):
+    """Validate the shared declarative identity before changing a live reader."""
+    if not isinstance(value, dict):
+        raise ValueError('活动监控声明缺失')
+    required = ('root', 'run_id', 'label', 'rollout_mode', 'iteration_steps',
+                'branch_step', 'branch_round', 'status', 'note')
+    if any(key not in value for key in required):
+        raise ValueError('活动监控声明缺少字段')
+    if (not isinstance(value['root'], str) or not value['root'].startswith('/') or
+        not isinstance(value['run_id'], str) or
+        not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', value['run_id'])):
+        raise ValueError('活动监控路径或run身份无效')
+    if value['rollout_mode'] not in ('complete_games', 'fixed_steps'):
+        raise ValueError('活动监控统计模式无效')
+    if value['rollout_mode'] == 'fixed_steps' and (
+        not isinstance(value['iteration_steps'], int) or value['iteration_steps'] <= 0):
+        raise ValueError('固定步数模式缺少正整数iteration_steps')
+    if value['status'] not in ('training', 'diagnostic', 'evaluation', 'paused', 'completed'):
+        raise ValueError('活动监控阶段无效')
+    if any(not isinstance(value[k], (int, float)) or not math.isfinite(value[k])
+           or value[k] < 0 for k in ('branch_step', 'branch_round')):
+        raise ValueError('活动监控分叉起点无效')
+    if not isinstance(value['label'], str) or not isinstance(value['note'], str):
+        raise ValueError('活动监控说明无效')
+    return {key: value[key] for key in required}
+
+
 class WorklogFeed:
     """Read committed worklogs from one configured remote branch, never checkout."""
     def __init__(self, config, cache):
@@ -132,7 +159,16 @@ class WorklogFeed:
                 content = self.git('show', commit + ':' + path)
                 entries.append(dict(path=path, text=content[-300000:],
                                     truncated=len(content) > 300000))
-            state = dict(enabled=True, branch=branch, commit=commit,
+            active_monitor, monitor_error = None, None
+            registry = self.config.get('monitor_registry')
+            if registry:
+                try:
+                    data = json.loads(self.git('show', commit + ':' + registry))
+                    active_monitor = monitor_target(data.get('monitor'))
+                except (ValueError, AttributeError, RuntimeError) as exc:
+                    monitor_error = '活动任务声明无效，保留现有曲线'
+            state = dict(active_monitor=active_monitor, monitor_error=monitor_error,
+                enabled=True, branch=branch, commit=commit,
                 updated_at=time.time(), attempted_at=time.time(), error=None, entries=entries)
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
             with self.lock:
@@ -237,15 +273,18 @@ class WorklogWriter:
 
 class Monitor:
     def __init__(self, config, output, interval):
+        config = dict(config)
+        saved = json.loads(output.read_text(encoding='utf-8')) if output.exists() else {}
+        if config.get('follow_active') and saved.get('active_target'):
+            config.update(monitor_target(saved['active_target']))
         self.config, self.output, self.interval = config, output, interval
+        self.poll_lock = threading.Lock()
         self.lock = threading.Lock()
         self.stop = threading.Event()
         self.state = dict(run_id=config['run_id'], iteration_steps=config['iteration_steps'],
                           interval=interval, rows=[], ranks=[], updated_at=None, polling=False)
-        if output.exists():
-            saved = json.loads(output.read_text(encoding='utf-8'))
-            if saved.get('run_id') == config['run_id']:
-                self.state.update(saved)
+        if saved.get('run_id') == config['run_id']:
+            self.state.update(saved)
         self.state.update(interval=interval, polling=False)
         self.state['label'] = config.get('label', config['run_id'])
         self.state['branch_step'] = config.get('branch_step', 0)
@@ -253,6 +292,7 @@ class Monitor:
         self.state['rollout_mode'] = config.get('rollout_mode', 'fixed_steps')
         self.state['branch_round'] = config.get('branch_round',
             self.state['branch_step'] / (config['iteration_steps'] or 1))
+        followed_histories = saved.get('comparisons', [])
         self.state['comparisons'] = []
         for reference in config.get('comparisons', []):
             saved = json.loads(Path(reference['history_file']).read_text(encoding='utf-8'))
@@ -263,6 +303,45 @@ class Monitor:
                 iteration_steps=saved['iteration_steps'], rollout_mode=saved.get('rollout_mode', 'fixed_steps'), branch_step=reference.get('branch_step', 0),
                 branch_round=reference.get('branch_round', saved.get('branch_round',
                     reference.get('branch_step', 0) / (saved['iteration_steps'] or 1)))))
+
+
+        for history in followed_histories:
+            if config.get('follow_active') and history.get('followed'):
+                self.state['comparisons'].append(history)
+
+    def save_locked(self):
+        payload = json.dumps(clean(self.state), ensure_ascii=False, allow_nan=False)
+        self.output.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.output.with_suffix('.tmp')
+        tmp.write_text(payload, encoding='utf-8')
+        os.replace(tmp, self.output)
+
+    def follow_target(self, value, commit):
+        if not self.config.get('follow_active'):
+            return
+        target = monitor_target(value)
+        with self.poll_lock, self.lock:
+            changed = (target['root'], target['run_id']) != (
+                self.config['root'], self.config['run_id'])
+            if changed:
+                old = {k: self.state.get(k) for k in ('run_id', 'label', 'rows',
+                    'iteration_steps', 'rollout_mode', 'branch_step', 'branch_round')}
+                old.update(root=self.config['root'], followed=True)
+                histories = self.state['comparisons']
+                restored = next((h for h in histories if h.get('root') == target['root']
+                                 and h['run_id'] == target['run_id']), {})
+                self.state['comparisons'] = [h for h in histories if not (
+                    h.get('root') in (old['root'], target['root']) and
+                    (h.get('root'), h['run_id']) in (
+                        (old['root'], old['run_id']), (target['root'], target['run_id'])))]
+                self.state['comparisons'].append(old)
+                self.state.update(rows=restored.get('rows', []), ranks=[],
+                                  updated_at=None, polling=False)
+            self.config.update(target)
+            self.state.update({k: target[k] for k in ('run_id', 'label',
+                'iteration_steps', 'rollout_mode', 'branch_step', 'branch_round')})
+            self.state.update(active_target=target, target_commit=commit, target_error=None)
+            self.save_locked()
 
     def read_rank(self, rank):
         with self.lock:
@@ -288,6 +367,10 @@ class Monitor:
             return dict(previous, rank=rank, connection_error=str(exc), attempted_at=time.time())
 
     def poll(self):
+        with self.poll_lock:
+            self.poll_ranks()
+
+    def poll_ranks(self):
         with self.lock:
             self.state['polling'] = True
         with concurrent.futures.ThreadPoolExecutor(len(self.config['ports'])) as pool:
@@ -296,11 +379,7 @@ class Monitor:
             rows = [row for rank in ranks for row in rank.pop('rows', [])]
             self.state['rows'] = merge_rows(self.state['rows'], rows)
             self.state.update(ranks=ranks, updated_at=time.time(), polling=False)
-            payload = json.dumps(clean(self.state), ensure_ascii=False, allow_nan=False)
-            self.output.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.output.with_suffix('.tmp')
-            tmp.write_text(payload, encoding='utf-8')
-            os.replace(tmp, self.output)
+            self.save_locked()
 
     def watch(self, max_hours):
         deadline = time.monotonic() + max_hours * 3600 if max_hours else math.inf
@@ -417,6 +496,16 @@ def main():
         while not monitor.stop.is_set():
             try:
                 worklog.poll()
+                if config.get('follow_active'):
+                    with worklog.lock:
+                        target = worklog.state.get('active_monitor')
+                        commit = worklog.state.get('commit')
+                        error = worklog.state.get('monitor_error') or worklog.state.get('error')
+                    if target and not error:
+                        monitor.follow_target(target, commit)
+                    else:
+                        with monitor.lock:
+                            monitor.state['target_error'] = error or '等待活动任务声明'
             except Exception:
                 # File-system failures must not silently kill the log collector.
                 with worklog.lock:

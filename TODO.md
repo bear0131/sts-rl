@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| MONITOR-HANDOFF | 已部署自动跟随；远端接手待回执 | 本地固定订阅 `experiments/launchers/unified_upper_comparison.json#monitor`，远端管理会话随任务切换更新声明；每60秒自动跟随root/run与阶段，保留旧曲线及重启身份，拒绝无效声明；交接见USER-MONITOR-HANDOFF-20261104。 |
 | MONITOR-USER-PROMPTS | 已完成并本地部署 | `apps/training_monitor.py`、`apps/dashboard_static/training_worklog.html`：前端用户发言按原文提交共享Git日志，普通推送、失败保留草稿、并发不覆盖、唯一ID重试；不直接执行训练操作。 |
 | MONITOR-WORKLOG | 已完成并本地部署 | `apps/training_monitor.py`：恢复8773并新增独立只读Git工作日志页面；保留历史，自动同步远端日志，失败显示缓存与时间，不操作训练。 |
 | UPPER-CANDIDATES | 评测完成；仅作参考 | 原配置/优化候选、常数与房间lambda、独立校准自适应lambda的诊断记录已同步Git。范围、来源commit、数据划分、指标、重复/还原验证与局限见[评测参考归档](docs/2026-11-03/upper-critic-diagnostic-reference.json)及[日志](worklog/2026-11-03.md#upper-evaluation-reference-only)。用户明确要求“不作为下一步计划的直接指导，只作为参考”；不由这些结果自动选择上线配置、安排在线对照或新增误差下界测量。历史后续建议不构成当前计划。 |

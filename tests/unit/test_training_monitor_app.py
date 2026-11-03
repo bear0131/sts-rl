@@ -370,3 +370,67 @@ def test_failed_message_is_not_published_and_can_be_retried(message_repositories
     r.feed.config['allow_messages'] = False
     with pytest.raises(ValueError):
         r.writer.publish(str(uuid.uuid4()), 'disabled')
+
+
+@pytest.fixture
+def active_target():
+    return dict(root='/original', run_id='original', label='Original',
+        rollout_mode='complete_games', iteration_steps=None,
+        branch_step=0, branch_round=0, status='training', note='current task')
+
+
+def test_active_run_switches_without_mixing_rows_and_survives_restart(tmp_path, active_target):
+    config = dict(active_target, ports=[2200], follow_active=True)
+    history = tmp_path / 'legacy.json'
+    history.write_text(json.dumps(dict(run_id='legacy', iteration_steps=10, rows=[])))
+    config['comparisons'] = [dict(run_id='legacy', history_file=str(history))]
+    output = tmp_path / 'state.json'
+    m = Monitor(config, output, 30)
+    m.state['rows'] = [dict(global_timesteps=10, rollout_round=1, loss=1)]
+    m.state['ranks'] = [dict(rank=0, cursor=dict(offset=999, inode=1))]
+    next_run = dict(active_target, root='/candidate', run_id='candidate', label='Candidate',
+                    branch_step=10, branch_round=1)
+    m.follow_target(next_run, 'commit1')
+    assert m.state['rows'] == [] and m.state['ranks'] == []
+    assert m.state['comparisons'][-1]['rows'][0]['loss'] == 1
+    with patch.object(m, 'read_rank', return_value=dict(rank=0, rows=[
+            dict(global_timesteps=10, rollout_round=2, loss=2)], connection_error=None)):
+        m.poll()
+    restarted = Monitor(config, output, 30)
+    assert restarted.config['run_id'] == 'candidate'
+    assert restarted.state['rows'][0]['loss'] == 2
+    assert restarted.state['comparisons'][-1]['run_id'] == 'original'
+    restarted.follow_target(active_target, 'commit2')
+    assert restarted.state['rows'][0]['loss'] == 1
+    assert restarted.state['comparisons'][-1]['rows'][0]['loss'] == 2
+    restarted.follow_target(dict(active_target, status='diagnostic', note='frozen rollout'), 'commit3')
+    assert restarted.state['active_target']['status'] == 'diagnostic'
+    assert restarted.state['rows'][0]['loss'] == 1
+    assert len(restarted.state['comparisons']) == 2
+    with pytest.raises(ValueError):
+        restarted.follow_target(dict(active_target, rollout_mode='fixed_steps'), 'invalid')
+    assert restarted.config['run_id'] == 'original'
+
+
+def test_registry_and_logs_share_commit_and_invalid_registry_keeps_logs_fresh(
+        message_repositories, active_target):
+    r = message_repositories
+    r.feed.config['monitor_registry'] = 'registry.json'
+    (r.source / 'registry.json').write_text(json.dumps(dict(monitor=active_target)))
+    r.git(r.source, 'add', '.')
+    r.git(r.source, 'commit', '-m', 'declare current run')
+    r.git(r.source, 'push', 'origin', 'codex/log')
+    r.feed.poll()
+    first = json.loads(r.feed.snapshot())
+    assert first['active_monitor'] == active_target
+    assert first['monitor_error'] is None
+    (r.source / 'registry.json').write_text('{invalid')
+    r.git(r.source, 'add', '.')
+    r.git(r.source, 'commit', '-m', 'bad registry')
+    r.git(r.source, 'push', 'origin', 'codex/log')
+    r.feed.poll()
+    second = json.loads(r.feed.snapshot())
+    assert second['commit'] != first['commit']
+    assert second['monitor_error']
+    assert second['active_monitor'] is None
+    assert second['error'] is None

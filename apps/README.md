@@ -122,3 +122,18 @@ seed 当作原始开场种子，也不能将留出失败筛选集的结果作为
 提交使用独立临时Git index，不改变任何工作区、暂存区或本地分支；并发更新在新远端tip上重试，
 不强推。发送回执保存在output旁的 `.messages.json`，同ID重试去重，失败保留浏览器草稿。
 POST入口沿用LAN allowlist，并要求同源JSON与当前页面发送token；默认配置仍仅可读。
+
+### 活动任务自动跟随与交接
+
+本地配置一次设置 `"follow_active": true`，并在worklog配置中加入
+`"monitor_registry": "experiments/launchers/unified_upper_comparison.json"`。
+远端管理会话在原协议JSON顶层维护 `monitor` 对象，随训练/诊断切换正常提交推送；
+本地每分钟按同一固定Git commit读取声明，无需反复编辑Windows配置。字段为
+`root/run_id/label/rollout_mode/iteration_steps/branch_step/branch_round/status/note`。
+status支持training、diagnostic、evaluation、paused、completed。固定步数须有正整数iteration_steps，
+完整游戏为null；分叉起点须是真实值。无训练曲线的诊断保留最近训练身份，更新status/note。
+
+不同root/run切换时，监控自动将旧曲线保留为历史，新run单独读取；切回时恢复该run历史并去重。
+服务重启保留已跟随的身份和历史；无效声明/同步失败显示提示并保留已有数据。
+此协议只声明展示对象，不启动/停止任何远端任务；Windows服务仍在原机器，
+远端会话负责在工作流切换时更新声明及日志。本地实现位于origin/codex/monitor-worklog。
