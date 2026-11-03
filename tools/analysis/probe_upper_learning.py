@@ -378,7 +378,10 @@ def unified_candidates():
     try:
         # Initialize on the main thread so allocator telemetry is available.
         # The trainer subsequently restores the checkpoint's CUDA RNG state.
+        import os
         import torch
+        # Must precede the first CUDA BLAS handle used by the restored model.
+        os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
         torch.cuda.init()
         with ResourceMonitor(interval=1., gpu=True, torch_device='cuda:0') as resources:
             with patch.object(trainer, 'update_upper', diagnose), patch.object(

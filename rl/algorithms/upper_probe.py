@@ -142,6 +142,16 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
         random.setstate(rng[0]); np.random.set_state(rng[1]); torch.set_rng_state(rng[2])
         if rng[3] is not None:
             torch.cuda.set_rng_state_all(rng[3])
+    deterministic = torch.are_deterministic_algorithms_enabled()
+    warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+    benchmark = torch.backends.cudnn.benchmark
+    cudnn_deterministic = torch.backends.cudnn.deterministic
+    # RNG restoration alone does not order CUDA embedding/index reductions.
+    # Exact control replay is a diagnostic contract, not a production setting.
+    torch.use_deterministic_algorithms(True)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    results['deterministic_algorithms'] = True
     try:
         old = {name: evaluate(model, records, indices) for name, indices in probes.items()}
         for arm in protocol['arms']:
@@ -214,6 +224,9 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
             if not results['control_repeat_exact']:
                 raise AssertionError('candidate screen changed repeated control update')
     finally:
+        torch.use_deterministic_algorithms(deterministic, warn_only=warn_only)
+        torch.backends.cudnn.benchmark = benchmark
+        torch.backends.cudnn.deterministic = cudnn_deterministic
         reset()
         results['source_state_restored'] = state_digest(dict(policy=model.policy.state_dict(),
             optimizer=model.policy.upper_optimizer.state_dict())) == initial_digest

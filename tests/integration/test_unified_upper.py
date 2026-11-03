@@ -172,16 +172,20 @@ def test_unequal_empty_ranks_match_global_weighted_update(unified_env, tmp_path)
             torch.testing.assert_close(p, q, rtol=2e-5, atol=3e-6)
 
 
-def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_env, tmp_path):
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_env, tmp_path, device, monkeypatch):
     from unittest.mock import patch
     from rl.algorithms import unified_upper as U
     from rl.algorithms.upper_probe import run_probe, state_digest, split_games, categorical_kl
-    model = make_model(unified_env)
+    monkeypatch.setenv('CUBLAS_WORKSPACE_CONFIG', ':4096:8')
+    if device == 'cuda' and not torch.cuda.is_available():
+        pytest.skip('CUDA hardware unavailable; CPU result is not GPU qualification')
+    model = make_model(unified_env, device=device)
     model.set_logger(configure(str(tmp_path), []))
     obs, _ = unified_env.reset(seed=41)
     masks = unified_env.action_masks()
     with torch.no_grad():
-        action, value, logp = model.policy(tensor(obs), action_masks=masks[None])
+        action, value, logp = model.policy({k: v.to(device) for k, v in tensor(obs).items()}, action_masks=masks[None])
     rows = [dict(observation=copy.deepcopy(obs), action=int(action), mask=masks.copy(),
         value=float(value), log_prob=float(logp), reward=i/7, terminal=True,
         env=i, episode=0) for i in range(7)]
@@ -196,7 +200,9 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
         arms=[dict(id='control', changes={}), dict(id='batch3', changes={'effective_batch_size': 3}),
               dict(id='critic_lambda', changes={}, critic_target='frozen_lambda_return'),
               dict(id='control_repeat', changes={})])
+    deterministic_before = torch.are_deterministic_algorithms_enabled()
     result = run_probe(model, protocol, output_dir=tmp_path/'probe')
+    assert torch.are_deterministic_algorithms_enabled() == deterministic_before
     assert result['control_repeat_exact'] and result['source_state_restored']
     assert result['rng_restored'] and result['lower_optimizer_unchanged']
     assert result['training_games'] == 5 and result['holdout_games'] == 2
@@ -209,6 +215,7 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
     with patch.object(U, 'update_unified_upper', side_effect=RuntimeError('probe failed')):
         with pytest.raises(RuntimeError, match='probe failed'):
             run_probe(model, protocol)
+    assert torch.are_deterministic_algorithms_enabled() == deterministic_before
     assert state_digest(dict(policy=model.policy.state_dict(),
         optimizer=model.policy.upper_optimizer.state_dict())) == before
     # A trajectory with two decisions must stay wholly on one side.
