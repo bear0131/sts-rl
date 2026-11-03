@@ -555,7 +555,7 @@
       "execution": "FAILED collection28: rank2 native HEADBUTT100 distinct/172 exceeds96; other ranks ring peer exit. All4 exit1; completed26/27 fully protected, no restart. Learning reviewed20, next fixed30 pending."
     },
     "early_update_diagnostic": {
-      "status": "source3 finite diagnostic launched on all4; next source27 only after complete acceptance; no production updates",
+      "status": "source3 all9 accepted/analyzed; no epoch arm passed diagnostic gates; source27 all4 launched, pending",
       "user_message": "USER-6af35206-b9c0-46ab-8682-def713e3f527",
       "registered_at": "2026-11-04T02:56:12.367811+08:00",
       "protocol": "unified-upper-candidate-screen-v1",
@@ -669,6 +669,15 @@
         "native_sha256": "f35674a6ab8f7a6d7b0851da6cf19e72ccce8bc2810f6fe79fba5ad8ff603a1e",
         "semantic_gate": "early-epoch-semantics-20261104-032010.json",
         "native_scope": "Dynamic small-playout candidates only; fixed policy slots unchanged.116 regressions,85 supported fixed states and real3/27/B192/trial30 checkpoint smoke passed. Full natural collection and production qualification remain pending."
+      },
+      "source3_result": {
+        "accepted": "candidates/early-epoch-3-accepted.json",
+        "analysis": "candidates/early-epoch-3-analysis.json",
+        "process_seconds": 497.97194480895996,
+        "games": 1920,
+        "validation_games": 192,
+        "diagnostic_gate_passes": [],
+        "decision": "No early epoch change; await predeclared source27. Not independent final test or online causal evidence."
       }
     },
     "native_capacity_recovery_qualification": {
@@ -699,7 +708,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "diagnostic",
-    "note": "原训练故障停止、完整26/27保护；修复native及四机CPU/CUDA检查通过，第3轮源的9臂/10%整局留出测试已在四机运行，之后验收再测27。未改变正式训练更新次数。",
-    "updated_at": "2026-11-04T03:21:35.436448+08:00"
+    "note": "第3轮源9臂测试已验收：没有增减epoch方案通过门槛；源27同方案测试已启动。原正式训练仍停，26/27完整保护；测试结束再做原配置28/29原生修复资格。",
+    "updated_at": "2026-11-04T03:31:24.180738+08:00"
   }
 }
