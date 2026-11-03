@@ -552,7 +552,20 @@
         "estimate_limitation": "Linear sample scaling of deterministic720-training-game MC diagnostic, not actual full1920-game lambda production timing; actual full rounds and mature limits govern."
       },
       "runtime_headroom_review": "Two successive complete rounds>=380s trigger workload/headroom diagnosis.415s abort unchanged; never cut games/search or automatically restart. A single noisy round is not a learning-plateau trigger.",
-      "execution": "Failure28 archived; native repair finite28/29 and ordinary continuous resumed30 full-state accepted. Original Python/2+4/settings unchanged; native boundary28 explicit. No total-round cap."
+      "execution": "Failure28 archived; native repair finite28/29 and ordinary continuous resumed30 full-state accepted. Original Python/2+4/settings unchanged; native boundary28 explicit. No total-round cap.",
+      "recent_training_reference": {
+        "registered_at": "2026-11-04T04:19:08.149046+08:00",
+        "first_review_round": 40,
+        "games_per_window": 9600,
+        "purpose": "Add recent training-trajectory level to cumulative-prefix history references; cumulative averages include early weak policies and are not endpoint strength.",
+        "endpoints": [
+          "same total complete natural games as current review",
+          "last complete rounds fitting the existing common cumulative max4-wall budget"
+        ],
+        "window_rule": "At each already-defined endpoint, take the immediately preceding9600 natural games:5 full fresh1920 rounds and10 full historicalB960 rounds. Report all windows, per-window complete max4 wall, samples and actual actor/critic/lower updates, win/floor differences. If either endpoint is too early, return unavailable; never interpolate or select another favorable window.",
+        "interpretation": "Descriptive evolving-policy training windows, not independent heldout/frozen policy evaluation. Equal recent-game counts do not imply equal recent duration; common cumulative-wall endpoint times differ by unspent whole-round budget. Keep existing cumulative prefixes/three10/six5 and plateau/adoption gates unchanged. Native28 boundary and other cross-lineage differences remain. This analysis addition was motivated after reviewing30, so it is exploratory, not a newly independent confirmatory test.",
+        "retroactivity": "First used at40 and each subsequent fixed10 review; do not rewrite10/20/30 reports or select this analysis after seeing40 results."
+      }
     },
     "early_update_diagnostic": {
       "status": "complete: both3/27 all9 accepted/analyzed, no arm passed preregistered gates; retain2/4, no dynamic deployment",
