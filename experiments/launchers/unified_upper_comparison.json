@@ -311,7 +311,8 @@
         "uncertainty": "Single source/cohort-selection-informed exploratory replica, no independent causal endpoint win-rate claim. Game-heldout diagnostic is design evidence, not online acceptance. No automatic promotion."
       },
       "preservation": "Original lowLR/batch32768/2+2 candidate163 remains stopped/protected, route not rejected. A/C/oldCOMBAT30 remain stopped. Historical20 decision unchanged.",
-      "final_running_policy": "After final full-state audit and review, resume selected original or candidate continuously without a total-round cap; bounded20 only defines this experiment. No restart of failed runs."
+      "final_running_policy": "After final full-state audit and review, resume selected original or candidate continuously without a total-round cap; bounded20 only defines this experiment. No restart of failed runs.",
+      "execution_status": "Original control173-192 continues; unlaunched critic1 candidate deferred by USER-dafb15fd-39a0-452a-a454-60cf538f9241 requesting more parallel games and best-supported hyperparameters. Historical preregistration retained; do not auto-launch candidate."
     },
     "critic_reuse_frozen_endpoints": {
       "status": "preregistered before either192 endpoint; runtime adapter CPU/native checks passed, full-game qualification pending",
@@ -366,7 +367,8 @@
         "bootstrap_resamples": 10000
       },
       "decision": "Report alongside all registered online windows and common-complete-wall cost; do not automatically promote from frozen score or loss. If trajectory gate fails or independent evidence is inconclusive, retain originalB default and preserve candidate for later bounded confirmation. After decision, resume chosen accepted endpoint continuous with no total-round cap.",
-      "original_low_lr_candidate": "C35 protected163 remains available; this endpoint protocol does not falsely compare its earlier163 against later192 as equal-training evidence."
+      "original_low_lr_candidate": "C35 protected163 remains available; this endpoint protocol does not falsely compare its earlier163 against later192 as equal-training evidence.",
+      "execution_status": "Deferred with critic1 candidate. Runtime adapter remains useful; do not automatically execute this paired192 plan against a new larger-cohort lineage."
     }
   }
 }
