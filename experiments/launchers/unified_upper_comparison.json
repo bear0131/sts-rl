@@ -372,7 +372,7 @@
     },
     "rollout_scale_diagnostic": {
       "protocol": "unified-upper-rollout-scale-v1",
-      "status": "scale1/scale1p5/scale2 accepted; scale2p5 launching; remaining arms pending",
+      "status": "scale1/scale1p5/scale2/scale2p5 accepted; scale3 launching; repeat and micro pending",
       "user_message": "USER-ce1e8fc7-7c7a-4637-9c53-377888849c11",
       "seed": 20261103,
       "source": "OriginalB192 protected complete model/upper+lower Adam/RNG and240 environments/rank, only after all4 stopped/exit0/full-state acceptance. Source files remain unchanged.",
@@ -530,7 +530,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "diagnostic",
-    "note": "B192保留；2倍1920局已通过（采集285.78秒），继续2.5倍；测试后按新指令从头训练λ=.97候选。",
-    "updated_at": "2026-11-04T01:01:37+08:00"
+    "note": "B192保留；2.5倍2400局已通过（采集328.21秒），继续3倍测量；随后新训λ=.97候选。",
+    "updated_at": "2026-11-04T01:08:41+08:00"
   }
 }
