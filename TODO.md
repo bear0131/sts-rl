@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| UPPER-LOWER-BATCH-CADENCE | 已完成历史暴露核查；登记后续单因素候选，尚未暂停/启动 | `post_screen.lower_batch_comparison`：同累计完整wall，新下层Adam/h比B少25.13%，样本使用/h反多46.24%，均8遍，不能说丢样本或因果已证。候选只改每rank lower batch102400→51200、micro8192/LR.003/8遍及上层/搜索不变；先固定60、保护未来完整61，控制62–81继续并于完整81停界；真实CLI/非空Adam/上下层状态CPU与四GPU门禁后，隔离同源候选2轮资格+18轮，各38400自然局/8400完整wall上限，零剔除/415失败/420门禁。实际更新按rank最大样本ceil计算，不硬称16次。两末5窗及共同完整墙钟门槛只决定是否进入另登记冻结确认，不能直接选型；试验后原81恢复continuous。源61尚未产生、助手/隔离部署/门禁均待做，不能执行旧critic助手或按文档当已启动。 |
 | UPPER-PROBE-CRITIC-LR | 已修复验收：CPU23及四机各7项CPU/CUDA通过 | 8698c41d按真实参数归属设置两组候选LR，拒绝混合/未知/空组；实际critic5e-5原仍1e-4回归先失败后通过。完整51计划停界后，四机实际两组LR/参数影响、非空Adam/RNG还原和控制重复7项通过、无skip，见critic-stability-semantics-result.json；诊断工具验收不等于候选效果。既有probe无critic-LR覆盖，旧结果不因此作废；生产source未热改。 |
 | UPPER-CRITIC-UPDATE-STABILITY | 双源五臂及普通恢复52已验；无候选过门槛，保持原配置 | `post_screen.critic_stability_diagnostic`：源40/51共3840自然局/0剔除，各1728训练192验证、critic LR1e-4/5e-5×2/4遍及控制重复，实际LR/Adam/模型/RNG还原与容差通过。源40验证目标三候选均差1.59–3.69%；源51半LR/组合改善3.07%/2.68%，均未达5%且游戏配对区间跨0，两遍单臂恶化；没有双源通过者。保留全部结果与初次40r1零采样入口失败证据，不重跑。原配置普通resume51后52/global29645931、Adam2684/1104/416及480环境/RNG/lower衔接/全包保护通过，245.918秒/1920自然局0剔除；continuous无总限、下一固定60。同批优化波动未被排除，离线诊断不证明长期最优。 |
 | SIM-SMALL-NATIVE-CHOICE-CAPACITY | 已完成动态路径修复；28/29资格及恢复30全状态通过 | COMBAT37第28轮rank2 HEADBUTT100种/172张越过固定96槽；四机exit1。small-playout使用动态native动作但误用固定policy槽容量。保留原固定ABI与已支持状态/等价合并顺序，仅动态路径支持全部不同选择；不截候选/游戏或削搜索。要求故障夹具、旧ABI拒绝、CPU/CUDA语义与保留checkpoint预测/环境、四机生产长度资格；修复前不自动恢复。证据candidates/fresh-failure27-accepted.json保护26/27及3/B192/trial30。 |

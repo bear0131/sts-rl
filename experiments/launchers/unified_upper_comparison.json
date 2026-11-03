@@ -856,6 +856,132 @@
       },
       "continuous_launch_evidence": "runs/local/upper-unified/candidates/critic-stability-continuous-launch.json",
       "resume_audit_evidence": "runs/local/upper-unified/candidates/critic-stability-resume52-accepted.json"
+    },
+    "lower_batch_comparison": {
+      "status": "Registered next single-factor online candidate; preparation only. Production unchanged; no boundary request or candidate launch yet.",
+      "issue": "UPPER-LOWER-BATCH-CADENCE",
+      "registered_at": "2026-11-04T05:59:16.752702+08:00",
+      "user_intention": "Improve same-wall learning and stability autonomously after the requested fewer-upper-updates/smaller-LR routes were actually tested; do not adopt on loss or historical correlation.",
+      "hypothesis": "At1920 games the lower policy still consumes every sample8 times but has fewer Adam steps per game/wall than historical960-game B. Halving lower effective batch at fixed8 epochs may improve useful search-policy adaptation with modest update-phase overhead. This is a statistical optimization experiment, not equivalent throughput tuning or a proven cause of the historical gap.",
+      "design_evidence": [
+        "runs/local/upper-unified/candidates/fresh-lambda-50-lower-exposure-audit.json",
+        "runs/local/upper-unified/candidates/lower-exposure-config-provenance.json"
+      ],
+      "source_boundary": {
+        "run_id": "combat37-upper-fresh-lambda097-r1",
+        "root": "/root/upper-throughput-20261104",
+        "round": 61,
+        "global_step": "Resolve from fresh four-rank complete61/full bundle; not yet available.",
+        "state": "Protect full61 while original continues; same upper/lower weights, all Adam moments/counts, learner RNG and480env/rank. No reset-env or initial restart. If61 is unavailable, stop preparation and explicitly revise future source before observing its comparison outcomes; no silent substitution."
+      },
+      "runtime_commit": "b12c01d4",
+      "native_sha256": "f35674a6ab8f7a6d7b0851da6cf19e72ccce8bc2810f6fe79fba5ad8ff603a1e",
+      "seed": 20261103,
+      "world_size": 4,
+      "games_per_round": 1920,
+      "rounds_per_arm": 20,
+      "first_round": 62,
+      "last_round": 81,
+      "maximum_round_seconds": 420,
+      "failure_deadline_seconds": 415,
+      "maximum_completed_round_wall_seconds_per_arm": 8400,
+      "control": {
+        "run_id": "combat37-upper-fresh-lambda097-r1",
+        "root": "/root/upper-throughput-20261104",
+        "lower_batch_per_rank": 102400,
+        "execution": "Original remains continuous through fixed60/70/80 reviews. Protect61 when complete, retain complete62-81 comparison. Only after all4 latest complete80 request natural STOP81, verify stopped80/81 and source61 full state before any exclusive GPU test or candidate."
+      },
+      "candidate": {
+        "run_id": "combat38-lower-b51200-fresh61-r1",
+        "root": "/root/upper-lower-batch-20261104",
+        "ring_port": 29954,
+        "lower_batch_per_rank": 51200,
+        "lower_requested_global_batch": 204800,
+        "execution": "Only after guards and all4 control exit0: isolated full-state fork61, first2 complete62-63 qualification, full audit, then ordinary resume18 through81. Preserve qualified and endpoint bundles; never automatically repeat a failed run."
+      },
+      "shared": {
+        "upper_actor_epochs": 2,
+        "upper_critic_epochs": 4,
+        "upper_actor_batch": 6144,
+        "upper_critic_batch": 32768,
+        "upper_micro_batch": 1024,
+        "upper_actor_lr": 0.00012,
+        "upper_critic_lr": 0.0001,
+        "critic_target": "frozen-lambda",
+        "gae_lambda": 0.97,
+        "measure_value_loss": true,
+        "lower_epochs": 8,
+        "lower_micro_batch_per_rank": 8192,
+        "lower_lr": 0.003,
+        "lower_optimizer": "adamw",
+        "lower_weight_decay": 0.0001,
+        "lower_target_mix": 0.2,
+        "lower_max_grad_norm": 0,
+        "games_per_rank": 480,
+        "search_simulations": [
+          250,
+          250,
+          1000
+        ],
+        "playout_depth": 200,
+        "tree_depth": 1024,
+        "amp": "off"
+      },
+      "isolation": "Only small_playout batch_size102400->51200 differs; CLI already exposes this. Do not change lower epochs/LR/targets/search or upper optimization. Every lower sample remains used8 times; actual lower Adam per round is8*ceil(max_rank_lower_samples/batch_per_rank), not a promised constant16. Global requested lower batch is4*per-rank; mean actual sample uses/update is reported separately. Smaller tail batches and extra Adam steps change optimization.",
+      "prerequisites": [
+        "Review fixed60 and source61 timing; new failure or severe regression requires diagnosis before executing the registered candidate, not automatic replacement.",
+        "Read and verify committed actual CLI override, nonempty Adam/state preservation, upper unchanged, lower8-pass/count semantics including uneven ranks/tails; CPU checks then isolated4-GPU checks only when production stopped.",
+        "Deploy immutable b12c01d4 into new isolated root with same explicit f356 native; verify all source files and no duplicate GPU workloads. No production hotpatch.",
+        "Protect61 and stopped80/81 full upper/lower models/Adam/RNG/env and old references; validate candidate config and seed continuation without changing existing run.",
+        "First candidate collection62 uses same source61 and seeds as control62; compare full outcomes/counts, source state and weights with reasoned floating tolerances. After its update trajectories may diverge; no bitwise cross-device requirement."
+      ],
+      "comparison": {
+        "equal_games": 38400,
+        "ten_round_windows": [
+          [
+            62,
+            71
+          ],
+          [
+            72,
+            81
+          ]
+        ],
+        "five_round_windows": [
+          [
+            62,
+            66
+          ],
+          [
+            67,
+            71
+          ],
+          [
+            72,
+            76
+          ],
+          [
+            77,
+            81
+          ]
+        ],
+        "screen_windows": [
+          [
+            72,
+            76
+          ],
+          [
+            77,
+            81
+          ]
+        ],
+        "gate": "To advance to separately preregistered frozen-policy confirmation, require at least+0.5pp win OR+2floor in EACH final5 window, with win decline no worse than0.25pp in either window. In common complete-round wall over all20, require floor no lower and win no worse than0.25pp. Zero exclusions, valid actual counts/state/limits and no nonfinite/failure are mandatory. Report each predicate separately; no automatic adoption.",
+        "wall": "Per-round max over4 then sum, only complete rounds within common smaller budget. Report both actual wall totals and endpoint denominators, phase clocks/resources and separate end-to-end startup/qualification/pause costs. More wins with more games is not stronger policy.",
+        "metrics": "All fixed windows, wins/games/floor, upper/lower effective samples and sample uses/real Adam, actual LRs, upper KL, full critic MC/target pre-post, lower online CE/targetKL/teacher-top1 with its within-epoch measurement limitation, and search workload. Do not select on lower training CE.",
+        "limitations": "One paired training trajectory per arm, evolving policies/data and path-dependent seeds; common-wall endpoints can have different game counts and policies. Historical B motivated the hypothesis but is not this control. Screening cannot prove optimality or causal frozen endpoint win-rate."
+      },
+      "after_screen": "Full stopped endpoint audits, then restore original control81 continuously without total cap while considering results. If gate passes, register a separate matched frozen-policy confirmation before promoting the candidate. If no gate passes, retain original and archive candidate. Do not leave training stopped simply to write reports.",
+      "failure": "Missing source, failed prerequisite,415 timeout, nonfinite or incomplete save requires diagnosis; preserve logs/partial attempt and no automatic restart. Never cut games/search or force a past boundary stop."
     }
   },
   "monitor": {
