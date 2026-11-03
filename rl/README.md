@@ -536,3 +536,10 @@ actor 的冻结 GAE、奖励、终局定义、搜索、样本遍数和上下层 
 原 `upper/value_loss` 仍是末遍各 batch 更新前误差的加权均值，不是冻结前后重算值。
 以上均为**参与拟合的训练数据**，不能凭降幅证明过拟合；泛化诊断须另用未参与更新、
 按完整游戏划分的留出集。空 rank 参与同一归约，旧轮次没有这些字段时不填零。
+
+已有 `tools.analysis.probe_upper_learning --unified-candidate-protocol ...` 的协议
+`diagnostic.full_critic_mse: true` 会另外对按完整游戏拆分的**全部** train/holdout
+决策记录冻结 MC MSE、全局样本数和每 rank 测量耗时；`full_critic_pre_update` 为
+共同源权重，逐臂 `full_critic_post_update` 为更新后的权重。它复用同一测量原语。
+原 `probes` 仍受 `max_probe_decisions_per_split_per_rank` 限制，是另一个采样分母；
+不要将 probe MSE 与全 split MSE 混用，或将有界诊断的总成本混入生产单轮吞吐。
