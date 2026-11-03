@@ -99,3 +99,18 @@ seed 当作原始开场种子，也不能将留出失败筛选集的结果作为
 `ironclad-overworld-v3`（未知画面回退 checkpoint）；下层支持 checkpoint direct/NOSL
 搜索，或上述固定配置的 `ironclad-turn-v8-awakened-phase`。评测状态记录两项选择、版本和
 规划器配置；切换回合规划下层时 NOSL 参数不参与执行。
+
+### 远端会话工作日志
+
+训练页面与 `/worklog` 页面互相导航。工作日志每60秒读取指定 origin 分支的最新提交，
+展示最近三个 `worklog/YYYY-MM-DD.md`（每文件最多末300000字符），按小节倒序并支持搜索。
+来源是已提交的工作记录，不包括聊天或未提交进度；与训练指标独立采集，失败保留缓存并显示最后成功时间。
+本地配置可加入：
+
+```json
+{"worklog":{"repository":"/path/to/local/checkout","branch":"codex/upper-unified-420s"}}
+```
+
+该 checkout 需有可读 origin；后台仅 fetch 和读取提交，不切换工作区或合并代码。
+同现有曲线共用访问范围限制，无写入远端或训练控制接口。日志缓存放 output 旁的 `.worklog.json`。
+监控停止时先核端口和进程身份；PID文件可能已失效，不能据旧PID停止其他程序。

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>远端工作日志</title>
+<style>
+:root{color-scheme:dark;font-family:"Segoe UI","Microsoft YaHei",sans-serif;background:#10141d;color:#e3e9f2}*{box-sizing:border-box}body{max-width:1200px;margin:auto;padding:26px}a{color:#56baf0}nav{margin-bottom:22px}h1{font-size:24px}p{color:#9caac0;line-height:1.7}input,select,button{background:#1c2434;color:#e3e9f2;border:1px solid #334158;border-radius:7px;padding:10px;max-width:100%}.controls{display:flex;flex-wrap:wrap;gap:12px;margin:20px 0}input{flex:1;min-width:180px}article{background:#18202e;border:1px solid #283449;border-radius:12px;padding:20px;margin:14px 0}h2{font-size:17px;line-height:1.6;margin:0 0 12px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.85 "Segoe UI","Microsoft YaHei",sans-serif;margin:0;color:#cdd7e6}.bad{color:#f49f9f}#status{color:#58d3ab}.meta{font-size:12px}@media(max-width:600px){body{padding:14px}article{padding:14px}}
+</style></head><body><nav><a href="/">训练曲线</a> · <a href="/worklog" aria-current="page">工作日志</a></nav>
+<h1>远端会话工作日志</h1><p>读取另一会话提交到 Git 的决策、改动与验收记录，每分钟同步。尚未提交的工作和聊天内容不会出现；日志更新时间不代表训练状态。</p>
+<p id="status" role="status">等待同步…</p><p id="source" class="meta"></p>
+<div class="controls"><select id="date" aria-label="日志日期"></select><input id="search" aria-label="搜索日志" placeholder="搜索决策、改动、验收…"><button id="refresh">刷新</button></div><p id="count"></p><section id="entries"></section>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);let state=null;
+function render(){if(!state)return;const age=state.updated_at?Date.now()/1000-state.updated_at:Infinity;const stale=age>180;
+$('status').className=state.error||stale?'bad':'';$('status').textContent=!state.enabled?'尚未配置工作日志来源':(state.error||(!state.updated_at?'等待首次同步':stale?'内容已过期':'同步正常'))+(state.updated_at?' · 最近成功 '+new Date(state.updated_at*1000).toLocaleString('zh-CN'): '');
+$('source').textContent=state.branch?state.branch+' · 提交 '+(state.commit||'').slice(0,12):'';
+const selected=$('date').value,entries=state.entries||[];$('date').replaceChildren();for(const entry of entries){const o=document.createElement('option');o.value=entry.path;o.textContent=entry.path;$('date').append(o)}if(entries.some(e=>e.path===selected))$('date').value=selected;
+const entry=entries.find(e=>e.path===$('date').value);$('entries').replaceChildren();if(!entry){$('count').textContent='暂无已同步日志';return}
+const sections=entry.text.split(/(?=^#{2,3} )/m).filter(t=>t.trim()).reverse(),query=$('search').value.trim().toLowerCase();let count=0;
+for(const text of sections){if(query&&!text.toLowerCase().includes(query))continue;const lines=text.trim().split('\n'),article=document.createElement('article'),title=document.createElement('h2'),body=document.createElement('pre');title.textContent=lines.shift().replace(/^#+\s*/, '');body.textContent=lines.join('\n').trim();article.append(title,body);$('entries').append(article);count++}
+$('count').textContent=count+' 条记录 · 新记录在前'+(entry.truncated?' · 仅展示文件末尾部分':'');}
+async function refresh(){try{const r=await fetch('/api/worklog',{cache:'no-store'});if(!r.ok)throw Error(r.status);state=await r.json();render()}catch(e){$('status').className='bad';$('status').textContent='本地服务连接失败，保留页面内容'}}
+$('date').onchange=render;$('search').oninput=render;$('refresh').onclick=refresh;refresh();setInterval(refresh,10000);
+</script></body></html>

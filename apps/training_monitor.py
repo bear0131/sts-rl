@@ -7,6 +7,7 @@ import json
 import ipaddress
 import math
 import os
+import re
 from pathlib import Path
 import shlex
 import subprocess
@@ -78,6 +79,64 @@ def merge_rows(existing, incoming):
 def allowed_client(address, networks):
     address = ipaddress.ip_address(address)
     return address.is_loopback or any(address in network for network in networks)
+
+
+class WorklogFeed:
+    """Read committed worklogs from one configured remote branch, never checkout."""
+    def __init__(self, config, cache):
+        self.config, self.cache = config, cache
+        self.lock = threading.Lock()
+        self.state = dict(enabled=bool(config), updated_at=None, error=None, entries=[])
+        if config and cache.exists():
+            try:
+                saved = json.loads(cache.read_text(encoding='utf-8'))
+                if saved.get('branch') == config['branch']:
+                    self.state.update(saved)
+            except (OSError, ValueError):
+                pass
+
+    def git(self, *args):
+        result = subprocess.run(['git', '-C', self.config['repository'], *args],
+            capture_output=True, timeout=25,
+            env=dict(os.environ, GIT_TERMINAL_PROMPT='0',
+                     GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=8'))
+        if result.returncode:
+            raise RuntimeError('Git同步失败（退出码 %s）' % result.returncode)
+        return result.stdout.decode('utf-8', 'replace')
+
+    def poll(self):
+        if not self.config:
+            return
+        try:
+            branch = self.config['branch']
+            self.git('check-ref-format', 'refs/heads/' + branch)
+            self.git('fetch', '--no-tags', 'origin',
+                     'refs/heads/' + branch + ':refs/remotes/origin/' + branch)
+            commit = self.git('rev-parse', 'refs/remotes/origin/' + branch).strip()
+            paths = sorted(p for p in self.git('ls-tree', '-r', '--name-only',
+                commit, '--', 'worklog/').splitlines()
+                if re.fullmatch(r'worklog/\d{4}-\d{2}-\d{2}\.md', p))[-3:]
+            entries = []
+            for path in reversed(paths):
+                content = self.git('show', commit + ':' + path)
+                entries.append(dict(path=path, text=content[-300000:],
+                                    truncated=len(content) > 300000))
+            state = dict(enabled=True, branch=branch, commit=commit,
+                updated_at=time.time(), attempted_at=time.time(), error=None, entries=entries)
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
+            with self.lock:
+                self.state.update(attempted_at=time.time(), error='远端日志同步失败，保留上次成功内容')
+            return
+        with self.lock:
+            self.state = state
+        self.cache.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.cache.with_suffix('.tmp')
+        tmp.write_text(json.dumps(state, ensure_ascii=False), encoding='utf-8')
+        os.replace(tmp, self.cache)
+
+    def snapshot(self):
+        with self.lock:
+            return json.dumps(self.state, ensure_ascii=False).encode('utf-8')
 
 
 class Monitor:
@@ -186,6 +245,7 @@ def main():
     if (config.get('rollout_mode') != 'complete_games' and (config.get('iteration_steps') or 0) <= 0) or not config['ports']:
         parser.error('positive iteration_steps and at least one rank required')
     monitor = Monitor(config, args.output, args.poll_seconds)
+    worklog = WorklogFeed(config.get('worklog'), args.output.with_suffix('.worklog.json'))
     html = Path(__file__).with_name('dashboard_static') / 'training.html'
 
     class Handler(BaseHTTPRequestHandler):
@@ -195,6 +255,11 @@ def main():
                 return
             if self.path == '/api/state':
                 body, content = monitor.snapshot(), 'application/json; charset=utf-8'
+            elif self.path == '/api/worklog':
+                body, content = worklog.snapshot(), 'application/json; charset=utf-8'
+            elif self.path == '/worklog':
+                body = html.with_name('training_worklog.html').read_bytes()
+                content = 'text/html; charset=utf-8'
             elif self.path in ('/', '/training.html'):
                 body, content = html.read_bytes(), 'text/html; charset=utf-8'
             else:
@@ -214,6 +279,16 @@ def main():
     server = ThreadingHTTPServer((str(listen), args.port), Handler)
     thread = threading.Thread(target=monitor.watch, args=(args.max_hours,), daemon=True)
     thread.start()
+    def watch_worklog():
+        while not monitor.stop.is_set():
+            try:
+                worklog.poll()
+            except Exception:
+                # File-system failures must not silently kill the log collector.
+                with worklog.lock:
+                    worklog.state['error'] = '日志缓存写入失败，请检查本地磁盘'
+            monitor.stop.wait(max(60, args.poll_seconds))
+    threading.Thread(target=watch_worklog, daemon=True).start()
     print(f'Training monitor listening on {listen}:{args.port}', flush=True)
     try:
         server.serve_forever()

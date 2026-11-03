@@ -216,3 +216,48 @@ assert.ok($('winavg').textContent.includes('连续补局滚动窗口'));
     path = tmp_path / 'dashboard.cjs'
     path.write_text(harness, encoding='utf-8')
     subprocess.run(['node', str(path)], check=True, capture_output=True, timeout=15)
+
+
+def test_worklog_tracks_remote_commits_without_checkout_and_keeps_cache_on_failure(tmp_path):
+    import subprocess
+    from apps.training_monitor import WorklogFeed
+
+    source, reader = tmp_path / 'source', tmp_path / 'reader'
+    def git(path, *args):
+        return subprocess.run(['git', '-C', str(path), *args], check=True,
+                              capture_output=True).stdout.decode().strip()
+    source.mkdir()
+    git(source, 'init', '-b', 'codex/log')
+    git(source, 'config', 'user.email', 'test@example.invalid')
+    git(source, 'config', 'user.name', 'test')
+    (source / 'worklog').mkdir()
+    log = source / 'worklog/2026-11-03.md'
+    log.write_text('## first\n<unsafe> & 中文', encoding='utf-8')
+    git(source, 'add', '.')
+    git(source, 'commit', '-m', 'first')
+    subprocess.run(['git', 'clone', str(source), str(reader)], check=True, capture_output=True)
+    head = git(reader, 'rev-parse', 'HEAD')
+    config = dict(repository=str(reader), branch='codex/log')
+    cache = tmp_path / 'worklog.json'
+    feed = WorklogFeed(config, cache)
+    feed.poll()
+    first = json.loads(feed.snapshot())
+    assert first['error'] is None
+    assert first['entries'][0]['text'] == '## first\n<unsafe> & 中文'
+    log.write_text('## second\nnew decision', encoding='utf-8')
+    git(source, 'add', '.')
+    git(source, 'commit', '-m', 'second')
+    feed.poll()
+    second = json.loads(feed.snapshot())
+    assert second['commit'] != first['commit']
+    assert second['entries'][0]['text'] == '## second\nnew decision'
+    assert git(reader, 'rev-parse', 'HEAD') == head
+    git(reader, 'remote', 'set-url', 'origin', str(tmp_path / 'missing'))
+    feed.poll()
+    failed = json.loads(feed.snapshot())
+    assert failed['error']
+    assert failed['entries'] == second['entries']
+    assert failed['updated_at'] == second['updated_at']
+    restarted = WorklogFeed(config, cache)
+    assert json.loads(restarted.snapshot())['entries'] == second['entries']
+    assert json.loads(WorklogFeed(None, tmp_path / 'disabled').snapshot())['enabled'] is False
