@@ -494,7 +494,7 @@
       "failure": "No retry on timeout/OOM/nonfinite/source-restore failure; no automatic promotion from MSE or speed alone. Larger micro must pass numerical comparison and full production-length qualification."
     },
     "fresh_lambda_training": {
-      "status": "Final candidate registered after all seven diagnostics accepted; fresh initialization preflight pending, not launched.",
+      "status": "Original initial all4 SHA/empty Adam/zero counters verified; new identity launched for full rounds1-2; acceptance pending.",
       "user_message": "USER-b1cb9f48-083c-4bd1-8dba-8c38c0e5849d",
       "intent": "After tests start a genuinely new training run from the original unified initialization; prioritize complete-game frozen lambda-return critic with lambda0.97.",
       "initialization": {
@@ -555,15 +555,15 @@
     }
   },
   "monitor": {
-    "root": "/root/upper-unified-20261103",
-    "run_id": "combat32-unified-upper-lr12-r1",
-    "label": "B · 当前控制段173–192",
+    "root": "/root/upper-throughput-20261104",
+    "run_id": "combat37-upper-fresh-lambda097-r1",
+    "label": "COMBAT37 · 新初值 λ=.97 / 1920局",
     "branch_step": 0,
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
-    "status": "diagnostic",
-    "note": "全部局数/micro测量验收；选择1920自然局、micro1024、整局λ=.97新初值候选，启动前预检中。原B192保留。",
-    "updated_at": "2026-11-04T01:33:03.579188+08:00"
+    "status": "training",
+    "note": "从原随机上层/203下层初值启动，全部Adam及计数0；每轮1920自然局，micro1024，整局λ=.97。当前完整1–2轮资格，之后验普通恢复再continuous；旧B192保留。",
+    "updated_at": "2026-11-04T01:34:41.529616+08:00"
   }
 }
