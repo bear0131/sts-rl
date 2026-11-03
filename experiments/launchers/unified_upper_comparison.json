@@ -372,7 +372,7 @@
     },
     "rollout_scale_diagnostic": {
       "protocol": "unified-upper-rollout-scale-v1",
-      "status": "scale1/scale1p5/scale2/scale2p5 accepted; scale3 launching; repeat and micro pending",
+      "status": "all five geometries accepted; scale1_repeat launching; micro pending",
       "user_message": "USER-ce1e8fc7-7c7a-4637-9c53-377888849c11",
       "seed": 20261103,
       "source": "OriginalB192 protected complete model/upper+lower Adam/RNG and240 environments/rank, only after all4 stopped/exit0/full-state acceptance. Source files remain unchanged.",
@@ -518,7 +518,10 @@
       "provisional_optimizer": "Actor6144/2 epochs/LR1.2e-4; critic32768/4 epochs/LR1e-4. These are exploratory settings, not a proven lambda optimum; final params registered before launch.",
       "qualification": "After all diagnostics terminate and source audits pass, register exact new identity/root/geometry/micro and two full fresh rounds1-2,420s complete/415s failure/no restart,all natural games0excluded,actual upper/lower Adam/sampleuses/RNG/save and lower refresh. Then ordinary full-state resume and fixed learning windows; final continuous training has no total-round cap.",
       "supersedes": "Prior proposed larger-cohort training fork fromB192. B192 remains only the frozen timing source/reference. Existing no-reset protection still applies to all old runs; user explicitly authorizes fresh initialization for this new identity.",
-      "interpretation": "Earlier afternoon lambda diagnostic is reference only; target-noise reduction does not prove online learning gain. Fresh package changes geometry/critic batch/target and possibly execution micro; cannot isolate lambda causality from its learning curve."
+      "interpretation": "Earlier afternoon lambda diagnostic is reference only; target-noise reduction does not prove online learning gain. Fresh package changes geometry/critic batch/target and possibly execution micro; cannot isolate lambda causality from its learning curve.",
+      "complete_game_failure_policy": "New initial training uses censored_games=error: an action/wall budget failure aborts before updating incomplete games. Keep2424 actions/1800s cohort budget and415s iteration failure; do not truncate/exclude to pass. Existing frozen diagnostics retain their original source exclude contract with actual0 exclusions.",
+      "continue_after_qualification": true,
+      "learning_review": "After accepted fresh rounds1-2, ordinary complete-state resume continuous with no total-round cap. Initial10 and20 reported descriptively, then fixed three10/six5/common-complete-wall windows at30 and each10 thereafter. Compare historicalB only at matching full-game and complete-wall budgets with explicit source/measurement limitations, not as isolated lambda causality."
     }
   },
   "monitor": {
@@ -530,7 +533,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "diagnostic",
-    "note": "B192保留；2.5倍2400局已通过（采集328.21秒），继续3倍测量；随后新训λ=.97候选。",
-    "updated_at": "2026-11-04T01:08:41+08:00"
+    "note": "B192保留；1至3倍冻结曲线已通过，正在重复1倍基线；之后测micro并启动新λ=.97训练。",
+    "updated_at": "2026-11-04T01:17:21+08:00"
   }
 }
