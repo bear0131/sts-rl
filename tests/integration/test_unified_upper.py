@@ -371,18 +371,21 @@ def test_fewer_updates_small_lr_preserves_adam_and_survives_resume(unified_env, 
         apply_unified_upper_update_overrides(candidate, args)
 
 
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
 @pytest.mark.parametrize('target', ['mc', 'frozen-lambda'])
-def test_frozen_value_measurement_preserves_updates_rng_and_resume(unified_env, tmp_path, target):
+def test_frozen_value_measurement_preserves_updates_rng_and_resume(unified_env, tmp_path, target, device):
     import random
     from dataclasses import asdict, replace
     from rl.algorithms.upper_probe import state_digest
     from rl.training.distributed_sb3 import build_parser, apply_unified_upper_update_overrides
-    model = make_model(unified_env)
+    if device == 'cuda' and not torch.cuda.is_available():
+        pytest.skip('CUDA hardware unavailable; CPU result is not GPU qualification')
+    model = make_model(unified_env, device=device)
     model.set_logger(configure(str(tmp_path), []))
     obs, _ = unified_env.reset(seed=41)
     mask = unified_env.action_masks()
     with torch.no_grad():
-        action, value, logp = model.policy(tensor(obs), action_masks=mask[None])
+        action, value, logp = model.policy({k: v.to(device) for k, v in tensor(obs).items()}, action_masks=mask[None])
     terminal = [dict(observation=copy.deepcopy(obs), action=int(action), mask=mask.copy(),
         value=float(value), log_prob=float(logp), reward=i/7, terminal=True, env=i, episode=0)
         for i in range(7)]
@@ -393,8 +396,8 @@ def test_frozen_value_measurement_preserves_updates_rng_and_resume(unified_env, 
     model.policy.core.upper_config = cfg
     model.policy.upper_config = model.policy_kwargs['upper_config'] = asdict(cfg)
     source = tmp_path/'measurement-source.zip'; model.save(source)
-    control = AccumulatingMaskablePPO.load(source, device='cpu')
-    measured = AccumulatingMaskablePPO.load(source, device='cpu')
+    control = AccumulatingMaskablePPO.load(source, device=device)
+    measured = AccumulatingMaskablePPO.load(source, device=device)
     original = state_digest((measured.policy.state_dict(), measured.policy.upper_optimizer.state_dict()))
     parser = build_parser()
     apply_unified_upper_update_overrides(measured, parser.parse_args(
@@ -402,13 +405,13 @@ def test_frozen_value_measurement_preserves_updates_rng_and_resume(unified_env, 
     assert original == state_digest((measured.policy.state_dict(), measured.policy.upper_optimizer.state_dict()))
     mc = complete_returns(rows).astype(np.float32)
     labels = (mc if target == 'mc' else macro_advantages(rows, np.zeros(len(rows)), 1., .97)[1].astype(np.float32))
-    batch = {k: torch.as_tensor(np.stack([r['observation'][k] for r in rows])) for k in obs}
+    batch = {k: torch.as_tensor(np.stack([r['observation'][k] for r in rows]), device=device) for k in obs}
     def oracle(learner):
         network = learner.policy.core.upper_critic
         mode = network.training
         network.eval()
         with torch.no_grad():
-            predictions = network(batch).flatten().double().numpy()
+            predictions = network(batch).flatten().double().cpu().numpy()
         network.train(mode)
         return {key: float(np.square(predictions-value.astype(np.float64)).mean())
                 for key, value in [('mc', mc), ('target', labels)]}
@@ -420,15 +423,24 @@ def test_frozen_value_measurement_preserves_updates_rng_and_resume(unified_env, 
             learner._upper_completed = copy.deepcopy(rows)
             random.seed(700+iteration); np.random.seed(700+iteration); torch.manual_seed(700+iteration)
             results.append(update_upper(learner))
-            rngs.append(state_digest((random.getstate(), np.random.get_state(), torch.get_rng_state())))
+            rngs.append(state_digest((random.getstate(), np.random.get_state(), torch.get_rng_state(),
+                torch.cuda.get_rng_state_all() if device == 'cuda' else None)))
         expected_post = oracle(measured)
         assert rngs[0] == rngs[1]
-        assert state_digest(control.policy.state_dict()) == state_digest(measured.policy.state_dict())
-        assert state_digest(control.policy.upper_optimizer.state_dict()) == state_digest(measured.policy.upper_optimizer.state_dict())
+        if device == 'cpu':
+            assert state_digest(control.policy.state_dict()) == state_digest(measured.policy.state_dict())
+            assert state_digest(control.policy.upper_optimizer.state_dict()) == state_digest(measured.policy.upper_optimizer.state_dict())
+        else:
+            # Independent CUDA reductions may differ in roundoff. Actual Adam
+            # counts and every RNG stream still have to match exactly.
+            torch.testing.assert_close(control.policy.state_dict(), measured.policy.state_dict(), rtol=1e-5, atol=2e-6)
+            torch.testing.assert_close(control.policy.upper_optimizer.state_dict(),
+                                       measured.policy.upper_optimizer.state_dict(), rtol=1e-5, atol=2e-6)
         assert 'value_mc_mse_pre_update' not in results[0]
         stats = results[1]
-        for key in ('updates', 'critic_updates', 'samples_used', 'critic_samples_used', 'value_loss'):
+        for key in ('updates', 'critic_updates', 'samples_used', 'critic_samples_used'):
             assert stats[key] == results[0][key]
+        assert stats['value_loss'] == pytest.approx(results[0]['value_loss'], rel=1e-5, abs=2e-6)
         assert stats['value_measurement_samples'] == len(rows)
         for name in ('mc', 'target'):
             assert stats[f'value_{name}_mse_pre_update'] == pytest.approx(expected_pre[name], rel=1e-5, abs=2e-6)
@@ -438,8 +450,8 @@ def test_frozen_value_measurement_preserves_updates_rng_and_resume(unified_env, 
             stats['value_measurement_pre_seconds_rank'] + stats['value_measurement_post_seconds_rank'])
         for name, learner in [('control', control), ('measured', measured)]:
             learner.save(tmp_path/f'{name}.zip')
-        control = AccumulatingMaskablePPO.load(tmp_path/'control.zip', device='cpu')
-        measured = AccumulatingMaskablePPO.load(tmp_path/'measured.zip', device='cpu')
+        control = AccumulatingMaskablePPO.load(tmp_path/'control.zip', device=device)
+        measured = AccumulatingMaskablePPO.load(tmp_path/'measured.zip', device=device)
         apply_unified_upper_update_overrides(measured, parser.parse_args(['--rank', '0', '--world-size', '1']))
         assert measured.policy.core.upper_config.measure_value_loss
     apply_unified_upper_update_overrides(measured, parser.parse_args(

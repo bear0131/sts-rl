@@ -530,6 +530,8 @@ actor 的冻结 GAE、奖励、终局定义、搜索、样本遍数和上下层 
 `value_target_mse_pre_update` / `post_update` 使用实际 critic 标签，冻结 λ 模式下
 与 MC 区分。标签使用训练实际 float32 值、平方误差以 float64 累计，按全局样本数加权；
 `value_measurement_samples` 给出分母，`critic_target_version` 给出目标版本。
+当前 SSH 标量归约仍使用 FP32；FP64 是本地平方误差累计精度，同一 MC/目标指标
+也可能因 ring 分片的求和次序产生微小舍入差，比较须使用有依据的浮点容差。
 测量保留模型训练模式和 Python/NumPy/Torch RNG，不执行 optimizer step。
 `value_measurement_pre_seconds_rank` / `post_seconds_rank` 和总
 `value_measurement_seconds_rank` 包含 GPU 同步与指标归约；开销计入完整轮墙钟。
