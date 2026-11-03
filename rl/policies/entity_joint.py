@@ -36,10 +36,11 @@ class UpperConfig:
     latents: int = 16
     critic_epochs: int = 4
     effective_batch_size: int = 6144
+    critic_target: str = 'mc'
 
     def __post_init__(self):
         if (not all(math.isfinite(value) for key, value in asdict(self).items()
-                    if key not in ('optimizer', 'target_kl', 'architecture'))
+                    if key not in ('optimizer', 'target_kl', 'architecture', 'critic_target'))
                 or min(self.width, self.layers, self.heads, self.epochs, self.micro_batch_size) < 1
                 or self.width % self.heads or self.learning_rate <= 0
                 or not 0 <= self.gamma <= 1 or not 0 <= self.gae_lambda <= 1
@@ -54,10 +55,13 @@ class UpperConfig:
             raise ValueError('invalid strategic PPO configuration')
         if self.architecture not in ('legacy', 'upper-latent-actions-v1'):
             raise ValueError('unknown upper architecture contract')
+        if self.critic_target not in ('mc', 'frozen-lambda') or (
+                self.architecture == 'legacy' and self.critic_target != 'mc'):
+            raise ValueError('critic target override requires unified upper')
         if self.architecture != 'legacy' and (
                 self.gamma != 1 or self.target_kl is not None or self.optimizer != 'adamw'
                 or min(self.latents, self.critic_epochs, self.effective_batch_size) < 1):
-            raise ValueError('unified upper requires MC gamma1, AdamW and monitor-only KL')
+            raise ValueError('unified upper requires complete-game gamma1, AdamW and monitor-only KL')
 
 
 class EntityJointCore(EntityCombatCore):

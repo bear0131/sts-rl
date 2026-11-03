@@ -15,7 +15,14 @@
     "model_updates_persisted": false,
     "lower_updates": 0,
     "split": "Fixed seeded split of whole (env,episode) trajectories, never randomly split decisions from one game.",
-    "source_state_restored_after_each_arm": true
+    "source_state_restored_after_each_arm": true,
+    "repeat_tolerances": {
+      "kl": 1e-05,
+      "value": 0.0001,
+      "surrogate_gain": 1e-05,
+      "relative_l2": 3e-05
+    },
+    "repeatability": "User clarified GPU floating-point differences need not be byte-identical. Keep exact source policy/Adam/RNG restoration. Compare fixed-probe outputs with explicit FP32 absolute and relative-L2 limits; report actual errors and exact-repeat flag separately. These output limits are numerical diagnostics, not evidence of policy improvement."
   },
   "arms": [
     {
@@ -55,11 +62,11 @@
     "unseen-whole-game clipped surrogate with frozen old advantages, reported as a diagnostic not achieved win-rate gain",
     "old/new critic bias, MSE and explained variance against natural Monte Carlo returns on held-out whole games",
     "actual actor/critic Adam counts, full sample reuse, update wall and process-tree CPU/RSS/Torch/VRAM/device GPU telemetry",
-    "exact control-repeat state equality and original policy/Adam/lower/RNG restoration"
+    "numerical control-repeat probes with errors reported; exact original policy/Adam/lower/RNG restoration"
   ],
-  "selection": "Reject nonfinite, failed exact-repeat/restore, skipped/censored games, or cross-rank inconsistency. A single fixed-cohort surrogate cannot prove online benefit; select at most one candidate for separately bounded paired online continuation.",
+  "selection": "Reject nonfinite, failed source restoration, incomplete/censored games, cross-rank inconsistency or numerical-repeat differences exceeding explicit tolerances. Single fixed-cohort surrogate/MSE is reference evidence only; online common-wall learning and stability decide adoption.",
   "online_confirmation": {
-    "status": "Not launched; candidate chosen after diagnostics",
+    "status": "Registered paired continuation from B143: original B control144–163 first, then one frozen-lambda critic candidate from the identical protected full state; no adoption yet",
     "seed": 20261103,
     "rounds_per_arm": 20,
     "games_per_round": 960,
@@ -67,7 +74,11 @@
     "failure_deadline_seconds": 415,
     "maximum_completed_round_wall_seconds_per_arm": 8400,
     "initialization": "Identical verified boundary bundle, all optimizers/RNG/environments preserved, separate run identities, four ranks sequentially exclusive.",
-    "comparison": "Equal19200 natural games and common completed-round wall, final two5-round windows; require +0.5pp win or +2floor in both and no material win/common-time regression. Report all windows, exclusions, uncertainty and single-replica limitation."
+    "comparison": "Equal19200 natural games and common completed-round wall, final two5-round windows; require +0.5pp win or +2floor in both and no material win/common-time regression. Report all windows, exclusions, uncertainty and single-replica limitation.",
+    "selected_candidate": "critic_lambda097",
+    "source_round": 143,
+    "source_global_step": 48549650,
+    "selection_reference": "Afternoon B143 screen: all four ranks lower held-out natural-MC prediction error with frozen-lambda critic, actor settings unchanged; more actor steps/LR or smaller batch did not improve pooled held-out surrogate. Original exact-repeat gate exited1, now retained as reference after user-approved floating-point review; missing cohort/resource summary is not fabricated."
   },
   "candidate_interpretation": {
     "batch3072": "Smaller optimizer batch changes Adam count and noise; fresh game count remains960. Shared effective batch affects both independent networks.",

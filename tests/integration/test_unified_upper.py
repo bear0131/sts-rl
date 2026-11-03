@@ -220,3 +220,60 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
     new = np.log([[.75, .25], [1., 1e-30]])
     kl = categorical_kl(old, new, np.array([[True, True], [True, False]]))
     np.testing.assert_allclose(kl, [.5*np.log(4/3), 0.], rtol=1e-12)
+
+
+def test_probe_float_tolerance_distinguishes_roundoff_from_policy_change():
+    from rl.algorithms.upper_probe import compare_probe_arrays
+    old = {'value': np.array([.5, 1.])}
+    limits = dict(value=1e-4, relative_l2=3e-5)
+    assert compare_probe_arrays(old, {'value': old['value']+1e-6}, limits)['value']['passed']
+    assert not compare_probe_arrays(old, {'value': old['value']+.001}, limits)['value']['passed']
+    assert not compare_probe_arrays(old, {'value': np.array([np.nan, 1.])}, limits)['value']['passed']
+
+
+def test_frozen_lambda_critic_preserves_actor_and_adam_resume(unified_env, tmp_path):
+    from rl.algorithms.upper_probe import state_digest
+    from rl.policies.entity_joint import UpperConfig
+    model = make_model(unified_env)
+    model.set_logger(configure(str(tmp_path), []))
+    obs, _ = unified_env.reset(seed=41)
+    mask = unified_env.action_masks()
+    with torch.no_grad():
+        action, value, logp = model.policy(tensor(obs), action_masks=mask[None])
+    rows = [dict(observation=copy.deepcopy(obs), action=int(action), mask=mask.copy(),
+                 value=float(value), log_prob=float(logp), reward=i/7, terminal=True,
+                 env=i, episode=0) for i in range(7)]
+    model._upper_completed = copy.deepcopy(rows)
+    update_upper(model)  # actual nonempty actor and critic Adam state
+    source = tmp_path/'source.zip'
+    model.save(source)
+    original_adam = state_digest(model.policy.upper_optimizer.state_dict())
+    kwargs = copy.deepcopy(model.policy_kwargs)
+    kwargs['upper_config']['critic_target'] = 'frozen-lambda'
+    candidate = AccumulatingMaskablePPO.load(source, device='cpu', custom_objects={'policy_kwargs': kwargs})
+    assert state_digest(candidate.policy.upper_optimizer.state_dict()) == original_adam
+    assert state_digest(candidate.policy.state_dict()) == state_digest(model.policy.state_dict())
+    rows = [dict(r, terminal=False, reward=.1, value=float(r['value'])+.3) for r in rows] + rows
+    mc = complete_returns(rows)
+    _, frozen = macro_advantages(rows, np.zeros(len(rows)), 1., .97)
+    assert not np.array_equal(mc, frozen)
+    old_labels = [(r['value'], r['log_prob']) for r in rows]
+    for learner in (model, candidate):
+        learner.set_logger(configure(str(tmp_path), []))
+        learner._upper_completed = copy.deepcopy(rows)
+        np.random.seed(71)
+        stats = update_upper(learner)
+        assert stats['samples_used'] == 28 and stats['critic_samples_used'] == 42
+    assert old_labels == [(r['value'], r['log_prob']) for r in rows]
+    assert stats['critic_target_version'] == 2
+    assert state_digest(candidate.policy.core.upper_actor.state_dict()) == state_digest(model.policy.core.upper_actor.state_dict())
+    assert state_digest(candidate.policy.core.upper_critic.state_dict()) != state_digest(model.policy.core.upper_critic.state_dict())
+    saved = tmp_path/'candidate.zip'; candidate.save(saved)
+    restored = AccumulatingMaskablePPO.load(saved, device='cpu')
+    assert restored.policy.core.upper_config.critic_target == 'frozen-lambda'
+    assert state_digest(restored.policy.upper_optimizer.state_dict()) == state_digest(candidate.policy.upper_optimizer.state_dict())
+    restored.set_logger(configure(str(tmp_path), []))
+    restored._upper_completed = copy.deepcopy(rows)
+    assert update_upper(restored)['critic_target_version'] == 2
+    with pytest.raises(ValueError, match='unified'):
+        UpperConfig(critic_target='frozen-lambda')

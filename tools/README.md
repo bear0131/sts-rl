@@ -37,3 +37,13 @@ CUDA 记录同步后的 update 耗时和 Torch 峰值 allocated；并行实验�
 这是训练 replay 上的校准，不是独立验证。历史 replay 没有保留 `sample_kind`，因此
 “无存活敌人的 value-only”只是编码分组，不能等同于精确 terminal 分类或推断回血是否合法。
 该模式不执行训练参数矩阵，推理始终 FP32；预算不足以 `budget_exhausted`/退出码2返回部分结果。
+
+
+`python -m tools.analysis.probe_upper_learning --unified-candidate-protocol PROTOCOL --probe-output OUTPUT ...`
+使用其余 `distributed_sb3` 参数执行有限、完整环境 `--fork-state` 恢复和四机自然游戏采集，
+再按完整游戏分训练/留出；协议固定游戏数、候选和墙钟，外层另设进程硬超时。
+该模式拒绝 continuous、reset-env、W&B 和 checkpoint 输出，禁用下层更新。
+候选临时更新从同源模型/Adam/RNG复位，精确还原源状态；完整分布 KL、critic 自然MC误差
+与 surrogate 都是诊断，不是在线收益。GPU控制重复可按协议显式FP32数值容差验收，
+同时保留逐字节相等标志和逐样本最大/相对L2差异，不能把浮点噪声直接报为训练故障。
+cohort和资源记录在诊断失败时也保留。实际采用仍需独立的有界在线共同墙钟对照。

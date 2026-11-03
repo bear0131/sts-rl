@@ -443,6 +443,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Strategic PPO passes per collection; retains the configured KL stopping policy. "
              "Omission preserves the checkpoint value.",
     )
+    parser.add_argument('--upper-critic-target', choices=('mc', 'frozen-lambda'), default=None,
+                        help='Unified upper critic labels only; frozen-lambda uses collection-time values. '
+                             'Omission preserves the checkpoint target and all Adam state.')
     parser.add_argument(
         "--upper-target-kl", type=float, default=None,
         help="Strategic PPO stops above 1.5 times this positive KL target; 0 disables KL early stopping. "
@@ -2376,6 +2379,8 @@ def main() -> None:
         raise ValueError('--upper-micro-batch-size requires joint strategic PPO')
     if args.upper_epochs is not None and not joint_upper(probe_model):
         raise ValueError('--upper-epochs requires joint strategic PPO')
+    if args.upper_critic_target is not None and not joint_upper(probe_model):
+        raise ValueError('--upper-critic-target requires unified upper')
     if args.upper_gae_lambda is not None and not joint_upper(probe_model):
         raise ValueError('--upper-gae-lambda requires joint strategic PPO')
     if args.upper_target_kl is not None and not joint_upper(probe_model):
@@ -2410,6 +2415,10 @@ def main() -> None:
                 args.upper_config['micro_batch_size'] = args.upper_micro_batch_size
             if args.upper_epochs is not None:
                 args.upper_config['epochs'] = args.upper_epochs
+            if args.upper_critic_target is not None:
+                if args.upper_config.get('architecture', 'legacy') != 'upper-latent-actions-v1':
+                    raise ValueError('--upper-critic-target requires unified upper')
+                args.upper_config['critic_target'] = args.upper_critic_target
             if args.upper_gae_lambda is not None:
                 args.upper_config['gae_lambda'] = args.upper_gae_lambda
             if args.upper_target_kl is not None:

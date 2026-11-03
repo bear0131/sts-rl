@@ -1,8 +1,8 @@
 """Bounded upper-PPO diagnostic from a protected bundle; never resumes its run.
 
 Uses the production collector/update. Loss ablations operate on cloned in-memory
-state and are rolled back before online collection. Each invocation is a local
-world_size=1 experiment, not a replay of distributed production training.
+state. The original mode is local world_size=1; unified candidate mode uses the
+real distributed full-state restore and a whole-game holdout, without saving updates.
 """
 from __future__ import annotations
 
@@ -367,11 +367,13 @@ def unified_candidates():
         if model.episode_rollout_stats['censored_games']:
             raise ValueError('candidate screen cannot accept censored games')
         output = args.probe_output / f'rank{rank}'
-        result = run_probe(model, protocol, output_dir=output, **kwargs)
+        output.mkdir(parents=True, exist_ok=True)
         (output/'cohort.json').write_text(json.dumps(model.episode_rollout_stats, indent=2))
+        result = run_probe(model, protocol, output_dir=output, **kwargs)
         print('UPPER_PROBE_COMPLETE ' + json.dumps(dict(rank=rank,
             source_state_restored=result['source_state_restored'],
-            control_repeat_exact=result['control_repeat_exact'])), flush=True)
+            control_repeat_exact=result['control_repeat_exact'],
+            control_repeat_numerical=result['control_repeat_numerical'])), flush=True)
         raise ProbeComplete()
     original = sys.argv
     sys.argv = [original[0], *remaining]
@@ -380,17 +382,20 @@ def unified_candidates():
         # The trainer subsequently restores the checkpoint's CUDA RNG state.
         import torch
         torch.cuda.init()
-        with ResourceMonitor(interval=1., gpu=True, torch_device='cuda:0') as resources:
-            with patch.object(trainer, 'update_upper', diagnose), patch.object(
-                    small_playout, 'update_online', lambda *a, **kw: {}):
-                try:
-                    trainer.main()
-                except ProbeComplete:
-                    pass
-        rank = int(remaining[remaining.index('--rank')+1])
-        output = args.probe_output / f'rank{rank}'
-        output.mkdir(parents=True, exist_ok=True)
-        (output/'resources.json').write_text(json.dumps(resources.summary, indent=2))
+        resources = ResourceMonitor(interval=1., gpu=True, torch_device='cuda:0')
+        try:
+            with resources:
+                with patch.object(trainer, 'update_upper', diagnose), patch.object(
+                        small_playout, 'update_online', lambda *a, **kw: {}):
+                    try:
+                        trainer.main()
+                    except ProbeComplete:
+                        pass
+        finally:
+            output = args.probe_output / f'rank{launch.rank}'
+            output.mkdir(parents=True, exist_ok=True)
+            if hasattr(resources, 'summary'):
+                (output/'resources.json').write_text(json.dumps(resources.summary, indent=2))
     finally:
         sys.argv = original
 

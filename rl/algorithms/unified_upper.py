@@ -1,4 +1,4 @@
-"""Complete-game MC critic and frozen-GAE PPO actor with independent updates."""
+"""Complete-game critic and frozen-GAE PPO actor with independent updates."""
 import math
 import time
 import numpy as np
@@ -27,7 +27,11 @@ def update_unified_upper(model, *, rank=0, world_size=1, average=lambda x: x, sy
     records, core = model._upper_completed, model.policy.core
     cfg, count = core.upper_config, len(records)
     returns = complete_returns(records)
-    advantages, _ = macro_advantages(records, np.zeros(count), 1., cfg.gae_lambda)
+    advantages, lambda_returns = macro_advantages(records, np.zeros(count), 1., cfg.gae_lambda)
+    # Both targets require natural complete games. Lambda labels use only
+    # collection-time frozen values, never this batch's newly fitted critic.
+    if cfg.critic_target == 'frozen-lambda':
+        returns = lambda_returns
     stats = average(dict(count=float(count), total=float(advantages.sum()),
         square=float(np.square(advantages).sum()),
         **reward_monitor.counts(model), **campfire_monitor.counts(model)))
@@ -36,6 +40,7 @@ def update_unified_upper(model, *, rank=0, world_size=1, average=lambda x: x, sy
         requested_epochs=float(cfg.epochs), epochs_completed=0., critic_epochs_completed=0.,
         kl_stopped=0., kl_early_stop_enabled=0., bootstrap_samples=0., pending=0., censored=0.,
         gae_precision_bits=64., target_precision_version=2.,
+        critic_target_version=2. if cfg.critic_target == 'frozen-lambda' else 1.,
         **reward_monitor.metrics(stats, world_size), **campfire_monitor.metrics(stats, world_size))
     if not total:
         return out

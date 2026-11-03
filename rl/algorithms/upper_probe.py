@@ -84,6 +84,22 @@ def _distribution(values):
         p99=float(np.quantile(values, .99)), maximum=float(np.max(values)))
 
 
+def compare_probe_arrays(reference, current, tolerances):
+    """FP32 output repeatability, distinct from exact source-state restore."""
+    report = {}
+    for key, old in reference.items():
+        new = current[key]
+        if new.shape != old.shape:
+            raise ValueError('repeat probe shapes differ')
+        difference = np.abs(new - old)
+        relative_l2 = float(np.linalg.norm(difference) / max(np.linalg.norm(old), 1e-20))
+        maximum = float(difference.max(initial=0.))
+        report[key] = dict(max_abs=maximum, relative_l2=relative_l2,
+            passed=bool(np.isfinite(new).all() and maximum <= tolerances[key]
+                        and relative_l2 <= tolerances['relative_l2']))
+    return report
+
+
 def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
               synchronize=None, output_dir=None):
     """Compare candidates on identical data/Adam/RNG; restore even on failure.
@@ -131,6 +147,7 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
         training_games=len(games) - limits['holdout_games_per_rank'],
         holdout_games=limits['holdout_games_per_rank'], training_samples=len(train),
         holdout_samples=len(hold), initial_digest=initial_digest, arms=[])
+    control_outputs = {}
     def reset():
         model.policy.load_state_dict(policy)
         model.policy.upper_optimizer.load_state_dict(copy.deepcopy(optimizer))
@@ -200,6 +217,12 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
                 if not all(np.isfinite(v).all() for v in (kl, values, surrogate_gain)):
                     raise FloatingPointError('nonfinite candidate probes')
                 result['probes'][name] = summary
+                current_outputs = dict(kl=kl, value=values, surrogate_gain=surrogate_gain)
+                if arm['id'] == 'control':
+                    control_outputs[name] = current_outputs
+                elif arm['id'] == 'control_repeat' and 'repeat_tolerances' in limits:
+                    results.setdefault('control_repeat_differences', {})[name] = compare_probe_arrays(
+                        control_outputs[name], current_outputs, limits['repeat_tolerances'])
                 if output:
                     np.savez_compressed(output/f'{arm["id"]}-{name}.npz', indices=indices,
                         kl=kl, legal=legal, phase=phases, surrogate_gain=surrogate_gain,
@@ -211,7 +234,12 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
                 (output/'probe.json').write_text(json.dumps(results, indent=2, allow_nan=False))
         if results['arms'][0]['id'] == 'control' and results['arms'][-1]['id'] == 'control_repeat':
             results['control_repeat_exact'] = results['arms'][0]['final_digest'] == results['arms'][-1]['final_digest']
-            if not results['control_repeat_exact']:
+            results['control_repeat_numerical'] = (all(item['passed']
+                for split in results['control_repeat_differences'].values() for item in split.values())
+                if 'control_repeat_differences' in results else None)
+            passed = (results['control_repeat_numerical'] if 'repeat_tolerances' in limits
+                      else results['control_repeat_exact'])
+            if not passed:
                 raise AssertionError('candidate screen changed repeated control update')
     finally:
         reset()

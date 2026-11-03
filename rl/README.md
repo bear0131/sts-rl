@@ -505,3 +505,13 @@ small-playout、无辅助/旧 replay；不改变动作、公开观测、奖励�
 MLP/head 的学习率，其他上层参数用主学习率；默认 `optimizer=inherit` 保持旧
 checkpoint 行为。完整960局实验使用 `small_playout_full960_fresh.args` 生成随机
 初始模型，四机启动使用 `small_playout_full960_distributed.args`。
+
+
+统一上层的 `--upper-critic-target mc|frozen-lambda` 只选择 critic 的监督标签；
+仅支持 `upper-latent-actions-v1`，省略时沿用 checkpoint，旧包默认 `mc`。
+两种模式都要求完整自然终局，先检查完整 MC 回报；`frozen-lambda` 使用采样时保存的
+旧 value 和既有 GAE λ 计算固定 λ-return，整次 critic 拟合中不重算目标。
+actor 的冻结 GAE、奖励、终局定义、搜索、样本遍数和上下层 Adam 均保持原合同。
+这是统计目标实验，不能把 value loss 下降当作实际策略改进。
+`upper/critic_target_version` 为1（MC）或2（冻结 λ），配置随模型和 manifest 保存；
+普通恢复保留该目标，目标覆盖保留已有优化器状态。
