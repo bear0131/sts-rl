@@ -494,7 +494,7 @@
       "failure": "No retry on timeout/OOM/nonfinite/source-restore failure; no automatic promotion from MSE or speed alone. Larger micro must pass numerical comparison and full production-length qualification."
     },
     "fresh_lambda_training": {
-      "status": "Fresh full rounds1-2 and ordinary resumed3 accepted/protected; continuous no total cap. Next descriptive10/20 then fixed30/every10 learning reviews.",
+      "status": "Fresh1-3 full state and first10 fixed descriptive review complete; continuous unchanged, next20 then three10/six5/common walls at30 and every10. Early speed gain is not established strength.",
       "user_message": "USER-b1cb9f48-083c-4bd1-8dba-8c38c0e5849d",
       "intent": "After tests start a genuinely new training run from the original unified initialization; prioritize complete-game frozen lambda-return critic with lambda0.97.",
       "initialization": {
@@ -563,7 +563,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "新初值1–2资格与普通恢复3全状态均验收；1920自然局/micro1024/整局λ=.97持续训练，无总轮数上限。下一10/20描述、30后固定窗口复核；旧B192保留。",
-    "updated_at": "2026-11-04T01:45:37.268563+08:00"
+    "note": "新COMBAT37已复核完整10轮：19200自然局/0剔除，1781.11秒；同局数比历史B快34.82%但楼层低.72，未证更强。保持1920局/整局λ=.97持续训练，下一20描述。",
+    "updated_at": "2026-11-04T02:07:36.090217+08:00"
   }
 }
