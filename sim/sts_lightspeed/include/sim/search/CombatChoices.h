@@ -22,6 +22,10 @@ struct CombatChoices {
     std::vector<CombatChoice> cards;
 };
 
+// Fixed policies encode at most 96 pick slots. Compact playout scores a
+// variable-length list of native handles and has no such slot ABI.
+enum class CombatChoiceContract { FixedPolicySlots, NativeHandles };
+
 inline CardInstance combatChoiceCard(const BattleContext &bc, int zone, int index) {
     switch (zone) {
         case 1: return bc.cards.hand[index];
@@ -56,7 +60,8 @@ inline std::vector<CardInstance> combatSelectedCards(const BattleContext &bc) {
     return result;
 }
 
-inline CombatChoices combatChoices(const BattleContext &bc) {
+inline CombatChoices combatChoices(const BattleContext &bc,
+        CombatChoiceContract contract = CombatChoiceContract::FixedPolicySlots) {
     CombatChoices result;
     if (bc.inputState != InputState::CARD_SELECT) return result;
     const auto task = bc.cardSelectInfo.cardSelectTask;
@@ -123,7 +128,7 @@ inline CombatChoices combatChoices(const BattleContext &bc) {
                 return Action::equivalentCards(card, cardAt(other.nativeIndex));
             })) unique.push_back(choice);
         }
-        if (unique.size() > 96) {
+        if (unique.size() > 96 && contract == CombatChoiceContract::FixedPolicySlots) {
             std::ostringstream detail;
             detail << "combat candidate capacity 96 exceeded after equivalence: "
                    << unique.size() << " distinct of " << result.cards.size()
@@ -153,7 +158,8 @@ inline bool isMultiSelection(const BattleContext &bc) {
         bc.cardSelectInfo.isMultiSelection();
 }
 
-inline std::vector<Action> neuralCombatActions(const BattleContext &bc) {
+inline std::vector<Action> neuralCombatActions(const BattleContext &bc,
+        CombatChoiceContract contract = CombatChoiceContract::FixedPolicySlots) {
     auto actions = Action::enumerateCombatActions(bc);
     if (bc.inputState == InputState::CARD_SELECT &&
         !bc.cardSelectInfo.isMultiSelection() && actions.size() > 96) {
@@ -161,7 +167,7 @@ inline std::vector<Action> neuralCombatActions(const BattleContext &bc) {
         // choice. Use those same handles below the search root: the omitted
         // aliases have no policy slot and must not enter a leaf's legal mask.
         // Keep the native order and every action in already encodable states.
-        const auto choices = combatChoices(bc);
+        const auto choices = combatChoices(bc, contract);
         actions.erase(std::remove_if(actions.begin(), actions.end(), [&](const Action &action) {
             return std::none_of(choices.cards.begin(), choices.cards.end(), [&](const CombatChoice &choice) {
                 return choice.nativeIndex == action.getSelectIdx();
@@ -171,10 +177,11 @@ inline std::vector<Action> neuralCombatActions(const BattleContext &bc) {
     return actions;
 }
 
-// Full atomic actions encodable by the policy contract, before multi prefixes.
+// Full atomic actions for the selected contract, before multi prefixes.
 // Potion discard is deliberately absent from native-v1/autoregressive-v2.
-inline std::vector<Action> completePolicyCombatActions(const BattleContext &bc) {
-    auto actions = neuralCombatActions(bc);
+inline std::vector<Action> completePolicyCombatActions(const BattleContext &bc,
+        CombatChoiceContract contract = CombatChoiceContract::FixedPolicySlots) {
+    auto actions = neuralCombatActions(bc, contract);
     actions.erase(std::remove_if(actions.begin(), actions.end(), [](const Action &action) {
         // Packed -1 is the unsigned 13-bit sentinel 8191.
         return action.getActionType() == ActionType::POTION && action.getTargetIdx() > 5;

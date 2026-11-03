@@ -281,6 +281,35 @@ def test_target_slots_and_potion_features(combat_factory):
             assert row[22] == pytest.approx((target+1)/5)
 
 
+@pytest.mark.parametrize('card,zone', [('HEADBUTT', 'discard'), ('EXHUME', 'exhaust')])
+def test_dynamic_playout_preserves_choices_beyond_fixed_policy_slots(combat_factory, card, zone):
+    """SIM-SMALL-NATIVE-CHOICE-CAPACITY: no unique option may be truncated."""
+    bc = combat_factory([card] * 5).thick.bc
+    # 172 instances, 100 distinct effects, including handles beyond slot 95.
+    cards = [('SEARING_BLOW', i) for i in range(100)] + [('SEARING_BLOW', 0)] * 72
+    bc.apply_custom_state({'hand': [card], zone: cards})
+    bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    features = sts.small_playout_features(bc)
+    assert [sts.Action(bits).source_idx for bits in features['action_bits']] == list(range(100))
+    assert features['actions'].shape == (100, 24)
+    np.testing.assert_allclose(features['actions'][:, 6], np.arange(100) / 10, atol=1e-6)
+    # The fixed ABI continues to reject this state rather than aliasing picks
+    # onto multi-select ids or changing historical checkpoint dimensions.
+    with pytest.raises(RuntimeError, match='100 distinct of 172'):
+        bc.compact_leaf_arrays()
+    learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=250, playout_depth=200))
+    with torch.inference_mode():
+        expected = learner.policy(*collate_features([features])).numpy()[0]
+    np.testing.assert_allclose(learner.search.net.logits(bc), expected, atol=2e-5, rtol=2e-5)
+    result = learner.search.search([bc], [123])[0]
+    assert result['action'] in features['action_bits']
+    np.testing.assert_array_equal(result['action_bits'], features['action_bits'])
+    assert np.isfinite(result['visits']).all()
+    # Last distinct option is executable even if the search chose another one.
+    bc.execute(sts.Action(int(features['action_bits'][-1])))
+    assert int(bc.input_state) != 2
+
+
 @pytest.mark.parametrize('contract', ['native-v1', 'autoregressive-v2'])
 def test_compact_search_uses_drink_only_contract_with_passive_potion(combat_factory, contract):
     env = combat_factory(['STRIKE_RED', 'DEFEND_RED', 'BASH'] * 4, combat_action_contract=contract)

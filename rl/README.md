@@ -38,6 +38,12 @@ FP32为123556字节。多选动作按所选卡的key向量/bias取均值，其�
 原生权重顺序为fc1 W/b、fc2 W/b、key embedding/bias、action projection/linear；
 Torch与原生有不同浮点归约顺序，以2e-5绝对/相对容差验证，不声称跨平台逐位相同。
 
+small-playout 的候选列表使用动态 native handle，不受旧策略96个PICK槽限制。
+超过96个候选时仍按原规则仅合并效果等价项，并保留全部不同选择及执行索引；
+原来可编码的局面、特征维度、权重和搜索预算不变。固定槽策略/packed observation
+仍明确拒绝超过96种不同选项，不能将动态搜索支持误称为旧Gym动作ABI扩容。
+对应回归为`test_dynamic_playout_preserves_choices_beyond_fixed_policy_slots`。
+
 32维状态含玩家HP/maxHP、格挡、能量、回合、药水数、四牌堆计数、力量/敏捷、
 虚弱/易伤/脆弱/人工制品、五个固定敌槽的HP/格挡/当前伤害意图、选牌状态。
 24维动作含五类动作、费用/升级/卡类型/成长值/免费/消耗/保留/虚无、选择区域与任务、

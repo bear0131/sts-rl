@@ -40,7 +40,7 @@ bool smallTurnCardLimitReached(const BattleContext &bc) {
 }
 namespace {
 std::vector<Action> budgetActions(const BattleContext &bc) {
-    auto actions=completePolicyCombatActions(bc);
+    auto actions=completePolicyCombatActions(bc, CombatChoiceContract::NativeHandles);
     if(!smallTurnCardLimitReached(bc)) return actions;
     for(auto action:actions) if(action.getActionType()==ActionType::END_TURN) return {action};
     throw std::logic_error("turn card budget reached without a legal End Turn");
@@ -71,7 +71,8 @@ SmallFeatures smallFeatures(const BattleContext &bc) {
     s[31] = bc.inputState == InputState::CARD_SELECT ? 1.f : 0.f;
     const auto actions = budgetActions(bc);
     f.actions.reserve(actions.size());
-    const auto choices = bc.inputState == InputState::CARD_SELECT ? combatChoices(bc) : CombatChoices{};
+    const auto choices = bc.inputState == InputState::CARD_SELECT
+        ? combatChoices(bc, CombatChoiceContract::NativeHandles) : CombatChoices{};
     for (const auto &action : actions) {
         SmallActionFeatures a; a.bits = action.bits;
         const auto kind = action.getActionType();
