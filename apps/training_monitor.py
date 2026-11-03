@@ -1,4 +1,4 @@
-"""Read-only local training charts; standard library only, no model loading."""
+"""Local training charts and user worklog messages; no model loading."""
 from __future__ import annotations
 
 import argparse
@@ -8,6 +8,10 @@ import ipaddress
 import math
 import os
 import re
+import secrets
+import tempfile
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import shlex
 import subprocess
@@ -86,6 +90,8 @@ class WorklogFeed:
     def __init__(self, config, cache):
         self.config, self.cache = config, cache
         self.lock = threading.Lock()
+        self.git_lock = threading.Lock()
+        self.send_token = secrets.token_urlsafe(32)
         self.state = dict(enabled=bool(config), updated_at=None, error=None, entries=[])
         if config and cache.exists():
             try:
@@ -95,11 +101,16 @@ class WorklogFeed:
             except (OSError, ValueError):
                 pass
 
-    def git(self, *args):
+    def git(self, *args, input=None, extra_env=None):
+        with self.git_lock:
+            return self._git(*args, input=input, extra_env=extra_env)
+
+    def _git(self, *args, input=None, extra_env=None):
         result = subprocess.run(['git', '-C', self.config['repository'], *args],
-            capture_output=True, timeout=25,
+            capture_output=True, timeout=25, input=input,
             env=dict(os.environ, GIT_TERMINAL_PROMPT='0',
-                     GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=8'))
+                     GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=8',
+                     **(extra_env or {})))
         if result.returncode:
             raise RuntimeError('Git同步失败（退出码 %s）' % result.returncode)
         return result.stdout.decode('utf-8', 'replace')
@@ -136,7 +147,92 @@ class WorklogFeed:
 
     def snapshot(self):
         with self.lock:
-            return json.dumps(self.state, ensure_ascii=False).encode('utf-8')
+            return json.dumps(dict(self.state, can_send=bool(self.config and
+                self.config.get('allow_messages')), send_token=self.send_token),
+                ensure_ascii=False).encode('utf-8')
+
+
+class WorklogWriter:
+    """Append user text with optimistic Git commits; never alter a checkout."""
+    def __init__(self, feed, receipts):
+        self.feed, self.receipts = feed, receipts
+        self.lock = threading.Lock()
+        self.messages = {}
+        if receipts.exists():
+            self.messages = json.loads(receipts.read_text(encoding='utf-8'))
+
+    def save(self):
+        self.receipts.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.receipts.with_suffix('.tmp')
+        tmp.write_text(json.dumps(self.messages, ensure_ascii=False), encoding='utf-8')
+        os.replace(tmp, self.receipts)
+
+    def publish(self, message_id, text):
+        if not self.feed.config or not self.feed.config.get('allow_messages'):
+            raise ValueError('此监控尚未启用用户发言')
+        if not isinstance(text, str) or not text.strip() or len(text) > 20000:
+            raise ValueError('请输入1至20000字的发言')
+        if not isinstance(message_id, str) or str(uuid.UUID(message_id)) != message_id:
+            raise ValueError('发送编号无效，请刷新页面')
+        if not self.lock.acquire(blocking=False):
+            raise RuntimeError('已有发言正在发送，请稍后重试')
+        try:
+            receipt = self.messages.get(message_id)
+            if receipt and receipt['text'] != text:
+                raise ValueError('同一发送编号的内容已改变，请重新编辑后发送')
+            if receipt and receipt.get('status') == 'published':
+                return {k: v for k, v in receipt.items() if k != 'text'}
+            now = datetime.now(timezone(timedelta(hours=8)))
+            if not receipt:
+                receipt = dict(id='USER-' + message_id, text=text,
+                    path='worklog/' + now.strftime('%Y-%m-%d') + '.md',
+                    created_at=now.isoformat(timespec='seconds'), status='pending')
+                self.messages[message_id] = receipt
+            self.save()
+            marker = '<!-- user-message:' + message_id + ' -->'
+            branch = self.feed.config['branch']
+            git = self.feed.git
+            git('check-ref-format', 'refs/heads/' + branch)
+            # Every retry starts from the current remote tip, preserving concurrent work.
+            for attempt in range(3):
+                git('fetch', '--no-tags', 'origin',
+                    'refs/heads/' + branch + ':refs/remotes/origin/' + branch)
+                base = git('rev-parse', 'refs/remotes/origin/' + branch).strip()
+                exists = git('ls-tree', '--name-only', base, '--', receipt['path']).strip()
+                previous = git('show', base + ':' + receipt['path']) if exists else ''
+                if marker in previous:
+                    receipt.update(status='published', commit=base)
+                    self.save()
+                    return {k: v for k, v in receipt.items() if k != 'text'}
+                # Quote every user line so Markdown headings cannot impersonate log metadata.
+                quoted = '\n'.join('> ' + line for line in text.split('\n'))
+                addition = ('\n\n## 用户发言 · ' + receipt['id'] + '\n\n' + marker +
+                    '\n- 时间：' + receipt['created_at'] +
+                    '\n- 收件对象：当前远端训练管理会话。来源：用户在8773前端主动发送。' +
+                    '\n- 请注意本条用户prompt，读取后在日志末尾引用本ID回复接收/处理状态。' +
+                    '\n- 以下为用户原文；发送成功仅表示已推送，尚未确认对方读取或执行。\n\n' + quoted + '\n')
+                blob = git('hash-object', '-w', '--stdin',
+                           input=(previous + addition).encode('utf-8')).strip()
+                with tempfile.TemporaryDirectory(prefix='worklog-index-',
+                                                 dir=self.receipts.parent) as folder:
+                    env = dict(GIT_INDEX_FILE=str(Path(folder) / 'index'))
+                    git('read-tree', base, extra_env=env)
+                    git('update-index', '--add', '--cacheinfo',
+                        '100644,' + blob + ',' + receipt['path'], extra_env=env)
+                    tree = git('write-tree', extra_env=env).strip()
+                commit = git('commit-tree', tree, '-p', base,
+                    input=('Record user prompt ' + receipt['id'] + '\n').encode()).strip()
+                try:
+                    git('push', 'origin', commit + ':refs/heads/' + branch)
+                except (RuntimeError, subprocess.TimeoutExpired):
+                    # A lost push response may still mean success; fetch/deduplicate next.
+                    continue
+                receipt.update(status='published', commit=commit)
+                self.save()
+                return {k: v for k, v in receipt.items() if k != 'text'}
+            raise RuntimeError('推送未确认成功，请重试；相同编号不会重复写入')
+        finally:
+            self.lock.release()
 
 
 class Monitor:
@@ -246,6 +342,7 @@ def main():
         parser.error('positive iteration_steps and at least one rank required')
     monitor = Monitor(config, args.output, args.poll_seconds)
     worklog = WorklogFeed(config.get('worklog'), args.output.with_suffix('.worklog.json'))
+    writer = WorklogWriter(worklog, args.output.with_suffix('.messages.json'))
     html = Path(__file__).with_name('dashboard_static') / 'training.html'
 
     class Handler(BaseHTTPRequestHandler):
@@ -272,10 +369,47 @@ def main():
             self.end_headers()
             self.wfile.write(body)
 
+        def do_POST(self):
+            if not allowed_client(self.client_address[0], networks):
+                self.send_error(403)
+                return
+            if self.path != '/api/messages':
+                self.send_error(404)
+                return
+            origin = self.headers.get('Origin')
+            expected_origin = 'http://' + self.headers.get('Host', '')
+            if ((origin and origin != expected_origin) or
+                self.headers.get('Content-Type') != 'application/json' or
+                not secrets.compare_digest(self.headers.get('X-Monitor-Token', ''),
+                                           worklog.send_token)):
+                self.send_error(403)
+                return
+            self.connection.settimeout(15)
+            try:
+                size = int(self.headers.get('Content-Length', '0'))
+                if not 0 < size <= 100000:
+                    raise ValueError('发言过长或为空')
+                payload = json.loads(self.rfile.read(size).decode('utf-8'))
+                if not isinstance(payload, dict):
+                    raise ValueError('发言格式无效')
+                result = writer.publish(payload.get('id'), payload.get('text'))
+                status = 200
+            except (ValueError, UnicodeError):
+                status, result = 400, dict(error='请输入有效发言（最多20000字）')
+            except (OSError, RuntimeError, subprocess.TimeoutExpired):
+                status, result = 503, dict(error='发送未确认成功，已保留草稿，请重试')
+            body = json.dumps(result, ensure_ascii=False).encode('utf-8')
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(body)
+
         def log_message(self, *args):
             pass
 
-    # Read-only HTTP: optional explicit LAN allowlist, no credentials/control API.
+    # Charts remain read-only; explicit user messages only append to configured Git logs.
     server = ThreadingHTTPServer((str(listen), args.port), Handler)
     thread = threading.Thread(target=monitor.watch, args=(args.max_hours,), daemon=True)
     thread.start()

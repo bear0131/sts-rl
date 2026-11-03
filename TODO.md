@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| MONITOR-USER-PROMPTS | 已完成并本地部署 | `apps/training_monitor.py`、`apps/dashboard_static/training_worklog.html`：前端用户发言按原文提交共享Git日志，普通推送、失败保留草稿、并发不覆盖、唯一ID重试；不直接执行训练操作。 |
 | MONITOR-WORKLOG | 已完成并本地部署 | `apps/training_monitor.py`：恢复8773并新增独立只读Git工作日志页面；保留历史，自动同步远端日志，失败显示缓存与时间，不操作训练。 |
 | UPPER-CANDIDATES | 评测完成；仅作参考 | 原配置/优化候选、常数与房间lambda、独立校准自适应lambda的诊断记录已同步Git。范围、来源commit、数据划分、指标、重复/还原验证与局限见[评测参考归档](docs/2026-11-03/upper-critic-diagnostic-reference.json)及[日志](worklog/2026-11-03.md#upper-evaluation-reference-only)。用户明确要求“不作为下一步计划的直接指导，只作为参考”；不由这些结果自动选择上线配置、安排在线对照或新增误差下界测量。历史后续建议不构成当前计划。 |
 | UPPER-ONLINE-COMPARISON | 原B20轮控制完整验收；少更新候选已启动两轮资格 | 最新用户要求参考聊天先试少更新与小学习率。`experiments/launchers/unified_upper_comparison.json#post_screen.autonomous_online_comparison`：同保护B143全状态，原B144–163已完整验收（19200局、4282胜、4671.807s）；combat35于21:12从B143完整启动两轮资格，batch32768、actor3e-5/critic5e-5、2+2遍、MC目标不变；先2轮完整资格再18轮，保持960自然局/搜索/奖励/下层。必须核实际Adam LR与moment/step、全样本使用/相邻权重/保存恢复；65536仅外部配方参考，不截游戏凑步数。lambda critic候选暂缓，下午评测仍仅参考。按同19200局/共同完整墙钟/末两窗效果和稳定性判断，415/420/8400预算，不凭MSE或更新更少宣称最佳；最终长期训练无总限。 |

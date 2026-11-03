@@ -261,3 +261,112 @@ def test_worklog_tracks_remote_commits_without_checkout_and_keeps_cache_on_failu
     restarted = WorklogFeed(config, cache)
     assert json.loads(restarted.snapshot())['entries'] == second['entries']
     assert json.loads(WorklogFeed(None, tmp_path / 'disabled').snapshot())['enabled'] is False
+
+
+import pytest
+
+
+@pytest.fixture
+def message_repositories(tmp_path):
+    import subprocess
+    from apps.training_monitor import WorklogFeed, WorklogWriter
+    origin, source, reader = (tmp_path / name for name in ('origin', 'source', 'reader'))
+    def git(path, *args):
+        return subprocess.run(['git', '-C', str(path), *args], check=True,
+                              capture_output=True).stdout.decode('utf-8').strip()
+    origin.mkdir()
+    git(origin, 'init', '--bare')
+    source.mkdir()
+    git(source, 'init', '-b', 'codex/log')
+    git(source, 'config', 'user.email', 'test@example.invalid')
+    git(source, 'config', 'user.name', 'test')
+    (source / 'tracked').write_text('original', encoding='utf-8')
+    git(source, 'add', '.')
+    git(source, 'commit', '-m', 'initial')
+    git(source, 'remote', 'add', 'origin', str(origin))
+    git(source, 'push', 'origin', 'codex/log')
+    subprocess.run(['git', 'clone', '-b', 'codex/log', str(origin), str(reader)],
+                   check=True, capture_output=True)
+    git(reader, 'config', 'user.email', 'test@example.invalid')
+    git(reader, 'config', 'user.name', 'test')
+    feed = WorklogFeed(dict(repository=str(reader), branch='codex/log',
+                           allow_messages=True), tmp_path / 'cache.json')
+    writer = WorklogWriter(feed, tmp_path / 'receipts.json')
+    return SimpleNamespace(origin=origin, source=source, reader=reader,
+                           feed=feed, writer=writer, git=git)
+
+
+def test_user_message_preserves_concurrent_commits_checkout_and_staging(message_repositories):
+    import uuid
+    from datetime import datetime, timedelta, timezone
+    r = message_repositories
+    git = r.git
+    original_head = git(r.reader, 'rev-parse', 'HEAD')
+    (r.reader / 'tracked').write_text('user staged change', encoding='utf-8')
+    git(r.reader, 'add', 'tracked')
+    staged = git(r.reader, 'diff', '--cached')
+    original_git = r.feed.git
+    raced = False
+    path = 'worklog/' + datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d') + '.md'
+    def concurrent_git(*args, **kwargs):
+        nonlocal raced
+        if args[0] == 'push' and not raced:
+            raced = True
+            (r.source / 'worklog').mkdir()
+            (r.source / path).write_text('## Other session\nkeep this decision\n', encoding='utf-8')
+            (r.source / 'other-code').write_text('keep code too', encoding='utf-8')
+            git(r.source, 'add', '.')
+            git(r.source, 'commit', '-m', 'concurrent work')
+            git(r.source, 'push', 'origin', 'codex/log')
+        return original_git(*args, **kwargs)
+    with patch.object(r.feed, 'git', side_effect=concurrent_git):
+        receipt = r.writer.publish(str(uuid.uuid4()), '中文 prompt\n## literal heading\n<script>not executable</script>')
+    text = git(r.origin, 'show', 'refs/heads/codex/log:' + receipt['path'])
+    assert receipt['status'] == 'published'
+    assert 'keep this decision' in text
+    assert '> 中文 prompt\n> ## literal heading\n> <script>not executable</script>' in text
+    assert git(r.origin, 'show', 'refs/heads/codex/log:other-code') == 'keep code too'
+    assert git(r.reader, 'rev-parse', 'HEAD') == original_head
+    assert git(r.reader, 'diff', '--cached') == staged
+    assert git(r.origin, 'diff', '--name-only', receipt['commit'] + '^', receipt['commit']) == receipt['path']
+
+
+def test_lost_push_response_retries_once_and_restart_does_not_duplicate(message_repositories):
+    import uuid
+    import subprocess
+    from apps.training_monitor import WorklogWriter
+    r = message_repositories
+    original_git = r.feed.git
+    lost = False
+    def lost_response(*args, **kwargs):
+        nonlocal lost
+        result = original_git(*args, **kwargs)
+        if args[0] == 'push' and not lost:
+            lost = True
+            raise subprocess.TimeoutExpired('git', 25)
+        return result
+    message_id = str(uuid.uuid4())
+    with patch.object(r.feed, 'git', side_effect=lost_response):
+        receipt = r.writer.publish(message_id, 'Only once')
+    restarted = WorklogWriter(r.feed, r.writer.receipts)
+    assert restarted.publish(message_id, 'Only once') == receipt
+    text = r.git(r.origin, 'show', 'refs/heads/codex/log:' + receipt['path'])
+    assert text.count('<!-- user-message:' + message_id + ' -->') == 1
+    with pytest.raises(ValueError):
+        restarted.publish(message_id, 'Changed content')
+
+
+def test_failed_message_is_not_published_and_can_be_retried(message_repositories):
+    import uuid
+    r = message_repositories
+    message_id = str(uuid.uuid4())
+    original = r.git(r.reader, 'remote', 'get-url', 'origin')
+    r.git(r.reader, 'remote', 'set-url', 'origin', str(r.reader / 'missing'))
+    with pytest.raises(RuntimeError):
+        r.writer.publish(message_id, 'retry me')
+    assert r.writer.messages[message_id]['status'] == 'pending'
+    r.git(r.reader, 'remote', 'set-url', 'origin', original)
+    assert r.writer.publish(message_id, 'retry me')['status'] == 'published'
+    r.feed.config['allow_messages'] = False
+    with pytest.raises(ValueError):
+        r.writer.publish(str(uuid.uuid4()), 'disabled')
