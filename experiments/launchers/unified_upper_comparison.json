@@ -372,7 +372,7 @@
     },
     "rollout_scale_diagnostic": {
       "protocol": "unified-upper-rollout-scale-v1",
-      "status": "All six frozen collection arms accepted; repeat work counts identical, wall +2.390741%. Pending micro/full interpretation.",
+      "status": "All six arms accepted; full curve/repeat drift reported;1920 games chosen for fresh qualification, not proven online best.",
       "user_message": "USER-ce1e8fc7-7c7a-4637-9c53-377888849c11",
       "seed": 20261103,
       "source": "OriginalB192 protected complete model/upper+lower Adam/RNG and240 environments/rank, only after all4 stopped/exit0/full-state acceptance. Source files remain unchanged.",
@@ -419,7 +419,7 @@
     },
     "microbatch_diagnostic": {
       "protocol": "unified-upper-candidate-screen-v1",
-      "status": "Launched once after all six scaling arms accepted; bounded actual four-rank results pending.",
+      "status": "All four arms complete, all4rank exit0/source restoration verified;512/1024 numerical comparisons and control repeat pass.1024 selected for fresh qualification.",
       "seed": 20261103,
       "user_message": "USER-ce1e8fc7-7c7a-4637-9c53-377888849c11",
       "source": "Same protected B192 full state; fresh960 complete cohort from that source, no lower update or persisted upper update.",
@@ -494,7 +494,7 @@
       "failure": "No retry on timeout/OOM/nonfinite/source-restore failure; no automatic promotion from MSE or speed alone. Larger micro must pass numerical comparison and full production-length qualification."
     },
     "fresh_lambda_training": {
-      "status": "User authorized after current scaling/micro diagnostics; geometry and micro pending full curve. Not launched.",
+      "status": "Final candidate registered after all seven diagnostics accepted; fresh initialization preflight pending, not launched.",
       "user_message": "USER-b1cb9f48-083c-4bd1-8dba-8c38c0e5849d",
       "intent": "After tests start a genuinely new training run from the original unified initialization; prioritize complete-game frozen lambda-return critic with lambda0.97.",
       "initialization": {
@@ -521,7 +521,37 @@
       "interpretation": "Earlier afternoon lambda diagnostic is reference only; target-noise reduction does not prove online learning gain. Fresh package changes geometry/critic batch/target and possibly execution micro; cannot isolate lambda causality from its learning curve.",
       "complete_game_failure_policy": "New initial training uses censored_games=error: an action/wall budget failure aborts before updating incomplete games. Keep2424 actions/1800s cohort budget and415s iteration failure; do not truncate/exclude to pass. Existing frozen diagnostics retain their original source exclude contract with actual0 exclusions.",
       "continue_after_qualification": true,
-      "learning_review": "After accepted fresh rounds1-2, ordinary complete-state resume continuous with no total-round cap. Initial10 and20 reported descriptively, then fixed three10/six5/common-complete-wall windows at30 and each10 thereafter. Compare historicalB only at matching full-game and complete-wall budgets with explicit source/measurement limitations, not as isolated lambda causality."
+      "learning_review": "After accepted fresh rounds1-2, ordinary complete-state resume continuous with no total-round cap. Initial10 and20 reported descriptively, then fixed three10/six5/common-complete-wall windows at30 and each10 thereafter. Compare historicalB only at matching full-game and complete-wall budgets with explicit source/measurement limitations, not as isolated lambda causality.",
+      "launch_registered": true,
+      "registered_at": "2026-11-04T01:33:03.579188+08:00",
+      "candidate": {
+        "root": "/root/upper-throughput-20261104",
+        "runtime_commit": "b12c01d4",
+        "run_id": "combat37-upper-fresh-lambda097-r1",
+        "wandb_id": "combat37fresh097a",
+        "ring_port": 29948,
+        "games_per_rank": 480,
+        "micro_batch_size": 1024,
+        "qualification_rounds": 2,
+        "critic_target": "frozen-lambda",
+        "gae_lambda": 0.97,
+        "actor_effective_batch_size": 6144,
+        "critic_effective_batch_size": 32768,
+        "actor_learning_rate": 0.00012,
+        "critic_learning_rate": 0.0001,
+        "actor_epochs": 2,
+        "critic_epochs": 4,
+        "measure_value_loss": true,
+        "censored_games": "error",
+        "seed": 20261103
+      },
+      "selection": {
+        "evidence": "runs/local/upper-unified/candidates/throughput-summary.json",
+        "reason": "1920 natural games balances collection285.777s with update/save/growing-workload headroom;2400/2880 collect328.212/377.641s before updates. micro1024 update19.263s vs25639.976s and51226.625s; all numerical tolerances pass. Not an online learning optimum or full-round qualification.",
+        "estimated_mature_upper_update_seconds": 51.29478694841539,
+        "estimate_limitation": "Linear sample scaling of deterministic720-training-game MC diagnostic, not actual full1920-game lambda production timing; actual full rounds and mature limits govern."
+      },
+      "runtime_headroom_review": "Two successive complete rounds>=380s trigger workload/headroom diagnosis.415s abort unchanged; never cut games/search or automatically restart. A single noisy round is not a learning-plateau trigger."
     }
   },
   "monitor": {
@@ -533,7 +563,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "diagnostic",
-    "note": "1/1.5/2/2.5/3倍及1倍重复均验收；micro256/512/1024/256对照进行中。之后按用户要求从原初值启动整局λ=.97新训，实际几何待结果。",
-    "updated_at": "2026-11-04T01:25:22.816407+08:00"
+    "note": "全部局数/micro测量验收；选择1920自然局、micro1024、整局λ=.97新初值候选，启动前预检中。原B192保留。",
+    "updated_at": "2026-11-04T01:33:03.579188+08:00"
   }
 }
