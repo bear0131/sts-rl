@@ -319,6 +319,12 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
         for arm in protocol['arms']:
             reset()
             candidate = replace(cfg, **arm['changes'])
+            if arm.get('critic_target') == 'frozen_lambda_return':
+                # This historical diagnostic injects custom room/calibrated
+                # labels through complete_returns. Its independent probes
+                # below still evaluate true MC returns; do not mislabel the
+                # injected labels as production full-cohort MC measurements.
+                candidate = replace(candidate, measure_value_loss=False)
             model.policy.core.upper_config = candidate
             model.policy.upper_config = asdict(candidate)
             model.policy_kwargs['upper_config'] = asdict(candidate)

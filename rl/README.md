@@ -522,3 +522,17 @@ actor 的冻结 GAE、奖励、终局定义、搜索、样本遍数和上下层 
 全局目标 batch 不再乘 rank 数，实际每遍更新 `ceil(全局上层样本数 / 目标batch)` 次，
 所有完整游戏样本均使用；micro batch 只控制执行分块。日志记录实际 actor/critic LR、
 目标及实际平均有效 batch、更新次数和样本使用，资格仍须完成多机生产采集与保存恢复。
+
+统一上层的 `--upper-measure-value-loss` 启用同一完整训练 cohort 的冻结前后测量；
+默认关闭，省略参数时沿用 checkpoint，`--no-upper-measure-value-loss` 显式关闭。
+`upper/value_mc_mse_pre_update` / `post_update` 分别在任何上层更新前、全部 critic
+更新后，以固定权重和 eval/no-grad 对全部样本重算 MC MSE；对应
+`value_target_mse_pre_update` / `post_update` 使用实际 critic 标签，冻结 λ 模式下
+与 MC 区分。标签使用训练实际 float32 值、平方误差以 float64 累计，按全局样本数加权；
+`value_measurement_samples` 给出分母，`critic_target_version` 给出目标版本。
+测量保留模型训练模式和 Python/NumPy/Torch RNG，不执行 optimizer step。
+`value_measurement_pre_seconds_rank` / `post_seconds_rank` 和总
+`value_measurement_seconds_rank` 包含 GPU 同步与指标归约；开销计入完整轮墙钟。
+原 `upper/value_loss` 仍是末遍各 batch 更新前误差的加权均值，不是冻结前后重算值。
+以上均为**参与拟合的训练数据**，不能凭降幅证明过拟合；泛化诊断须另用未参与更新、
+按完整游戏划分的留出集。空 rank 参与同一归约，旧轮次没有这些字段时不填零。

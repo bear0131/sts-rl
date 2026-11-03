@@ -450,6 +450,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--upper-critic-target', choices=('mc', 'frozen-lambda'), default=None,
                         help='Unified upper critic labels only; frozen-lambda uses collection-time values. '
                              'Omission preserves the checkpoint target and all Adam state.')
+    parser.add_argument('--upper-measure-value-loss', action=argparse.BooleanOptionalAction, default=None,
+                        help='Measure frozen full-cohort critic MSE before/after unified upper updates; '
+                             'adds forward passes. Omission preserves checkpoint configuration.')
     parser.add_argument(
         "--upper-target-kl", type=float, default=None,
         help="Strategic PPO stops above 1.5 times this positive KL target; 0 disables KL early stopping. "
@@ -2128,19 +2131,21 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
 
 
 def apply_unified_upper_update_overrides(model, args):
-    """Change explicit optimization settings after loading Adam, without resetting moments."""
+    """Apply explicit unified settings after loading Adam, without resetting moments."""
     from dataclasses import asdict, replace
     changes = {name: getattr(args, 'upper_' + name) for name in
                ('learning_rate', 'value_learning_rate', 'effective_batch_size', 'critic_epochs')
                if getattr(args, 'upper_' + name, None) is not None}
+    if any(not np.isfinite(v) or v <= 0 for v in changes.values()):
+        raise ValueError('upper optimization overrides must be finite and positive')
+    if getattr(args, 'upper_measure_value_loss', None) is not None:
+        changes['measure_value_loss'] = args.upper_measure_value_loss
     if not changes:
         return
     core = getattr(model.policy, 'core', None)
     cfg = getattr(core, 'upper_config', None)
     if cfg is None or cfg.architecture != 'upper-latent-actions-v1':
         raise ValueError('upper optimization overrides require unified upper')
-    if any(not np.isfinite(v) or v <= 0 for v in changes.values()):
-        raise ValueError('upper optimization overrides must be finite and positive')
     updated = replace(cfg, **changes)
     groups = model.policy.upper_optimizer.param_groups
     networks = (core.upper_actor, core.upper_critic)

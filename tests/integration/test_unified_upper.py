@@ -123,7 +123,8 @@ def test_two_updates_save_load_and_old_value_freezing(unified_env, tmp_path, dev
         model.set_logger(configure(str(tmp_path), []))
 
 
-def test_unequal_empty_ranks_match_global_weighted_update(unified_env, tmp_path):
+@pytest.mark.parametrize('measure', [False, True])
+def test_unequal_empty_ranks_match_global_weighted_update(unified_env, tmp_path, measure):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
     from dataclasses import replace
@@ -145,12 +146,13 @@ def test_unequal_empty_ranks_match_global_weighted_update(unified_env, tmp_path)
         row.update(value=float(value), log_prob=float(logp))
     def ready(model, samples):
         model.policy.load_state_dict(state)
-        model.policy.core.upper_config = replace(model.policy.core.upper_config, effective_batch_size=64)
+        model.policy.core.upper_config = replace(model.policy.core.upper_config,
+            effective_batch_size=64, measure_value_loss=measure)
         model.set_logger(configure(str(tmp_path), []))
         model._upper_completed, model._upper_pending = copy.deepcopy(samples), []
         return model
     ready(reference, rows)
-    update_upper(reference)
+    reference_result = update_upper(reference)
     models = [ready(make_model(unified_env), samples) for samples in ([], rows[:3], rows[3:])]
     barrier, slots = Barrier(3, timeout=40), [None]*3
     def average(rank, values):
@@ -168,6 +170,11 @@ def test_unequal_empty_ranks_match_global_weighted_update(unified_env, tmp_path)
         results = list(pool.map(train, range(3)))
     for model, result in zip(models, results):
         assert result['samples_used'] == 14 and result['critic_samples_used'] == 21
+        if measure:
+            assert result['value_measurement_samples'] == 7
+            for when in ('pre', 'post'):
+                assert result[f'value_mc_mse_{when}_update'] == pytest.approx(
+                    reference_result[f'value_mc_mse_{when}_update'], rel=2e-5, abs=3e-6)
         for p, q in zip(model.policy.parameters(), reference.policy.parameters()):
             torch.testing.assert_close(p, q, rtol=2e-5, atol=3e-6)
 
@@ -175,6 +182,7 @@ def test_unequal_empty_ranks_match_global_weighted_update(unified_env, tmp_path)
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 @pytest.mark.parametrize('calibration_games', [0, 2])
 def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_env, tmp_path, device, monkeypatch, calibration_games):
+    from dataclasses import asdict, replace
     from unittest.mock import patch
     from rl.algorithms import unified_upper as U
     from rl.algorithms.upper_probe import run_probe, state_digest, split_games, categorical_kl
@@ -182,6 +190,9 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
     if device == 'cuda' and not torch.cuda.is_available():
         pytest.skip('CUDA hardware unavailable; CPU result is not GPU qualification')
     model = make_model(unified_env, device=device)
+    cfg = replace(model.policy.core.upper_config, measure_value_loss=True)
+    model.policy.core.upper_config = cfg
+    model.policy.upper_config = model.policy_kwargs['upper_config'] = asdict(cfg)
     model.set_logger(configure(str(tmp_path), []))
     obs, _ = unified_env.reset(seed=41)
     masks = unified_env.action_masks()
@@ -222,6 +233,9 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
                for r in result['arms'])
     assert result['arms'][0]['probes'] == result['arms'][-1]['probes']
     assert result['arms'][0]['final_digest'] == result['arms'][1]['final_digest']
+    assert 'value_mc_mse_pre_update' in result['arms'][0]['stats']
+    assert 'value_mc_mse_pre_update' not in result['arms'][1]['stats']
+    assert model.policy.core.upper_config.measure_value_loss
     assert result['room_transition_audit']['terminals'] == 7
     assert model._upper_completed is rows
     assert state_digest(dict(policy=model.policy.state_dict(),
@@ -347,3 +361,103 @@ def test_fewer_updates_small_lr_preserves_adam_and_survives_resume(unified_env, 
     args.upper_learning_rate = float('nan')
     with pytest.raises(ValueError, match='finite and positive'):
         apply_unified_upper_update_overrides(candidate, args)
+
+
+@pytest.mark.parametrize('target', ['mc', 'frozen-lambda'])
+def test_frozen_value_measurement_preserves_updates_rng_and_resume(unified_env, tmp_path, target):
+    import random
+    from dataclasses import asdict, replace
+    from rl.algorithms.upper_probe import state_digest
+    from rl.training.distributed_sb3 import build_parser, apply_unified_upper_update_overrides
+    model = make_model(unified_env)
+    model.set_logger(configure(str(tmp_path), []))
+    obs, _ = unified_env.reset(seed=41)
+    mask = unified_env.action_masks()
+    with torch.no_grad():
+        action, value, logp = model.policy(tensor(obs), action_masks=mask[None])
+    terminal = [dict(observation=copy.deepcopy(obs), action=int(action), mask=mask.copy(),
+        value=float(value), log_prob=float(logp), reward=i/7, terminal=True, env=i, episode=0)
+        for i in range(7)]
+    rows = [dict(r, terminal=False, reward=.1, value=float(r['value'])+.3) for r in terminal] + terminal
+    model._upper_completed = copy.deepcopy(rows)
+    update_upper(model)  # Nonempty Adam before enabling instrumentation.
+    cfg = replace(model.policy.core.upper_config, critic_target=target)
+    model.policy.core.upper_config = cfg
+    model.policy.upper_config = model.policy_kwargs['upper_config'] = asdict(cfg)
+    source = tmp_path/'measurement-source.zip'; model.save(source)
+    control = AccumulatingMaskablePPO.load(source, device='cpu')
+    measured = AccumulatingMaskablePPO.load(source, device='cpu')
+    original = state_digest((measured.policy.state_dict(), measured.policy.upper_optimizer.state_dict()))
+    parser = build_parser()
+    apply_unified_upper_update_overrides(measured, parser.parse_args(
+        ['--rank', '0', '--world-size', '1', '--upper-measure-value-loss']))
+    assert original == state_digest((measured.policy.state_dict(), measured.policy.upper_optimizer.state_dict()))
+    mc = complete_returns(rows).astype(np.float32)
+    labels = (mc if target == 'mc' else macro_advantages(rows, np.zeros(len(rows)), 1., .97)[1].astype(np.float32))
+    batch = {k: torch.as_tensor(np.stack([r['observation'][k] for r in rows])) for k in obs}
+    def oracle(learner):
+        network = learner.policy.core.upper_critic
+        mode = network.training
+        network.eval()
+        with torch.no_grad():
+            predictions = network(batch).flatten().double().numpy()
+        network.train(mode)
+        return {key: float(np.square(predictions-value.astype(np.float64)).mean())
+                for key, value in [('mc', mc), ('target', labels)]}
+    for iteration in range(2):
+        expected_pre = oracle(measured)
+        results, rngs = [], []
+        for learner in (control, measured):
+            learner.set_logger(configure(str(tmp_path), []))
+            learner._upper_completed = copy.deepcopy(rows)
+            random.seed(700+iteration); np.random.seed(700+iteration); torch.manual_seed(700+iteration)
+            results.append(update_upper(learner))
+            rngs.append(state_digest((random.getstate(), np.random.get_state(), torch.get_rng_state())))
+        expected_post = oracle(measured)
+        assert rngs[0] == rngs[1]
+        assert state_digest(control.policy.state_dict()) == state_digest(measured.policy.state_dict())
+        assert state_digest(control.policy.upper_optimizer.state_dict()) == state_digest(measured.policy.upper_optimizer.state_dict())
+        assert 'value_mc_mse_pre_update' not in results[0]
+        stats = results[1]
+        for key in ('updates', 'critic_updates', 'samples_used', 'critic_samples_used', 'value_loss'):
+            assert stats[key] == results[0][key]
+        assert stats['value_measurement_samples'] == len(rows)
+        for name in ('mc', 'target'):
+            assert stats[f'value_{name}_mse_pre_update'] == pytest.approx(expected_pre[name], rel=1e-5, abs=2e-6)
+            assert stats[f'value_{name}_mse_post_update'] == pytest.approx(expected_post[name], rel=1e-5, abs=2e-6)
+        assert stats['value_measurement_seconds_rank'] > 0
+        assert stats['value_measurement_seconds_rank'] == (
+            stats['value_measurement_pre_seconds_rank'] + stats['value_measurement_post_seconds_rank'])
+        for name, learner in [('control', control), ('measured', measured)]:
+            learner.save(tmp_path/f'{name}.zip')
+        control = AccumulatingMaskablePPO.load(tmp_path/'control.zip', device='cpu')
+        measured = AccumulatingMaskablePPO.load(tmp_path/'measured.zip', device='cpu')
+        apply_unified_upper_update_overrides(measured, parser.parse_args(['--rank', '0', '--world-size', '1']))
+        assert measured.policy.core.upper_config.measure_value_loss
+    apply_unified_upper_update_overrides(measured, parser.parse_args(
+        ['--rank', '0', '--world-size', '1', '--no-upper-measure-value-loss']))
+    assert not measured.policy.core.upper_config.measure_value_loss
+
+
+def test_frozen_measurement_failure_restores_modes_and_rng(unified_env, monkeypatch):
+    import random
+    from rl.algorithms.unified_upper import measure_critic_mse
+    from rl.algorithms.upper_probe import state_digest
+    model = make_model(unified_env)
+    obs, _ = unified_env.reset(seed=41)
+    network = model.policy.core.upper_critic
+    network.train()
+    modules = list(network.modules())
+    modules[-1].training = False
+    modes = [m.training for m in modules]
+    before = state_digest((random.getstate(), np.random.get_state(), torch.get_rng_state()))
+    policy = state_digest(model.policy.state_dict())
+    def fail(*args, **kwargs):
+        random.random(); np.random.random(); torch.rand(1)
+        raise RuntimeError('measurement failed')
+    monkeypatch.setattr(network, 'forward', fail)
+    with pytest.raises(RuntimeError, match='measurement failed'):
+        measure_critic_mse(model, {k: v[None] for k, v in obs.items()}, {'mc': np.array([1.])})
+    assert [m.training for m in modules] == modes
+    assert before == state_digest((random.getstate(), np.random.get_state(), torch.get_rng_state()))
+    assert policy == state_digest(model.policy.state_dict())

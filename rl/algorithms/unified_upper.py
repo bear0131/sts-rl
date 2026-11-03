@@ -1,5 +1,6 @@
 """Complete-game critic and frozen-GAE PPO actor with independent updates."""
 import math
+import random
 import time
 import numpy as np
 import torch
@@ -23,10 +24,59 @@ def complete_returns(records):
     return returns
 
 
+def measure_critic_mse(model, observations, targets, *, average=lambda x: x):
+    """Frozen full-cohort forward passes; never train on or mutate the inputs.
+
+    Targets use the learner's float32 labels, with float64 squared-error sums.
+    All ranks participate, including empty ranks. This measures training data,
+    not held-out generalization. The returned time includes reduction and CUDA
+    synchronization; callers retain it in their end-to-end round time.
+    """
+    network, cfg = model.policy.core.upper_critic, model.policy.core.upper_config
+    if not targets:
+        raise ValueError('critic measurement requires named targets')
+    count = len(next(iter(targets.values())))
+    if any(len(value) != count for value in targets.values()):
+        raise ValueError('critic measurement targets have different sample counts')
+    device = torch.device(model.device)
+    devices = [device.index if device.index is not None else torch.cuda.current_device()] if device.type == 'cuda' else []
+    if devices:
+        torch.cuda.synchronize(device)
+    started = time.perf_counter()
+    modes = [(module, module.training) for module in network.modules()]
+    python_rng, numpy_rng = random.getstate(), np.random.get_state()
+    try:
+        with torch.random.fork_rng(devices=devices), torch.no_grad():
+            network.eval()
+            sums = torch.zeros(len(targets), dtype=torch.float64, device=device)
+            for start in range(0, count, cfg.micro_batch_size):
+                stop = min(start + cfg.micro_batch_size, count)
+                obs = {key: torch.as_tensor(value[start:stop], device=device)
+                       for key, value in observations.items()}
+                prediction = network(obs).flatten().double()
+                for index, value in enumerate(targets.values()):
+                    label = torch.as_tensor(value[start:stop], dtype=torch.float32, device=device).double()
+                    sums[index] += (prediction - label).square().sum()
+            reduced = average(dict(count=float(count), **{
+                key: float(value) for key, value in zip(targets, sums.cpu().tolist())}))
+            if not all(np.isfinite(value) for value in reduced.values()):
+                raise FloatingPointError('nonfinite frozen critic measurement')
+            result = {key: reduced[key] / reduced['count'] if reduced['count'] else None for key in targets}
+    finally:
+        for module, training in modes:
+            module.training = training
+        random.setstate(python_rng)
+        np.random.set_state(numpy_rng)
+    if devices:
+        torch.cuda.synchronize(device)
+    return result, time.perf_counter() - started
+
+
 def update_unified_upper(model, *, rank=0, world_size=1, average=lambda x: x, synchronize=None):
     records, core = model._upper_completed, model.policy.core
     cfg, count = core.upper_config, len(records)
     returns = complete_returns(records)
+    mc_returns = returns
     advantages, lambda_returns = macro_advantages(records, np.zeros(count), 1., cfg.gae_lambda)
     # Both targets require natural complete games. Lambda labels use only
     # collection-time frozen values, never this batch's newly fitted critic.
@@ -61,6 +111,14 @@ def update_unified_upper(model, *, rank=0, world_size=1, average=lambda x: x, sy
     batches = max(1, math.ceil(total / cfg.effective_batch_size))
     out.update(requested_updates=float(cfg.epochs * batches),
                effective_batch_size_global=total / batches)
+    measurement_seconds = 0.
+    if cfg.measure_value_loss:
+        measured, measurement_seconds = measure_critic_mse(model, observations,
+            dict(mc=mc_returns, target=returns), average=average)
+        out.update(value_mc_mse_pre_update=measured['mc'],
+                   value_target_mse_pre_update=measured['target'],
+                   value_measurement_pre_seconds_rank=measurement_seconds,
+                   value_measurement_samples=float(total), value_measurement_version=1.)
     model.policy.set_training_mode(True)
     serial = 0
     with train_phase(model, upper=True):
@@ -126,6 +184,13 @@ def update_unified_upper(model, *, rank=0, world_size=1, average=lambda x: x, sy
             out[name+'_grad_norm'] = float(torch.stack(norms).mean()) if norms else 0.
             out[name+'_parameter_l2_change'] = float(torch.stack([(p.detach()-q).square().sum()
                 for p, q in zip(network.parameters(), before)]).sum().sqrt())
+    if cfg.measure_value_loss:
+        measured, seconds = measure_critic_mse(model, observations,
+            dict(mc=mc_returns, target=returns), average=average)
+        out.update(value_mc_mse_post_update=measured['mc'],
+                   value_target_mse_post_update=measured['target'],
+                   value_measurement_post_seconds_rank=seconds,
+                   value_measurement_seconds_rank=measurement_seconds + seconds)
     out['grad_norm'] = out['actor_grad_norm']
     out['parameter_l2_change'] = out['actor_parameter_l2_change']
     model._upper_completed = []

@@ -37,10 +37,11 @@ class UpperConfig:
     critic_epochs: int = 4
     effective_batch_size: int = 6144
     critic_target: str = 'mc'
+    measure_value_loss: bool = False
 
     def __post_init__(self):
         if (not all(math.isfinite(value) for key, value in asdict(self).items()
-                    if key not in ('optimizer', 'target_kl', 'architecture', 'critic_target'))
+                    if key not in ('optimizer', 'target_kl', 'architecture', 'critic_target', 'measure_value_loss'))
                 or min(self.width, self.layers, self.heads, self.epochs, self.micro_batch_size) < 1
                 or self.width % self.heads or self.learning_rate <= 0
                 or not 0 <= self.gamma <= 1 or not 0 <= self.gae_lambda <= 1
@@ -58,6 +59,9 @@ class UpperConfig:
         if self.critic_target not in ('mc', 'frozen-lambda') or (
                 self.architecture == 'legacy' and self.critic_target != 'mc'):
             raise ValueError('critic target override requires unified upper')
+        if type(self.measure_value_loss) is not bool or (
+                self.measure_value_loss and self.architecture == 'legacy'):
+            raise ValueError('value loss measurement requires unified upper and a boolean option')
         if self.architecture != 'legacy' and (
                 self.gamma != 1 or self.target_kl is not None or self.optimizer != 'adamw'
                 or min(self.latents, self.critic_epochs, self.effective_batch_size) < 1):
