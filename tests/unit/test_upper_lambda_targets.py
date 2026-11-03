@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 from env.core import encode
-from rl.algorithms.upper_probe import critic_lambda_returns, room_key, room_transition_audit
+from rl.algorithms.upper_probe import (critic_lambda_returns, room_key,
+                                      room_transition_audit, fit_room_calibration)
 from rl.algorithms.unified_upper import complete_returns
 from rl.algorithms.upper_ppo import macro_advantages
 
@@ -75,3 +76,39 @@ def test_room_successor_audit_counts_and_rejects_false_boundary(lambda_row):
     rows[0]['next_observation']=r(floor=99)['observation']
     with pytest.raises(ValueError,match='successor'):
         room_transition_audit(rows)
+
+
+def test_scene_bias_calibration_uses_game_weights_and_preserves_room_menus(lambda_row):
+    def scene_row(phase, **kwargs):
+        row=lambda_row(**kwargs)
+        row['observation']['phase']=np.array([phase])
+        return row
+    records=[scene_row(1,env=i,value=1.,terminal=True) for i in range(4)]
+    records += [scene_row(2,env=i+4,value=0.,terminal=True) for i in range(4)]
+    settings=dict(base=.9,span=.07,shrinkage_games=0,noise_floor=.05)
+    table=fit_room_calibration(records,settings)
+    assert table['calibration_games']==8
+    assert table['scenes']['1:1']['coefficient'] > .96
+    assert table['scenes']['1:2']['coefficient'] == .9
+    first=scene_row(1,value=.1,reward=.2)
+    last=scene_row(2,floor=2,value=.9,reward=1.,terminal=True)
+    original=critic_lambda_returns([first,last],.9,'calibrated_room',table)[0]
+    # Arbitrarily wrong V or different phase on an extra internal menu cannot
+    # alter the earlier target, nor re-fit the frozen calibration table.
+    before=copy.deepcopy(table)
+    extra=scene_row(1,value=99.)
+    assert critic_lambda_returns([first,extra,last],.9,'calibrated_room',table)[0]==original
+    assert table==before
+    with pytest.raises(ValueError,match='frozen calibration'):
+        critic_lambda_returns([first,last],.9,'calibrated_room')
+
+
+def test_scene_calibration_does_not_count_menu_length_as_more_games(lambda_row):
+    row=lambda_row(value=1.,terminal=True)
+    row['observation']['phase']=np.array([1])
+    shorter=[row,dict(row,env=1,value=0.)]
+    longer=[dict(row,terminal=False),*shorter]
+    settings=dict(base=.9,span=.07,shrinkage_games=32,noise_floor=.05)
+    first=fit_room_calibration(shorter,settings)
+    second=fit_room_calibration(longer,settings)
+    assert first==second

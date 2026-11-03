@@ -16,7 +16,7 @@ import numpy as np
 import torch
 
 from rl.algorithms import unified_upper as U
-from env.core import encode
+from env.core import encode, vocab
 
 
 def room_key(observation):
@@ -34,7 +34,61 @@ def room_key(observation):
     return tuple(values)
 
 
-def critic_lambda_returns(records, coefficient, scope='decision'):
+def fit_room_calibration(records, settings, *, average=lambda x: x, world_size=1):
+    """Freeze scene bias estimates using separate complete calibration games.
+
+    One contribution per game/scene prevents long menu sequences dominating.
+    Residual spread contains outcome noise; it is not epistemic uncertainty.
+    """
+    returns = U.complete_returns(records)
+    groups, games = {}, {}
+    for row, target in zip(records, returns):
+        game = (row['env'], row['episode'])
+        scene = (room_key(row['observation'])[0], int(row['observation']['phase'][0]))
+        residual = float(row['value']) - target
+        groups.setdefault((game, scene), []).append(residual)
+        games.setdefault(game, []).append(residual)
+    counts = dict(global_n=float(len(games)), global_sum=0., global_square=0.)
+    for values in games.values():
+        mean = float(np.mean(values))
+        counts['global_sum'] += mean
+        counts['global_square'] += mean*mean
+    for act in range(5):
+        for phase in range(len(vocab.PHASE_VOCAB)):
+            for field in ('n', 'sum', 'square'):
+                counts[f'{act}:{phase}:{field}'] = 0.
+    for (_, (act, phase)), values in groups.items():
+        mean = float(np.mean(values))
+        counts[f'{act}:{phase}:n'] += 1
+        counts[f'{act}:{phase}:sum'] += mean
+        counts[f'{act}:{phase}:square'] += mean*mean
+    reduced = {k: v*world_size for k, v in average(counts).items()}
+    if reduced['global_n'] <= 0:
+        raise ValueError('adaptive lambda requires distinct calibration games')
+    global_mean = reduced['global_sum']/reduced['global_n']
+    global_second = reduced['global_square']/reduced['global_n']
+    base, span = settings['base'], settings['span']
+    prior, floor = settings['shrinkage_games'], settings['noise_floor']
+    if not (0 <= base <= base+span <= 1 and prior >= 0 and floor > 0):
+        raise ValueError('invalid scene calibration settings')
+    scenes = {}
+    for act in range(5):
+        for phase in range(len(vocab.PHASE_VOCAB)):
+            key = f'{act}:{phase}'
+            n = reduced[f'{key}:n']
+            if n+prior:
+                mean = (reduced[f'{key}:sum']+prior*global_mean)/(n+prior)
+                second = (reduced[f'{key}:square']+prior*global_second)/(n+prior)
+            else:
+                mean, second = global_mean, global_second
+            spread = max(0., second-mean*mean)**.5
+            lam = base+span*abs(mean)/(abs(mean)+spread+floor)
+            scenes[key] = dict(games=n, bias=mean, residual_spread=spread, coefficient=lam)
+    return dict(settings=settings, calibration_games=reduced['global_n'],
+                global_bias=global_mean, scenes=scenes)
+
+
+def critic_lambda_returns(records, coefficient, scope='decision', calibration=None):
     """Frozen-old-V targets, gamma=1, on complete natural upper trajectories.
 
     Room scope has lambda=1 on every within-room transition. Only crossing
@@ -43,8 +97,10 @@ def critic_lambda_returns(records, coefficient, scope='decision'):
     """
     if not np.isfinite(coefficient) or not 0 <= coefficient <= 1:
         raise ValueError('critic lambda must be between zero and one')
-    if scope not in ('decision', 'room'):
+    if scope not in ('decision', 'room', 'calibrated_room'):
         raise ValueError('unknown critic lambda scope')
+    if scope == 'calibrated_room' and calibration is None:
+        raise ValueError('adaptive lambda requires frozen calibration')
     if U.bootstrap_indices(records):
         raise ValueError('critic lambda requires complete natural episodes')
     targets = np.zeros(len(records), dtype=np.float64)
@@ -55,13 +111,19 @@ def critic_lambda_returns(records, coefficient, scope='decision'):
         if row['terminal']:
             targets[i] = row['reward']
         else:
-            next_target, next_value, next_room = tails[key]
+            next_target, next_value, next_room, next_scene = tails[key]
             lam = coefficient
-            if scope == 'room' and room_key(row['observation']) == next_room:
-                lam = 1.
+            if scope != 'decision':
+                if room_key(row['observation']) == next_room:
+                    lam = 1.
+                elif scope == 'calibrated_room':
+                    lam = calibration['scenes'][next_scene]['coefficient']
             targets[i] = row['reward'] + (1-lam)*next_value + lam*next_target
+        current_room = room_key(row['observation']) if scope != 'decision' else None
+        scene = (f"{current_room[0]}:{int(row['observation']['phase'][0])}"
+                 if scope == 'calibrated_room' else None)
         tails[key] = (targets[i], float(row['value']),
-                      room_key(row['observation']) if scope == 'room' else None)
+                      current_room, scene)
     return targets
 
 
@@ -174,6 +236,15 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
     returns = U.complete_returns(records)
     advantages, lambda_returns = U.macro_advantages(records, np.zeros(len(records)), 1., cfg.gae_lambda)
     train, hold = split_games(records, limits['holdout_games_per_rank'], protocol['seed'] + rank)
+    calibration_count = limits.get('calibration_games_per_rank', 0)
+    calibration = None
+    if calibration_count:
+        remaining, selected = split_games([records[i] for i in train], calibration_count,
+                                          protocol['seed'] + rank + 30000)
+        calibration_rows = [records[train[i]] for i in selected]
+        train = [train[i] for i in remaining]
+        calibration = fit_room_calibration(calibration_rows, protocol['adaptive_lambda'],
+                                            average=average, world_size=world_size)
     train_rows = [records[i] for i in train]
     normalization = average(dict(n=float(len(train)), total=float(advantages[train].sum()),
         square=float(np.square(advantages[train]).sum())))
@@ -197,10 +268,11 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
     if output:
         output.mkdir(parents=True, exist_ok=True)
     results = dict(rank=rank, world_size=world_size, games=len(games),
-        training_games=len(games) - limits['holdout_games_per_rank'],
+        training_games=len(games) - limits['holdout_games_per_rank'] - calibration_count,
         holdout_games=limits['holdout_games_per_rank'], training_samples=len(train),
-        holdout_samples=len(hold), initial_digest=initial_digest, arms=[])
-    if any(arm.get('lambda_scope') == 'room' for arm in protocol['arms']):
+        holdout_samples=len(hold), initial_digest=initial_digest, arms=[],
+        calibration_games=calibration_count, frozen_scene_calibration=calibration)
+    if any(arm.get('lambda_scope') in ('room','calibrated_room') for arm in protocol['arms']):
         results['room_transition_audit'] = room_transition_audit(records)
     def reset():
         model.policy.load_state_dict(policy)
@@ -244,7 +316,7 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
             if arm.get('critic_target') == 'frozen_lambda_return':
                 coefficient = arm.get('critic_lambda', cfg.gae_lambda)
                 scope = arm.get('lambda_scope', 'decision')
-                target = lambda rows: critic_lambda_returns(rows, coefficient, scope)
+                target = lambda rows: critic_lambda_returns(rows, coefficient, scope, calibration)
             arm_targets = target(records)
             with patch.object(U, 'complete_returns', target):
                 stats = U.update_unified_upper(model, rank=rank, world_size=world_size,

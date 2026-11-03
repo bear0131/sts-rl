@@ -173,7 +173,8 @@ def test_unequal_empty_ranks_match_global_weighted_update(unified_env, tmp_path)
 
 
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
-def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_env, tmp_path, device, monkeypatch):
+@pytest.mark.parametrize('calibration_games', [0, 2])
+def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_env, tmp_path, device, monkeypatch, calibration_games):
     from unittest.mock import patch
     from rl.algorithms import unified_upper as U
     from rl.algorithms.upper_probe import run_probe, state_digest, split_games, categorical_kl
@@ -203,13 +204,21 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
               dict(id='batch3', changes={'effective_batch_size': 3}),
               dict(id='critic_lambda', changes={}, critic_target='frozen_lambda_return'),
               dict(id='control_repeat', changes={})])
+    protocol['diagnostic']['calibration_games_per_rank'] = calibration_games
+    if calibration_games:
+        protocol['adaptive_lambda'] = dict(base=.9, span=.07, shrinkage_games=32, noise_floor=.05)
+        protocol['arms'].insert(-1, dict(id='adaptive', changes={},
+            critic_target='frozen_lambda_return', critic_lambda=.9, lambda_scope='calibrated_room'))
     deterministic_before = torch.are_deterministic_algorithms_enabled()
     result = run_probe(model, protocol, output_dir=tmp_path/'probe')
     assert torch.are_deterministic_algorithms_enabled() == deterministic_before
     assert result['control_repeat_exact'] and result['source_state_restored']
     assert result['rng_restored'] and result['lower_optimizer_unchanged']
-    assert result['training_games'] == 5 and result['holdout_games'] == 2
-    assert all(r['stats']['samples'] == 5 and r['stats']['samples_used'] == 10
+    assert result['training_games'] == 5-calibration_games and result['holdout_games'] == 2
+    assert result['calibration_games'] == calibration_games
+    if calibration_games:
+        assert result['frozen_scene_calibration']['calibration_games'] == calibration_games
+    assert all(r['stats']['samples'] == 5-calibration_games and r['stats']['samples_used'] == 2*(5-calibration_games)
                for r in result['arms'])
     assert result['arms'][0]['probes'] == result['arms'][-1]['probes']
     assert result['arms'][0]['final_digest'] == result['arms'][1]['final_digest']
