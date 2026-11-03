@@ -208,7 +208,7 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
     before = state_digest(dict(policy=model.policy.state_dict(),
         optimizer=model.policy.upper_optimizer.state_dict()))
     protocol = dict(seed=31, diagnostic=dict(world_size=1, games_per_rank=7,
-        holdout_games_per_rank=2, max_probe_decisions_per_split_per_rank=10),
+        holdout_games_per_rank=2, max_probe_decisions_per_split_per_rank=10, full_critic_mse=True),
         arms=[dict(id='control', changes={}),
               dict(id='lambda1', changes={}, critic_target='frozen_lambda_return', critic_lambda=1.),
               dict(id='room_half', changes={}, critic_target='frozen_lambda_return', critic_lambda=.5, lambda_scope='room'),
@@ -227,6 +227,14 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
     assert result['rng_restored'] and result['lower_optimizer_unchanged']
     assert result['training_games'] == 5-calibration_games and result['holdout_games'] == 2
     assert result['calibration_games'] == calibration_games
+    for split, count in [('train', 5-calibration_games), ('holdout', 2)]:
+        pre = result['full_critic_pre_update'][split]
+        assert pre['samples'] == count
+        for arm in result['arms']:
+            post = arm['full_critic_post_update'][split]
+            assert post['samples'] == count
+            assert post['mc_mse'] == pytest.approx(arm['probes'][split]['critic_mc_mse'], rel=1e-5, abs=2e-6)
+            assert pre['mc_mse'] == pytest.approx(arm['probes'][split]['critic_old_mc_mse'], rel=1e-5, abs=2e-6)
     if calibration_games:
         assert result['frozen_scene_calibration']['calibration_games'] == calibration_games
     assert all(r['stats']['samples'] == 5-calibration_games and r['stats']['samples_used'] == 2*(5-calibration_games)

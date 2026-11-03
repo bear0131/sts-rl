@@ -1,0 +1,92 @@
+{
+  "protocol": "unified-upper-candidate-screen-v1",
+  "seed": 20261103,
+  "user_intention": "USER-dbf42ea3/USER-02bf4ed1: measure frozen pre/post train error and game-heldout batch effect; training loss reduction alone is not proof of overfitting.",
+  "registered_at": "2026-11-03T22:48:17.575532+08:00",
+  "source_policy": "Protected original B170 full model/upper+lower Adam/RNG/240 environments per rank; source remains unchanged. If exact170 boundary missed, revise before diagnostic collection.",
+  "diagnostic": {
+    "world_size": 4,
+    "games_per_rank": 240,
+    "new_complete_games": 960,
+    "holdout_games_per_rank": 60,
+    "max_probe_decisions_per_split_per_rank": 4096,
+    "full_critic_mse": true,
+    "maximum_wall_seconds": 1200,
+    "rank_process_timeout_seconds": 1260,
+    "training_round": false,
+    "model_updates_persisted": false,
+    "lower_updates": 0,
+    "source_state_restored_after_each_arm": true,
+    "repeat_tolerances": {
+      "kl": 1e-05,
+      "value": 0.0001,
+      "surrogate_gain": 1e-05,
+      "relative_l2": 3e-05
+    }
+  },
+  "arms": [
+    {
+      "id": "control",
+      "changes": {
+        "effective_batch_size": 6144,
+        "critic_epochs": 4,
+        "measure_value_loss": true
+      }
+    },
+    {
+      "id": "batch6144_epoch1",
+      "changes": {
+        "effective_batch_size": 6144,
+        "critic_epochs": 1,
+        "measure_value_loss": true
+      }
+    },
+    {
+      "id": "batch6144_epoch2",
+      "changes": {
+        "effective_batch_size": 6144,
+        "critic_epochs": 2,
+        "measure_value_loss": true
+      }
+    },
+    {
+      "id": "batch32768_epoch1",
+      "changes": {
+        "effective_batch_size": 32768,
+        "critic_epochs": 1,
+        "measure_value_loss": true
+      }
+    },
+    {
+      "id": "batch32768_epoch2",
+      "changes": {
+        "effective_batch_size": 32768,
+        "critic_epochs": 2,
+        "measure_value_loss": true
+      }
+    },
+    {
+      "id": "batch32768_epoch4",
+      "changes": {
+        "effective_batch_size": 32768,
+        "critic_epochs": 4,
+        "measure_value_loss": true
+      }
+    },
+    {
+      "id": "control_repeat",
+      "changes": {
+        "effective_batch_size": 6144,
+        "critic_epochs": 4,
+        "measure_value_loss": true
+      }
+    }
+  ],
+  "interpretation": {
+    "fixed": "All arms restore identical source weights/moments/RNG and same natural cohort; critic LR.0001, actorLR.00012/2epochs, micro256, MC labels, GAE.97 and search unchanged. Train720 whole games, holdout240; report exact decision denominators. Shared batch changes actor updates too, but actor/critic have disjoint networks and optimizers and critic fits fixed MC labels: critic batch contrast is independent of actor parameters; this is not an actor-only or frozen-actor online comparison.",
+    "epoch_curve": "Each epoch1/2/4 arm starts at same source; same batch-specific critic permutation prefix. Compare equal epochs within batch pairs; report actual ceil(N/batch) Adam, not call lower train loss better generalization.",
+    "full_vs_probe": "Full train/holdout MSE evaluated on all decisions with float32 MC labels and float64 SSE. Categorical KL and bootstrap diagnostics use fixed at most4096 decisions per split/rank; these are separately labeled sampled probes.",
+    "selection": "No automatic online adoption from this single-cohort diagnostic. Train MSE down plus holdout MSE up is evidence consistent with within-cohort overfitting, not proof of long-run win-rate causality; one split/one checkpoint cannot establish stable superiority. Report every arm and repeat tolerances, not select best probe score as independent test performance.",
+    "cost": "Two full-critic evaluation passes and all probe/update costs included in diagnostic end-to-end/resource accounting. No production420s comparison against this1200s diagnostic. Timeout/nonfinite/restore failure is failure, no automatic retry."
+  }
+}

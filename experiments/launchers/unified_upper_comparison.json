@@ -193,6 +193,22 @@
         "termination": "If confirmation is inconclusive or candidate fails the unchanged practical gate, retain original B and diagnose before changing parameters. Both endpoints protected before choosing; never discard the candidate archive.",
         "measurement_request_priority": "USER-dbf42ea3-bbdc-4c76-bc56-383267a18329 and USER-02bf4ed1-69d9-4573-b41c-3dd47c155abc request current frozen pre/post MSE and isolated batch heldout diagnostics. Keep original20 result; implement/qualify at a stopped boundary and revise/preregister confirmation if workload or timing comparison changes."
       }
+    },
+    "value_measurement_and_batch_diagnostic": {
+      "status": "preregistered; implementation CPU-tested; exact stopped170 boundary and GPU qualification pending",
+      "protocol": "experiments/launchers/unified_upper_value_probe.json",
+      "production_measurement": {
+        "stop_boundary": 170,
+        "qualification_rounds": [
+          171,
+          172
+        ],
+        "maximum_round_seconds": 420,
+        "failure_deadline_seconds": 415,
+        "measurement_option": "--upper-measure-value-loss",
+        "optimization_changes": "none; source/config/Adam/RNG/env preservation checked before launch"
+      },
+      "execution": "After full four-rank stopped170 audit, use isolated committed runtime for one finite960-game diagnostic. Keep both originalB and candidate163 protected. Then deploy measurement at stopped originalB source and run two full rounds171–172; accept full saved states/metrics/LR/actual Adam/overhead before ordinary continuous resume. No failed automatic retry. Preserve B170 review; defer old164–173 confirmation until equal measured-workload design is preregistered."
     }
   }
 }

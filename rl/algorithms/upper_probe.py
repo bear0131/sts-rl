@@ -304,6 +304,19 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
         random.setstate(rng[0]); np.random.set_state(rng[1]); torch.set_rng_state(rng[2])
         if rng[3] is not None:
             torch.cuda.set_rng_state_all(rng[3])
+    def full_critic_measurement():
+        measured = {}
+        for name, indices in [('train', train), ('holdout', hold)]:
+            rows = [records[i] for i in indices]
+            keys = set().union(*(r['observation'] for r in rows)) if rows else set()
+            observations = {k: np.stack([r['observation'].get(k,
+                np.zeros(model.observation_space[k].shape)) for r in rows]) for k in keys}
+            counts = average(dict(samples=float(len(rows))))
+            mse, seconds = U.measure_critic_mse(model, observations,
+                dict(mc=returns[indices]), average=average)
+            measured[name] = dict(mc_mse=mse['mc'], samples=int(round(counts['samples'] * world_size)),
+                                  seconds_rank=seconds)
+        return measured
     deterministic = torch.are_deterministic_algorithms_enabled()
     warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
     benchmark = torch.backends.cudnn.benchmark
@@ -316,6 +329,8 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
     results['deterministic_algorithms'] = True
     try:
         old = {name: evaluate(model, records, indices) for name, indices in probes.items()}
+        if limits.get('full_critic_mse', False):
+            results['full_critic_pre_update'] = full_critic_measurement()
         for arm in protocol['arms']:
             reset()
             candidate = replace(cfg, **arm['changes'])
@@ -353,6 +368,8 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
                 update_seconds=time.perf_counter() - started,
                 final_digest=state_digest(dict(policy=model.policy.state_dict(),
                     optimizer=model.policy.upper_optimizer.state_dict())), probes={})
+            if limits.get('full_critic_mse', False):
+                result['full_critic_post_update'] = full_critic_measurement()
             for name, indices in probes.items():
                 old_logp, old_values = old[name]
                 logp, values = evaluate(model, records, indices)
