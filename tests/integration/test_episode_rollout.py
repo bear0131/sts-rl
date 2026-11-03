@@ -406,6 +406,8 @@ def test_frozen_rollout_diagnostic_uses_real_collector_without_saving_updates(
     unified_candidates()
     result = json.loads((output/'rank0/rollout.json').read_text())
     assert result['cohort']['completed_games'] == 3
+    assert result['all_rank_completed_games'] == 3
+    assert result['completion_sync_seconds'] >= 0
     assert result['cohort']['first_seed'] == 50
     assert result['collector_wall_seconds'] > 0
     assert result['setup_times']['entry_to_collection_seconds'] >= result['setup_times']['environment_learner_restore_seconds'] > 0

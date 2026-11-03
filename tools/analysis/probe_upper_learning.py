@@ -431,6 +431,14 @@ def unified_candidates():
         if collection_only:
             if not collection:
                 raise AssertionError('missing measured collection')
+            # Keep the transport alive until every rank finishes collecting.
+            # This barrier is outside collector time and inside process time.
+            joined_at = time.perf_counter()
+            joined = kwargs['average'](dict(games=float(model.env.num_envs), complete=1.))
+            if joined != dict(games=float(limits['games_per_rank']), complete=1.):
+                raise ValueError('frozen rollout completion ranks disagree')
+            collection['completion_sync_seconds'] = time.perf_counter() - joined_at
+            collection['all_rank_completed_games'] = int(round(joined['games'] * launch.world_size))
             collection['setup_times'] = dict(setup_times)
             (output/'rollout.json').write_text(json.dumps(collection, indent=2, allow_nan=False))
             print('UPPER_ROLLOUT_BENCHMARK_COMPLETE ' + json.dumps(dict(
