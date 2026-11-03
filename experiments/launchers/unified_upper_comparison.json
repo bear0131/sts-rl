@@ -555,7 +555,7 @@
       "execution": "FAILED collection28: rank2 native HEADBUTT100 distinct/172 exceeds96; other ranks ring peer exit. All4 exit1; completed26/27 fully protected, no restart. Learning reviewed20, next fixed30 pending."
     },
     "early_update_diagnostic": {
-      "status": "blocked on native capacity repair after collection28 failure; full26/27 protected, no restart; diagnostic sources revised3/27 before any arms run",
+      "status": "source3 finite diagnostic launched on all4; next source27 only after complete acceptance; no production updates",
       "user_message": "USER-6af35206-b9c0-46ab-8682-def713e3f527",
       "registered_at": "2026-11-04T02:56:12.367811+08:00",
       "protocol": "unified-upper-candidate-screen-v1",
@@ -661,7 +661,33 @@
         "interpretation": "More epochs reducing only training loss is not sufficient. Critic improvement candidate requires >=5% relative validation target MSE reduction versus control, paired-game sampled MSE difference95% interval below0, and MC MSE no >2% deterioration. Actor candidate requires positive paired-game validation surrogate difference95% interval, multi-action mean categorical KL<=.02 and p95<=.1. Report all arms and sampling limits; these are diagnostic gates, not proven win-rate or automatic promotion.",
         "adaptive_followup": "If supported, propose bounded epoch selection using disjoint validation, minimum/maximum epochs and wall reserve; keep final online or frozen endpoints independent. Do not call repeatedly selected validation a test set or deploy without semantic/full production qualification. Otherwise resume model/optimizer state from27 after explicit repair qualification, no total cap.",
         "learning_reviews": "Fixed30 is pending and cannot be computed from27 complete rounds. Diagnostic games never advance training counters. Native repair creates a marked runtime boundary; do not attribute later differences solely to epochs."
+      },
+      "runtime": {
+        "source_commit": "6a26d40e",
+        "root": "/root/upper-epoch-diagnostic-20261104",
+        "native": "/root/upper-native-capacity-20261104/sim/sts_lightspeed/build-capacity/slaythespire.cpython-311-x86_64-linux-gnu.so",
+        "native_sha256": "f35674a6ab8f7a6d7b0851da6cf19e72ccce8bc2810f6fe79fba5ad8ff603a1e",
+        "semantic_gate": "early-epoch-semantics-20261104-032010.json",
+        "native_scope": "Dynamic small-playout candidates only; fixed policy slots unchanged.116 regressions,85 supported fixed states and real3/27/B192/trial30 checkpoint smoke passed. Full natural collection and production qualification remain pending."
       }
+    },
+    "native_capacity_recovery_qualification": {
+      "status": "registered; not launched; requires both frozen epoch diagnostics to end and full source27 integrity",
+      "issue": "SIM-SMALL-NATIVE-CHOICE-CAPACITY",
+      "source_round": 27,
+      "target_complete_rounds": [
+        28,
+        29
+      ],
+      "run_id": "combat37-upper-fresh-lambda097-r1",
+      "root": "/root/upper-throughput-20261104",
+      "python_source_commit": "b12c01d4",
+      "native_repair_commit": "6a26d40e",
+      "native_sha256": "f35674a6ab8f7a6d7b0851da6cf19e72ccce8bc2810f6fe79fba5ad8ff603a1e",
+      "contract": "Ordinary full-state resume27, 480/rank1920 natural games per round, original actor2/critic4 and LR/batches/micro/lower/search. No environment reset or new initial; native artifact selected explicitly, production Python/source and original binary unchanged. Archive failed28 exit/transport first, preserve raw failed log and complete26/27/3/B192/trial30.",
+      "budget": "Two complete rounds only,415s fail protection/420s gate each,840s combined upper bound, seed continues20261103+(round-1)*1920+rank*480. Failure stops for diagnosis, never automatic retry.",
+      "acceptance": "Four ranks match28/29 round/global_step;0excluded, actual sample uses2+4 and actor/critic/lower Adam, both complete bundles/environment/RNG/lower refresh and model/optimizer preservation. Audit only new launch segment for failures while retaining historical failed segment; no claim failed28 was complete.",
+      "after_pass": "Protect28/29 then ordinary continuous resume from29 with no total limit; validate complete30 and fixed1-10/11-20/21-30 review with explicit native boundary28. Epoch diagnostic candidates still need separate evidence/implementation/qualification before changing update counts."
     }
   },
   "monitor": {
@@ -672,8 +698,8 @@
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
-    "status": "failed",
-    "note": "第28轮采集因HEADBUTT候选容量96溢出失败，四机exit1。完整26/27全状态已核验保护，未重启；先修复原生容量，再继续3/27更新次数和整局留出测试。固定30复核尚未完成。",
-    "updated_at": "2026-11-04T03:13:16.667763+08:00"
+    "status": "diagnostic",
+    "note": "原训练故障停止、完整26/27保护；修复native及四机CPU/CUDA检查通过，第3轮源的9臂/10%整局留出测试已在四机运行，之后验收再测27。未改变正式训练更新次数。",
+    "updated_at": "2026-11-04T03:21:35.436448+08:00"
   }
 }
