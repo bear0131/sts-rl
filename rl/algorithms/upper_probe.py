@@ -305,7 +305,7 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
         random.setstate(rng[0]); np.random.set_state(rng[1]); torch.set_rng_state(rng[2])
         if rng[3] is not None:
             torch.cuda.set_rng_state_all(rng[3])
-    def full_critic_measurement():
+    def full_critic_measurement(target_values):
         measured = {}
         for name, indices in [('train', train), ('holdout', hold)]:
             rows = [records[i] for i in indices]
@@ -314,8 +314,9 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
                 np.zeros(model.observation_space[k].shape)) for r in rows]) for k in keys}
             counts = average(dict(samples=float(len(rows))))
             mse, seconds = U.measure_critic_mse(model, observations,
-                dict(mc=returns[indices]), average=average)
-            measured[name] = dict(mc_mse=mse['mc'], samples=int(round(counts['samples'] * world_size)),
+                dict(mc=returns[indices], target=target_values[indices]), average=average)
+            measured[name] = dict(mc_mse=mse['mc'], target_mse=mse['target'],
+                                  samples=int(round(counts['samples'] * world_size)),
                                   seconds_rank=seconds)
         return measured
     deterministic = torch.are_deterministic_algorithms_enabled()
@@ -330,12 +331,16 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
     results['deterministic_algorithms'] = True
     try:
         old = {name: evaluate(model, records, indices) for name, indices in probes.items()}
+        initial_targets = lambda_returns if cfg.critic_target == 'frozen-lambda' else returns
+        results['initial_critic_target'] = dict(kind=cfg.critic_target, gae_lambda=cfg.gae_lambda)
         if limits.get('full_critic_mse', False):
-            results['full_critic_pre_update'] = full_critic_measurement()
+            results['full_critic_pre_update'] = full_critic_measurement(initial_targets)
         for arm in protocol['arms']:
             reset()
             candidate = replace(cfg, **arm['changes'])
             if arm.get('critic_target') == 'frozen_lambda_return':
+                if candidate.critic_target != 'mc':
+                    raise ValueError('custom diagnostic lambda labels require the MC update path')
                 # This historical diagnostic injects custom room/calibrated
                 # labels through complete_returns. Its independent probes
                 # below still evaluate true MC returns; do not mislabel the
@@ -354,17 +359,32 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
             if limits.get('profile_updates', False):
                 from rl.training.resource_monitor import ResourceMonitor
                 monitor = ResourceMonitor(interval=1., gpu=model.device.type == 'cuda', torch_device=model.device)
-            if model.device.type == 'cuda':
-                torch.cuda.synchronize(model.device)
-                if monitor is not None:
-                    torch.cuda.reset_peak_memory_stats(model.device)
-            started = time.perf_counter()
             target = U.complete_returns
             if arm.get('critic_target') == 'frozen_lambda_return':
                 coefficient = arm.get('critic_lambda', cfg.gae_lambda)
                 scope = arm.get('lambda_scope', 'decision')
                 target = lambda rows: critic_lambda_returns(rows, coefficient, scope, calibration)
-            arm_targets = target(records)
+            # The production frozen-lambda path owns its labels independently
+            # of complete_returns. Report the labels actually fitted, including
+            # when the restored checkpoint already uses that production path.
+            arm_targets = (U.macro_advantages(records, np.zeros(len(records)),
+                           1., candidate.gae_lambda)[1]
+                           if candidate.critic_target == 'frozen-lambda' else target(records))
+            pre_measurement = None
+            if limits.get('full_critic_mse', False):
+                # This controls collectives: decide from the common protocol,
+                # never from rank-local equality of sampled label arrays.
+                same_target = (arm.get('critic_target') is None
+                    and candidate.critic_target == cfg.critic_target
+                    and (candidate.critic_target == 'mc' or candidate.gae_lambda == cfg.gae_lambda))
+                pre_measurement = (results['full_critic_pre_update']
+                    if same_target
+                    else full_critic_measurement(arm_targets))
+            if model.device.type == 'cuda':
+                torch.cuda.synchronize(model.device)
+                if monitor is not None:
+                    torch.cuda.reset_peak_memory_stats(model.device)
+            started = time.perf_counter()
             with monitor if monitor is not None else nullcontext(), patch.object(U, 'complete_returns', target):
                 stats = U.update_unified_upper(model, rank=rank, world_size=world_size,
                     average=average, synchronize=synchronize)
@@ -374,6 +394,7 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
                 torch.cuda.synchronize(model.device)
             result = dict(id=arm['id'], config=asdict(candidate), stats=stats,
                 critic_target_spec={k: arm[k] for k in ('critic_target', 'critic_lambda', 'lambda_scope') if k in arm},
+                production_critic_target=dict(kind=candidate.critic_target, gae_lambda=candidate.gae_lambda),
                 update_seconds=time.perf_counter() - started,
                 final_digest=state_digest(dict(policy=model.policy.state_dict(),
                     optimizer=model.policy.upper_optimizer.state_dict())), probes={})
@@ -384,7 +405,8 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
                 result['torch_max_reserved_bytes'] = (torch.cuda.max_memory_reserved(model.device)
                                                       if model.device.type == 'cuda' else None)
             if limits.get('full_critic_mse', False):
-                result['full_critic_post_update'] = full_critic_measurement()
+                result['full_critic_pre_update'] = pre_measurement
+                result['full_critic_post_update'] = full_critic_measurement(arm_targets)
             for name, indices in probes.items():
                 old_logp, old_values = old[name]
                 logp, values = evaluate(model, records, indices)
@@ -408,6 +430,8 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
                     surrogate_gain_mean=float(surrogate_gain.mean()),
                     critic_mc_mse=float(np.square(residual).mean()),
                     critic_old_mc_mse=float(np.square(target_values-old_values).mean()),
+                    critic_target_mse=float(np.square(arm_targets[indices]-values).mean()),
+                    critic_old_target_mse=float(np.square(arm_targets[indices]-old_values).mean()),
                     critic_bias=float((values-target_values).mean()),
                     critic_mc_mse_by_phase={str(p): float(np.square(residual[phases == p]).mean())
                         for p in np.unique(phases)},

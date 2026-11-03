@@ -237,8 +237,19 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
         protocol['adaptive_lambda'] = dict(base=.9, span=.07, shrinkage_games=32, noise_floor=.05)
         protocol['arms'].insert(-1, dict(id='adaptive', changes={},
             critic_target='frozen_lambda_return', critic_lambda=.9, lambda_scope='calibrated_room'))
+    measurement_counts = []
+    original_measurement = U.measure_critic_mse
+    def count_measurements(current, observations, targets, **kwargs):
+        measurement_counts.append(len(next(iter(targets.values()))))
+        return original_measurement(current, observations, targets, **kwargs)
+    monkeypatch.setattr(U, 'measure_critic_mse', count_measurements)
     deterministic_before = torch.are_deterministic_algorithms_enabled()
     result = run_probe(model, protocol, output_dir=tmp_path/'probe')
+    # All records on this rank are terminal, so MC/lambda labels coincide.
+    # Other ranks can have longer games: collective evaluation counts must
+    # still follow the shared target contract, not local label equality.
+    changed_targets = sum(a.get('critic_target') == 'frozen_lambda_return' for a in protocol['arms'])
+    assert measurement_counts.count(2) == 1 + len(protocol['arms']) + changed_targets
     assert torch.are_deterministic_algorithms_enabled() == deterministic_before
     assert result['control_repeat_exact'] and result['source_state_restored']
     assert result['rng_restored'] and result['lower_optimizer_unchanged']
@@ -282,6 +293,92 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
     new = np.log([[.75, .25], [1., 1e-30]])
     kl = categorical_kl(old, new, np.array([[True, True], [True, False]]))
     np.testing.assert_allclose(kl, [.5*np.log(4/3), 0.], rtol=1e-12)
+
+
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_probe_reports_fitted_lambda_targets_and_whole_game_validation(unified_env, tmp_path, device, monkeypatch):
+    from collections import Counter
+    from dataclasses import asdict, replace
+    from rl.algorithms import unified_upper as U
+    from rl.algorithms.upper_probe import run_probe, state_digest
+    monkeypatch.setenv('CUBLAS_WORKSPACE_CONFIG', ':4096:8')
+    if device == 'cuda' and not torch.cuda.is_available():
+        pytest.fail('selected CUDA qualification requires an available device')
+    model = make_model(unified_env, device=device)
+    cfg = replace(model.policy.core.upper_config, critic_target='frozen-lambda',
+                  critic_effective_batch_size=8, measure_value_loss=True)
+    model.policy.core.upper_config = cfg
+    model.policy.upper_config = model.policy_kwargs['upper_config'] = asdict(cfg)
+    model.set_logger(configure(str(tmp_path), []))
+    obs, _ = unified_env.reset(seed=41)
+    mask = unified_env.action_masks()
+    with torch.no_grad():
+        action, value, logp = model.policy({k: v.to(device) for k, v in tensor(obs).items()},
+                                         action_masks=mask[None])
+    rows = []
+    for game in range(7):
+        for terminal in (False, True):
+            rows.append(dict(observation=copy.deepcopy(obs), action=int(action), mask=mask.copy(),
+                value=float(value), log_prob=float(logp), reward=(game+1)/7 if terminal else .25,
+                terminal=terminal, env=game, episode=0))
+    # Exercise restoration of real, nonempty optimizer moments as well as weights.
+    model._upper_completed = copy.deepcopy(rows)
+    update_upper(model)
+    with torch.no_grad():
+        logits, value = model.policy.core.actor_critic({k: v.to(device) for k, v in tensor(obs).items()})
+        logp = logits.float().masked_fill(~torch.as_tensor(mask[None], device=device), -1e9).log_softmax(-1)[0, int(action)]
+    for row in rows:
+        row.update(value=float(value), log_prob=float(logp))
+    model._upper_completed = rows
+    before = state_digest(dict(policy=model.policy.state_dict(), optimizer=model.policy.upper_optimizer.state_dict()))
+    fitted_games = []
+    original_update = U.update_unified_upper
+    def observe_update(current, **kwargs):
+        counts = Counter(r['env'] for r in current._upper_completed)
+        assert set(counts.values()) == {2}
+        fitted_games.append(set(counts))
+        return original_update(current, **kwargs)
+    monkeypatch.setattr(U, 'update_unified_upper', observe_update)
+    protocol = dict(seed=31, diagnostic=dict(world_size=1, games_per_rank=7,
+        holdout_games_per_rank=2, max_probe_decisions_per_split_per_rank=100, full_critic_mse=True),
+        arms=[dict(id='control', changes={}), dict(id='critic6', changes={'critic_epochs': 6}),
+              dict(id='control_repeat', changes={})])
+    result = run_probe(model, protocol, output_dir=tmp_path/'probe')
+    assert result['source_state_restored'] and result['rng_restored'] and result['lower_optimizer_unchanged']
+    assert result['control_repeat_numerical']
+    for arm, epochs in zip(result['arms'], (3, 6, 3)):
+        assert arm['stats']['samples'] == 10 and arm['stats']['samples_used'] == 20
+        assert arm['stats']['critic_samples_used'] == 10*epochs
+        assert arm['stats']['critic_updates'] == 2*epochs
+        for split, games in [('train', 5), ('holdout', 2)]:
+            with np.load(tmp_path/'probe'/f'{arm["id"]}-{split}.npz') as saved:
+                ids = saved['indices']
+                expected_mc = np.array([rows[i]['reward'] if rows[i]['terminal']
+                    else .25+rows[i+1]['reward'] for i in ids])
+                expected_target = np.array([rows[i]['reward'] if rows[i]['terminal']
+                    else .25+.03*rows[i+1]['value']+.97*rows[i+1]['reward'] for i in ids])
+                np.testing.assert_allclose(saved['mc_return'], expected_mc, rtol=1e-12, atol=1e-12)
+                np.testing.assert_allclose(saved['critic_target'], expected_target, rtol=1e-12, atol=1e-12)
+                assert np.max(np.abs(saved['critic_target']-saved['mc_return'])) > 1e-3
+                selected_games = set(saved['env'])
+                assert len(selected_games) == games
+                if split == 'train':
+                    assert all(group == selected_games for group in fitted_games)
+                else:
+                    assert all(group.isdisjoint(selected_games) for group in fitted_games)
+                for when, values in [('pre', saved['old_value']), ('post', saved['value'])]:
+                    measured = arm[f'full_critic_{when}_update'][split]
+                    assert measured['samples'] == 2*games
+                    for name, targets in [('mc', expected_mc), ('target', expected_target)]:
+                        expected_mse = np.square(values-targets.astype(np.float32)).mean()
+                        assert measured[f'{name}_mse'] == pytest.approx(expected_mse, rel=2e-5, abs=3e-6)
+    assert model._upper_completed is rows
+    assert state_digest(dict(policy=model.policy.state_dict(), optimizer=model.policy.upper_optimizer.state_dict())) == before
+    invalid = copy.deepcopy(protocol)
+    invalid['arms'] = [dict(id='invalid', changes={}, critic_target='frozen_lambda_return')]
+    with pytest.raises(ValueError, match='require the MC update path'):
+        run_probe(model, invalid)
+    assert state_digest(dict(policy=model.policy.state_dict(), optimizer=model.policy.upper_optimizer.state_dict())) == before
 
 
 def test_probe_float_tolerance_distinguishes_roundoff_from_policy_change():
