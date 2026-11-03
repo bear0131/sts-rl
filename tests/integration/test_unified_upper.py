@@ -172,16 +172,21 @@ def test_unequal_empty_ranks_match_global_weighted_update(unified_env, tmp_path)
             torch.testing.assert_close(p, q, rtol=2e-5, atol=3e-6)
 
 
-def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_env, tmp_path):
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+@pytest.mark.parametrize('calibration_games', [0, 2])
+def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_env, tmp_path, device, monkeypatch, calibration_games):
     from unittest.mock import patch
     from rl.algorithms import unified_upper as U
     from rl.algorithms.upper_probe import run_probe, state_digest, split_games, categorical_kl
-    model = make_model(unified_env)
+    monkeypatch.setenv('CUBLAS_WORKSPACE_CONFIG', ':4096:8')
+    if device == 'cuda' and not torch.cuda.is_available():
+        pytest.skip('CUDA hardware unavailable; CPU result is not GPU qualification')
+    model = make_model(unified_env, device=device)
     model.set_logger(configure(str(tmp_path), []))
     obs, _ = unified_env.reset(seed=41)
     masks = unified_env.action_masks()
     with torch.no_grad():
-        action, value, logp = model.policy(tensor(obs), action_masks=masks[None])
+        action, value, logp = model.policy({k: v.to(device) for k, v in tensor(obs).items()}, action_masks=masks[None])
     rows = [dict(observation=copy.deepcopy(obs), action=int(action), mask=masks.copy(),
         value=float(value), log_prob=float(logp), reward=i/7, terminal=True,
         env=i, episode=0) for i in range(7)]
@@ -193,22 +198,38 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
         optimizer=model.policy.upper_optimizer.state_dict()))
     protocol = dict(seed=31, diagnostic=dict(world_size=1, games_per_rank=7,
         holdout_games_per_rank=2, max_probe_decisions_per_split_per_rank=10),
-        arms=[dict(id='control', changes={}), dict(id='batch3', changes={'effective_batch_size': 3}),
+        arms=[dict(id='control', changes={}),
+              dict(id='lambda1', changes={}, critic_target='frozen_lambda_return', critic_lambda=1.),
+              dict(id='room_half', changes={}, critic_target='frozen_lambda_return', critic_lambda=.5, lambda_scope='room'),
+              dict(id='batch3', changes={'effective_batch_size': 3}),
               dict(id='critic_lambda', changes={}, critic_target='frozen_lambda_return'),
               dict(id='control_repeat', changes={})])
+    protocol['diagnostic']['calibration_games_per_rank'] = calibration_games
+    if calibration_games:
+        protocol['adaptive_lambda'] = dict(base=.9, span=.07, shrinkage_games=32, noise_floor=.05)
+        protocol['arms'].insert(-1, dict(id='adaptive', changes={},
+            critic_target='frozen_lambda_return', critic_lambda=.9, lambda_scope='calibrated_room'))
+    deterministic_before = torch.are_deterministic_algorithms_enabled()
     result = run_probe(model, protocol, output_dir=tmp_path/'probe')
+    assert torch.are_deterministic_algorithms_enabled() == deterministic_before
     assert result['control_repeat_exact'] and result['source_state_restored']
     assert result['rng_restored'] and result['lower_optimizer_unchanged']
-    assert result['training_games'] == 5 and result['holdout_games'] == 2
-    assert all(r['stats']['samples'] == 5 and r['stats']['samples_used'] == 10
+    assert result['training_games'] == 5-calibration_games and result['holdout_games'] == 2
+    assert result['calibration_games'] == calibration_games
+    if calibration_games:
+        assert result['frozen_scene_calibration']['calibration_games'] == calibration_games
+    assert all(r['stats']['samples'] == 5-calibration_games and r['stats']['samples_used'] == 2*(5-calibration_games)
                for r in result['arms'])
     assert result['arms'][0]['probes'] == result['arms'][-1]['probes']
+    assert result['arms'][0]['final_digest'] == result['arms'][1]['final_digest']
+    assert result['room_transition_audit']['terminals'] == 7
     assert model._upper_completed is rows
     assert state_digest(dict(policy=model.policy.state_dict(),
         optimizer=model.policy.upper_optimizer.state_dict())) == before
     with patch.object(U, 'update_unified_upper', side_effect=RuntimeError('probe failed')):
         with pytest.raises(RuntimeError, match='probe failed'):
             run_probe(model, protocol)
+    assert torch.are_deterministic_algorithms_enabled() == deterministic_before
     assert state_digest(dict(policy=model.policy.state_dict(),
         optimizer=model.policy.upper_optimizer.state_dict())) == before
     # A trajectory with two decisions must stay wholly on one side.

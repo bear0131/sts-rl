@@ -1,0 +1,102 @@
+{
+  "protocol": "unified-upper-candidate-screen-v1",
+  "user_intention": "设计并测量一个场景自适应lambda_t：房内不衰减，跨房间根据独立校准局中旧critic的场景偏差调节。",
+  "seed": 20261103,
+  "source_policy": "Fixed protected B143 / step48549650; complete model/upper+lower Adam/RNG/240 envs per rank, no adopted diagnostic weights.",
+  "diagnostic": {
+    "world_size": 4,
+    "games_per_rank": 240,
+    "new_complete_games": 960,
+    "holdout_games_per_rank": 60,
+    "max_probe_decisions_per_split_per_rank": 4096,
+    "maximum_wall_seconds": 1200,
+    "rank_process_timeout_seconds": 1260,
+    "training_round": false,
+    "model_updates_persisted": false,
+    "lower_updates": 0,
+    "split": "960 complete games:240 calibration only /480 optimizer training /240 validation, disjoint whole games. Calibration drawn only from the former720 training games; same splits and probes for every arm.",
+    "source_state_restored_after_each_arm": true,
+    "calibration_games_per_rank": 60
+  },
+  "arms": [
+    {
+      "id": "control",
+      "changes": {}
+    },
+    {
+      "id": "lambda0p97",
+      "changes": {},
+      "critic_target": "frozen_lambda_return",
+      "critic_lambda": 0.97,
+      "lambda_scope": "decision"
+    },
+    {
+      "id": "room0p9",
+      "changes": {},
+      "critic_target": "frozen_lambda_return",
+      "critic_lambda": 0.9,
+      "lambda_scope": "room"
+    },
+    {
+      "id": "adaptive_room",
+      "changes": {},
+      "critic_target": "frozen_lambda_return",
+      "critic_lambda": 0.9,
+      "lambda_scope": "calibrated_room"
+    },
+    {
+      "id": "adaptive_repeat",
+      "changes": {},
+      "critic_target": "frozen_lambda_return",
+      "critic_lambda": 0.9,
+      "lambda_scope": "calibrated_room"
+    },
+    {
+      "id": "control_repeat",
+      "changes": {}
+    }
+  ],
+  "measurements": [
+    "old-to-final complete categorical KL on fixed legal-action probes; single-legal-action and multi-action distributions separate, by phase and tails",
+    "unseen-whole-game clipped surrogate with frozen old advantages, reported as a diagnostic not achieved win-rate gain",
+    "old/new critic bias, MSE and explained variance against natural Monte Carlo returns on held-out whole games",
+    "actual actor/critic Adam counts, full sample reuse, update wall and process-tree CPU/RSS/Torch/VRAM/device GPU telemetry",
+    "exact control-repeat state equality and original policy/Adam/lower/RNG restoration"
+  ],
+  "selection": "Reject nonfinite, failed exact-repeat/restore, skipped/censored games, or cross-rank inconsistency. A single fixed-cohort surrogate cannot prove online benefit; select at most one candidate for separately bounded paired online continuation.",
+  "online_confirmation": {
+    "status": "Historical reference only; no follow-up selected or scheduled from this diagnostic.",
+    "seed": 20261103,
+    "rounds_per_arm": 20,
+    "games_per_round": 960,
+    "maximum_round_seconds": 420,
+    "failure_deadline_seconds": 415,
+    "maximum_completed_round_wall_seconds_per_arm": 8400,
+    "initialization": "Identical verified boundary bundle, all optimizers/RNG/environments preserved, separate run identities, four ranks sequentially exclusive.",
+    "comparison": "Equal19200 natural games and common completed-round wall, final two5-round windows; require +0.5pp win or +2floor in both and no material win/common-time regression. Report all windows, exclusions, uncertainty and single-replica limitation."
+  },
+  "candidate_interpretation": {
+    "formula": "Within room lambda=1. On room boundary, next scene g=(next act,next phase): lambda=.9+.07*abs(bias_g)/(abs(bias_g)+spread_g+.05). True terminal never bootstraps.",
+    "calibration": "For each calibration game/scene average frozen-old-V minus real whole-run MC; estimate mean and second moment across games. Shrink each scene with32 pseudo-games toward global per-game residual moments, then freeze before any temporary fitting. Spread includes outcome noise, not epistemic uncertainty.",
+    "scope": "Independent calibration games are excluded from optimizer training and validation. Actor original GAE.97, original rewards/search/state source and all optimizer settings stay fixed.",
+    "comparison": "Re-fit MC/constant.97/room.9 from identical source on the same480 training games; historical720-game fit numbers are not this experiment controls.",
+    "repeat": "Adaptive and MC both repeated exactly; no automatic post-result retuning or online adoption."
+  },
+  "references": [
+    "https://arxiv.org/html/2603.06009v2",
+    "https://arxiv.org/abs/2006.05990",
+    "https://arxiv.org/abs/1506.02438"
+  ],
+  "adaptive_lambda": {
+    "base": 0.9,
+    "span": 0.07,
+    "shrinkage_games": 32,
+    "noise_floor": 0.05
+  },
+  "record_use": {
+    "role": "reference_only",
+    "planning_effect": "Historical experiment recipe; not a default next-step plan or authorization to schedule follow-up.",
+    "user_instruction": "仅作参考，不作为下一步计划的直接指导。",
+    "results": "docs/2026-11-03/upper-critic-diagnostic-reference.json"
+  }
+}

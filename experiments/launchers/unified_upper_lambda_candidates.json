@@ -1,0 +1,143 @@
+{
+  "protocol": "unified-upper-candidate-screen-v1",
+  "user_intention": "先扫描常数critic lambda，再测同房间lambda=1、仅跨房间衰减；actor原GAE不变。",
+  "seed": 20261103,
+  "source_policy": "Fixed protected B143 / step48549650; complete model/upper+lower Adam/RNG/240 envs per rank, no adopted diagnostic weights.",
+  "diagnostic": {
+    "world_size": 4,
+    "games_per_rank": 240,
+    "new_complete_games": 960,
+    "holdout_games_per_rank": 60,
+    "max_probe_decisions_per_split_per_rank": 4096,
+    "maximum_wall_seconds": 1200,
+    "rank_process_timeout_seconds": 1260,
+    "training_round": false,
+    "model_updates_persisted": false,
+    "lower_updates": 0,
+    "split": "Fixed seeded split of whole (env,episode) trajectories, never randomly split decisions from one game.",
+    "source_state_restored_after_each_arm": true
+  },
+  "arms": [
+    {
+      "id": "control",
+      "changes": {}
+    },
+    {
+      "id": "lambda0",
+      "changes": {},
+      "critic_target": "frozen_lambda_return",
+      "critic_lambda": 0,
+      "lambda_scope": "decision"
+    },
+    {
+      "id": "lambda0p5",
+      "changes": {},
+      "critic_target": "frozen_lambda_return",
+      "critic_lambda": 0.5,
+      "lambda_scope": "decision"
+    },
+    {
+      "id": "lambda0p8",
+      "changes": {},
+      "critic_target": "frozen_lambda_return",
+      "critic_lambda": 0.8,
+      "lambda_scope": "decision"
+    },
+    {
+      "id": "lambda0p9",
+      "changes": {},
+      "critic_target": "frozen_lambda_return",
+      "critic_lambda": 0.9,
+      "lambda_scope": "decision"
+    },
+    {
+      "id": "lambda0p95",
+      "changes": {},
+      "critic_target": "frozen_lambda_return",
+      "critic_lambda": 0.95,
+      "lambda_scope": "decision"
+    },
+    {
+      "id": "lambda0p97",
+      "changes": {},
+      "critic_target": "frozen_lambda_return",
+      "critic_lambda": 0.97,
+      "lambda_scope": "decision"
+    },
+    {
+      "id": "lambda0p99",
+      "changes": {},
+      "critic_target": "frozen_lambda_return",
+      "critic_lambda": 0.99,
+      "lambda_scope": "decision"
+    },
+    {
+      "id": "room0p8",
+      "changes": {},
+      "critic_target": "frozen_lambda_return",
+      "critic_lambda": 0.8,
+      "lambda_scope": "room"
+    },
+    {
+      "id": "room0p9",
+      "changes": {},
+      "critic_target": "frozen_lambda_return",
+      "critic_lambda": 0.9,
+      "lambda_scope": "room"
+    },
+    {
+      "id": "room0p95",
+      "changes": {},
+      "critic_target": "frozen_lambda_return",
+      "critic_lambda": 0.95,
+      "lambda_scope": "room"
+    },
+    {
+      "id": "room0p97",
+      "changes": {},
+      "critic_target": "frozen_lambda_return",
+      "critic_lambda": 0.97,
+      "lambda_scope": "room"
+    },
+    {
+      "id": "control_repeat",
+      "changes": {}
+    }
+  ],
+  "measurements": [
+    "old-to-final complete categorical KL on fixed legal-action probes; single-legal-action and multi-action distributions separate, by phase and tails",
+    "unseen-whole-game clipped surrogate with frozen old advantages, reported as a diagnostic not achieved win-rate gain",
+    "old/new critic bias, MSE and explained variance against natural Monte Carlo returns on held-out whole games",
+    "actual actor/critic Adam counts, full sample reuse, update wall and process-tree CPU/RSS/Torch/VRAM/device GPU telemetry",
+    "exact control-repeat state equality and original policy/Adam/lower/RNG restoration"
+  ],
+  "selection": "Reject nonfinite, failed exact-repeat/restore, skipped/censored games, or cross-rank inconsistency. A single fixed-cohort surrogate cannot prove online benefit; select at most one candidate for separately bounded paired online continuation.",
+  "online_confirmation": {
+    "status": "Historical reference only; no follow-up selected or scheduled from this diagnostic.",
+    "seed": 20261103,
+    "rounds_per_arm": 20,
+    "games_per_round": 960,
+    "maximum_round_seconds": 420,
+    "failure_deadline_seconds": 415,
+    "maximum_completed_round_wall_seconds_per_arm": 8400,
+    "initialization": "Identical verified boundary bundle, all optimizers/RNG/environments preserved, separate run identities, four ranks sequentially exclusive.",
+    "comparison": "Equal19200 natural games and common completed-round wall, final two5-round windows; require +0.5pp win or +2floor in both and no material win/common-time regression. Report all windows, exclusions, uncertainty and single-replica limitation."
+  },
+  "candidate_interpretation": {
+    "constant_stage": "control is lambda=1 (MC); constants first, all critic-only; actor GAE remains .97.",
+    "room_stage": "Same public (act,floor) visit => lambda=1; changed visit => configured lambda. Phase is not identity; act changes bootstrap the same whole-run value, terminal never bootstraps.",
+    "room_source_evidence": "GameContext::transitionToMapNode/enterBossTreasureRoom/afterBattle advance floor on entry; menu operations retain visit. Native build-small b3a frozen.",
+    "selection_limit": "Same already-used cohort, exploratory ranking only; multiple comparisons and adaptive reuse cannot establish online benefit."
+  },
+  "references": [
+    "https://arxiv.org/html/2603.06009v2",
+    "https://arxiv.org/abs/2006.05990",
+    "https://arxiv.org/abs/1506.02438"
+  ],
+  "record_use": {
+    "role": "reference_only",
+    "planning_effect": "Historical experiment recipe; not a default next-step plan or authorization to schedule follow-up.",
+    "user_instruction": "仅作参考，不作为下一步计划的直接指导。",
+    "results": "docs/2026-11-03/upper-critic-diagnostic-reference.json"
+  }
+}

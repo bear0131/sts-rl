@@ -23,9 +23,40 @@
     "upper_branch_playouts": false
   },
   "arms": [
-    {"id": "A", "run_id": "combat31-unified-upper-420-r1", "width": 192, "layers": 3, "heads": 6, "latents": 16, "actor_learning_rate": 0.00006, "reuse_existing_first_30_rounds": true},
-    {"id": "B", "run_id": "combat32-unified-upper-lr12-r1", "width": 192, "layers": 3, "heads": 6, "latents": 16, "actor_learning_rate": 0.00012, "wandb_id": "combat32lr12a", "ring_port": 29932, "initial": "material/comparison-B.zip"},
-    {"id": "C", "run_id": "combat33-unified-upper-256-lr12-r1", "width": 256, "layers": 4, "heads": 8, "latents": 32, "actor_learning_rate": 0.00012, "wandb_id": "combat33big12a", "ring_port": 29933, "initial": "material/comparison-C.zip"}
+    {
+      "id": "A",
+      "run_id": "combat31-unified-upper-420-r1",
+      "width": 192,
+      "layers": 3,
+      "heads": 6,
+      "latents": 16,
+      "actor_learning_rate": 6e-05,
+      "reuse_existing_first_30_rounds": true
+    },
+    {
+      "id": "B",
+      "run_id": "combat32-unified-upper-lr12-r1",
+      "width": 192,
+      "layers": 3,
+      "heads": 6,
+      "latents": 16,
+      "actor_learning_rate": 0.00012,
+      "wandb_id": "combat32lr12a",
+      "ring_port": 29932,
+      "initial": "material/comparison-B.zip"
+    },
+    {
+      "id": "C",
+      "run_id": "combat33-unified-upper-256-lr12-r1",
+      "width": 256,
+      "layers": 4,
+      "heads": 8,
+      "latents": 32,
+      "actor_learning_rate": 0.00012,
+      "wandb_id": "combat33big12a",
+      "ring_port": 29933,
+      "initial": "material/comparison-C.zip"
+    }
   ],
   "execution": "Sequential four-rank trials using the existing launcher. B starts after A has at least 30 complete rounds and a verified boundary save. C starts after B completes 30 rounds or fails qualification; never overlap trial collectors. Every trial is finite; the selected long training remains continuous without a total-round limit.",
   "comparison": {
@@ -82,6 +113,25 @@
         "not_queued_now": true
       },
       "limitations": "The cited mechanism was studied primarily in dense-reward domains with highly parallel simulation. Transfer to complete-game strategic learning with a changing lower policy is a hypothesis. More games, stronger regularisation and larger models are separate experiments; keep existing single-training-replica limitations. PPO-EWMA is not implemented or adopted here."
+    },
+    "autonomous_online_comparison": {
+      "status": "Registered paired continuation from B143: original B control144–163 first, then one frozen-lambda critic candidate from the identical protected full state; no adoption yet",
+      "seed": 20261103,
+      "rounds_per_arm": 20,
+      "games_per_round": 960,
+      "maximum_round_seconds": 420,
+      "failure_deadline_seconds": 415,
+      "maximum_completed_round_wall_seconds_per_arm": 8400,
+      "initialization": "Identical verified boundary bundle, all optimizers/RNG/environments preserved, separate run identities, four ranks sequentially exclusive.",
+      "comparison": "Equal19200 natural games and common completed-round wall, final two5-round windows; require +0.5pp win or +2floor in both and no material win/common-time regression. Report all windows, exclusions, uncertainty and single-replica limitation.",
+      "selected_candidate": "critic_lambda097",
+      "source_round": 143,
+      "source_global_step": 48549650,
+      "selection_reference": "Afternoon B143 screen: all four ranks lower held-out natural-MC prediction error with frozen-lambda critic, actor settings unchanged; more actor steps/LR or smaller batch did not improve pooled held-out surrogate. Original exact-repeat gate exited1, now retained as reference after user-approved floating-point review; missing cohort/resource summary is not fabricated.",
+      "authorization": "Current user delegates continuous autonomous training planning and asks to continue the plan using afternoon evaluations only as reference; no diagnostic automatically adopts a policy.",
+      "hypothesis": "At fixed fresh games, actor objective/Adam budgets/search, test whether frozen old-V lambda critic labels improve future advantage quality and realized common-wall returns over MC labels. The minimal constant target avoids unproven calibration cost/complexity.",
+      "reference_only": "docs/2026-11-03/upper-critic-diagnostic-reference.json; unchanged archive, not an adoption result",
+      "execution": "Original B control144–163 runs first. Then isolated candidate forks protected B143 for two qualification rounds; after full two-round state/lifecycle audit resume18 further rounds, total20. All four ranks exclusive. Protect both endpoints and select only by online complete-game evidence."
     }
   }
 }
