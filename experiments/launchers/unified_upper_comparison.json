@@ -46,9 +46,9 @@
     "review_is_not_a_stop_limit": true,
     "conditional_followup": {
       "trigger": "At or after round60, inspect three successive non-overlapping 10-round windows. If both adjacent windows improve average floor by less than 0.5 and win rate by less than 0.5 percentage points, or there is sustained regression, investigate data/optimization before launching this experiment. Do not trigger on a single bad cohort.",
-      "hypothesis": "Low realized actor KL and the A/B learning-rate response justify testing update magnitude before another capacity increase.",
+      "hypothesis": "A/B supports an early learning-rate benefit, but low in-training KL alone does not identify insufficient updates or rule out rollout noise. Choose a follow-up only after distinguishing under-updating from noisy policy movement; see paper_informed_review.",
       "control": "Current B actor LR0.00012",
-      "candidate": "Same model, actor LR0.00024 only",
+      "candidate": "Same model, actor LR0.00024 only; conditional on evidence of under-updating, not the automatic plateau response",
       "initialization": "Both arms fork the same verified full checkpoint including upper/lower Adam, learner RNG, all 240 environments per rank and cohort counters; preserve native/source/reward/search and critic LR.",
       "seed": 20261103,
       "rounds_per_arm": 20,
@@ -59,6 +59,29 @@
       "execution": "Sequential four-rank paired continuation, separate run identities; do not compare candidate with an unrelated historical segment.",
       "comparison": "Common completed-round wall budget and equal19200 starting games, last two5-round windows; same +0.5pp win or +2floor practical gate with no material win/common-time regression. A single training replica remains exploratory.",
       "not_queued_now": true
+    },
+    "paper_informed_review": {
+      "reference": "https://arxiv.org/html/2603.06009v2",
+      "reviewed_version": "2603.06009v2, 18 July 2026, sections 3-5 and 8",
+      "hypothesis": "Investigate policy movement relative to fresh-rollout noise as another cause of stagnation. Adam learning rate, PPO regularisation and fresh data per policy update are different controls; none is selected from training loss or one KL scalar alone.",
+      "current_decision": "Keep B continuous while its complete-window learning trend improves. No paper-inspired experiment is queued merely because the reference was supplied.",
+      "measurement_contract": "960 fresh complete games per collection is the rollout batch; 6144 is the target global optimizer minibatch and micro256 is the execution chunk. More decisions from deeper games are not more independent games. upper/kl_epoch_2 averages sampled-action KL estimates before successive minibatch steps, not final-policy KL evaluated after the full update on one fixed probe set. Historical within-rollout gradient variance does not measure independent-rollout noise.",
+      "diagnosis_before_selection": "At the existing plateau/regression trigger, first audit cohorts, exclusions, advantage scales, entropy, sample reuse and actual Adam counts. If needed, preregister a bounded diagnostic using final old/new-policy KL on fixed legal-action probes and gradient agreement across independent complete-game cohorts at frozen weights, with explicit seeds/time limits and no production optimizer changes. Existing logs do not supply these measurements; do not invent them or use a universal KL cutoff.",
+      "regularisation_candidate": {
+        "control": "Current B, actor LR0.00012, clip0.2",
+        "candidate": "Same complete state and configuration, clip0.1 only; actor LR stays0.00012",
+        "eligibility": "A plateau accompanied by evidence consistent with noisy or excessive policy movement. A low clipping fraction may make this change weak; measure its effect rather than assuming a tighter clip is a hard trust region.",
+        "budget_and_comparison": "Inherit conditional_followup seed20261103,20 rounds per arm,960 games per round,420s maximum/415s failure,8400s completed-round wall cap per arm,identical full checkpoint and sequential four-rank execution. Preserve actor/critic/lower Adam,RNG and all240 environments per rank. Compare common completed-round wall and equal19200 games with the existing two-window adoption gate; only clip may differ between staged states.",
+        "not_queued_now": true
+      },
+      "larger_rollout_candidate": {
+        "status": "Design candidate only; requires separate bounded preregistration and production qualification before execution",
+        "direction": "Explore960 to1920 fresh complete games per policy update, initially holding target optimizer minibatch6144,micro256,actor LR0.00012 and actor2/critic4 epochs fixed; more minibatches process the extra samples. Do not substitute larger gradient accumulation or repeated epochs on the same960 games for new experience.",
+        "implementation_gate": "Ordinary resume rejects changes to games_per_rank/n_envs. Never bypass it with reset-env or silently restart RNG/cohort allocation. A multi-wave collector would need frozen behaviour weights during collection, disjoint game seeds, complete-return and saved-buffer recovery semantics, and an explicit treatment of lower-model update cadence/sample use. Any such source change requires semantic tests and two actual full GPU rounds across four ranks before comparison.",
+        "resource_gate": "Do not assume doubling is feasible: current full rounds have reached220.073s and two waves can exceed420s. Qualify actual full work under415s failure protection, with no early game termination or reduced search. If infeasible, reject or preregister another explicit cohort size; include all collection/update/save time and compare equal games as well as common wall.",
+        "not_queued_now": true
+      },
+      "limitations": "The cited mechanism was studied primarily in dense-reward domains with highly parallel simulation. Transfer to complete-game strategic learning with a changing lower policy is a hypothesis. More games, stronger regularisation and larger models are separate experiments; keep existing single-training-replica limitations. PPO-EWMA is not implemented or adopted here."
     }
   }
 }
