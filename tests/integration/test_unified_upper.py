@@ -197,7 +197,10 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
         optimizer=model.policy.upper_optimizer.state_dict()))
     protocol = dict(seed=31, diagnostic=dict(world_size=1, games_per_rank=7,
         holdout_games_per_rank=2, max_probe_decisions_per_split_per_rank=10),
-        arms=[dict(id='control', changes={}), dict(id='batch3', changes={'effective_batch_size': 3}),
+        arms=[dict(id='control', changes={}),
+              dict(id='lambda1', changes={}, critic_target='frozen_lambda_return', critic_lambda=1.),
+              dict(id='room_half', changes={}, critic_target='frozen_lambda_return', critic_lambda=.5, lambda_scope='room'),
+              dict(id='batch3', changes={'effective_batch_size': 3}),
               dict(id='critic_lambda', changes={}, critic_target='frozen_lambda_return'),
               dict(id='control_repeat', changes={})])
     deterministic_before = torch.are_deterministic_algorithms_enabled()
@@ -209,6 +212,8 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
     assert all(r['stats']['samples'] == 5 and r['stats']['samples_used'] == 10
                for r in result['arms'])
     assert result['arms'][0]['probes'] == result['arms'][-1]['probes']
+    assert result['arms'][0]['final_digest'] == result['arms'][1]['final_digest']
+    assert result['room_transition_audit']['terminals'] == 7
     assert model._upper_completed is rows
     assert state_digest(dict(policy=model.policy.state_dict(),
         optimizer=model.policy.upper_optimizer.state_dict())) == before

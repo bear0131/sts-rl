@@ -16,6 +16,75 @@ import numpy as np
 import torch
 
 from rl.algorithms import unified_upper as U
+from env.core import encode
+
+
+def room_key(observation):
+    """Public native room visit: floor advances on entry, including boss treasure.
+
+    Event subpages, embedded combat, shop and reward menus retain this key.
+    Act disambiguates transitions between maps; phase is deliberately excluded.
+    """
+    values = []
+    for key, scale in (('act', encode.ACT_SCALE), ('floor', encode.FLOOR_SCALE)):
+        value = float(observation[key][0]) * scale
+        if not np.isfinite(value) or abs(value - round(value)) > 1e-4:
+            raise ValueError('room identity must contain integer public act/floor')
+        values.append(round(value))
+    return tuple(values)
+
+
+def critic_lambda_returns(records, coefficient, scope='decision'):
+    """Frozen-old-V targets, gamma=1, on complete natural upper trajectories.
+
+    Room scope has lambda=1 on every within-room transition. Only crossing
+    an act/floor visit boundary applies coefficient; terminal never bootstraps.
+    Actor advantages and the original records are untouched.
+    """
+    if not np.isfinite(coefficient) or not 0 <= coefficient <= 1:
+        raise ValueError('critic lambda must be between zero and one')
+    if scope not in ('decision', 'room'):
+        raise ValueError('unknown critic lambda scope')
+    if U.bootstrap_indices(records):
+        raise ValueError('critic lambda requires complete natural episodes')
+    targets = np.zeros(len(records), dtype=np.float64)
+    tails = {}
+    for i in range(len(records)-1, -1, -1):
+        row = records[i]
+        key = (row['env'], row['episode'])
+        if row['terminal']:
+            targets[i] = row['reward']
+        else:
+            next_target, next_value, next_room = tails[key]
+            lam = coefficient
+            if scope == 'room' and room_key(row['observation']) == next_room:
+                lam = 1.
+            targets[i] = row['reward'] + (1-lam)*next_value + lam*next_target
+        tails[key] = (targets[i], float(row['value']),
+                      room_key(row['observation']) if scope == 'room' else None)
+    return targets
+
+
+def room_transition_audit(records):
+    """Check visit continuity against the collector's actual successor frames."""
+    counts = dict(within_room=0, across_room=0, across_act=0, terminals=0)
+    successors = {}
+    for row in reversed(records):
+        key = (row['env'], row['episode'])
+        current = room_key(row['observation'])
+        if row['terminal']:
+            counts['terminals'] += 1
+        else:
+            following = successors[key]
+            if following < current:
+                raise ValueError('room visits moved backwards within a game')
+            if row.get('next_observation') is not None:
+                if room_key(row['next_observation']) != following:
+                    raise ValueError('recorded room successor differs from next decision')
+            counts['within_room' if current == following else 'across_room'] += 1
+            counts['across_act'] += int(current[0] != following[0])
+        successors[key] = current
+    return counts
 
 
 def state_digest(value):
@@ -131,6 +200,8 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
         training_games=len(games) - limits['holdout_games_per_rank'],
         holdout_games=limits['holdout_games_per_rank'], training_samples=len(train),
         holdout_samples=len(hold), initial_digest=initial_digest, arms=[])
+    if any(arm.get('lambda_scope') == 'room' for arm in protocol['arms']):
+        results['room_transition_audit'] = room_transition_audit(records)
     def reset():
         model.policy.load_state_dict(policy)
         model.policy.upper_optimizer.load_state_dict(copy.deepcopy(optimizer))
@@ -171,13 +242,17 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
             started = time.perf_counter()
             target = U.complete_returns
             if arm.get('critic_target') == 'frozen_lambda_return':
-                target = lambda rows: U.macro_advantages(rows, np.zeros(len(rows)), 1., cfg.gae_lambda)[1]
+                coefficient = arm.get('critic_lambda', cfg.gae_lambda)
+                scope = arm.get('lambda_scope', 'decision')
+                target = lambda rows: critic_lambda_returns(rows, coefficient, scope)
+            arm_targets = target(records)
             with patch.object(U, 'complete_returns', target):
                 stats = U.update_unified_upper(model, rank=rank, world_size=world_size,
                     average=average, synchronize=synchronize)
             if model.device.type == 'cuda':
                 torch.cuda.synchronize(model.device)
             result = dict(id=arm['id'], config=asdict(candidate), stats=stats,
+                critic_target_spec={k: arm[k] for k in ('critic_target', 'critic_lambda', 'lambda_scope') if k in arm},
                 update_seconds=time.perf_counter() - started,
                 final_digest=state_digest(dict(policy=model.policy.state_dict(),
                     optimizer=model.policy.upper_optimizer.state_dict())), probes={})
@@ -205,6 +280,9 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
                     critic_mc_mse=float(np.square(residual).mean()),
                     critic_old_mc_mse=float(np.square(target_values-old_values).mean()),
                     critic_bias=float((values-target_values).mean()),
+                    critic_mc_mse_by_phase={str(p): float(np.square(residual[phases == p]).mean())
+                        for p in np.unique(phases)},
+                    critic_target_mc_mse=float(np.square(arm_targets[indices]-target_values).mean()),
                     critic_explained_variance=1-float(np.var(residual))/variance if variance > 0 else None,
                     old_logp_max_disagreement=float(np.max(np.abs(old_logp[np.arange(len(rows)), actions]-sampled_old))))
                 if not all(np.isfinite(v).all() for v in (kl, values, surrogate_gain)):
@@ -214,6 +292,7 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
                     np.savez_compressed(output/f'{arm["id"]}-{name}.npz', indices=indices,
                         kl=kl, legal=legal, phase=phases, surrogate_gain=surrogate_gain,
                         value=values, old_value=old_values, mc_return=target_values,
+                        critic_target=arm_targets[indices],
                         lambda_return=lambda_returns[indices], env=[r['env'] for r in rows],
                         episode=[r['episode'] for r in rows])
             results['arms'].append(result)
