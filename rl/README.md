@@ -515,3 +515,10 @@ actor 的冻结 GAE、奖励、终局定义、搜索、样本遍数和上下层 
 这是统计目标实验，不能把 value loss 下降当作实际策略改进。
 `upper/critic_target_version` 为1（MC）或2（冻结 λ），配置随模型和 manifest 保存；
 普通恢复保留该目标，目标覆盖保留已有优化器状态。
+
+统一上层有界优化实验可在现有分布式入口使用 `--upper-learning-rate`、
+`--upper-value-learning-rate`、`--upper-effective-batch-size` 和 `--upper-critic-epochs`。
+省略时保留 checkpoint；显式覆盖在 Adam 加载之后更新对应配置/参数组，保留所有动量和步数。
+全局目标 batch 不再乘 rank 数，实际每遍更新 `ceil(全局上层样本数 / 目标batch)` 次，
+所有完整游戏样本均使用；micro batch 只控制执行分块。日志记录实际 actor/critic LR、
+目标及实际平均有效 batch、更新次数和样本使用，资格仍须完成多机生产采集与保存恢复。

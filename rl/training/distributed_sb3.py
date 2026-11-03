@@ -443,6 +443,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Strategic PPO passes per collection; retains the configured KL stopping policy. "
              "Omission preserves the checkpoint value.",
     )
+    for flag, kind in (('learning-rate', float), ('value-learning-rate', float),
+                       ('effective-batch-size', int), ('critic-epochs', int)):
+        parser.add_argument('--upper-' + flag, type=kind, default=None,
+                            help='Unified upper override; omission preserves checkpoint configuration and Adam state.')
     parser.add_argument('--upper-critic-target', choices=('mc', 'frozen-lambda'), default=None,
                         help='Unified upper critic labels only; frozen-lambda uses collection-time values. '
                              'Omission preserves the checkpoint target and all Adam state.')
@@ -2123,6 +2127,40 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
 )
 
 
+def apply_unified_upper_update_overrides(model, args):
+    """Change explicit optimization settings after loading Adam, without resetting moments."""
+    from dataclasses import asdict, replace
+    changes = {name: getattr(args, 'upper_' + name) for name in
+               ('learning_rate', 'value_learning_rate', 'effective_batch_size', 'critic_epochs')
+               if getattr(args, 'upper_' + name, None) is not None}
+    if not changes:
+        return
+    core = getattr(model.policy, 'core', None)
+    cfg = getattr(core, 'upper_config', None)
+    if cfg is None or cfg.architecture != 'upper-latent-actions-v1':
+        raise ValueError('upper optimization overrides require unified upper')
+    if any(not np.isfinite(v) or v <= 0 for v in changes.values()):
+        raise ValueError('upper optimization overrides must be finite and positive')
+    updated = replace(cfg, **changes)
+    groups = model.policy.upper_optimizer.param_groups
+    networks = (core.upper_actor, core.upper_critic)
+    if len(groups) != 2 or any(
+        {id(p) for p in group['params']} != {id(p) for p in network.parameters()}
+        for group, network in zip(groups, networks)
+    ):
+        raise ValueError('unexpected unified upper Adam parameter groups')
+    # load_state_dict restores old group learning rates as well as moments.
+    # Set only explicitly requested rates after that restoration.
+    if 'learning_rate' in changes:
+        groups[0]['lr'] = updated.learning_rate
+    if 'value_learning_rate' in changes or ('learning_rate' in changes and not cfg.value_learning_rate):
+        groups[1]['lr'] = updated.value_learning_rate or updated.learning_rate
+    core.upper_config = updated
+    model.policy.upper_config = asdict(updated)
+    model.policy_kwargs['upper_config'] = asdict(updated)
+    args.upper_config = asdict(updated)
+
+
 def main() -> None:
     args = build_parser().parse_args()
     if not np.isfinite(args.iteration_timeout_seconds) or args.iteration_timeout_seconds < 0:
@@ -2537,6 +2575,7 @@ def main() -> None:
         amp_mode=args.amp_mode,
         custom_objects=custom_objects,
     )
+    apply_unified_upper_update_overrides(model, args)
     if args.max_grad_norm is not None:
         print(
             f"[rank {args.rank}] max gradient norm override: "

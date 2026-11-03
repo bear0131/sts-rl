@@ -47,7 +47,10 @@ def update_unified_upper(model, *, rank=0, world_size=1, average=lambda x: x, sy
     mean = stats['total'] / stats['count']
     std = max(0., stats['square'] / stats['count'] - mean * mean) ** .5
     advantages = (advantages - mean) / (std + 1e-8)
-    out.update(advantage_mean=mean, advantage_std=std)
+    out.update(advantage_mean=mean, advantage_std=std,
+               actor_learning_rate=float(model.policy.upper_optimizer.param_groups[0]['lr']),
+               critic_learning_rate=float(model.policy.upper_optimizer.param_groups[1]['lr']),
+               requested_effective_batch_size=float(cfg.effective_batch_size))
     # Pack once on CPU. Missing inactive-screen fields are zeros, never old state.
     keys = set().union(*(r['observation'] for r in records)) if records else set()
     observations = {k: np.stack([r['observation'].get(k, np.zeros(model.observation_space[k].shape))

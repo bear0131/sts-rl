@@ -115,7 +115,7 @@
       "limitations": "The cited mechanism was studied primarily in dense-reward domains with highly parallel simulation. Transfer to complete-game strategic learning with a changing lower policy is a hypothesis. More games, stronger regularisation and larger models are separate experiments; keep existing single-training-replica limitations. PPO-EWMA is not implemented or adopted here."
     },
     "autonomous_online_comparison": {
-      "status": "Registered paired continuation from B143: original B control144–163 first, then one frozen-lambda critic candidate from the identical protected full state; no adoption yet",
+      "status": "Original B control144-163 running; user-prioritized fewer-update small-LR candidate next; frozen-lambda candidate deferred, no adoption",
       "seed": 20261103,
       "rounds_per_arm": 20,
       "games_per_round": 960,
@@ -124,14 +124,34 @@
       "maximum_completed_round_wall_seconds_per_arm": 8400,
       "initialization": "Identical verified boundary bundle, all optimizers/RNG/environments preserved, separate run identities, four ranks sequentially exclusive.",
       "comparison": "Equal19200 natural games and common completed-round wall, final two5-round windows; require +0.5pp win or +2floor in both and no material win/common-time regression. Report all windows, exclusions, uncertainty and single-replica limitation.",
-      "selected_candidate": "critic_lambda097",
+      "selected_candidate": "few_updates_low_lr",
       "source_round": 143,
       "source_global_step": 48549650,
-      "selection_reference": "Afternoon B143 screen: all four ranks lower held-out natural-MC prediction error with frozen-lambda critic, actor settings unchanged; more actor steps/LR or smaller batch did not improve pooled held-out surrogate. Original exact-repeat gate exited1, now retained as reference after user-approved floating-point review; missing cohort/resource summary is not fabricated.",
-      "authorization": "Current user delegates continuous autonomous training planning and asks to continue the plan using afternoon evaluations only as reference; no diagnostic automatically adopts a policy.",
-      "hypothesis": "At fixed fresh games, actor objective/Adam budgets/search, test whether frozen old-V lambda critic labels improve future advantage quality and realized common-wall returns over MC labels. The minimal constant target avoids unproven calibration cost/complexity.",
+      "selection_reference": "User-supplied local chat 2026-11-03 19:28-19:38 describes 65536 collected decisions, 4096 microbatch times4 accumulation,2 epochs,8 optimizer steps; no numeric learning rate given. Different unified-network setup and unverified reported win rates are not performance evidence for this system.",
+      "authorization": "User explicitly asks to try fewer updates and smaller learning rates first, using the supplied chat only as candidate reference; existing autonomous training authority remains.",
+      "hypothesis": "Test a conservative optimization package (larger effective batch, lower actor/critic LR, reduced critic reuse) at fixed complete games, MC critic, search and lower update cadence. This does not isolate each hyperparameter.",
       "reference_only": "docs/2026-11-03/upper-critic-diagnostic-reference.json; unchanged archive, not an adoption result",
-      "execution": "Original B control144–163 runs first. Then isolated candidate forks protected B143 for two qualification rounds; after full two-round state/lifecycle audit resume18 further rounds, total20. All four ranks exclusive. Protect both endpoints and select only by online complete-game evidence."
+      "execution": "Finish original B control144-163 and protect/audit stopped boundary, then few_updates_low_lr forks identical protected B143 for2 qualification rounds. After full-state audit resume18 rounds,20 total. Frozen-lambda critic candidate remains deferred; do not use its old launch plan.",
+      "candidate_config": {
+        "run_id": "combat35-upper-lowupdate-b143-r1",
+        "effective_batch_size": 32768,
+        "micro_batch_size": 256,
+        "learning_rate": 3e-05,
+        "value_learning_rate": 5e-05,
+        "epochs": 2,
+        "critic_epochs": 2,
+        "critic_target": "mc",
+        "gae_lambda": 0.97
+      },
+      "measurement_contract": "N is actual global upper decisions from960 complete natural games, not environment transitions or search simulations. Per actor/critic epoch batches=ceil(N/32768), actual mean effective batch=N/batches;2*batches Adam steps for each network. N is not capped at65536. Micro256 is per-rank execution chunk; global effective32768 is not multiplied by4 ranks. At N=116193,4 batches/epoch mean29048.25,8 actor+8 critic steps vs control38+76. Fewer optimizer updates do not imply proportional collection or forward/backward speedup.",
+      "unchanged": "Complete B143 model, actor/critic/lower Adam moments and counts,RNG,240env/rank,960natural games,MC targets,GAE.97,architecture,reward,search250/250/1000,lower update cadence,FP32,415 failure/420 completion gate. Only explicit optimizer group LRs change; no Adam reset.",
+      "deferred_candidates": [
+        {
+          "id": "critic_lambda097",
+          "run_id": "combat34-upper-lambda097-b143-r1",
+          "status": "Prepared but not launched; deferred by latest user priority. Requires separate future planning; do not mix into low-update first arm."
+        }
+      ]
     }
   }
 }

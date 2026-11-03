@@ -298,3 +298,52 @@ def test_frozen_lambda_critic_preserves_actor_and_adam_resume(unified_env, tmp_p
     assert update_upper(restored)['critic_target_version'] == 2
     with pytest.raises(ValueError, match='unified'):
         UpperConfig(critic_target='frozen-lambda')
+
+
+def test_fewer_updates_small_lr_preserves_adam_and_survives_resume(unified_env, tmp_path):
+    from rl.algorithms.upper_probe import state_digest
+    from rl.training.distributed_sb3 import build_parser, apply_unified_upper_update_overrides
+    model = make_model(unified_env)
+    model.set_logger(configure(str(tmp_path), []))
+    obs, _ = unified_env.reset(seed=41)
+    mask = unified_env.action_masks()
+    with torch.no_grad():
+        action, value, logp = model.policy(tensor(obs), action_masks=mask[None])
+    rows = [dict(observation=copy.deepcopy(obs), action=int(action), mask=mask.copy(),
+                 value=float(value), log_prob=float(logp), reward=i/7, terminal=True,
+                 env=i, episode=0) for i in range(7)]
+    model._upper_completed = copy.deepcopy(rows)
+    update_upper(model)
+    source = tmp_path/'source.zip'; model.save(source)
+    candidate = AccumulatingMaskablePPO.load(source, device='cpu')
+    policy_digest = state_digest(candidate.policy.state_dict())
+    adam_digest = state_digest(candidate.policy.upper_optimizer.state_dict()['state'])
+    args = build_parser().parse_args(['--rank', '0', '--world-size', '1', '--upper-learning-rate', '0.00003',
+        '--upper-value-learning-rate', '0.00005', '--upper-effective-batch-size', '8',
+        '--upper-critic-epochs', '2'])
+    apply_unified_upper_update_overrides(candidate, args)
+    assert state_digest(candidate.policy.state_dict()) == policy_digest
+    assert state_digest(candidate.policy.upper_optimizer.state_dict()['state']) == adam_digest
+    assert [g['lr'] for g in candidate.policy.upper_optimizer.param_groups] == [3e-5, 5e-5]
+    for iteration in range(2):
+        candidate.set_logger(configure(str(tmp_path), []))
+        candidate._upper_completed = copy.deepcopy(rows)
+        result = update_upper(candidate)
+        assert result['updates'] == result['critic_updates'] == 2
+        assert result['samples_used'] == result['critic_samples_used'] == 14
+        assert result['critic_target_version'] == 1
+        assert result['actor_learning_rate'] == 3e-5 and result['critic_learning_rate'] == 5e-5
+        for network, expected in [(candidate.policy.core.upper_actor, 4+2*(iteration+1)),
+                                  (candidate.policy.core.upper_critic, 6+2*(iteration+1))]:
+            assert {int(candidate.policy.upper_optimizer.state[p]['step']) for p in network.parameters()} == {expected}
+        saved = tmp_path/f'candidate{iteration}.zip'; candidate.save(saved)
+        restored = AccumulatingMaskablePPO.load(saved, device='cpu')
+        assert state_digest(restored.policy.upper_optimizer.state_dict()) == state_digest(candidate.policy.upper_optimizer.state_dict())
+        apply_unified_upper_update_overrides(restored, build_parser().parse_args(['--rank', '0', '--world-size', '1']))
+        cfg = restored.policy.core.upper_config
+        assert cfg.learning_rate == 3e-5 and cfg.value_learning_rate == 5e-5
+        assert cfg.effective_batch_size == 8 and cfg.critic_epochs == 2
+        candidate = restored
+    args.upper_learning_rate = float('nan')
+    with pytest.raises(ValueError, match='finite and positive'):
+        apply_unified_upper_update_overrides(candidate, args)
