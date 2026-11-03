@@ -759,7 +759,7 @@
       }
     },
     "critic_stability_diagnostic": {
-      "status": "registered after fixed40: protect source40 done; probe critic-LR fix/CPU-CUDA qualification and full51 boundary pending; no diagnostic launched",
+      "status": "Fixed50 review complete; all4 guarded STOP51 requested. Isolated8698c41d deployed/CPU23 passed; full50/51 audit and CUDA qualification pending, no diagnostic launched.",
       "issue": "UPPER-CRITIC-UPDATE-STABILITY",
       "registered_at": "2026-11-04T04:46:26.860726+08:00",
       "motivation": "Fixed31-40 target MSE increased in32/36/37/39;32+18.697% and39+48.213%, with epoch4 worsening. Same-cohort optimization nonmonotonicity, not heldout-overfit proof; learning windows still improve, no production parameter change.",
@@ -821,7 +821,10 @@
       "gate": "An arm must pass at BOTH source40 and51: validation target MSE at least5% lower than within-source control, paired equal-game target-delta95% bootstrap interval entirely below0, validation MC MSE no more than2% worse, and full training target post MSE no worse than its own pre MSE. Require correct actual critic LR and exact actor2 and candidate critic2-or-4 sample-use counts, no actor-side change beyond tolerance, zero excluded games and restored source/control repeat. These are exploratory screening gates, not policy-win evidence or automatic deployment.",
       "limitations": "Holdout reduces training N to90%, potentially changing ceil(N/32768) critic batch counts compared with a full production cohort. Report both counts and do not call this an exact replay or rule out the production instability if it fails to recur. Single cohort per source, evolving labels/distributions, multiple arms and unadjusted bootstrap make this exploratory; independent online/frozen confirmation remains required before calling a winner.",
       "after_screen": "Keep source51 and40 protected; deliberately ordinary-resume original unchanged production from51, continuous/no total cap, validate resumed52 and continue fixed60. If an arm passes both sources, prepare a separate bounded matched-state online comparison before adoption; do not switch directly on MSE. If none passes, retain original and keep the observed instability/limitations explicit.",
-      "failure": "Any missing prerequisite, timeout/nonfinite/source restore failure stops diagnostic acceptance and requires diagnosis; no automatic retry or failed-training restart. Production415/420 gates and all games/search remain unchanged."
+      "failure": "Any missing prerequisite, timeout/nonfinite/source restore failure stops diagnostic acceptance and requires diagnosis; no automatic retry or failed-training restart. Production415/420 gates and all games/search remain unchanged.",
+      "isolated_runtime_commit": "8698c41d5548268432a2b449d7eaac1d6c55fc6c",
+      "deployment_evidence": "runs/local/upper-unified/candidates/critic-stability-deployment.json",
+      "stop_request_evidence": "runs/local/upper-unified/candidates/critic-stability-stop51-request.json"
     }
   },
   "monitor": {
