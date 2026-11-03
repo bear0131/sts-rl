@@ -526,3 +526,43 @@ def test_critic_batch_requires_unified_and_cli_positive():
                                          '--upper-critic-effective-batch-size', value])
         with pytest.raises(ValueError, match='finite and positive'):
             apply_unified_upper_update_overrides(None, args)
+
+
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_microbatch_partition_preserves_weighted_update(unified_env, tmp_path, device):
+    """Changing execution chunks keeps sample/order/Adam semantics, within FP32 rounding."""
+    from dataclasses import asdict, replace
+    if device == 'cuda':
+        assert torch.cuda.is_available(), 'explicit microbatch CUDA qualification requires CUDA'
+    model = make_model(unified_env, device)
+    cfg = replace(model.policy.core.upper_config, critic_effective_batch_size=8)
+    model.policy.core.upper_config = cfg
+    model.policy.upper_config = model.policy_kwargs['upper_config'] = asdict(cfg)
+    model.set_logger(configure(str(tmp_path), []))
+    obs, _ = unified_env.reset(seed=41)
+    mask = unified_env.action_masks()
+    with torch.no_grad():
+        action, value, logp = model.policy({k:v.to(device) for k,v in tensor(obs).items()}, action_masks=mask[None])
+    rows = [dict(observation=copy.deepcopy(obs), action=int(action), mask=mask.copy(),
+                 value=float(value), log_prob=float(logp), reward=i/7, terminal=True,
+                 env=i, episode=0) for i in range(7)]
+    # Start from nonempty Adam so chunk equivalence includes saved moments.
+    model._upper_completed = copy.deepcopy(rows)
+    update_upper(model)
+    source = tmp_path/'micro-source.zip'; model.save(source)
+    states, counters, rngs = [], [], []
+    for micro in (1, 2, 4):
+        candidate = AccumulatingMaskablePPO.load(source, device=device)
+        candidate.policy.core.upper_config = replace(cfg, micro_batch_size=micro)
+        candidate.set_logger(configure(str(tmp_path), []))
+        candidate._upper_completed = copy.deepcopy(rows)
+        np.random.seed(914)
+        result = update_upper(candidate)
+        states.append((copy.deepcopy(candidate.policy.state_dict()),
+                       copy.deepcopy(candidate.policy.upper_optimizer.state_dict())))
+        counters.append({k: result[k] for k in ('updates','critic_updates','samples_used','critic_samples_used')})
+        rngs.append(np.random.get_state())
+    assert counters == [dict(updates=4., critic_updates=3., samples_used=14., critic_samples_used=21.)]*3
+    for state, rng in zip(states[1:], rngs[1:]):
+        torch.testing.assert_close(state, states[0], rtol=2e-5, atol=3e-6)
+        np.testing.assert_equal(rng, rngs[0])
