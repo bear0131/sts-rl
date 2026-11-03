@@ -372,7 +372,7 @@
     },
     "rollout_scale_diagnostic": {
       "protocol": "unified-upper-rollout-scale-v1",
-      "status": "scale1 and scale1p5 accepted; scale2 launching; remaining arms pending",
+      "status": "scale1/scale1p5/scale2 accepted; scale2p5 launching; remaining arms pending",
       "user_message": "USER-ce1e8fc7-7c7a-4637-9c53-377888849c11",
       "seed": 20261103,
       "source": "OriginalB192 protected complete model/upper+lower Adam/RNG and240 environments/rank, only after all4 stopped/exit0/full-state acceptance. Source files remain unchanged.",
@@ -492,6 +492,33 @@
       "fixed": "Same720 training/240 heldout whole games, actorLR1.2e-4/criticLR1e-4, fixedMC/frozenGAE.97. Every arm restores identical weights/Adam/RNG and permutation seed. Only execution micro size differs; effective batches/epochs remain fixed. Full960 online update has a different decision denominator and needs separate qualification.",
       "report": "Per-arm max4rank synchronized update wall, complete diagnostic wall, CPU/RSS/available memory/Torch allocator exact and sampled peak/VRAM/GPU util, actual Adam/sampleuses. Compare final fixed-probe value/KL/surrogate arrays with stated absolute/relative tolerances and source restoration, not byte equality across micro sizes. Control-repeat is separately checked; first-use and allocator warm state are reported, not silently excluded.",
       "failure": "No retry on timeout/OOM/nonfinite/source-restore failure; no automatic promotion from MSE or speed alone. Larger micro must pass numerical comparison and full production-length qualification."
+    },
+    "fresh_lambda_training": {
+      "status": "User authorized after current scaling/micro diagnostics; geometry and micro pending full curve. Not launched.",
+      "user_message": "USER-b1cb9f48-083c-4bd1-8dba-8c38c0e5849d",
+      "intent": "After tests start a genuinely new training run from the original unified initialization; prioritize complete-game frozen lambda-return critic with lambda0.97.",
+      "initialization": {
+        "upper": "Original fresh unified initial weights, not B192 weights",
+        "initial_checkpoint": "/root/upper-unified-20261103/material/unified-initial.zip",
+        "initial_sha256": "3c2462eafb7ee5aaf30d99d0587e8fe19ddc07a6cf70eb46261e56e05ca24658",
+        "lower": "Retain original COMBAT30 round203 starting weights and unchanged search contract, as in original A/B/C initialization",
+        "all_optimizers": "fresh; verify empty Adam and zero counters",
+        "round_and_step": 0,
+        "seed": 20261103,
+        "existing_runs": "Do not overwrite or reset B192/C35/A/C/COMBAT30; preserve full state and references"
+      },
+      "target": {
+        "critic_target": "frozen-lambda",
+        "gae_lambda": 0.97,
+        "gamma": 1.0,
+        "scope": "Entire naturally completed game, recursion across upper decisions; not room-calibrated/adaptive lambda",
+        "values": "Collection-time frozen old critic values; fixed labels across all critic epochs",
+        "measurement": "Report both true MC and actual frozen-lambda full-cohort pre/post MSE; no false MC label or heldout claim"
+      },
+      "provisional_optimizer": "Actor6144/2 epochs/LR1.2e-4; critic32768/4 epochs/LR1e-4. These are exploratory settings, not a proven lambda optimum; final params registered before launch.",
+      "qualification": "After all diagnostics terminate and source audits pass, register exact new identity/root/geometry/micro and two full fresh rounds1-2,420s complete/415s failure/no restart,all natural games0excluded,actual upper/lower Adam/sampleuses/RNG/save and lower refresh. Then ordinary full-state resume and fixed learning windows; final continuous training has no total-round cap.",
+      "supersedes": "Prior proposed larger-cohort training fork fromB192. B192 remains only the frozen timing source/reference. Existing no-reset protection still applies to all old runs; user explicitly authorizes fresh initialization for this new identity.",
+      "interpretation": "Earlier afternoon lambda diagnostic is reference only; target-noise reduction does not prove online learning gain. Fresh package changes geometry/critic batch/target and possibly execution micro; cannot isolate lambda causality from its learning curve."
     }
   },
   "monitor": {
@@ -503,7 +530,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "diagnostic",
-    "note": "B192保留；1.5倍1440局已通过（采集226.58秒），继续2倍1920局测量。",
-    "updated_at": "2026-11-04T00:53:49+08:00"
+    "note": "B192保留；2倍1920局已通过（采集285.78秒），继续2.5倍；测试后按新指令从头训练λ=.97候选。",
+    "updated_at": "2026-11-04T01:01:37+08:00"
   }
 }
