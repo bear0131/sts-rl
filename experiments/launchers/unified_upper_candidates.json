@@ -59,7 +59,7 @@
   ],
   "selection": "Reject nonfinite, failed exact-repeat/restore, skipped/censored games, or cross-rank inconsistency. A single fixed-cohort surrogate cannot prove online benefit; select at most one candidate for separately bounded paired online continuation.",
   "online_confirmation": {
-    "status": "Not launched; candidate chosen after diagnostics",
+    "status": "Historical reference only; no follow-up selected or scheduled from this diagnostic.",
     "seed": 20261103,
     "rounds_per_arm": 20,
     "games_per_round": 960,
@@ -79,5 +79,11 @@
     "https://arxiv.org/html/2603.06009v2",
     "https://arxiv.org/abs/2006.05990",
     "https://arxiv.org/abs/1506.02438"
-  ]
+  ],
+  "record_use": {
+    "role": "reference_only",
+    "planning_effect": "Historical experiment recipe; not a default next-step plan or authorization to schedule follow-up.",
+    "user_instruction": "仅作参考，不作为下一步计划的直接指导。",
+    "results": "docs/2026-11-03/upper-critic-diagnostic-reference.json"
+  }
 }

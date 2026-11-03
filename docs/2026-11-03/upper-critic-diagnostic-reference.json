@@ -1,0 +1,862 @@
+{
+  "schema": "upper-critic-diagnostic-reference-v1",
+  "recorded_date": "2026-11-03",
+  "timezone": "Asia/Shanghai",
+  "role": "reference_only",
+  "user_instruction": "把这些评测记录同步到 git，不作为下一步计划的直接指导，只作为参考",
+  "planning_effect": "No production configuration selection, scheduled trial, or default next action is implied by these records. Historical next-step suggestions are superseded by the user instruction above.",
+  "limitations": [
+    "Exploratory reuse of one B143 cohort; not an independent final test.",
+    "Paired whole-game confidence intervals are descriptive and not corrected for adaptive/multiple selection.",
+    "No online win-rate or long-run stability validation.",
+    "720-training-game and480-training-game experiments require their own matched controls."
+  ],
+  "records": [
+    {
+      "run": "upper-probe-b143-r2",
+      "source_round": 143,
+      "source_step": 48549650,
+      "seed": 20261103,
+      "implementation_commit": "512407a4",
+      "result_commit": "1c858fbd",
+      "protocol": "experiments/launchers/unified_upper_candidates.json",
+      "training_games": 720,
+      "calibration_games": 0,
+      "holdout_games": 240,
+      "source_summary_sha256": "f3a0e4d14e4773cce9d7d05087fa53b80ee2348fdf06eb4a4e355fb2e941f396",
+      "source_summary_local_ignored": "runs/local/probe-recovery/summary.json",
+      "raw_remote_root": "/root/upper-candidates-20261103/runs/upper-probe-b143-r2",
+      "metrics": [
+        {
+          "id": "control",
+          "global_training_samples": 88039.0,
+          "actor_updates": 30.0,
+          "critic_updates": 60.0,
+          "holdout_surrogate_gain": -5.2635264814040745e-05,
+          "holdout_multiple_action_kl": 0.0026115201044643824,
+          "holdout_critic_mc_mse": 0.2726545657410548,
+          "old_critic_mc_mse": 0.25242665514959406,
+          "update_wall_slowest_rank_seconds": 42.5407822560519,
+          "cross_rank_final_state_exact": true
+        },
+        {
+          "id": "batch3072",
+          "global_training_samples": 88039.0,
+          "actor_updates": 58.0,
+          "critic_updates": 116.0,
+          "holdout_surrogate_gain": -0.0005494703280617813,
+          "holdout_multiple_action_kl": 0.004723784714034179,
+          "holdout_critic_mc_mse": 0.2763637685260528,
+          "old_critic_mc_mse": 0.25242665514959406,
+          "update_wall_slowest_rank_seconds": 58.81715474463999,
+          "cross_rank_final_state_exact": true
+        },
+        {
+          "id": "actor_epochs4",
+          "global_training_samples": 88039.0,
+          "actor_updates": 60.0,
+          "critic_updates": 60.0,
+          "holdout_surrogate_gain": -0.0009791979585514906,
+          "holdout_multiple_action_kl": 0.0042737736396421975,
+          "holdout_critic_mc_mse": 0.27965605062563637,
+          "old_critic_mc_mse": 0.25242665514959406,
+          "update_wall_slowest_rank_seconds": 56.24259246792644,
+          "cross_rank_final_state_exact": true
+        },
+        {
+          "id": "actor_lr24",
+          "global_training_samples": 88039.0,
+          "actor_updates": 30.0,
+          "critic_updates": 60.0,
+          "holdout_surrogate_gain": -0.001076576718641914,
+          "holdout_multiple_action_kl": 0.004900415497778815,
+          "holdout_critic_mc_mse": 0.2726545657410548,
+          "old_critic_mc_mse": 0.25242665514959406,
+          "update_wall_slowest_rank_seconds": 41.07182072661817,
+          "cross_rank_final_state_exact": true
+        },
+        {
+          "id": "critic_lambda097",
+          "global_training_samples": 88039.0,
+          "actor_updates": 30.0,
+          "critic_updates": 60.0,
+          "holdout_surrogate_gain": -5.2635264814040745e-05,
+          "holdout_multiple_action_kl": 0.0026115201044643824,
+          "holdout_critic_mc_mse": 0.20754383897323617,
+          "old_critic_mc_mse": 0.25242665514959406,
+          "update_wall_slowest_rank_seconds": 41.21328674815595,
+          "cross_rank_final_state_exact": true
+        },
+        {
+          "id": "control_repeat",
+          "global_training_samples": 88039.0,
+          "actor_updates": 30.0,
+          "critic_updates": 60.0,
+          "holdout_surrogate_gain": -5.2635264814040745e-05,
+          "holdout_multiple_action_kl": 0.0026115201044643824,
+          "holdout_critic_mc_mse": 0.2726545657410548,
+          "old_critic_mc_mse": 0.25242665514959406,
+          "update_wall_slowest_rank_seconds": 40.87544862832874,
+          "cross_rank_final_state_exact": true
+        }
+      ],
+      "checks": {
+        "deterministic_algorithms": true,
+        "control_repeat_exact": true,
+        "source_state_restored": true,
+        "rng_restored": true,
+        "lower_optimizer_unchanged": true
+      },
+      "source_checkpoint_checksums_verified": true,
+      "hardware": {
+        "gpu": "4 x RTX5090 32607MiB",
+        "driver": "595.71.05",
+        "torch": "2.12.0+cu132",
+        "cuda": "13.2",
+        "threads_per_rank": 1,
+        "precision": "FP32",
+        "tf32": false,
+        "sampling_seconds": 1
+      },
+      "total_wall_max_seconds": 494.54749496188015,
+      "resource_ranges": {
+        "tree_cpu_seconds": {
+          "min": 1410.149999999995,
+          "max": 1477.2799999999966
+        },
+        "tree_cpu_percent_mean": {
+          "min": 285.2775677705957,
+          "max": 298.7134734377465
+        },
+        "tree_rss_peak_sampled_bytes": {
+          "min": 5104742400,
+          "max": 5210714112
+        },
+        "system_available_min_bytes": {
+          "min": 589946662912,
+          "max": 696776007680
+        },
+        "torch_allocated_peak_sampled_bytes": {
+          "min": 774040064,
+          "max": 892082688
+        },
+        "torch_reserved_peak_sampled_bytes": {
+          "min": 1067450368,
+          "max": 1107296256
+        },
+        "notes": "1s samples; RSS may double-count shared pages; sampled peaks are lower bounds; system available is host-level, GPU telemetry is device-wide.",
+        "gpu_util_percent_mean": {
+          "min": 7.424242424242424,
+          "max": 7.93778801843318
+        },
+        "vram_peak_sampled_mib": {
+          "min": 1710.0,
+          "max": 1748.0
+        }
+      }
+    },
+    {
+      "run": "upper-lambda-b143-r1",
+      "source_round": 143,
+      "source_step": 48549650,
+      "seed": 20261103,
+      "implementation_commit": "c6dc5a3a",
+      "result_commit": "63e6099b",
+      "protocol": "experiments/launchers/unified_upper_lambda_candidates.json",
+      "training_games": 720,
+      "calibration_games": 0,
+      "holdout_games": 240,
+      "source_summary_sha256": "9281986e4f3dbdd45baa950844458d084e64c62f270a84952f9462934f374530",
+      "source_summary_local_ignored": "runs/local/probe-recovery/lambda-summary.json",
+      "raw_remote_root": "/root/upper-candidates-20261103/runs/upper-lambda-b143-r1",
+      "metrics": [
+        {
+          "id": "control",
+          "spec": {},
+          "decision_mse": 0.2726545657410548,
+          "game_mse": 0.2341631650848149,
+          "game_mse_delta_vs_mc": 0.0,
+          "paired_game_bootstrap_95": [
+            0.0,
+            0.0
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 42.1273945895955,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.65159010887146
+        },
+        {
+          "id": "lambda0",
+          "spec": {
+            "critic_target": "frozen_lambda_return",
+            "critic_lambda": 0,
+            "lambda_scope": "decision"
+          },
+          "decision_mse": 0.23984514936792958,
+          "game_mse": 0.20241600180509925,
+          "game_mse_delta_vs_mc": -0.031747163279715655,
+          "paired_game_bootstrap_95": [
+            -0.05569075067517133,
+            -0.007974921764178546
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 42.24078872613609,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.2744147777557373
+        },
+        {
+          "id": "lambda0p5",
+          "spec": {
+            "critic_target": "frozen_lambda_return",
+            "critic_lambda": 0.5,
+            "lambda_scope": "decision"
+          },
+          "decision_mse": 0.23450211303748694,
+          "game_mse": 0.19661831931691426,
+          "game_mse_delta_vs_mc": -0.03754484576790061,
+          "paired_game_bootstrap_95": [
+            -0.06107997332539881,
+            -0.014068312176349447
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 41.50068996101618,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.23008961975574493
+        },
+        {
+          "id": "lambda0p8",
+          "spec": {
+            "critic_target": "frozen_lambda_return",
+            "critic_lambda": 0.8,
+            "lambda_scope": "decision"
+          },
+          "decision_mse": 0.2255850993805408,
+          "game_mse": 0.18758167477435142,
+          "game_mse_delta_vs_mc": -0.04658149031046344,
+          "paired_game_bootstrap_95": [
+            -0.06951691066075627,
+            -0.023919380675486747
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 41.576558978296816,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.2473377287387848
+        },
+        {
+          "id": "lambda0p9",
+          "spec": {
+            "critic_target": "frozen_lambda_return",
+            "critic_lambda": 0.9,
+            "lambda_scope": "decision"
+          },
+          "decision_mse": 0.21814702233481073,
+          "game_mse": 0.18075452639740805,
+          "game_mse_delta_vs_mc": -0.053408638687406834,
+          "paired_game_bootstrap_95": [
+            -0.07550219241810416,
+            -0.03158151424930644
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 41.622847352176905,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.29266923666000366
+        },
+        {
+          "id": "lambda0p95",
+          "spec": {
+            "critic_target": "frozen_lambda_return",
+            "critic_lambda": 0.95,
+            "lambda_scope": "decision"
+          },
+          "decision_mse": 0.21016876911409085,
+          "game_mse": 0.17165011463577737,
+          "game_mse_delta_vs_mc": -0.0625130504490375,
+          "paired_game_bootstrap_95": [
+            -0.08436452160442981,
+            -0.04155865928890482
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 42.40786909684539,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.31254133582115173
+        },
+        {
+          "id": "lambda0p97",
+          "spec": {
+            "critic_target": "frozen_lambda_return",
+            "critic_lambda": 0.97,
+            "lambda_scope": "decision"
+          },
+          "decision_mse": 0.20754383897323617,
+          "game_mse": 0.16868424890665676,
+          "game_mse_delta_vs_mc": -0.06547891617815813,
+          "paired_game_bootstrap_95": [
+            -0.08663445961456157,
+            -0.045314012219999186
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 42.131356042809784,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.3500979542732239
+        },
+        {
+          "id": "lambda0p99",
+          "spec": {
+            "critic_target": "frozen_lambda_return",
+            "critic_lambda": 0.99,
+            "lambda_scope": "decision"
+          },
+          "decision_mse": 0.2135069944367677,
+          "game_mse": 0.17541522040283447,
+          "game_mse_delta_vs_mc": -0.05874794468198042,
+          "paired_game_bootstrap_95": [
+            -0.07626588894330945,
+            -0.042253024498274096
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 41.317192423157394,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.4550868570804596
+        },
+        {
+          "id": "room0p8",
+          "spec": {
+            "critic_target": "frozen_lambda_return",
+            "critic_lambda": 0.8,
+            "lambda_scope": "room"
+          },
+          "decision_mse": 0.21309369811876214,
+          "game_mse": 0.17529373226829217,
+          "game_mse_delta_vs_mc": -0.05886943281652276,
+          "paired_game_bootstrap_95": [
+            -0.08117334344758892,
+            -0.037550366215550544
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 41.60686108516529,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.31115028262138367
+        },
+        {
+          "id": "room0p9",
+          "spec": {
+            "critic_target": "frozen_lambda_return",
+            "critic_lambda": 0.9,
+            "lambda_scope": "room"
+          },
+          "decision_mse": 0.20657463379590577,
+          "game_mse": 0.16846144422246798,
+          "game_mse_delta_vs_mc": -0.06570172086234692,
+          "paired_game_bootstrap_95": [
+            -0.08713227379871148,
+            -0.045321946723320274
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 42.2832153653726,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.3414815366268158
+        },
+        {
+          "id": "room0p95",
+          "spec": {
+            "critic_target": "frozen_lambda_return",
+            "critic_lambda": 0.95,
+            "lambda_scope": "room"
+          },
+          "decision_mse": 0.20710983952029485,
+          "game_mse": 0.1697876942023692,
+          "game_mse_delta_vs_mc": -0.06437547088244572,
+          "paired_game_bootstrap_95": [
+            -0.08397939093179865,
+            -0.045919128387359454
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 41.61872757412493,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.41107210516929626
+        },
+        {
+          "id": "room0p97",
+          "spec": {
+            "critic_target": "frozen_lambda_return",
+            "critic_lambda": 0.97,
+            "lambda_scope": "room"
+          },
+          "decision_mse": 0.21448682718655504,
+          "game_mse": 0.1768693092410554,
+          "game_mse_delta_vs_mc": -0.0572938558437595,
+          "paired_game_bootstrap_95": [
+            -0.0744287905228271,
+            -0.041330251790393534
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 41.54525710828602,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.46745583415031433
+        },
+        {
+          "id": "control_repeat",
+          "spec": {},
+          "decision_mse": 0.2726545657410548,
+          "game_mse": 0.2341631650848149,
+          "game_mse_delta_vs_mc": 0.0,
+          "paired_game_bootstrap_95": [
+            0.0,
+            0.0
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 41.49337265454233,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.65159010887146
+        }
+      ],
+      "checks_passed": true,
+      "source_checkpoint_checksums_verified": true,
+      "best_room_vs_best_constant": {
+        "room": "room0p9",
+        "constant": "lambda0p97",
+        "decision_mse_delta": -0.0009692051773304011,
+        "game_mse_delta": -0.00022280468418879942,
+        "paired_game_bootstrap_95": [
+          -0.0014157513424307194,
+          0.0009383320197174822
+        ]
+      },
+      "room_boundary_counts": {
+        "within_room": 81007,
+        "across_room": 34226,
+        "across_act": 1241,
+        "terminals": 960
+      },
+      "hardware": {
+        "gpu": "4 x RTX5090 32607MiB",
+        "driver": "595.71.05",
+        "torch": "2.12.0+cu132",
+        "cuda": "13.2",
+        "precision": "FP32",
+        "tf32": false,
+        "threads_per_rank": 1,
+        "resource_sample_seconds": 1
+      },
+      "wall_max_seconds": 772.8102910667658,
+      "resource_ranges": {
+        "tree_cpu_seconds": {
+          "min": 1684.4999999999752,
+          "max": 1744.219999999982
+        },
+        "tree_cpu_percent_mean": {
+          "min": 217.97069985633064,
+          "max": 225.74597248003388
+        },
+        "tree_rss_peak_sampled_bytes": {
+          "min": 5124325376,
+          "max": 5158830080
+        },
+        "system_available_min_bytes": {
+          "min": 625239052288,
+          "max": 696669659136
+        },
+        "torch_allocated_peak_sampled_bytes": {
+          "min": 778975744,
+          "max": 878316544
+        },
+        "torch_reserved_peak_sampled_bytes": {
+          "min": 1067450368,
+          "max": 1107296256
+        },
+        "notes": "1s samples; RSS may double-count shared pages; sampled peaks are lower bounds; system available is host-level, GPU telemetry is device-wide.",
+        "gpu_util_percent_mean": {
+          "min": 9.00287356321839,
+          "max": 9.582608695652175
+        },
+        "vram_peak_sampled_mib": {
+          "min": 1710.0,
+          "max": 1748.0
+        }
+      }
+    },
+    {
+      "run": "upper-adaptive-b143-r1",
+      "source_round": 143,
+      "source_step": 48549650,
+      "seed": 20261103,
+      "implementation_commit": "1265d8bf",
+      "result_commit": "20d980a0",
+      "protocol": "experiments/launchers/unified_upper_adaptive_lambda.json",
+      "training_games": 480,
+      "calibration_games": 240,
+      "holdout_games": 240,
+      "source_summary_sha256": "a0c45e1fb542fa76225c9c4fe044a6797fe50f44d90c0b4f111a156c37263028",
+      "source_summary_local_ignored": "runs/local/probe-recovery/adaptive-summary.json",
+      "raw_remote_root": "/root/upper-candidates-20261103/runs/upper-adaptive-b143-r1",
+      "metrics": [
+        {
+          "id": "control",
+          "spec": {},
+          "decision_mse": 0.2686499843593516,
+          "game_mse": 0.2318896430569031,
+          "game_mse_delta_vs_mc": 0.0,
+          "paired_game_bootstrap_95": [
+            0.0,
+            0.0
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 27.708438933826983,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.9100698828697205,
+          "actor_updates": 20.0,
+          "critic_updates": 40.0,
+          "global_training_samples": 59493.0
+        },
+        {
+          "id": "lambda0p97",
+          "spec": {
+            "critic_target": "frozen_lambda_return",
+            "critic_lambda": 0.97,
+            "lambda_scope": "decision"
+          },
+          "decision_mse": 0.2062287232607247,
+          "game_mse": 0.16779128727674467,
+          "game_mse_delta_vs_mc": -0.06409835578015846,
+          "paired_game_bootstrap_95": [
+            -0.09041571510352722,
+            -0.03843054702655793
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 27.625398606061935,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.49315834045410156,
+          "actor_updates": 20.0,
+          "critic_updates": 40.0,
+          "global_training_samples": 59493.0
+        },
+        {
+          "id": "room0p9",
+          "spec": {
+            "critic_target": "frozen_lambda_return",
+            "critic_lambda": 0.9,
+            "lambda_scope": "room"
+          },
+          "decision_mse": 0.20691052476275126,
+          "game_mse": 0.16891238252547486,
+          "game_mse_delta_vs_mc": -0.06297726053142828,
+          "paired_game_bootstrap_95": [
+            -0.08948422326585447,
+            -0.037598972336101585
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 27.557421915233135,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.48980483412742615,
+          "actor_updates": 20.0,
+          "critic_updates": 40.0,
+          "global_training_samples": 59493.0
+        },
+        {
+          "id": "adaptive_room",
+          "spec": {
+            "critic_target": "frozen_lambda_return",
+            "critic_lambda": 0.9,
+            "lambda_scope": "calibrated_room"
+          },
+          "decision_mse": 0.2060308020215248,
+          "game_mse": 0.16774043729997878,
+          "game_mse_delta_vs_mc": -0.06414920575692433,
+          "paired_game_bootstrap_95": [
+            -0.09055882048482138,
+            -0.03894627482474575
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 27.43618804216385,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.5116462707519531,
+          "actor_updates": 20.0,
+          "critic_updates": 40.0,
+          "global_training_samples": 59493.0
+        },
+        {
+          "id": "adaptive_repeat",
+          "spec": {
+            "critic_target": "frozen_lambda_return",
+            "critic_lambda": 0.9,
+            "lambda_scope": "calibrated_room"
+          },
+          "decision_mse": 0.2060308020215248,
+          "game_mse": 0.16774043729997878,
+          "game_mse_delta_vs_mc": -0.06414920575692433,
+          "paired_game_bootstrap_95": [
+            -0.09055882048482138,
+            -0.03894627482474575
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 27.30090698413551,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.5116462707519531,
+          "actor_updates": 20.0,
+          "critic_updates": 40.0,
+          "global_training_samples": 59493.0
+        },
+        {
+          "id": "control_repeat",
+          "spec": {},
+          "decision_mse": 0.2686499843593516,
+          "game_mse": 0.2318896430569031,
+          "game_mse_delta_vs_mc": 0.0,
+          "paired_game_bootstrap_95": [
+            0.0,
+            0.0
+          ],
+          "sampled_holdout_games": 240,
+          "update_max_seconds": 26.926524110138416,
+          "actor_probe_exact_to_control": true,
+          "critic_grad_norm_mean": 0.9100698828697205,
+          "actor_updates": 20.0,
+          "critic_updates": 40.0,
+          "global_training_samples": 59493.0
+        }
+      ],
+      "checks_passed": true,
+      "source_checkpoint_checksums_verified": true,
+      "adaptive_repeat_exact": true,
+      "comparisons": {
+        "control": {
+          "decision_mse_delta": -0.06261918233782682,
+          "game_mse_delta": -0.06414920575692433,
+          "paired_game_bootstrap_95": [
+            -0.09055882048482138,
+            -0.03894627482474575
+          ]
+        },
+        "lambda0p97": {
+          "decision_mse_delta": -0.00019792123919989968,
+          "game_mse_delta": -5.084997676586406e-05,
+          "paired_game_bootstrap_95": [
+            -0.001248445777595967,
+            0.001113011445518979
+          ]
+        },
+        "room0p9": {
+          "decision_mse_delta": -0.0008797227412264685,
+          "game_mse_delta": -0.001171945225496044,
+          "paired_game_bootstrap_95": [
+            -0.0018445237348402423,
+            -0.00048430890952905713
+          ]
+        }
+      },
+      "room_boundary_counts": {
+        "within_room": 81007,
+        "across_room": 34226,
+        "across_act": 1241,
+        "terminals": 960
+      },
+      "hardware": {
+        "gpu": "4 x RTX5090 32607MiB",
+        "driver": "595.71.05",
+        "torch": "2.12.0+cu132",
+        "cuda": "13.2",
+        "precision": "FP32",
+        "tf32": false,
+        "threads_per_rank": 1,
+        "resource_sample_seconds": 1
+      },
+      "wall_max_seconds": 383.8238901477307,
+      "calibration": {
+        "settings": {
+          "base": 0.9,
+          "span": 0.07,
+          "shrinkage_games": 32,
+          "noise_floor": 0.05
+        },
+        "global_bias": -0.013684878746668497,
+        "global_fallback": {
+          "games": 0.0,
+          "bias": -0.013684878746668497,
+          "residual_spread": 0.39460322903767997,
+          "coefficient": 0.9020902604627864
+        },
+        "observed_scenes": {
+          "1:2": {
+            "games": 240.0,
+            "bias": -0.0579762154934453,
+            "residual_spread": 0.45496254716288725,
+            "coefficient": 0.9072091945940819
+          },
+          "1:3": {
+            "games": 240.0,
+            "bias": -0.057075158053753426,
+            "residual_spread": 0.45417663832619254,
+            "coefficient": 0.9071184824521401
+          },
+          "1:4": {
+            "games": 151.0,
+            "bias": -0.08149267589242515,
+            "residual_spread": 0.4705289704649138,
+            "coefficient": 0.9094755518293836
+          },
+          "1:5": {
+            "games": 233.0,
+            "bias": -0.0689412182981863,
+            "residual_spread": 0.48152602877939876,
+            "coefficient": 0.9080368834509461
+          },
+          "1:6": {
+            "games": 240.0,
+            "bias": -0.04917541087842455,
+            "residual_spread": 0.46265603915818543,
+            "coefficient": 0.9061268886981415
+          },
+          "1:7": {
+            "games": 233.0,
+            "bias": -0.06501779496294897,
+            "residual_spread": 0.49850496247441506,
+            "coefficient": 0.9074182181381774
+          },
+          "1:8": {
+            "games": 196.0,
+            "bias": -0.10439251319706788,
+            "residual_spread": 0.5302992128711796,
+            "coefficient": 0.9106726511298113
+          },
+          "1:9": {
+            "games": 167.0,
+            "bias": -0.06851268333805666,
+            "residual_spread": 0.4816417469821918,
+            "coefficient": 0.9079910896118935
+          },
+          "2:2": {
+            "games": 196.0,
+            "bias": -0.06497679398073788,
+            "residual_spread": 0.4429919727186024,
+            "coefficient": 0.9081516669930425
+          },
+          "2:3": {
+            "games": 196.0,
+            "bias": -0.05701964501051875,
+            "residual_spread": 0.44307830728160236,
+            "coefficient": 0.9072557535146336
+          },
+          "2:4": {
+            "games": 87.0,
+            "bias": -0.054930417143664104,
+            "residual_spread": 0.4475820080922109,
+            "coefficient": 0.9069593533546598
+          },
+          "2:5": {
+            "games": 171.0,
+            "bias": -0.07766159101464283,
+            "residual_spread": 0.4610938855025888,
+            "coefficient": 0.9092335639970321
+          },
+          "2:6": {
+            "games": 187.0,
+            "bias": -0.08028908443596083,
+            "residual_spread": 0.4618220883771811,
+            "coefficient": 0.9094918592463225
+          },
+          "2:7": {
+            "games": 167.0,
+            "bias": -0.09706882655720414,
+            "residual_spread": 0.4884189230709278,
+            "coefficient": 0.9106922877159794
+          },
+          "2:8": {
+            "games": 111.0,
+            "bias": -0.1408974463011557,
+            "residual_spread": 0.498643281669048,
+            "coefficient": 0.9143034643799998
+          },
+          "2:9": {
+            "games": 153.0,
+            "bias": -0.07680393081527573,
+            "residual_spread": 0.4648047427100477,
+            "coefficient": 0.9090875529681347
+          },
+          "3:2": {
+            "games": 111.0,
+            "bias": -0.06786659436348158,
+            "residual_spread": 0.43270366569419155,
+            "coefficient": 0.9086286200873729
+          },
+          "3:3": {
+            "games": 110.0,
+            "bias": -0.085472498701212,
+            "residual_spread": 0.43397148992302603,
+            "coefficient": 0.9105068716653587
+          },
+          "3:4": {
+            "games": 33.0,
+            "bias": -0.022275944245167267,
+            "residual_spread": 0.37998665224595,
+            "coefficient": 0.9034478113141783
+          },
+          "3:5": {
+            "games": 92.0,
+            "bias": -0.0819100820890037,
+            "residual_spread": 0.43598616934220247,
+            "coefficient": 0.9100963965368326
+          },
+          "3:6": {
+            "games": 102.0,
+            "bias": -0.07979578283888784,
+            "residual_spread": 0.45437815006055293,
+            "coefficient": 0.9095617152429218
+          },
+          "3:7": {
+            "games": 89.0,
+            "bias": -0.1155306156673379,
+            "residual_spread": 0.44800771580427406,
+            "coefficient": 0.9131811537794486
+          },
+          "3:9": {
+            "games": 86.0,
+            "bias": -0.06517318817181776,
+            "residual_spread": 0.45009594370346473,
+            "coefficient": 0.9080707098880358
+          }
+        }
+      },
+      "resource_ranges": {
+        "tree_cpu_seconds": {
+          "min": 1298.8699999999938,
+          "max": 1377.8599999999954
+        },
+        "tree_cpu_percent_mean": {
+          "min": 338.5757579959407,
+          "max": 359.03324731318077
+        },
+        "tree_rss_peak_sampled_bytes": {
+          "min": 4984967168,
+          "max": 5054382080
+        },
+        "system_available_min_bytes": {
+          "min": 635120041984,
+          "max": 698537046016
+        },
+        "torch_allocated_peak_sampled_bytes": {
+          "min": 735568896,
+          "max": 870617600
+        },
+        "torch_reserved_peak_sampled_bytes": {
+          "min": 1067450368,
+          "max": 1107296256
+        },
+        "notes": "1s samples; RSS may double-count shared pages; sampled peaks are lower bounds; system available is host-level, GPU telemetry is device-wide.",
+        "gpu_util_percent_mean": {
+          "min": 6.080597014925373,
+          "max": 6.6390532544378695
+        },
+        "vram_peak_sampled_mib": {
+          "min": 1710.0,
+          "max": 1748.0
+        }
+      }
+    }
+  ],
+  "irreducible_error_discussion": {
+    "status": "not_measured_reference_only",
+    "scope": "MSE floor is E[Var(G|critic-observation)] for a fixed policy and evaluation distribution, not marginal return variance or scene residual spread.",
+    "reward_definition": "Current G includes floor progress .002, Act1/2 completion .1/.2 and victory1; not binary win/loss.",
+    "future_sampling_requirement": "Identical visible root information, legally sampled hidden worlds/future RNG and independently sampled frozen policy; generic outer-state conditional sampling remains unqualified. This is methodological reference, not a scheduled experiment."
+  }
+}
