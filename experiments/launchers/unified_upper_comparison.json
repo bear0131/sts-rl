@@ -759,7 +759,7 @@
       }
     },
     "critic_stability_diagnostic": {
-      "status": "Full51 boundary and four-rank CPU/CUDA7 gate passed. Source40r1 failed at protocol parsing before restore/collection; diagnose schema, validate full CLI preflight, then explicitly launch corrected source40r2. Source51r1 remains pending.",
+      "status": "Full51 protected; four-rank CPU/CUDA7 and real CLI preflight passed. Source40r1 parse failure preserved with zero collection; corrected source40r2 running, source51r1 pending. No candidate accepted/adopted.",
       "issue": "UPPER-CRITIC-UPDATE-STABILITY",
       "registered_at": "2026-11-04T04:46:26.860726+08:00",
       "motivation": "Fixed31-40 target MSE increased in32/36/37/39;32+18.697% and39+48.213%, with epoch4 worsening. Same-cohort optimization nonmonotonicity, not heldout-overfit proof; learning windows still improve, no production parameter change.",
@@ -841,7 +841,9 @@
         "51": 1
       },
       "startup_failure_evidence": "runs/local/upper-unified/candidates/critic-stability-40-startup-failure-logs.json",
-      "schema_correction": "Add protocol discriminator and use canonical maximum_wall_seconds/rank_process_timeout_seconds; same900/960 budget, seed, cohort, arms and gates. Preserve failed40r1; corrected40r2 requires real CLI preflight and source integrity checks."
+      "schema_correction": "Add protocol discriminator and use canonical maximum_wall_seconds/rank_process_timeout_seconds; same900/960 budget, seed, cohort, arms and gates. Preserve failed40r1; corrected40r2 requires real CLI preflight and source integrity checks.",
+      "active_launch_evidence": "runs/local/upper-unified/candidates/critic-stability-40-r2-launch.json",
+      "cli_preflight_evidence": "runs/local/upper-unified/candidates/critic-stability-cli-preflight-accepted.json"
     }
   },
   "monitor": {
