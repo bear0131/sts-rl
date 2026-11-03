@@ -120,3 +120,14 @@ A/B/C均已完成30轮×960起始局和四机完整结束审计；精确初始�
 本交接文档、TODO、worklog和纯数据协议随Git提交推送。`runs/local/upper-unified`为忽略目录，包含ledger、运行快照、报告、一次性助手和监控配置，**不在Git中**；同一电脑的接手会话可直接读取。若换机器，先核实这些证据的可用性，不能以缺本地ledger为由重新初始化远端run。远端checkpoint和原日志保留，未复制密钥、大checkpoint或大输出进Git。
 
 原自动化ID、暂停状态和接手标记也已写入本地ledger；自动化配置位于 `C:/Users/Tony2/.codex/automations/automation/automation.toml`，通过应用工具修改，不手改其调度。生产source仍为61f4f94d，Git记录提交只负责交接文档。接手会话自行核实当前进度后继续，不要把本快照127轮当成需要回滚到的保存点。
+
+
+## Mac 接手补充（2026-11-03 11:58，Asia/Singapore）
+
+本文件上文保留原Windows交接快照；当前管理工作区为 `/Users/xb.zhong/my/sts-rl`，同一 `codex/upper-unified-420s` 分支。用户提供训练机认证后已核实四机现役B到完整130/global43180750，原PID与本次两次读取的创建时间一致、CPU推进、source/native及核心入口文件保持。B130固定窗口复核已完成，下一140用111–120/121–130/131–140，不是停止点；结果见 [Mac接手日志](../../worklog/2026-11-03.md#upper-training-mac-takeover-b130)。
+
+本机 `runs/local/upper-unified/active-training.json` 从新鲜远端证据重建，并标明旧31轮完整包验收来自Git交接而非本次重验。只读采集使用同目录 `collect.py`/`remote_snapshot.py`，分析使用 `review.py <health目录> <目标轮>`，原始四rank结果与B130报告放 `comparison/`；这些仍是忽略文件，不随Git跨机同步。旧Windows ledger、B120原JSON与11份监控历史不在本机，不能声称原报告逐字段一致或本机8773已恢复。未来重叠窗口可与本机B130及之后报告逐字段核对。
+
+本机免交互SSH使用 `/Users/xb.zhong/.ssh/sts_upper_monitor_ed25519`，仅在标准SSH目录保存私钥；对应公钥追加到四机authorized_keys，带`restrict`，保留既有条目。端口与远端路径不变，普通连接应显式指定该密钥、BatchMode和StrictHostKeyChecking；无需依赖临时控制socket或保存密码。
+
+当前聊天15分钟heartbeat `b` 已创建并核实ACTIVE。旧Windows `automation` 按交接保持PAUSED，未恢复；不要再创建并行巡检。原Windows监控没有被停止或修改，但本机未直接核实其当前状态；现役健康以新鲜SSH证据为准。运行配置、checkpoint、搜索与奖励均未修改。
