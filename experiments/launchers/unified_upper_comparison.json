@@ -115,7 +115,7 @@
       "limitations": "The cited mechanism was studied primarily in dense-reward domains with highly parallel simulation. Transfer to complete-game strategic learning with a changing lower policy is a hypothesis. More games, stronger regularisation and larger models are separate experiments; keep existing single-training-replica limitations. PPO-EWMA is not implemented or adopted here."
     },
     "autonomous_online_comparison": {
-      "status": "Original B control144-163 running; user-prioritized fewer-update small-LR candidate next; frozen-lambda candidate deferred, no adoption",
+      "status": "Original B control144-163 accepted; low-update candidate144-145 full-state qualification accepted, ordinary resume146-163 running; adoption pending paired20 results",
       "seed": 20261103,
       "rounds_per_arm": 20,
       "games_per_round": 960,
