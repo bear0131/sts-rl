@@ -552,6 +552,114 @@
         "estimate_limitation": "Linear sample scaling of deterministic720-training-game MC diagnostic, not actual full1920-game lambda production timing; actual full rounds and mature limits govern."
       },
       "runtime_headroom_review": "Two successive complete rounds>=380s trigger workload/headroom diagnosis.415s abort unchanged; never cut games/search or automatically restart. A single noisy round is not a learning-plateau trigger."
+    },
+    "early_update_diagnostic": {
+      "status": "registered; production continues to coordinated full boundary31, then two exclusive frozen diagnostics",
+      "user_message": "USER-6af35206-b9c0-46ab-8682-def713e3f527",
+      "registered_at": "2026-11-04T02:56:12.367811+08:00",
+      "protocol": "unified-upper-candidate-screen-v1",
+      "seed": 20261104,
+      "source_policy": {
+        "run": "combat37-upper-fresh-lambda097-r1",
+        "source_rounds": [
+          3,
+          31
+        ],
+        "boundary_stop_round": 31,
+        "preserve_adjacent": [
+          30,
+          31
+        ],
+        "initial_state": "Use already protected ordinary-resume3 and newly protected31 complete model/upper+lower Adam/RNG/480 environments per rank. Never reset initial or mutate either source.",
+        "order": [
+          3,
+          31
+        ]
+      },
+      "diagnostic": {
+        "world_size": 4,
+        "games_per_rank": 480,
+        "new_complete_games": 1920,
+        "holdout_games_per_rank": 48,
+        "max_probe_decisions_per_split_per_rank": 4096,
+        "full_critic_mse": true,
+        "profile_updates": true,
+        "maximum_wall_seconds": 1200,
+        "rank_process_timeout_seconds": 1260,
+        "training_round": false,
+        "model_updates_persisted": false,
+        "lower_updates": 0,
+        "source_state_restored_after_each_arm": true,
+        "repeat_tolerances": {
+          "kl": 1e-05,
+          "value": 0.0001,
+          "surrogate_gain": 1e-05,
+          "relative_l2": 3e-05
+        }
+      },
+      "arms": [
+        {
+          "id": "control",
+          "changes": {}
+        },
+        {
+          "id": "critic_epochs1",
+          "changes": {
+            "critic_epochs": 1
+          }
+        },
+        {
+          "id": "critic_epochs2",
+          "changes": {
+            "critic_epochs": 2
+          }
+        },
+        {
+          "id": "critic_epochs8",
+          "changes": {
+            "critic_epochs": 8
+          }
+        },
+        {
+          "id": "critic_epochs16",
+          "changes": {
+            "critic_epochs": 16
+          }
+        },
+        {
+          "id": "actor_epochs1",
+          "changes": {
+            "epochs": 1
+          }
+        },
+        {
+          "id": "actor_epochs4",
+          "changes": {
+            "epochs": 4
+          }
+        },
+        {
+          "id": "actor_epochs8",
+          "changes": {
+            "epochs": 8
+          }
+        },
+        {
+          "id": "control_repeat",
+          "changes": {}
+        }
+      ],
+      "contract": {
+        "fixed": "Actual frozen-lambda .97 target, actor GAE .97, actor6144/critic32768, LR.00012/.0001, micro1024, complete games, original lower/search/native; inherited source Adam/RNG reset in memory before every arm.",
+        "split": "At each checkpoint one natural1920-game cohort, seeded disjoint1728 training and192 validation whole games; validation never used for gradient or advantage normalization. Validation used to choose epochs is not an independent final test set.",
+        "measure": "Full-cohort train/validation MC and actual frozen-lambda target MSE pre/post; fixed decision probes for old-to-final categorical KL, sampled clipped surrogate, bias/EV, phase/tails and paired whole-game uncertainty; report actual Adam/sample uses and all timing/resources.",
+        "epoch_comparison": "Critic1/2/4/8/16 with actor2; actor1/2/4/8 with critic4. Same source/cohort/config/LR, repeated2/4 control last. No blanket joint-epochs search.",
+        "budget": "Two cohorts total3840 natural games; each1200s internal/1260s external plus bounded semantic tests. No automatic retry, no saved updates, no lower updates or partial-game exclusions. Production remains stopped and protected during GPU tests/diagnostics.",
+        "implementation": "Reuse existing probe entry. Correct diagnostic actual-target reporting for production frozen-lambda before launch; isolated committed diagnostic root, do not change active b12c01d4 source.",
+        "interpretation": "More epochs reducing only training loss is not sufficient. Critic improvement candidate requires >=5% relative validation target MSE reduction versus control, paired-game sampled MSE difference95% interval below0, and MC MSE no >2% deterioration. Actor candidate requires positive paired-game validation surrogate difference95% interval, multi-action mean categorical KL<=.02 and p95<=.1. Report all arms and sampling limits; these are diagnostic gates, not proven win-rate or automatic promotion.",
+        "adaptive_followup": "If supported, propose bounded epoch selection using disjoint validation, minimum/maximum epochs and wall reserve; keep final online or frozen endpoints independent. Do not call repeatedly selected validation a test set or deploy without semantic/full production qualification. Otherwise resume unchanged from31, no total cap.",
+        "learning_reviews": "Complete fixed30 from current lineage before diagnostic; diagnostic games do not advance training counters/windows. After ordinary resume continue fixed40, preserving source31 and lower refresh."
+      }
     }
   },
   "monitor": {
@@ -563,7 +671,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "新COMBAT37完整20轮：第二10轮平均22.465层/30胜，较首10轮+3.142层；累计38400局用3812.47秒，同局数比历史B快36.20%但低1.126层，未证更强。持续训练，下一30固定三窗。",
-    "updated_at": "2026-11-04T02:41:44.051508+08:00"
+    "note": "已收到训练前期更新次数测试请求：先完成30固定复核，31完整保存后暂停；对保护的3/31轮分别测试actor1/2/4/8、critic1/2/4/8/16，留出10%完整局验证。当前训练仍运行，未自动加更新。",
+    "updated_at": "2026-11-04T02:56:12.367811+08:00"
   }
 }
