@@ -494,7 +494,7 @@
       "failure": "No retry on timeout/OOM/nonfinite/source-restore failure; no automatic promotion from MSE or speed alone. Larger micro must pass numerical comparison and full production-length qualification."
     },
     "fresh_lambda_training": {
-      "status": "Fresh1-3 full state and first10 fixed descriptive review complete; continuous unchanged, next20 then three10/six5/common walls at30 and every10. Early speed gain is not established strength.",
+      "status": "Fresh1-3 full state and descriptive20 review complete; continuous unchanged, next30 fixed1-10/11-20/21-30, six5 and common complete walls. Faster same-game execution is not established strength.",
       "user_message": "USER-b1cb9f48-083c-4bd1-8dba-8c38c0e5849d",
       "intent": "After tests start a genuinely new training run from the original unified initialization; prioritize complete-game frozen lambda-return critic with lambda0.97.",
       "initialization": {
@@ -563,7 +563,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "新COMBAT37已复核完整10轮：19200自然局/0剔除，1781.11秒；同局数比历史B快34.82%但楼层低.72，未证更强。保持1920局/整局λ=.97持续训练，下一20描述。",
-    "updated_at": "2026-11-04T02:07:36.090217+08:00"
+    "note": "新COMBAT37完整20轮：第二10轮平均22.465层/30胜，较首10轮+3.142层；累计38400局用3812.47秒，同局数比历史B快36.20%但低1.126层，未证更强。持续训练，下一30固定三窗。",
+    "updated_at": "2026-11-04T02:41:44.051508+08:00"
   }
 }
