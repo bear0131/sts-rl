@@ -170,3 +170,53 @@ def test_unequal_empty_ranks_match_global_weighted_update(unified_env, tmp_path)
         assert result['samples_used'] == 14 and result['critic_samples_used'] == 21
         for p, q in zip(model.policy.parameters(), reference.policy.parameters()):
             torch.testing.assert_close(p, q, rtol=2e-5, atol=3e-6)
+
+
+def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_env, tmp_path):
+    from unittest.mock import patch
+    from rl.algorithms import unified_upper as U
+    from rl.algorithms.upper_probe import run_probe, state_digest, split_games, categorical_kl
+    model = make_model(unified_env)
+    model.set_logger(configure(str(tmp_path), []))
+    obs, _ = unified_env.reset(seed=41)
+    masks = unified_env.action_masks()
+    with torch.no_grad():
+        action, value, logp = model.policy(tensor(obs), action_masks=masks[None])
+    rows = [dict(observation=copy.deepcopy(obs), action=int(action), mask=masks.copy(),
+        value=float(value), log_prob=float(logp), reward=i/7, terminal=True,
+        env=i, episode=0) for i in range(7)]
+    # Seed actual nonempty Adam state before testing its exact restoration.
+    model._upper_completed = copy.deepcopy(rows)
+    update_upper(model)
+    model._upper_completed = rows
+    before = state_digest(dict(policy=model.policy.state_dict(),
+        optimizer=model.policy.upper_optimizer.state_dict()))
+    protocol = dict(seed=31, diagnostic=dict(world_size=1, games_per_rank=7,
+        holdout_games_per_rank=2, max_probe_decisions_per_split_per_rank=10),
+        arms=[dict(id='control', changes={}), dict(id='batch3', changes={'effective_batch_size': 3}),
+              dict(id='critic_lambda', changes={}, critic_target='frozen_lambda_return'),
+              dict(id='control_repeat', changes={})])
+    result = run_probe(model, protocol, output_dir=tmp_path/'probe')
+    assert result['control_repeat_exact'] and result['source_state_restored']
+    assert result['rng_restored'] and result['lower_optimizer_unchanged']
+    assert result['training_games'] == 5 and result['holdout_games'] == 2
+    assert all(r['stats']['samples'] == 5 and r['stats']['samples_used'] == 10
+               for r in result['arms'])
+    assert result['arms'][0]['probes'] == result['arms'][-1]['probes']
+    assert model._upper_completed is rows
+    assert state_digest(dict(policy=model.policy.state_dict(),
+        optimizer=model.policy.upper_optimizer.state_dict())) == before
+    with patch.object(U, 'update_unified_upper', side_effect=RuntimeError('probe failed')):
+        with pytest.raises(RuntimeError, match='probe failed'):
+            run_probe(model, protocol)
+    assert state_digest(dict(policy=model.policy.state_dict(),
+        optimizer=model.policy.upper_optimizer.state_dict())) == before
+    # A trajectory with two decisions must stay wholly on one side.
+    trajectories = [dict(r, terminal=False, reward=0.) for r in rows] + rows
+    train, hold = split_games(trajectories, 2, 31)
+    assert {trajectories[i]['env'] for i in train}.isdisjoint(
+        {trajectories[i]['env'] for i in hold})
+    old = np.log([[.5, .5], [1., 1e-30]])
+    new = np.log([[.75, .25], [1., 1e-30]])
+    kl = categorical_kl(old, new, np.array([[True, True], [True, False]]))
+    np.testing.assert_allclose(kl, [.5*np.log(4/3), 0.], rtol=1e-12)

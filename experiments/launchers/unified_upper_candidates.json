@@ -1,0 +1,83 @@
+{
+  "protocol": "unified-upper-candidate-screen-v1",
+  "user_intention": "同样时间内学得更强、更稳定；主动寻找其他候选，不再等待B停滞门槛才诊断。",
+  "seed": 20261103,
+  "source_policy": "Latest mutually completed B boundary, full model/upper+lower Adam/RNG/240 environments per rank preserved before any diagnostic.",
+  "diagnostic": {
+    "world_size": 4,
+    "games_per_rank": 240,
+    "new_complete_games": 960,
+    "holdout_games_per_rank": 60,
+    "max_probe_decisions_per_split_per_rank": 4096,
+    "maximum_wall_seconds": 1200,
+    "rank_process_timeout_seconds": 1260,
+    "training_round": false,
+    "model_updates_persisted": false,
+    "lower_updates": 0,
+    "split": "Fixed seeded split of whole (env,episode) trajectories, never randomly split decisions from one game.",
+    "source_state_restored_after_each_arm": true
+  },
+  "arms": [
+    {
+      "id": "control",
+      "changes": {}
+    },
+    {
+      "id": "batch3072",
+      "changes": {
+        "effective_batch_size": 3072
+      }
+    },
+    {
+      "id": "actor_epochs4",
+      "changes": {
+        "epochs": 4
+      }
+    },
+    {
+      "id": "actor_lr24",
+      "changes": {
+        "learning_rate": 0.00024
+      }
+    },
+    {
+      "id": "critic_lambda097",
+      "changes": {},
+      "critic_target": "frozen_lambda_return"
+    },
+    {
+      "id": "control_repeat",
+      "changes": {}
+    }
+  ],
+  "measurements": [
+    "old-to-final complete categorical KL on fixed legal-action probes; single-legal-action and multi-action distributions separate, by phase and tails",
+    "unseen-whole-game clipped surrogate with frozen old advantages, reported as a diagnostic not achieved win-rate gain",
+    "old/new critic bias, MSE and explained variance against natural Monte Carlo returns on held-out whole games",
+    "actual actor/critic Adam counts, full sample reuse, update wall and process-tree CPU/RSS/Torch/VRAM/device GPU telemetry",
+    "exact control-repeat state equality and original policy/Adam/lower/RNG restoration"
+  ],
+  "selection": "Reject nonfinite, failed exact-repeat/restore, skipped/censored games, or cross-rank inconsistency. A single fixed-cohort surrogate cannot prove online benefit; select at most one candidate for separately bounded paired online continuation.",
+  "online_confirmation": {
+    "status": "Not launched; candidate chosen after diagnostics",
+    "seed": 20261103,
+    "rounds_per_arm": 20,
+    "games_per_round": 960,
+    "maximum_round_seconds": 420,
+    "failure_deadline_seconds": 415,
+    "maximum_completed_round_wall_seconds_per_arm": 8400,
+    "initialization": "Identical verified boundary bundle, all optimizers/RNG/environments preserved, separate run identities, four ranks sequentially exclusive.",
+    "comparison": "Equal19200 natural games and common completed-round wall, final two5-round windows; require +0.5pp win or +2floor in both and no material win/common-time regression. Report all windows, exclusions, uncertainty and single-replica limitation."
+  },
+  "candidate_interpretation": {
+    "batch3072": "Smaller optimizer batch changes Adam count and noise; fresh game count remains960. Shared effective batch affects both independent networks.",
+    "actor_epochs4": "More actor reuse only, critic four epochs unchanged; tests optimization effort not additional independent experience.",
+    "actor_lr24": "Actor LR only; original clip and critic remain unchanged.",
+    "critic_lambda097": "Frozen old-value lambda returns for critic only; actor advantages unchanged. Introduces bias/variance tradeoff, not a reward/terminal change."
+  },
+  "references": [
+    "https://arxiv.org/html/2603.06009v2",
+    "https://arxiv.org/abs/2006.05990",
+    "https://arxiv.org/abs/1506.02438"
+  ]
+}

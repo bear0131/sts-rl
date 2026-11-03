@@ -325,7 +325,80 @@ def compare_horizons(model, env, callback, args, panel, report, publish, check):
     publish()
 
 
+def unified_candidates():
+    """Use the real four-rank restore/collector/transport, stop before saving.
+
+    This mode fits temporary update candidates to one complete cohort split
+    by game. Production source state and lower weights are never advanced.
+    All remaining arguments belong to the existing distributed trainer CLI.
+    """
+    import sys
+    from unittest.mock import patch
+    from rl.algorithms import small_playout
+    from rl.algorithms.upper_probe import run_probe
+    from rl.training import distributed_sb3 as trainer
+    from rl.training.resource_monitor import ResourceMonitor
+
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--unified-candidate-protocol', type=Path, required=True)
+    parser.add_argument('--probe-output', type=Path, required=True)
+    args, remaining = parser.parse_known_args()
+    if '--fork-state' not in remaining or '--continuous' in remaining:
+        raise ValueError('candidate diagnosis requires an isolated finite full-state fork')
+    protocol = json.loads(args.unified_candidate_protocol.read_text())
+    if protocol['protocol'] != 'unified-upper-candidate-screen-v1':
+        raise ValueError('unknown candidate protocol')
+    launch = trainer.build_parser().parse_args(remaining)
+    limits = protocol['diagnostic']
+    if (launch.continuous or launch.updates != 1 or launch.total_steps is not None
+            or launch.fork_reset_environments or launch.resume_reset_environments
+            or launch.training_state_dir is not None or launch.checkpoint_dir is not None
+            or launch.output is not None or launch.wandb or not launch.episode_rollout
+            or launch.n_envs != limits['games_per_rank']
+            or launch.world_size != limits['world_size']
+            or launch.iteration_timeout_seconds != limits['maximum_wall_seconds']):
+        raise ValueError('candidate launch must be finite, unsaved, fully restored and protocol-bounded')
+    class ProbeComplete(BaseException):
+        pass
+    def diagnose(model, **kwargs):
+        rank = kwargs['rank']
+        if not model._recovery_environment_restored:
+            raise ValueError('candidate source environment was not restored')
+        if model.episode_rollout_stats['censored_games']:
+            raise ValueError('candidate screen cannot accept censored games')
+        output = args.probe_output / f'rank{rank}'
+        result = run_probe(model, protocol, output_dir=output, **kwargs)
+        (output/'cohort.json').write_text(json.dumps(model.episode_rollout_stats, indent=2))
+        print('UPPER_PROBE_COMPLETE ' + json.dumps(dict(rank=rank,
+            source_state_restored=result['source_state_restored'],
+            control_repeat_exact=result['control_repeat_exact'])), flush=True)
+        raise ProbeComplete()
+    original = sys.argv
+    sys.argv = [original[0], *remaining]
+    try:
+        # Initialize on the main thread so allocator telemetry is available.
+        # The trainer subsequently restores the checkpoint's CUDA RNG state.
+        import torch
+        torch.cuda.init()
+        with ResourceMonitor(interval=1., gpu=True, torch_device='cuda:0') as resources:
+            with patch.object(trainer, 'update_upper', diagnose), patch.object(
+                    small_playout, 'update_online', lambda *a, **kw: {}):
+                try:
+                    trainer.main()
+                except ProbeComplete:
+                    pass
+        rank = int(remaining[remaining.index('--rank')+1])
+        output = args.probe_output / f'rank{rank}'
+        output.mkdir(parents=True, exist_ok=True)
+        (output/'resources.json').write_text(json.dumps(resources.summary, indent=2))
+    finally:
+        sys.argv = original
+
+
 def main():
+    import sys
+    if '--unified-candidate-protocol' in sys.argv:
+        return unified_candidates()
     from stable_baselines3.common.callbacks import BaseCallback
     from stable_baselines3.common.logger import configure
     from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
