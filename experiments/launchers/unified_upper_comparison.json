@@ -115,7 +115,7 @@
       "limitations": "The cited mechanism was studied primarily in dense-reward domains with highly parallel simulation. Transfer to complete-game strategic learning with a changing lower policy is a hypothesis. More games, stronger regularisation and larger models are separate experiments; keep existing single-training-replica limitations. PPO-EWMA is not implemented or adopted here."
     },
     "autonomous_online_comparison": {
-      "status": "Initial paired20 accepted; low-update faster with late gain but fails both-final5 benefit gate. Original B retained as operating default, candidate163 protected; fixed10 confirmation preregistered but pending new measurement-workload compatibility.",
+      "status": "Historical paired20 accepted: low-update faster but fails both-final5 benefit gate; C35-163 protected. Later confirmation deferred; originalB stopped192, user now selected fresh lambda route. Not a rejection of all low-LR candidates.",
       "seed": 20261103,
       "rounds_per_arm": 20,
       "games_per_round": 960,
@@ -195,7 +195,7 @@
       }
     },
     "value_measurement_and_batch_diagnostic": {
-      "status": "preregistered; implementation CPU-tested; exact stopped170 boundary and GPU qualification pending",
+      "status": "Complete: B170 seven-arm heldout diagnostic, measurement171-172 qualification and ordinary resumed173 accepted. Do not repeat.",
       "protocol": "experiments/launchers/unified_upper_value_probe.json",
       "production_measurement": {
         "stop_boundary": 170,
@@ -208,10 +208,10 @@
         "measurement_option": "--upper-measure-value-loss",
         "optimization_changes": "none; source/config/Adam/RNG/env preservation checked before launch"
       },
-      "execution": "B170 protected and seven-arm diagnostic accepted; stopped deploymentadc46691 and production171–172 qualification underway. After accepted172, use ordinary finite20 control continuation173–192 for preregistered critic-reuse comparison, then candidate. Final selected long training remains continuous; do not execute old indefinite-resume helper or old164–173 confirmation blindly."
+      "execution": "Completed B170 protected diagnostic, measurement171-172 qualification and ordinary resumed173. Original control subsequently stopped/accepted192; newer fresh_lambda_training now continuous. Do not rerun historical launch/resume helpers."
     },
     "critic_reuse_comparison": {
-      "status": "preregistered; wait for successful measurement171–172 qualification and accepted full172 source",
+      "status": "Control173-192 complete/accepted; critic1 candidate36 DEFERRED under newer larger-cohort and fresh-lambda user instructions. Never auto-launch old plan.",
       "registered_at": "2026-11-03T23:10:12.100489+08:00",
       "user_intention": "Improve same-wall learning and stability; latest USER game-heldout diagnostic shows additional critic epochs erase first-epoch generalization gains. Test online before adoption.",
       "source_boundary": {
@@ -312,10 +312,10 @@
       },
       "preservation": "Original lowLR/batch32768/2+2 candidate163 remains stopped/protected, route not rejected. A/C/oldCOMBAT30 remain stopped. Historical20 decision unchanged.",
       "final_running_policy": "After final full-state audit and review, resume selected original or candidate continuously without a total-round cap; bounded20 only defines this experiment. No restart of failed runs.",
-      "execution_status": "Original control173-192 continues; unlaunched critic1 candidate deferred by USER-dafb15fd-39a0-452a-a454-60cf538f9241 requesting more parallel games and best-supported hyperparameters. Historical preregistration retained; do not auto-launch candidate."
+      "execution_status": "Original control173-192 stopped and accepted; unlaunched critic1 candidate and paired endpoints deferred by newer USER larger-cohort/fresh-lambda requests. Keep historical protocol as provenance; no automatic launch."
     },
     "critic_reuse_frozen_endpoints": {
-      "status": "preregistered before either192 endpoint; runtime adapter CPU/native checks passed, full-game qualification pending",
+      "status": "Adapter CPU/native and model prediction smokes passed; full-game GPU qualification and original paired endpoint evaluation NOT done, DEFERRED with critic1. No automatic old schedule.",
       "purpose": "Independent frozen-policy strength reference after the registered equal-game online comparison; does not replace wall-clock learning trajectory evidence.",
       "source": "Use each accepted protected192 endpoint from critic_reuse_comparison; same deployed evaluation commit/native for both arms in an isolated root. Never load training environment state into evaluation or mutate source bundles.",
       "order": [
@@ -494,7 +494,7 @@
       "failure": "No retry on timeout/OOM/nonfinite/source-restore failure; no automatic promotion from MSE or speed alone. Larger micro must pass numerical comparison and full production-length qualification."
     },
     "fresh_lambda_training": {
-      "status": "Fresh full rounds1-2 accepted and protected; ordinary full-state resume from2 launched continuous without total cap; actual continued3 acceptance pending.",
+      "status": "Fresh full rounds1-2 and ordinary resumed3 accepted/protected; continuous no total cap. Next descriptive10/20 then fixed30/every10 learning reviews.",
       "user_message": "USER-b1cb9f48-083c-4bd1-8dba-8c38c0e5849d",
       "intent": "After tests start a genuinely new training run from the original unified initialization; prioritize complete-game frozen lambda-return critic with lambda0.97.",
       "initialization": {
@@ -563,7 +563,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "新初值前两完整轮均验收（143.24/153.02秒，1920局/0剔除）；已从2轮全状态普通恢复continuous，无总轮数上限，正在核第3轮衔接。",
-    "updated_at": "2026-11-04T01:41:04+08:00"
+    "note": "新初值1–2资格与普通恢复3全状态均验收；1920自然局/micro1024/整局λ=.97持续训练，无总轮数上限。下一10/20描述、30后固定窗口复核；旧B192保留。",
+    "updated_at": "2026-11-04T01:45:37.268563+08:00"
   }
 }
