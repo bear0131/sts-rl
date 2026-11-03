@@ -2,7 +2,7 @@
 
 记录时间：2026-11-03 11:45（Asia/Shanghai）。用户要求“把当前的任务记录下来推上去，我交给其他会话”。本文件是交接快照；实时身份和下一复核点以本地 ledger 为准，TODO.md 仍是唯一任务清单。
 
-> **11月3日晚续接说明：下文是原Windows交接快照，不是当前启动指令。** 当前工作目录为Mac `/Users/xb.zhong/my/sts-rl`，同分支；source已在完整170停界后部署`adc46691`，严格前后MSE测量已完成171/172资格及173普通恢复验收，不重复执行。当前原B运行已预登记的173–192有限控制臂，之后才从同B172全状态启动仅critic4→1候选；最终选定训练恢复continuous。下一原B固定复核180/190，以ledger为准。原Windows监控未迁移，唯一Mac heartbeat `b`在用，旧Windows调度保持暂停。用户已直接授权读取共享worklog中“用户发言 · USER-…”并在日志完整回复。最新执行状态、候选协议、未完成事项分别以ledger、`unified_upper_comparison.json#post_screen.critic_reuse_comparison`和TODO为准；不得使用下文旧PID/source/恢复入口重启。
+> **11月4日续接说明：下文是原Windows交接快照，不是当前启动指令。** 当前管理为Mac同分支，原B/source adc46691有限173–192控制段；已复核B190，192完整保存停界后优先按`unified_upper_comparison.json#post_screen.rollout_scale_diagnostic`及`microbatch_diagnostic`做同源冻结局数扩容/micro测量，再选两完整轮新训练资格。critic1候选及旧配对192终点评测已暂缓，不自动执行。隔离测量root为`/root/upper-throughput-20261104`/source b12c01d4，CPU/native通过、GPU与各臂执行实时以ledger/receipt为准。原B后续B200窗口不得混入新cohort分叉。用户授权读取共享worklog“用户发言 · USER-…”并完整回复；已接受顶层monitor身份维护，无训练曲线诊断保留最近B身份，Windows8773自动跟随由原会话负责，本机未验证上线。唯一heartbeat b继续，旧Windows巡检暂停。最新状态以本地ledger、协议及TODO为准，禁止用本快照旧PID/initial/已执行续训入口重启。
 
 ## 接手先做什么
 

@@ -372,7 +372,7 @@
     },
     "rollout_scale_diagnostic": {
       "protocol": "unified-upper-rollout-scale-v1",
-      "status": "preregistered; implementation CPU tests in progress; not launched",
+      "status": "B192 accepted and GPU6 passed; scale1 launching, further arms pending",
       "user_message": "USER-ce1e8fc7-7c7a-4637-9c53-377888849c11",
       "seed": 20261103,
       "source": "OriginalB192 protected complete model/upper+lower Adam/RNG and240 environments/rank, only after all4 stopped/exit0/full-state acceptance. Source files remain unchanged.",
@@ -502,8 +502,8 @@
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
-    "status": "training",
-    "note": "原B已复核190，继续至192完整停界；之后冻结扩容与micro测量。",
-    "updated_at": "2026-11-04T00:39:59+08:00"
+    "status": "diagnostic",
+    "note": "B192完整保存已核；GPU六项通过，开始同源冻结rollout的1倍局数测量。",
+    "updated_at": "2026-11-04T00:44:04+08:00"
   }
 }
