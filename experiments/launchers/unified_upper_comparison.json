@@ -372,7 +372,7 @@
     },
     "rollout_scale_diagnostic": {
       "protocol": "unified-upper-rollout-scale-v1",
-      "status": "all five geometries accepted; scale1_repeat launching; micro pending",
+      "status": "All six frozen collection arms accepted; repeat work counts identical, wall +2.390741%. Pending micro/full interpretation.",
       "user_message": "USER-ce1e8fc7-7c7a-4637-9c53-377888849c11",
       "seed": 20261103,
       "source": "OriginalB192 protected complete model/upper+lower Adam/RNG and240 environments/rank, only after all4 stopped/exit0/full-state acceptance. Source files remain unchanged.",
@@ -419,7 +419,7 @@
     },
     "microbatch_diagnostic": {
       "protocol": "unified-upper-candidate-screen-v1",
-      "status": "preregistered; not launched",
+      "status": "Launched once after all six scaling arms accepted; bounded actual four-rank results pending.",
       "seed": 20261103,
       "user_message": "USER-ce1e8fc7-7c7a-4637-9c53-377888849c11",
       "source": "Same protected B192 full state; fresh960 complete cohort from that source, no lower update or persisted upper update.",
@@ -533,7 +533,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "diagnostic",
-    "note": "B192保留；1至3倍冻结曲线已通过，正在重复1倍基线；之后测micro并启动新λ=.97训练。",
-    "updated_at": "2026-11-04T01:17:21+08:00"
+    "note": "1/1.5/2/2.5/3倍及1倍重复均验收；micro256/512/1024/256对照进行中。之后按用户要求从原初值启动整局λ=.97新训，实际几何待结果。",
+    "updated_at": "2026-11-04T01:25:22.816407+08:00"
   }
 }
