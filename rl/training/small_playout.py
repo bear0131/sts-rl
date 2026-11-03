@@ -36,12 +36,8 @@ def configure_collection(model, env):
                 or model.nosl_is_az_replay_enabled or getattr(model, '_frozen_upper', False)
                 or hasattr(model, 'small_playout_pair')):
             raise ValueError('online compact policy needs its own vocabulary and fresh whole-run objective')
-        weights = model.policy.small_playout.export()
-        pair = dict(sha256=hashlib.sha256(weights.tobytes()).hexdigest(),
-            contract='sts1-small-playout-v1', search_contract=SEARCH_CONTRACT,
-            online=True, policy=weights, prior=None,
-            common_simulations=250, elite_simulations=250, boss_simulations=1000,
-            playout_depth=200, tree_depth=1024)
+        from rl.policies.small_playout import export_online_search_pair
+        pair = export_online_search_pair(model.policy.small_playout, collect_samples=True)
         model.small_playout_collection_sha256 = pair['sha256']
     else:
         pair = getattr(model, 'small_playout_pair', None)

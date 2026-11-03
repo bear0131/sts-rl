@@ -312,6 +312,61 @@
       },
       "preservation": "Original lowLR/batch32768/2+2 candidate163 remains stopped/protected, route not rejected. A/C/oldCOMBAT30 remain stopped. Historical20 decision unchanged.",
       "final_running_policy": "After final full-state audit and review, resume selected original or candidate continuously without a total-round cap; bounded20 only defines this experiment. No restart of failed runs."
+    },
+    "critic_reuse_frozen_endpoints": {
+      "status": "preregistered before either192 endpoint; runtime adapter CPU/native checks passed, full-game qualification pending",
+      "purpose": "Independent frozen-policy strength reference after the registered equal-game online comparison; does not replace wall-clock learning trajectory evidence.",
+      "source": "Use each accepted protected192 endpoint from critic_reuse_comparison; same deployed evaluation commit/native for both arms in an isolated root. Never load training environment state into evaluation or mutate source bundles.",
+      "order": [
+        "control",
+        "candidate"
+      ],
+      "qualification": {
+        "source": "protected originalB172",
+        "rank": 0,
+        "games": 2,
+        "num_envs": 2,
+        "seed": 9100000,
+        "timeout_seconds": 180,
+        "external_timeout_seconds": 210,
+        "acceptance": "Both complete natural terminal games, no exclusions; frozen policy and upper/lower Adam plus checkpoint file digest unchanged; actual GPU/eval CLI/native identity and output verified."
+      },
+      "execution": "Only with all four training ranks stopped and accepted complete boundaries. Qualification in idle time before endpoint evaluation; no overlapping GPU workload, no failed automatic restart.",
+      "world_size": 4,
+      "games_per_rank": 240,
+      "games_per_arm": 960,
+      "num_envs_per_rank": 240,
+      "seed_base": 9110000,
+      "rank_seed_rule": "seed_base+240*rank; identical episode seeds and rank partition for both frozen endpoints",
+      "max_steps_per_game": 10000,
+      "timeout_seconds_per_rank": 600,
+      "external_timeout_seconds_per_rank": 630,
+      "solver": "small-playout",
+      "task": "wholerun",
+      "ascension": 0,
+      "upper": "deterministic masked argmax; no stochastic flag, upper rules or route override",
+      "native_search_threads": 16,
+      "float32_matmul_precision": "highest",
+      "amp": "off",
+      "search": [
+        250,
+        250,
+        1000
+      ],
+      "playout_depth": 200,
+      "tree_depth": 1024,
+      "information": "Reuse production SmallPlayoutBatch including public-feature/no-search Runic Dome and pending autoregressive multi-pick; evaluation nonce differs from training by design.",
+      "measurement": "Record each episode seed, natural outcome/floor/actions; hashes for full checkpoint and exported lower, native/evaluation commit, elapsed startup+evaluation+output wall, process-tree CPU/RSS/system memory and Torch/device VRAM/util with sampling interval. No missing metric reported as zero.",
+      "acceptance": "Exactly960 unique expected seeds per arm, all death/win natural terminal results, zero truncation/step_limit/exclusions, no worker errors, unchanged source hashes/model/Adam; incomplete runs are failures, never scored as a complete cohort.",
+      "analysis": {
+        "primary": "paired candidate-minus-control win-rate percentage points on identical episode seeds",
+        "secondary": "paired floor difference and each model win/floor; report evaluation wall as cost, not training learning efficiency",
+        "uncertainty": "Per-arm Wilson95 and paired seed bootstrap95 with10000 resamples using seed9140000. Intervals condition on these trained checkpoints; not causal uncertainty over training replicas. Single exploratory training replica remains a limitation.",
+        "bootstrap_seed": 9140000,
+        "bootstrap_resamples": 10000
+      },
+      "decision": "Report alongside all registered online windows and common-complete-wall cost; do not automatically promote from frozen score or loss. If trajectory gate fails or independent evidence is inconclusive, retain originalB default and preserve candidate for later bounded confirmation. After decision, resume chosen accepted endpoint continuous with no total-round cap.",
+      "original_low_lr_candidate": "C35 protected163 remains available; this endpoint protocol does not falsely compare its earlier163 against later192 as equal-training evidence."
     }
   }
 }

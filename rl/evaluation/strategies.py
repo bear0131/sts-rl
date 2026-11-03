@@ -82,6 +82,83 @@ class SmallPlayoutStrategy:
         return [Decision(None, self.name, result['stats'], native_action=result['action']) for result in results]
 
 
+class OnlinePlayoutEvaluationStrategy:
+    """Frozen online lower policy through the actual collection decision path.
+
+    Thin autoregressive actions preserve pending multi-pick bookkeeping. The
+    shared worker owns tier budgets, public-information Dome fallback and search.
+    """
+    name = 'small-playout'
+    combat_action_contract = 'autoregressive-v2'
+
+    def __init__(self, policy, *, threads=1):
+        from rl.policies.small_playout import export_online_search_pair
+        if threads < 1:
+            raise ValueError('native search threads must be positive')
+        self.pair = export_online_search_pair(policy, collect_samples=False)
+        self.threads = threads
+        self._batch = self._pool = None
+        self._indices = {}
+        self._statistics = {}
+
+    def bind_environments(self, environments):
+        import slaythespire as sts
+        from env.search.small_playout import SmallPlayoutBatch
+        self.unbind_environments()
+        envs = [getattr(env, 'unwrapped', env) for env in environments]
+        if any(env.combat_action_contract != self.combat_action_contract for env in envs):
+            raise ValueError('online small-playout evaluation requires autoregressive-v2 environments')
+        if len({id(env) for env in envs}) != len(envs):
+            raise ValueError('online small-playout environments must be distinct')
+        self._statistics = {}
+        pool = sts.NeuralSearchBatch(self.threads)
+        try:
+            batch = SmallPlayoutBatch(envs, pool, self.pair)
+        except BaseException:
+            pool.clear()
+            raise
+        self._pool, self._batch = pool, batch
+        self._indices = {id(env): index for index, env in enumerate(envs)}
+
+    def unbind_environments(self):
+        if self._batch is not None:
+            self._statistics = self._batch.scalar_stats()
+            self._batch = None
+        self._indices = {}
+        if self._pool is not None:
+            self._pool.clear()
+            self._pool = None
+
+    def decide(self, requests, *, check=lambda: None):
+        check()
+        if not requests:
+            return []
+        if self._batch is None:
+            raise RuntimeError('bind evaluation environments before small-playout decisions')
+        if any(r.info.get('phase') != 'combat' for r in requests):
+            raise ValueError('small-playout requires combat requests')
+        indices = [self._indices[id(getattr(r.env, 'unwrapped', r.env))] for r in requests]
+        if len(set(indices)) != len(indices):
+            raise ValueError('duplicate environment in decision batch')
+        # Episode-local nonces keep frozen evaluation independent of batch order.
+        # These are independent evaluation seeds, not training RNG replay.
+        calls = {i: ((), {'state_nonce': (int(r.seed)*1000000007 + int(r.step)) & ((1 << 64)-1)})
+                 for i, r in zip(indices, requests, strict=True)}
+        results = self._batch.decisions(calls)
+        check()
+        return [Decision(results[i]['action'], self.name, results[i]['diagnostics']) for i in indices]
+
+    def manifest(self):
+        return dict(contract=self.pair['contract'], search_contract=self.pair['search_contract'],
+                    lower_sha256=self.pair['sha256'], native_threads=self.threads,
+                    config={k: self.pair[k] for k in ('common_simulations', 'elite_simulations',
+                            'boss_simulations', 'playout_depth', 'tree_depth')},
+                    prior=False, collect_training_samples=False,
+                    dome='shared collection public-feature policy; no hidden-intent search',
+                    nonce='uint64(episode_seed*1000000007+episode_step)',
+                    search_statistics=self._batch.scalar_stats() if self._batch is not None else self._statistics)
+
+
 def _forced_end_batch(strategy, requests, check):
     """Resolve forced execution roots; internal search leaves still evaluate V."""
     if strategy.combat_action_contract not in C.NEURAL_CONTRACTS:
@@ -549,9 +626,29 @@ def turn_planner_strategy(model, args, lock=None):
 
 # Registration is deliberately a plain mapping, not discovery/import magic.
 # Embedders can pass any DecisionStrategy directly without registering a CLI.
+def small_playout_strategy(model, args, lock=None):
+    from env.search.small_playout import SEARCH_CONTRACT
+    if (getattr(args, 'task', 'wholerun') != 'wholerun'
+            or C.policy_contract(model.observation_space) != 'autoregressive-v2'
+            or not hasattr(model.policy, 'small_playout')
+            or getattr(model, 'small_playout_search_contract', None) != SEARCH_CONTRACT):
+        raise ValueError('small-playout evaluation requires an online autoregressive-v2 whole-run checkpoint with the current search contract')
+    if getattr(args, 'trace', None) or getattr(args, 'compare_combats', 0):
+        raise ValueError('small-playout does not support the separate combat-audit wrapper; use trajectory-output')
+    threads = getattr(args, 'native_search_threads', 0)
+    if threads < 0:
+        raise ValueError('native search threads must be non-negative')
+    for name in ('simulations', 'depth', 'prior_temperature', 'gumbel_scale', 'fixed_worldline', 'leaf_batch_size'):
+        if getattr(args, name, None) is not None:
+            raise ValueError('small-playout uses the collection search budget; cannot override '+name)
+    return PhaseStrategy(policy_strategy(model, args, lock), {'combat':
+        OnlinePlayoutEvaluationStrategy(model.policy.small_playout,
+            threads=max(1, threads))})
+
+
 STRATEGIES = {'policy': policy_strategy, 'native': native_strategy, 'value': value_strategy,
               'leftmost': lambda model, args, lock=None: LeftmostStrategy(), 'rules': rule_strategy,
-              'turn-planner': turn_planner_strategy}
+              'turn-planner': turn_planner_strategy, 'small-playout': small_playout_strategy}
 
 
 def compose_strategy(upper_model, args, combat_model=None, *, trace=None):
@@ -561,7 +658,7 @@ def compose_strategy(upper_model, args, combat_model=None, *, trace=None):
         raise ValueError('frozen upper evaluation cannot override its actor or map route')
     if frozen and (args.solver not in ('policy', 'native') or combat_model is not None):
         raise ValueError('frozen-upper evaluation supports its own lower with policy/native only')
-    if combat_model is not None and getattr(getattr(combat_model.policy, 'core', None), 'frozen_upper', False):
+    if combat_model is not None and getattr(getattr(getattr(combat_model, 'policy', None), 'core', None), 'frozen_upper', False):
         raise ValueError('use the complete frozen-upper checkpoint; a separate upper would change its teacher contract')
     strategy = STRATEGIES[args.solver](combat_model if combat_model is not None else upper_model, args)
     if args.solver == 'turn-planner':

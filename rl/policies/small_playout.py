@@ -6,12 +6,27 @@ The key table contains real StS1 card/upgrade and potion IDs, not StS2 padding.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import hashlib
 import math
 import numpy as np
 import torch
 from torch import nn
 
 CONTRACT = 'sts1-small-playout-v1'
+
+
+def export_online_search_pair(policy, *, collect_samples):
+    """Snapshot the online lower policy with its shared collection search budget."""
+    import slaythespire as sts
+    from env.search.small_playout import SEARCH_CONTRACT
+    if policy.key_count != sts.small_playout_key_count():
+        raise ValueError('native/Python action vocabulary mismatch')
+    weights = policy.export()
+    return dict(sha256=hashlib.sha256(weights.tobytes()).hexdigest(),
+                contract=CONTRACT, search_contract=SEARCH_CONTRACT,
+                online=bool(collect_samples), policy=weights, prior=None,
+                common_simulations=250, elite_simulations=250, boss_simulations=1000,
+                playout_depth=200, tree_depth=1024)
 
 
 @dataclass(frozen=True)

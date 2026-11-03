@@ -2,6 +2,7 @@
 from argparse import Namespace
 from types import SimpleNamespace
 import sys
+import pytest
 
 from rl.evaluation import strategies as S
 
@@ -67,3 +68,23 @@ def test_combat_only_model_automatically_uses_rules_without_neural_fallback(monk
     assert strategy.default.fallback is None
     assert [r.source for r in strategy.decide(requests())]==['upper-rules','combat-only','upper-rules','combat-only']
     assert lower.phases==['combat','combat']
+
+
+@pytest.mark.parametrize('options,message', [
+    (['--simulations', '1'], 'collection search budget'),
+    (['--depth', '1'], 'collection search budget'),
+    (['--trace', 'trace.jsonl'], 'combat-audit wrapper'),
+    (['--compare-combats', '1'], 'combat-audit wrapper'),
+    (['--native-search-threads', '-1'], 'non-negative'),
+    (['--task', 'combat'], 'whole-run checkpoint'),
+])
+def test_small_playout_cli_rejects_unsupported_combinations(options, message):
+    from rl.evaluation.eval import build_parser
+    from env.core.native_actions import AUTOREGRESSIVE_WIDTH
+    from env.search.small_playout import SEARCH_CONTRACT
+    model = SimpleNamespace(
+        observation_space=SimpleNamespace(spaces={'combat_legal': SimpleNamespace(shape=(AUTOREGRESSIVE_WIDTH,))}),
+        policy=SimpleNamespace(small_playout=object()), small_playout_search_contract=SEARCH_CONTRACT)
+    args = build_parser().parse_args(['model.zip', '--solver', 'small-playout', *options])
+    with pytest.raises(ValueError, match=message):
+        S.small_playout_strategy(model, args)

@@ -69,6 +69,28 @@ python -m rl.evaluation.eval CHECKPOINT --task wholerun --upper-strategy rules \
 
 评测加载使用共享 `load_checkpoint(..., inference_only=True)`，将 SB3 为推理重建的未使用训练 buffer 限为2步×1环境，避免按 checkpoint 的大规模训练几何分配内存。权重、双Adam和搜索/上层配置仍从原ZIP加载；真实评测环境数由 `--num-envs` 控制。此加载选项不用于训练resume，普通共享加载默认保持保存的训练几何。
 
+保存在线 small-playout 下层的 autoregressive-v2 whole-run checkpoint 可使用
+`--solver small-playout`。它通过 `PhaseStrategy` 保留上层策略，战斗复用训练的
+`env.search.small_playout.SmallPlayoutBatch`：普通/精英/Boss 搜索分别250/250/1000，
+playout depth200、tree depth1024、无单独prior；Runic Dome使用同一公开特征策略且不搜索隐藏意图，
+待完成多选沿原薄动作路径执行。下层权重导出为冻结快照，不收集训练样本或更新Adam。
+`effective_strategy`记录lower SHA、搜索契约、线程数和累计搜索统计。
+此模式不接受`--simulations`/`--depth`等其他搜索器覆盖，也不支持独立combat checkpoint、
+`--compare-combats`/`--trace`包装；稀疏轨迹仍可用`--trajectory-output`。
+
+```text
+python -m rl.evaluation.eval MODEL.zip --solver small-playout --task wholerun \
+  --episodes 32 --seed 9100000 --num-envs 8 --native-search-threads 16 \
+  --max-steps 10000 --timeout 600 --float32-matmul-precision highest \
+  --output runs/local/frozen-evaluation.json
+```
+
+上层默认masked argmax；`--stochastic`显式改为采样。搜索nonce为
+`uint64(episode_seed*1000000007+episode_step)`，不依赖批次位置；这是独立冻结评测，
+不声称复现训练RNG轨迹。固定独立种子、完整游戏数和超时后再运行；step_limit/timeout/其他截断
+必须原样报告，只有全部自然终局且零剔除才可作为完整评测胜率。上述命令是用法示例，
+不代替实验预登记或真实checkpoint/native/完整游戏验收；评测与生产训练须排他安排。
+
 Native whole-run 评估可显式加 `--leaf-inference cuda-graph`，复用已有
 `CombatLeafGraphs`；默认 `eager` 保持原路径。图后端只支持 CUDA、eval 模式、FP32
 的 compact combat 模型，其他组合明确报错。缓存归各个搜索策略独立所有；同一模型上的
