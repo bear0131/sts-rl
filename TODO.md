@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| UPPER-PROBE-CRITIC-LR | 已修复并复现回归；CPU23通过，隔离CUDA验收待做 | `rl/algorithms/upper_probe.py`现在按真实参数归属设置两组候选LR，拒绝混合/未知/空组。实际critic5e-5原先仍1e-4的回归先失败后通过；两组LR/真实参数影响、非空Adam/RNG还原和控制重复CPU通过，必须在完整停界后隔离CUDA通过才能执行新critic-LR臂。既有probe协议无critic-LR覆盖，旧结果不因此作废；生产参数覆盖入口已另验，禁止热改现役source。 |
+| UPPER-PROBE-CRITIC-LR | 已修复验收：CPU23及四机各7项CPU/CUDA通过 | 8698c41d按真实参数归属设置两组候选LR，拒绝混合/未知/空组；实际critic5e-5原仍1e-4回归先失败后通过。完整51计划停界后，四机实际两组LR/参数影响、非空Adam/RNG还原和控制重复7项通过、无skip，见critic-stability-semantics-result.json；诊断工具验收不等于候选效果。既有probe无critic-LR覆盖，旧结果不因此作废；生产source未热改。 |
 | UPPER-CRITIC-UPDATE-STABILITY | 固定50已复核；四机STOP51已请求，完整停界/实验待验 | COMBAT37第32/39轮同批实际λ目标MSE更新后+18.697%/+48.213%，第4遍恶化；非单凭此证明过拟合。41–50未再出现>10%上升，学习仍进步但共同累计wall的近期9600局落后旧B；保留全部结果。`post_screen.critic_stability_diagnostic`：probe LR已修、隔离8698c41d/CPU23通过；须完整51停界/保护50-51、CUDA门禁后才执行源40/51各1920自然局、1728训练192验证、critic LR1e-4/5e-5×2/4遍及控制重复共5臂，各900s内部/960s外部、零lower/持久更新。双源门槛通过才考虑独立在线确认；随后原51普通恢复、52核验、持续无总限。当前未启动新诊断。 |
 | SIM-SMALL-NATIVE-CHOICE-CAPACITY | 已完成动态路径修复；28/29资格及恢复30全状态通过 | COMBAT37第28轮rank2 HEADBUTT100种/172张越过固定96槽；四机exit1。small-playout使用动态native动作但误用固定policy槽容量。保留原固定ABI与已支持状态/等价合并顺序，仅动态路径支持全部不同选择；不截候选/游戏或削搜索。要求故障夹具、旧ABI拒绝、CPU/CUDA语义与保留checkpoint预测/环境、四机生产长度资格；修复前不自动恢复。证据candidates/fresh-failure27-accepted.json保护26/27及3/B192/trial30。 |
 | UPPER-EARLY-UPDATES | 已完成两阶段18臂；保持2/4 | USER-6af35206-b9c0-46ab-8682-def713e3f527：实际用保护3/27各1920自然局、1728训练/192验证、actor1/2/4/8与critic1/2/4/8/16单因素及控制重复；四机exit0/0剔除，源权重/Adam/RNG还原、无lower或持久更新，完整MC/实际λ目标、游戏配对CI、真实Adam/样本使用与资源均验。源3/27总进程497.972/665.504秒；全部候选未过预登记门槛，更多critic的训练拟合未转为一致验证收益、更多actor的surrogate区间跨0，暂不采用动态次数或新epoch。验证不冒称独立最终测试或长期最优，完整表及答复见worklog/2026-11-04.md对应USER小节；原生恢复另见SIM-SMALL-NATIVE-CHOICE-CAPACITY。 |

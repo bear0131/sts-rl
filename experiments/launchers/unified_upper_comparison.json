@@ -759,7 +759,7 @@
       }
     },
     "critic_stability_diagnostic": {
-      "status": "Fixed50 review complete; all4 guarded STOP51 requested. Isolated8698c41d deployed/CPU23 passed; full50/51 audit and CUDA qualification pending, no diagnostic launched.",
+      "status": "Full51 boundary and four-rank CPU/CUDA7 gate passed. Source40r1 failed at protocol parsing before restore/collection; diagnose schema, validate full CLI preflight, then explicitly launch corrected source40r2. Source51r1 remains pending.",
       "issue": "UPPER-CRITIC-UPDATE-STABILITY",
       "registered_at": "2026-11-04T04:46:26.860726+08:00",
       "motivation": "Fixed31-40 target MSE increased in32/36/37/39;32+18.697% and39+48.213%, with epoch4 worsening. Same-cohort optimization nonmonotonicity, not heldout-overfit proof; learning windows still improve, no production parameter change.",
@@ -784,8 +784,18 @@
         "max_probe_decisions_per_split_per_rank": 4096,
         "full_critic_mse": true,
         "profile_updates": true,
-        "max_seconds": 900,
-        "external_timeout_seconds": 960
+        "maximum_wall_seconds": 900,
+        "rank_process_timeout_seconds": 960,
+        "training_round": false,
+        "model_updates_persisted": false,
+        "lower_updates": 0,
+        "source_state_restored_after_each_arm": true,
+        "repeat_tolerances": {
+          "kl": 1e-05,
+          "value": 0.0001,
+          "surrogate_gain": 1e-05,
+          "relative_l2": 3e-05
+        }
       },
       "arms": [
         {
@@ -824,7 +834,14 @@
       "failure": "Any missing prerequisite, timeout/nonfinite/source restore failure stops diagnostic acceptance and requires diagnosis; no automatic retry or failed-training restart. Production415/420 gates and all games/search remain unchanged.",
       "isolated_runtime_commit": "8698c41d5548268432a2b449d7eaac1d6c55fc6c",
       "deployment_evidence": "runs/local/upper-unified/candidates/critic-stability-deployment.json",
-      "stop_request_evidence": "runs/local/upper-unified/candidates/critic-stability-stop51-request.json"
+      "stop_request_evidence": "runs/local/upper-unified/candidates/critic-stability-stop51-request.json",
+      "protocol": "unified-upper-candidate-screen-v1",
+      "execution_attempts": {
+        "40": 2,
+        "51": 1
+      },
+      "startup_failure_evidence": "runs/local/upper-unified/candidates/critic-stability-40-startup-failure-logs.json",
+      "schema_correction": "Add protocol discriminator and use canonical maximum_wall_seconds/rank_process_timeout_seconds; same900/960 budget, seed, cohort, arms and gates. Preserve failed40r1; corrected40r2 requires real CLI preflight and source integrity checks."
     }
   },
   "monitor": {
