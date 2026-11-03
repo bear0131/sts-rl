@@ -350,9 +350,15 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
             model.policy.upper_config = asdict(candidate)
             model.policy_kwargs['upper_config'] = asdict(candidate)
             actor_ids = {id(p) for p in model.policy.core.upper_actor.parameters()}
+            critic_ids = {id(p) for p in model.policy.core.upper_critic.parameters()}
             for group in model.policy.upper_optimizer.param_groups:
-                if any(id(p) in actor_ids for p in group['params']):
+                parameter_ids = {id(p) for p in group['params']}
+                if parameter_ids and parameter_ids <= actor_ids and not parameter_ids & critic_ids:
                     group['lr'] = candidate.learning_rate
+                elif parameter_ids and parameter_ids <= critic_ids and not parameter_ids & actor_ids:
+                    group['lr'] = candidate.value_learning_rate
+                else:
+                    raise ValueError('probe requires separate nonempty actor and critic optimizer groups')
             np.random.seed(protocol['seed'] + rank)
             model._upper_completed = train_rows
             monitor = None

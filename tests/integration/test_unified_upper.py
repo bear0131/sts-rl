@@ -231,6 +231,8 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
               dict(id='room_half', changes={}, critic_target='frozen_lambda_return', critic_lambda=.5, lambda_scope='room'),
               dict(id='batch3', changes={'effective_batch_size': 3}),
               dict(id='critic_lambda', changes={}, critic_target='frozen_lambda_return'),
+              dict(id='actor_half_lr', changes={'learning_rate': 3e-5}),
+              dict(id='critic_half_lr', changes={'value_learning_rate': 5e-5}),
               dict(id='control_repeat', changes={})])
     protocol['diagnostic']['calibration_games_per_rank'] = calibration_games
     if calibration_games:
@@ -243,6 +245,15 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
         measurement_counts.append(len(next(iter(targets.values()))))
         return original_measurement(current, observations, targets, **kwargs)
     monkeypatch.setattr(U, 'measure_critic_mse', count_measurements)
+    updated_parameters = []
+    original_update = U.update_unified_upper
+    def record_updated_parameters(current, **kwargs):
+        stats = original_update(current, **kwargs)
+        updated_parameters.append({name: torch.cat([
+            p.detach().flatten().cpu().clone() for p in getattr(current.policy.core, name).parameters()
+        ]) for name in ('upper_actor', 'upper_critic')})
+        return stats
+    monkeypatch.setattr(U, 'update_unified_upper', record_updated_parameters)
     deterministic_before = torch.are_deterministic_algorithms_enabled()
     result = run_probe(model, protocol, output_dir=tmp_path/'probe')
     # All records on this rank are terminal, so MC/lambda labels coincide.
@@ -253,6 +264,21 @@ def test_game_holdout_candidate_probe_restores_adam_and_repeats_control(unified_
     assert torch.are_deterministic_algorithms_enabled() == deterministic_before
     assert result['control_repeat_exact'] and result['source_state_restored']
     assert result['rng_restored'] and result['lower_optimizer_unchanged']
+    by_id = {arm['id']: (arm, parameters)
+             for arm, parameters in zip(result['arms'], updated_parameters)}
+    for arm in result['arms']:
+        assert arm['stats']['actor_learning_rate'] == pytest.approx(arm['config']['learning_rate'])
+        assert arm['stats']['critic_learning_rate'] == pytest.approx(arm['config']['value_learning_rate'])
+    control_parameters = by_id['control'][1]
+    for arm_id, changed, unchanged in (
+        ('actor_half_lr', 'upper_actor', 'upper_critic'),
+        ('critic_half_lr', 'upper_critic', 'upper_actor'),
+    ):
+        parameters = by_id[arm_id][1]
+        # Same restored state, labels and shuffle counts: changing one group's
+        # LR must affect its real Adam update without moving the other group.
+        torch.testing.assert_close(parameters[unchanged], control_parameters[unchanged], rtol=1e-5, atol=2e-6)
+        assert (parameters[changed] - control_parameters[changed]).abs().max().item() > 2e-6
     assert result['training_games'] == 5-calibration_games and result['holdout_games'] == 2
     assert result['calibration_games'] == calibration_games
     assert all(a['resources']['interval_seconds'] == 1. for a in result['arms'])
