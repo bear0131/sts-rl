@@ -552,10 +552,10 @@
         "estimate_limitation": "Linear sample scaling of deterministic720-training-game MC diagnostic, not actual full1920-game lambda production timing; actual full rounds and mature limits govern."
       },
       "runtime_headroom_review": "Two successive complete rounds>=380s trigger workload/headroom diagnosis.415s abort unchanged; never cut games/search or automatically restart. A single noisy round is not a learning-plateau trigger.",
-      "execution": "FAILED collection28: rank2 native HEADBUTT100 distinct/172 exceeds96; other ranks ring peer exit. All4 exit1; completed26/27 fully protected, no restart. Learning reviewed20, next fixed30 pending."
+      "execution": "Failure28 archived; explicit validated native repair qualification28/29 resumed from protected27, original2/4 unchanged. Await full-state acceptance before continuous resume29."
     },
     "early_update_diagnostic": {
-      "status": "source3 all9 accepted/analyzed; no epoch arm passed diagnostic gates; source27 all4 launched, pending",
+      "status": "complete: both3/27 all9 accepted/analyzed, no arm passed preregistered gates; retain2/4, no dynamic deployment",
       "user_message": "USER-6af35206-b9c0-46ab-8682-def713e3f527",
       "registered_at": "2026-11-04T02:56:12.367811+08:00",
       "protocol": "unified-upper-candidate-screen-v1",
@@ -678,10 +678,22 @@
         "validation_games": 192,
         "diagnostic_gate_passes": [],
         "decision": "No early epoch change; await predeclared source27. Not independent final test or online causal evidence."
+      },
+      "source27_result": {
+        "accepted": "candidates/early-epoch-27-accepted.json",
+        "analysis": "candidates/early-epoch-27-analysis.json",
+        "process_seconds": 665.5043730735779,
+        "games": 1920,
+        "validation_games": 192,
+        "training_samples": 146988,
+        "validation_samples": 16299,
+        "probe_validation_samples": 16130,
+        "diagnostic_gate_passes": [],
+        "decision": "No epoch change supported at either tested checkpoint. Dynamic epoch condition not established; not a proof of optimality or online win-rate."
       }
     },
     "native_capacity_recovery_qualification": {
-      "status": "registered; not launched; requires both frozen epoch diagnostics to end and full source27 integrity",
+      "status": "launched once from full27 after both epoch diagnostics passed acceptance; finite28/29 in progress",
       "issue": "SIM-SMALL-NATIVE-CHOICE-CAPACITY",
       "source_round": 27,
       "target_complete_rounds": [
@@ -707,8 +719,8 @@
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
-    "status": "diagnostic",
-    "note": "第3轮源9臂测试已验收：没有增减epoch方案通过门槛；源27同方案测试已启动。原正式训练仍停，26/27完整保护；测试结束再做原配置28/29原生修复资格。",
-    "updated_at": "2026-11-04T03:31:24.180738+08:00"
+    "status": "training",
+    "note": "3/27两阶段共18臂整局留出测试完成，均无方案通过门槛，保持actor2/critic4。已从完整27恢复，正在进行新native的有限28/29完整生产资格；通过后续训，无总限目标不变。",
+    "updated_at": "2026-11-04T03:45:05.674018+08:00"
   }
 }
