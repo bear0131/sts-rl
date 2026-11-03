@@ -551,10 +551,11 @@
         "estimated_mature_upper_update_seconds": 51.29478694841539,
         "estimate_limitation": "Linear sample scaling of deterministic720-training-game MC diagnostic, not actual full1920-game lambda production timing; actual full rounds and mature limits govern."
       },
-      "runtime_headroom_review": "Two successive complete rounds>=380s trigger workload/headroom diagnosis.415s abort unchanged; never cut games/search or automatically restart. A single noisy round is not a learning-plateau trigger."
+      "runtime_headroom_review": "Two successive complete rounds>=380s trigger workload/headroom diagnosis.415s abort unchanged; never cut games/search or automatically restart. A single noisy round is not a learning-plateau trigger.",
+      "execution": "FAILED collection28: rank2 native HEADBUTT100 distinct/172 exceeds96; other ranks ring peer exit. All4 exit1; completed26/27 fully protected, no restart. Learning reviewed20, next fixed30 pending."
     },
     "early_update_diagnostic": {
-      "status": "registered; production continues to coordinated full boundary31, then two exclusive frozen diagnostics",
+      "status": "blocked on native capacity repair after collection28 failure; full26/27 protected, no restart; diagnostic sources revised3/27 before any arms run",
       "user_message": "USER-6af35206-b9c0-46ab-8682-def713e3f527",
       "registered_at": "2026-11-04T02:56:12.367811+08:00",
       "protocol": "unified-upper-candidate-screen-v1",
@@ -563,18 +564,19 @@
         "run": "combat37-upper-fresh-lambda097-r1",
         "source_rounds": [
           3,
-          31
+          27
         ],
-        "boundary_stop_round": 31,
+        "boundary_stop_round": null,
         "preserve_adjacent": [
-          30,
-          31
+          26,
+          27
         ],
-        "initial_state": "Use already protected ordinary-resume3 and newly protected31 complete model/upper+lower Adam/RNG/480 environments per rank. Never reset initial or mutate either source.",
+        "initial_state": "Use protected ordinary-resume3 and failure28-preserved complete27 model/upper+lower Adam/RNG/480 environments per rank. All4 exited1 during collection28, not a planned clean31 stop. No reset; source27 requires repaired native before new collection.",
         "order": [
           3,
-          31
-        ]
+          27
+        ],
+        "change_reason": "Unplanned native HEADBUTT capacity failure during collection28. No31 exists; no diagnostic arm has run.26/27 full-state accepted in fresh-failure27-accepted.json."
       },
       "diagnostic": {
         "world_size": 4,
@@ -650,15 +652,15 @@
         }
       ],
       "contract": {
-        "fixed": "Actual frozen-lambda .97 target, actor GAE .97, actor6144/critic32768, LR.00012/.0001, micro1024, complete games, original lower/search/native; inherited source Adam/RNG reset in memory before every arm.",
+        "fixed": "Actual frozen-lambda .97 target, actor GAE .97, actor6144/critic32768, LR.00012/.0001, micro1024, complete games, original lower/search budgets; both stages require the same separately validated repaired native; inherited source Adam/RNG reset in memory before every arm.",
         "split": "At each checkpoint one natural1920-game cohort, seeded disjoint1728 training and192 validation whole games; validation never used for gradient or advantage normalization. Validation used to choose epochs is not an independent final test set.",
         "measure": "Full-cohort train/validation MC and actual frozen-lambda target MSE pre/post; fixed decision probes for old-to-final categorical KL, sampled clipped surrogate, bias/EV, phase/tails and paired whole-game uncertainty; report actual Adam/sample uses and all timing/resources.",
         "epoch_comparison": "Critic1/2/4/8/16 with actor2; actor1/2/4/8 with critic4. Same source/cohort/config/LR, repeated2/4 control last. No blanket joint-epochs search.",
         "budget": "Two cohorts total3840 natural games; each1200s internal/1260s external plus bounded semantic tests. No automatic retry, no saved updates, no lower updates or partial-game exclusions. Production remains stopped and protected during GPU tests/diagnostics.",
         "implementation": "Reuse existing probe entry. Correct diagnostic actual-target reporting for production frozen-lambda before launch; isolated committed diagnostic root, do not change active b12c01d4 source.",
         "interpretation": "More epochs reducing only training loss is not sufficient. Critic improvement candidate requires >=5% relative validation target MSE reduction versus control, paired-game sampled MSE difference95% interval below0, and MC MSE no >2% deterioration. Actor candidate requires positive paired-game validation surrogate difference95% interval, multi-action mean categorical KL<=.02 and p95<=.1. Report all arms and sampling limits; these are diagnostic gates, not proven win-rate or automatic promotion.",
-        "adaptive_followup": "If supported, propose bounded epoch selection using disjoint validation, minimum/maximum epochs and wall reserve; keep final online or frozen endpoints independent. Do not call repeatedly selected validation a test set or deploy without semantic/full production qualification. Otherwise resume unchanged from31, no total cap.",
-        "learning_reviews": "Complete fixed30 from current lineage before diagnostic; diagnostic games do not advance training counters/windows. After ordinary resume continue fixed40, preserving source31 and lower refresh."
+        "adaptive_followup": "If supported, propose bounded epoch selection using disjoint validation, minimum/maximum epochs and wall reserve; keep final online or frozen endpoints independent. Do not call repeatedly selected validation a test set or deploy without semantic/full production qualification. Otherwise resume model/optimizer state from27 after explicit repair qualification, no total cap.",
+        "learning_reviews": "Fixed30 is pending and cannot be computed from27 complete rounds. Diagnostic games never advance training counters. Native repair creates a marked runtime boundary; do not attribute later differences solely to epochs."
       }
     }
   },
@@ -670,8 +672,8 @@
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
-    "status": "training",
-    "note": "已收到训练前期更新次数测试请求：先完成30固定复核，31完整保存后暂停；对保护的3/31轮分别测试actor1/2/4/8、critic1/2/4/8/16，留出10%完整局验证。当前训练仍运行，未自动加更新。",
-    "updated_at": "2026-11-04T02:56:12.367811+08:00"
+    "status": "failed",
+    "note": "第28轮采集因HEADBUTT候选容量96溢出失败，四机exit1。完整26/27全状态已核验保护，未重启；先修复原生容量，再继续3/27更新次数和整局留出测试。固定30复核尚未完成。",
+    "updated_at": "2026-11-04T03:13:16.667763+08:00"
   }
 }

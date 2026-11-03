@@ -2,6 +2,8 @@
 
 记录时间：2026-11-03 11:45（Asia/Shanghai）。用户要求“把当前的任务记录下来推上去，我交给其他会话”。本文件是交接快照；实时身份和下一复核点以本地 ledger 为准，TODO.md 仍是唯一任务清单。
 
+> **11月4日03:12故障更新：** COMBAT37第28轮采集遇HEADBUTT100种/172张超过固定96槽，四机exit1，未重启。完整26/27（最后global14073832）模型/上下层Adam/RNG/480环境已保护，3/B192/trial30仍保留。先处理TODO SIM-SMALL-NATIVE-CHOICE-CAPACITY，不执行旧31停界/launch；更新次数诊断源已在运行前修订为3/27。学习已复核20、固定30待完成。以下continuous状态为故障前历史。
+
 > **11月4日续接说明：下文保留原Windows历史，不是当前启动指令。** 当前Mac同分支；原B完整停192/global71059696且191/192全状态保护，B190复核完成。B192冻结1/1.5/2/2.5/3/1倍重复及micro256/512/1024/256全部验收，已选1920自然局/micro1024。用户最新USER-b1cb…明确测试后从头新训，四机已从原统一随机上层/COMBAT30-203下层初值、空Adam/计数0启动 `combat37-upper-fresh-lambda097-r1`，root `/root/upper-throughput-20261104`/source b12c01d4；critic整局frozen-lambda .97、actor6144×2/LR.00012、critic32768×4/LR.0001。完整1–2轮资格与普通resume3全状态均已通过，现continuous无总限；不得重复资格/launch，下一10/20描述及30后固定复核；实际阶段以ledger/receipt为准，已有launch禁止重复。新训练用censored_games=error、415失败/420门禁、不削搜索或截局。新lineage用candidates/review_fresh_lambda.py，10/20描述、30及每10固定三10/六5/共同完整max4墙钟；不能混B960窗口。原critic1/配对终点评测暂缓，A/C/C35/COMBAT30保持停。用户授权共享worklog“用户发言 · USER-…”读取并完整回复；顶层monitor已指新run真实origin0/0，Windows8773由原会话负责。唯一heartbeat b，旧Windows巡检保持暂停，健康不重启或重复资格。
 
 ## 接手先做什么
