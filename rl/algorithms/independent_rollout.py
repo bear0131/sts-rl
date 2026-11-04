@@ -1,10 +1,10 @@
-"""Bounded diagnostic for independent whole games; not a production entry.
+"""Independent whole-game collection with explicit checkpointed scheduling.
 
 Reuse native environments, compact search, strategic credit and cohort checks.
 The barrier control uses the same new random streams and sample construction.
 Neither mode updates weights or changes search/terminal/return definitions.
 """
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import time
 
 import numpy as np
@@ -70,13 +70,37 @@ class GameRandomStreams:
                 rng.bit_generator.state = saved
 
 
+def configure(model, config, *, fork=False):
+    """Opt in at a natural cohort boundary; plain resume uses its saved contract."""
+    old = getattr(model, 'independent_rollout_config', None)
+    selected = old if config is None else asdict(IndependentRolloutConfig(**config))
+    if selected is None:
+        return None
+    if selected['mode'] != 'independent':
+        raise ValueError('barrier mode is a frozen diagnostic control only')
+    cohort = getattr(model, 'episode_rollout_config', None)
+    if cohort is None or cohort['censored_games'] != 'error':
+        raise ValueError('independent training requires complete natural cohorts with error budgets')
+    if selected != old and model.num_timesteps:
+        stats = getattr(model, 'episode_rollout_stats', {})
+        if (not fork or stats.get('rollout') != getattr(model, 'episode_rollouts_completed', None)
+                or stats.get('completed_games') != cohort['games_per_rank']
+                or stats.get('censored_games') != 0 or stats.get('unfinished_games') != 0):
+            raise ValueError('scheduler migration requires an explicit fork at a complete natural boundary')
+        model.independent_rollout_migration = dict(
+            source_round=stats['rollout'], source_global_step=model.num_timesteps,
+            previous=old, random_stream=GameRandomStreams.version)
+    model.independent_rollout_config = selected
+    return selected
+
+
 def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=True, *, config):
-    """Collect real policy/search samples for an unsaved diagnostic only.
+    """Collect real policy/search samples with weights frozen for the whole cohort.
 
     An explicit synchronous control isolates scheduling from the new RNG
     contract. Per-game sample order is canonicalized before returning.
     Legacy unused combat-value diagnostic rows are not materialized in either
-    mode; production adoption requires its separate lifecycle qualification.
+    mode. Complete cohorts are the only supported checkpoint boundary.
     """
     from stable_baselines3.common.vec_env import VecMonitor
     from rl.training.native_vec_env import NativeSearchVecEnv
@@ -95,6 +119,8 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     rollout_buffer.reset()
     model._upper_completed, model._upper_censored = [], 0
     model._nosl_is_az_samples = []
+    model._nosl_is_az_rollout_upper_counts = {}
+    model._nosl_is_az_rollout_hp_order = {}
     reward_monitor.begin_collection(model)
     campfire_monitor.begin_collection(model)
     session = episode_rollout.begin(model, env)
@@ -109,6 +135,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     stats = dict(root_policy_seconds=0., env_step_seconds=0., search_wait_seconds=0.,
                  upper_batches=0, upper_rows=0, transition_batches=0, simulator_transitions=0,
                  selection_prefix_decisions=0, forced_end_turn_roots=0)
+    model._independent_rollout_progress = stats
 
     with SmallPlayoutStream(vec.small_playout_batch, threads=cfg.threads) as stream:
         while vec.episode_rollout_active.any():
@@ -221,7 +248,9 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     model._independent_rollout_rng = randoms.state_dict()
     stats['collection_seconds'] = time.monotonic()-session['started']
     model._independent_rollout_diagnostic = dict(random_stream=randoms.version, **stats,
-        mode=cfg.mode, note='Unsaved diagnostic; unused legacy combat-value diagnostic rows omitted in both modes.')
+        mode=cfg.mode, note='Unused legacy combat-value diagnostic rows omitted; complete natural cohorts only.')
+    model._nosl_is_az_rollout_timings = dict(stats)
+    model._nosl_is_az_rollout_upper_counts = dict(forced_end_turn_roots=stats['forced_end_turn_roots'])
     for k, value in stats.items():
         model.logger.record('nosl_is_az/'+k, value)
     for k, value in model._small_playout_stats.items():

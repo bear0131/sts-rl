@@ -480,6 +480,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             *super()._excluded_save_params(),
             "_native_leaf_inference",
             "_rollout_inference",
+            "_independent_rollout_progress",
             "_nosl_leaf_batch_controller",
             "_reasoning_rollout_samples",
             "_nosl_is_az_samples",
@@ -885,6 +886,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
         # keep this guard so an early callback/error cannot leave a compiler
         # thread racing with a later buffer reuse.
         self._wait_for_reasoning_samples()
+        independent = getattr(self, 'independent_rollout_config', None)
+        if independent is not None:
+            from rl.algorithms.independent_rollout import collect
+            return collect(self, env, callback, rollout_buffer, n_rollout_steps,
+                           use_masking, config=independent)
         if self.amp_mode == "bf16" and not getattr(
             self.policy, "supports_bf16_rollout", False
         ):

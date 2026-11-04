@@ -77,6 +77,12 @@ class RolloutProgressCallback(NoopCallback):
                 record.update(target_steps=None,
                     completed_games=int(self.model.env.episode_rollout_finished.sum()),
                     target_games=self.model.env.num_envs)
+            independent = getattr(self.model, '_independent_rollout_progress', None)
+            if independent is not None:
+                record.pop('vector_steps')
+                record.update(transition_batches=self.completed,
+                    env_steps=independent['simulator_transitions'] + independent['selection_prefix_decisions'],
+                    simulator_transitions=independent['simulator_transitions'])
             runtime = getattr(self.model, '_rollout_inference', None)
             if runtime is not None:
                 record['inference'] = runtime.statistics()
@@ -400,6 +406,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help='One complete fresh game per environment per rollout; no auto-replacement.')
     parser.add_argument('--episode-rollout-max-steps', type=int, default=6000)
     parser.add_argument('--episode-rollout-max-seconds', type=float, default=1800.)
+    parser.add_argument('--independent-rollout-config', type=Path, default=None,
+        help='JSON thread/coalescing/RNG configuration; checkpointed, complete natural cohorts only. '
+             'A trained source requires an explicit complete-boundary fork to migrate.')
     parser.add_argument('--iteration-timeout-seconds', type=float, default=0.,
                         help='Hard round wall limit; timeout exits 124, resume only prior common save.')
     parser.add_argument('--episode-rollout-censored', choices=('error', 'exclude'), default=None)
@@ -2763,6 +2772,14 @@ def main() -> None:
         episode_rollout.configure(model, episode_config, rank=args.rank, world_size=args.world_size,
                                   grow_environments=args.fork_grow_environments)
     args.episode_rollout_config = episode_config
+    from rl.algorithms.independent_rollout import configure as configure_independent
+    independent_config = (json.loads(args.independent_rollout_config.read_text(encoding='utf-8'))
+                          if args.independent_rollout_config is not None else None)
+    args.independent_rollout_config = configure_independent(
+        model, independent_config, fork=args.fork_state is not None)
+    if args.independent_rollout_config is not None:
+        if args.reasoning_updates or args.reasoning_coef or args.interactive_reasoning:
+            raise ValueError('independent cohorts do not support reasoning training')
     if episode_config is not None:
         args.episode_rollout_seed_offset = getattr(model, 'episode_rollout_seed_offset', 0)
         args.episode_rollout_growth = getattr(model, 'episode_rollout_growth', None)
@@ -3546,6 +3563,10 @@ def main() -> None:
                                    if episode_config is not None else rollout_size)
             global_actions = int(round(average_scalar_dict(
                 {'actions': float(actual_rollout_size)}, ring_transport)['actions'] * args.world_size))
+            rank_rollout_seconds = average_scalar_dict({
+                f'rank{i}': rollout_sec if i == args.rank else 0.
+                for i in range(args.world_size)}, ring_transport)
+            rollout_max_seconds = max(rank_rollout_seconds.values()) * args.world_size
             cumulative_global_steps += global_actions
             record = {
                 "rank": args.rank,
@@ -3560,6 +3581,8 @@ def main() -> None:
                 "leaf_graph_release_sec": graph_release_sec,
                 "leaf_graph_release_memory": graph_release_memory,
                 "rollout_steps_per_sec_local": actual_rollout_size / rollout_sec,
+                "rollout_sec_max": rollout_max_seconds,
+                "rollout_steps_per_sec_global": global_actions / rollout_max_seconds,
                 "loss_mean": float(np.mean(losses)) if losses else 0.0,
                 "optimizer_steps": optimizer_steps,
                 "sync_sec": sync_seconds,
@@ -3861,6 +3884,8 @@ def main() -> None:
                         "dist/iteration_wall_sec": record["iteration_wall_sec"],
                         "dist/checkpoint_sec": record["checkpoint_sec"],
                         "dist/rollout_sec": record["rollout_sec"],
+                        "dist/rollout_sec_max": record["rollout_sec_max"],
+                        "speed/rollout_env_steps_per_second": record["rollout_steps_per_sec_global"],
                         "dist/leaf_graph_release_sec": record["leaf_graph_release_sec"],
                         "dist/backward_sec": record["backward_sec"],
                         "dist/sync_sec": record["sync_sec"],

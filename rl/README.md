@@ -79,7 +79,16 @@ small-playout 的候选列表使用动态 native handle，不受旧策略96个PI
 `independent-games-pcg64-v1`；这是显式的新采样合同，不承诺与旧全局Torch随机序列相同。
 支持FP32、resident native、joint small-playout、完整自然局、aux/replay关闭。
 不更新或保存生产模型；两模式均不生成旧大网未用于学习的战斗value诊断行。
-正式连续训练的配置、保存恢复与监控资格尚未完成，不提供生产开关。
+正式入口的 `--independent-rollout-config config.json` 接受同样字段，但只允许
+`mode=independent`、完整自然局error预算且reasoning关闭。旧checkpoint默认不切换；
+已训练源必须用 `--fork-state` 在完整自然局边界显式迁移。配置随model/manifest保存，
+普通resume省略JSON文件即可保留，不能在普通resume中静默改变随机流/调度。
+每轮按下一批唯一game seed生成各局随机流，checkpoint只支持完整cohort边界；
+最终随机流保存用于审计，不声称支持线程池/半轮恢复。
+`speed/rollout_env_steps_per_second` 为全rank实际环境操作总数除以最慢rank的collection秒数，
+包含选择前缀；原 `env_steps_per_second` 仍包含更新/同步/保存的整轮时间。
+独立进度使用 `transition_batches`/`env_steps`/`simulator_transitions`，不冒充同步向量步。
+新采样方式须另通过同硬件完整collection与两轮更新/保存/普通恢复资格后才能用于现役任务。
 目标熵、CE减目标熵的KL、teacher top1、uniform CE与策略熵一同上报，避免把变化的标签难度误当学习进步。上层配置由实验args/checkpoint显式决定；当前完整游戏实验见`configs/train/small_playout_terminal_full960_distributed.args`，两遍192/rank小批、FP32和λ.97。历史全批设置不得当作当前入口默认值。
 用户授权的单回合保护使用引擎cardsPlayedThisTurn（含自动/重复打牌）：达到128后等待已开始的效果/选牌结算，只允许合法结束回合。实际搜索、模拟和Dome纯策略共用同一候选限制；这是预算约束，可能截短合法超长连招，不是特定卡牌偏好。
 完整游戏模式每rank启动240局，完成槽保持、不补局。新实验动作上限2424来自旧27/28共115200自然结束局观察最大1212的两倍，墙钟1800秒。`--episode-rollout-censored exclude`仅对这些预算超限剔除整局所有上下层样本并继续；不吞掉OOM、无效状态或一般异常。各槽种子/操作数/原因记录，有限现场快照单列；全删失批次零Adam、仍保存并推进下一批种子。自然结束+剔除=启动数，胜率分母仅自然结束，零分母省略，不能将删失当死亡或声称剔除无选择偏差。普通恢复必须保留该合同；历史error模式仍失败停止。

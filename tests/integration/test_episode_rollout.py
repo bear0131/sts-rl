@@ -105,7 +105,14 @@ def test_unified_mc_cohort_update_payload_and_resume(tmp_path, monkeypatch, shor
                       unified=True, critic_batch=critic_batch)
 
 
-def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override, censor_case=None, resume_target_kl=None, keep_round_multiple=0, fork_resume=False, unified=False, critic_batch=None):
+@pytest.mark.timeout(180)
+@pytest.mark.parametrize('device,natural_start', [('cpu', False), ('cpu', True), ('cuda', False)])
+def test_independent_cohort_updates_payload_and_plain_resume(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start):
+    _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device,
+                      natural_start, None, unified=True, independent=True)
+
+
+def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override, censor_case=None, resume_target_kl=None, keep_round_multiple=0, fork_resume=False, unified=False, critic_batch=None, independent=False, cohort_error=False):
     if device == 'cuda':
         assert torch.cuda.is_available(), 'explicit CUDA qualification requires CUDA'
     def make_env(*args):
@@ -157,7 +164,13 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
         '--run-id', 'cohort-test', '--wandb', '--wandb-id', 'cohort-test',
         '--training-state-dir', str(tmp_path/'state'), '--save-every-updates', '1', '--max-checkpoints', '4',
         '--stop-file', str(tmp_path/'STOP'), '--output', str(tmp_path/'latest.zip')]
-    if unified and not censor_case:
+    if independent:
+        scheduler_path = tmp_path/'scheduler.json'
+        scheduler_config = dict(mode='independent', threads=2, upper_batch=2,
+                                upper_wait_seconds=.010, seed=42)
+        scheduler_path.write_text(json.dumps(scheduler_config))
+        argv += ['--independent-rollout-config', str(scheduler_path), '--rollout-resource-interval', '.1']
+    if unified and not censor_case and not independent and not cohort_error:
         argv += ['--episode-rollout-censored', 'exclude']
     if critic_batch is not None:
         argv += ['--upper-critic-effective-batch-size', str(critic_batch)]
@@ -226,6 +239,10 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
         return result
     monkeypatch.setattr(distributed_sb3, 'restore_learner', restore)
     resume_argv = list(argv)
+    if independent:
+        index = resume_argv.index('--independent-rollout-config')
+        del resume_argv[index:index+2]
+        scheduler_path.unlink()  # Resume must not depend on a config file.
     if critic_batch is not None:
         index = resume_argv.index('--upper-critic-effective-batch-size')
         del resume_argv[index:index+2]
@@ -258,6 +275,15 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
             assert i == bundle_index
         assert manifest['config']['checkpoint_keep_round_multiple'] == keep_round_multiple
         current = AccumulatingMaskablePPO.load(bundle/'model.zip', device='cpu')
+        if independent:
+            assert current.independent_rollout_config == scheduler_config
+            assert manifest['config']['independent_rollout_config'] == scheduler_config
+            assert current._independent_rollout_rng['version'] == 'independent-games-pcg64-v1'
+            assert len(current._independent_rollout_rng['upper']) == 2
+            assert payloads[i]['speed/rollout_env_steps_per_second'] > 0
+            assert payloads[i]['dist/rollout_sec_max'] == payloads[i]['dist/rollout_sec']
+            assert payloads[i]['small_playout_train/updates'] > 0
+            assert current.policy.upper_optimizer.state and current.policy.small_playout_optimizer.state
         assert current.small_playout_search_contract == 'terminal-hp-boss-win-turn128-v1'
         assert manifest['config']['small_playout_search_contract'] == 'terminal-hp-boss-win-turn128-v1'
         assert current.policy.core.upper_config.gae_lambda == (lambda_override or .97)
@@ -299,6 +325,64 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
             torch.testing.assert_close(current.policy.state_dict(),initial_policy,rtol=0,atol=0,check_device=False)
 
     return dict(argv=argv, payloads=payloads, last_bundle=bundles[-1])
+
+
+@pytest.mark.timeout(180)
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_independent_fork_preserves_nonempty_state_and_plain_resume(
+        tmp_path, monkeypatch, short_natural_game_env_type, device):
+    from rl.training.checkpoints import restore_learner, _observation_sha256
+    from tests.integration.test_training_smoke import assert_nested_equal
+    setup = _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type,
+                              device, False, None, unified=True, cohort_error=True)
+    source = setup['last_bundle']
+    original_manifest = read_bundle(source, rank=0, world_size=1)
+    scheduler_path = tmp_path/'independent.json'
+    cfg = dict(mode='independent', threads=2, upper_batch=2,
+               upper_wait_seconds=.010, seed=42)
+    scheduler_path.write_text(json.dumps(cfg))
+    restored = []
+    def observed_restore(model, path, **kwargs):
+        expected = AccumulatingMaskablePPO.load(path/'model.zip', device=device)
+        environment = torch.load(path/'environment.pt', weights_only=False)
+        result = restore_learner(model, path, **kwargs)
+        assert expected.policy.upper_optimizer.state and expected.policy.small_playout_optimizer.state
+        for actual, saved in ((model.policy.state_dict(), expected.policy.state_dict()),
+                (model.policy.upper_optimizer.state_dict(), expected.policy.upper_optimizer.state_dict()),
+                (model.policy.small_playout_optimizer.state_dict(), expected.policy.small_playout_optimizer.state_dict())):
+            torch.testing.assert_close(actual, saved, rtol=0, atol=0, check_device=False)
+        assert_nested_equal(model.env.env_method('export_training_state'), environment['states'])
+        assert _observation_sha256(model._last_obs) == environment['last_observation_sha256']
+        assert model.independent_rollout_config == cfg
+        restored.append(model.episode_rollouts_completed)
+        return result
+    monkeypatch.setattr(distributed_sb3, 'restore_learner', observed_restore)
+    args = [*setup['argv'], '--run-id', 'independent-fork', '--wandb-id', 'independent-fork',
+            '--training-state-dir', str(tmp_path/'independent-state')]
+    monkeypatch.setattr(sys, 'argv', [*args, '--fork-state', str(source),
+                        '--independent-rollout-config', str(scheduler_path)])
+    distributed_sb3.main()
+    boundary = sorted((tmp_path/'independent-state/rank0').glob('step-*'))[-1]
+    scheduler_path.unlink()
+    monkeypatch.setattr(sys, 'argv', [*args, '--resume-state', str(boundary)])
+    distributed_sb3.main()
+    assert restored == [4, 6]
+    assert read_bundle(source, rank=0, world_size=1) == original_manifest
+    assert [p['legacy_step'] for p in setup['payloads']] == list(range(1, 9))
+    assert all(p['episode_rollout/completed_games_global'] == 2 for p in setup['payloads'])
+    for path in sorted((tmp_path/'independent-state/rank0').glob('step-*')):
+        model = AccumulatingMaskablePPO.load(path/'model.zip', device='cpu')
+        assert model.independent_rollout_config == cfg
+        assert model.independent_rollout_migration['source_round'] == 4
+        n = model.episode_rollouts_completed
+        assert model.episode_rollout_stats['first_seed'] == 42 + (n-1)*2
+        for optimizer, key in ((model.policy.upper_optimizer, 'upper/updates'),
+                               (model.policy.small_playout_optimizer, 'small_playout_train/updates')):
+            steps = sum(p[key] for p in setup['payloads'][:n])
+            if key.startswith('small'):
+                assert {int(v['step']) for v in optimizer.state.values()} == {steps}
+            else:
+                assert optimizer.state
 
 
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
