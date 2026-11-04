@@ -1603,6 +1603,31 @@
         "model_and_search_unchanged": true,
         "native_same_binary": "a736f74ca56de9c3a24974e51d444126264eabb364b631c4a7f4700651b7e98e",
         "production_migrated": false
+      },
+      "training_qualification": {
+        "status": "prepared",
+        "root": "/root/rollout-independent-training-20261104",
+        "run_id": "combat37-upper-independent-r1",
+        "wandb_id": "combat37independent1",
+        "source_round": 169,
+        "source_global_step": 132648816,
+        "integrated_commit": "86eb674d",
+        "native_sha256": "a736f74ca56de9c3a24974e51d444126264eabb364b631c4a7f4700651b7e98e",
+        "rounds": 2,
+        "world_size": 4,
+        "games_per_rank": 480,
+        "iteration_timeout_seconds": 415,
+        "process_timeout_seconds": 1100,
+        "critic_batch_size": 32768,
+        "independent": {
+          "mode": "independent",
+          "threads": 16,
+          "upper_batch": 64,
+          "upper_wait_seconds": 0.002,
+          "seed": 20261104
+        },
+        "acceptance": "Each max-rank rollout <200s, all 1920 games natural without exclusions, real upper/lower updates and full save; audit states then ordinary continuous resume",
+        "lifecycle_validation": "14 passed in 43.17s; CPU/CUDA, full source/Adam/env restoration, ordinary resume, PPO/NOSL payload/checkpoint"
       }
     }
   },
