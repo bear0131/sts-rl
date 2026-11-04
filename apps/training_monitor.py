@@ -109,7 +109,26 @@ def monitor_target(value):
         raise ValueError('活动监控分叉起点无效')
     if not isinstance(value['label'], str) or not isinstance(value['note'], str):
         raise ValueError('活动监控说明无效')
-    return {key: value[key] for key in required}
+    result = {key: value[key] for key in required}
+    predecessors = value.get('continuation_of', [])
+    if not isinstance(predecessors, list):
+        raise ValueError('续训历史声明必须是列表')
+    seen = {(value['root'], value['run_id'])}
+    for source in predecessors:
+        if (not isinstance(source, dict) or
+            not isinstance(source.get('root'), str) or not source['root'].startswith('/') or
+            not isinstance(source.get('run_id'), str) or
+            not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', source['run_id']) or
+            type(source.get('through_step')) is not int or source['through_step'] < 0):
+            raise ValueError('续训历史身份或截止步数无效')
+        identity = (source['root'], source['run_id'])
+        if identity in seen:
+            raise ValueError('续训历史身份重复')
+        seen.add(identity)
+    if predecessors:
+        result['continuation_of'] = [{k: source[k] for k in ('root', 'run_id', 'through_step')}
+                                     for source in predecessors]
+    return result
 
 
 class WorklogFeed:
@@ -290,6 +309,7 @@ class Monitor:
         self.state['branch_step'] = config.get('branch_step', 0)
         self.state['iteration_steps'] = config['iteration_steps']
         self.state['rollout_mode'] = config.get('rollout_mode', 'fixed_steps')
+        self.state['continuation_of'] = config.get('continuation_of', [])
         self.state['branch_round'] = config.get('branch_round',
             self.state['branch_step'] / (config['iteration_steps'] or 1))
         followed_histories = saved.get('comparisons', [])
@@ -325,7 +345,7 @@ class Monitor:
                 self.config['root'], self.config['run_id'])
             if changed:
                 old = {k: self.state.get(k) for k in ('run_id', 'label', 'rows',
-                    'iteration_steps', 'rollout_mode', 'branch_step', 'branch_round')}
+                    'iteration_steps', 'rollout_mode', 'branch_step', 'branch_round', 'continuation_of')}
                 old.update(root=self.config['root'], followed=True)
                 histories = self.state['comparisons']
                 restored = next((h for h in histories if h.get('root') == target['root']
@@ -341,6 +361,7 @@ class Monitor:
             self.state.update({k: target[k] for k in ('run_id', 'label',
                 'iteration_steps', 'rollout_mode', 'branch_step', 'branch_round')})
             self.state.update(active_target=target, target_commit=commit, target_error=None)
+            self.state['continuation_of'] = target.get('continuation_of', [])
             self.save_locked()
 
     def read_rank(self, rank):

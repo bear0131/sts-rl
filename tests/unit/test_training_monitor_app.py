@@ -166,6 +166,7 @@ const last={...old,global_timesteps:20,rollout_round:2,games_per_rollout_global:
  'upper/epochs_completed':1,'upper/kl_stopped':1,
  'upper/policy_loss_epoch_1':.02,'upper/policy_loss_epoch_2':-.001,
  'upper/value_loss_epoch_1':.3,'upper/value_loss_epoch_2':.1,
+ 'upper/policy_loss_pre_update':.000012,
  'upper/value_mc_mse_pre_update':.42,'upper/value_mc_mse_post_update':.05,
  'upper/kl_epoch_1':.003,'upper/kl_epoch_2':.005};
 state={run_id:'current',rollout_mode:'complete_games',branch_step:0,branch_round:0,
@@ -178,7 +179,7 @@ assert.equal($('floor').textContent,'40');
 assert.equal($('winavg').textContent,'最近2个完整轮次 · 1,200局 · 65.00%');
 assert.equal($('chart0').previousElementSibling.children.length,2);
 assert.equal($('chart0').previousElementSibling.children[0].textContent.includes('legacy'),true);
-assert.equal(displayRow(last)['display/upper_policy_loss'],-.001);
+assert.equal(displayRow(last)['display/upper_policy_loss'],.000012);
 assert.equal(displayRow(last)['display/upper_value_loss'],.42);
 assert.equal(displayRow(old)['display/upper_value_loss'],undefined);
 assert.equal(displayRow({'upper/value_loss_epoch_1':.3,'upper/value_loss_epoch_4':.06})['display/upper_value_loss'],undefined);
@@ -206,6 +207,21 @@ assert.equal($('chart0').previousElementSibling.children.length,3);
 assert.ok($('chart0').previousElementSibling.children.some(n=>n.textContent.includes('lambda-reference')));
 assert.equal(datasets().find(s=>s.label==='lambda-reference').x(reference),1); // Explicit rounds, different action counts.
 state.comparisons.pop();
+state.label='COMBAT37';
+state.rows=[last];
+state.continuation_of=[{root:'/old',run_id:'predecessor',through_step:10}];
+state.comparisons.push({root:'/old',run_id:'predecessor',rollout_mode:'complete_games',rows:[first,{...last,global_timesteps:30}]});
+const raw=JSON.stringify(state);
+render();
+assert.equal($('run').textContent,'COMBAT37');
+assert.equal(datasets().length,2);
+assert.equal(datasets().at(-1).rows.length,2);
+assert.equal(datasets().at(-1).x(first),1);
+assert.equal(datasets().at(-1).x(last),2);
+assert.equal($('winavg').textContent,'最近2个完整轮次 · 1,200局 · 65.00%');
+assert.equal(JSON.stringify(state),raw);
+assert.equal(displayRow({'upper/policy_loss_epoch_1':.2})['display/upper_policy_loss'],undefined);
+state.continuation_of=[];
 state.rows=[old];state.comparisons=[];render();
 assert.equal($('win').textContent,'—');assert.equal($('floor').textContent,'—');
 assert.equal($('winavg').textContent,'暂无完整轮次统计');
@@ -413,6 +429,32 @@ def test_active_run_switches_without_mixing_rows_and_survives_restart(tmp_path, 
     with pytest.raises(ValueError):
         restarted.follow_target(dict(active_target, rollout_mode='fixed_steps'), 'invalid')
     assert restarted.config['run_id'] == 'original'
+
+
+def test_continuation_metadata_survives_restart_without_merging_raw_cursors(tmp_path, active_target):
+    from apps.training_monitor import monitor_target
+    config = dict(active_target, ports=[2200], follow_active=True)
+    output = tmp_path / 'state.json'
+    m = Monitor(config, output, 30)
+    m.state['rows'] = [dict(global_timesteps=10, rollout_round=1)]
+    source = dict(root='/original', run_id='original', through_step=10)
+    target = dict(active_target, root='/next', run_id='next', continuation_of=[source])
+    m.follow_target(target, 'next')
+    m.state['ranks'] = [dict(rank=0, cursor=dict(offset=123))]
+    m.save_locked()
+    restored = Monitor(config, output, 30)
+    assert restored.state['continuation_of'] == [source]
+    assert restored.state['rows'] == []
+    assert restored.state['comparisons'][0]['rows'][0]['global_timesteps'] == 10
+    assert restored.state['ranks'][0]['cursor']['offset'] == 123
+    for sources in ([source, source], [dict(source, through_step=-1)],
+                    [dict(source, through_step=True)], [dict(source, root='relative')], 'bad'):
+        with pytest.raises(ValueError):
+            monitor_target(dict(target, continuation_of=sources))
+    with pytest.raises(ValueError):
+        monitor_target(dict(active_target, continuation_of=[source]))
+    restored.follow_target(active_target, 'back')
+    assert restored.state['continuation_of'] == []
 
 
 def test_registry_and_logs_share_commit_and_invalid_registry_keeps_logs_fresh(

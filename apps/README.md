@@ -137,3 +137,10 @@ status支持training、diagnostic、evaluation、paused、completed。固定步�
 服务重启保留已跟随的身份和历史；无效声明/同步失败显示提示并保留已有数据。
 此协议只声明展示对象，不启动/停止任何远端任务；Windows服务仍在原机器，
 远端会话负责在工作流切换时更新声明及日志。本地实现位于origin/codex/monitor-worklog。
+
+显式续训可在monitor中加 `continuation_of` 列表，每项为旧 `root/run_id/through_step`。
+页面只合并缓存中身份与统计模式匹配、且不超过该保存点的历史，按global_timesteps去重，
+当前段覆盖重复点；原始缓存、SSH游标和checkpoint身份不变。不靠run名前缀猜测继承关系。
+重启保留声明；不同实验默认仍分开。缺失旧历史不会伪造，需保留已有history缓存。
+上层policy loss图只读 `upper/policy_loss_pre_update`：全批样本、全部更新前的固定actor。
+没有该字段的旧记录留空；它是归一化优势上的PPO相对目标，接近零不等于停止学习。
