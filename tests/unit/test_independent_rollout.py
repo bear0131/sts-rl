@@ -41,3 +41,26 @@ def test_categorical_sampling_respects_probabilities_and_zero_support():
 def test_diagnostic_rejects_unsupported_configuration(values):
     with pytest.raises(ValueError):
         IndependentRolloutConfig(**values)
+
+
+def test_scheduler_migration_requires_complete_fork_and_resume_keeps_contract():
+    from types import SimpleNamespace
+    from rl.algorithms.independent_rollout import configure
+    model = SimpleNamespace(num_timesteps=100, episode_rollouts_completed=3,
+        episode_rollout_config=dict(games_per_rank=2, censored_games='error'),
+        episode_rollout_stats=dict(rollout=3, completed_games=2, censored_games=0, unfinished_games=0))
+    assert configure(model, None) is None
+    with pytest.raises(ValueError, match='explicit fork'):
+        configure(model, {})
+    model.episode_rollout_stats['unfinished_games'] = 1
+    with pytest.raises(ValueError, match='explicit fork'):
+        configure(model, {}, fork=True)
+    model.episode_rollout_stats['unfinished_games'] = 0
+    config = configure(model, {}, fork=True)
+    assert configure(model, None) == config
+    with pytest.raises(ValueError, match='explicit fork'):
+        configure(model, dict(config, seed=44))
+    assert model.independent_rollout_config == config
+    assert model.independent_rollout_migration['source_round'] == 3
+    with pytest.raises(ValueError, match='diagnostic'):
+        configure(model, dict(config, mode='barrier'), fork=True)
