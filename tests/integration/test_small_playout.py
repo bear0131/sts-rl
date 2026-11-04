@@ -122,6 +122,42 @@ def test_selected_card_embeddings_are_averaged_not_summed(combat_factory):
     assert learner.search.net.logits(bc) == expected
 
 
+def test_zero_state_and_inactive_hidden_channels_ignore_coefficients():
+    learner = SmallPlayoutLearner(seed=19)
+    root = BattleFixture().create(42)
+    inactive = sts.small_playout_features(root)['state'] == 0
+    assert inactive.any() and not inactive.all()
+    with torch.no_grad():
+        learner.policy.fc1.weight[:16].zero_()
+        learner.policy.fc1.bias[:16].fill_(-1.)
+    learner.search.refresh(learner.policy)
+    expected = learner.search.net.logits(root)
+    with torch.no_grad():
+        learner.policy.fc1.weight[:, inactive] = 1e20
+        learner.policy.fc2.weight[:, :16] = -1e20
+    learner.search.refresh(learner.policy)
+    assert learner.search.net.logits(root) == expected
+
+
+@pytest.mark.parametrize('nonce', [0, 1, 73, 2**63 + 7])
+def test_small_and_general_resampling_share_future_rng_without_hidden_cards(combat_factory, nonce):
+    root = combat_factory(['STRIKE_RED', 'DEFEND_RED'] * 5).thick.bc
+    root.apply_custom_state({'hand': ['WILD_STRIKE', 'TRUE_GRIT', 'DEFEND_RED'],
+                             'draw': [], 'discard': [], 'exhaust': []})
+    expected, actual = root.clone(), root.clone()
+    expected.nosl_redeterminize(nonce)
+    sts.small_playout_redeterminize(actual, nonce)
+    for step in range(100):
+        assert actual.to_dict() == expected.to_dict()
+        assert actual.nosl_future_key() == expected.nosl_future_key()
+        if expected.is_battle_over:
+            break
+        actions = expected.legal_actions()
+        action = actions[step % len(actions)]
+        expected.execute(action)
+        actual.execute(action)
+
+
 def test_search_determinism_hidden_state_and_parallel_equivalence():
     learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=32), threads=2)
     bc = BattleFixture().create(42)
