@@ -483,7 +483,32 @@ def test_frozen_rollout_diagnostic_uses_real_collector_without_saving_updates(
     assert result['unisolated_timing']['upper_forward_seconds'] is None
     assert result['optimizer_updates'] == 0 and result['policy_and_adam_unchanged']
     assert result['state_digests'] == expected
+    assert result['semantic_digest_seconds'] >= 0
+    assert set(result['semantic_digests']) == {
+        'environment', 'upper_samples', 'upper_decisions', 'lower_samples', 'rng'}
     assert result['resources']['interval_seconds'] == 1.
     assert result['torch_max_allocated_bytes'] is None  # CPU is not GPU qualification.
     assert read_bundle(source, rank=0, world_size=1) == manifest
     assert len(setup['payloads']) == 4  # Diagnostic never publishes a training update.
+    repeated = list(sys.argv)
+    repeat_output = tmp_path/'rollout-repeat'
+    repeated[repeated.index('--probe-output') + 1] = str(repeat_output)
+    monkeypatch.setattr(sys, 'argv', repeated)
+    unified_candidates()
+    repeat = json.loads((repeat_output/'rank0/rollout.json').read_text())
+    assert repeat['semantic_digests'] == result['semantic_digests']
+    assert repeat['state_digests'] == expected
+    assert len(setup['payloads']) == 4
+    config = json.loads(protocol.read_text())
+    config['diagnostic']['fresh_cohort_offset'] = 1
+    protocol.write_text(json.dumps(config))
+    repeated[repeated.index('--probe-output') + 1] = str(tmp_path/'fresh-cohort')
+    monkeypatch.setattr(sys, 'argv', repeated)
+    unified_candidates()
+    fresh = json.loads((tmp_path/'fresh-cohort/rank0/rollout.json').read_text())
+    assert fresh['cohort']['first_seed'] == 53
+    assert fresh['cohort']['last_seed'] == 55
+    assert fresh['state_digests'] == expected
+    assert fresh['semantic_digests']['environment'] != result['semantic_digests']['environment']
+    assert read_bundle(source, rank=0, world_size=1) == manifest
+    assert len(setup['payloads']) == 4

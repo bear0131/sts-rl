@@ -352,6 +352,21 @@ def measure_frozen_rollout(model, collect, *args, **kwargs):
     if (stats['completed_games'] != model.env.num_envs or stats['censored_games']
             or stats['unfinished_games'] or stats['games'] != model.env.num_envs):
         raise ValueError('frozen rollout requires every natural complete game')
+    # Semantic evidence is outside collector timing. Aggregate game/search
+    # counts alone cannot detect changed action trajectories or supervision.
+    from rl.training.checkpoints import _capture_environment
+    digest_started = time.perf_counter()
+    source_rng = (random.getstate(), np.random.get_state(), torch.get_rng_state(),
+                  torch.cuda.get_rng_state_all() if cuda else None)
+    semantic_digests = dict(
+        environment=state_digest(_capture_environment(model)),
+        upper_samples=state_digest(model._upper_completed),
+        upper_decisions=state_digest([
+            {k: v for k, v in row.items() if k not in ('value', 'log_prob')}
+            for row in model._upper_completed]),
+        lower_samples=state_digest(model._small_playout_samples),
+        rng=state_digest(source_rng))
+    digest_seconds = time.perf_counter() - digest_started
     result = dict(cohort=stats, collector_wall_seconds=seconds,
         upper_samples=len(model._upper_completed), lower_samples=len(model._small_playout_samples),
         search_statistics=dict(model._small_playout_stats),
@@ -360,6 +375,7 @@ def measure_frozen_rollout(model, collect, *args, **kwargs):
         unisolated_timing=dict(warmup_seconds=None, upper_forward_seconds=None, encoding_ipc_seconds=None,
                               reason='Included in collector wall, but not separately instrumented by this path.'),
         policy_and_adam_unchanged=True, state_digests=before, optimizer_updates=0,
+        semantic_digests=semantic_digests, semantic_digest_seconds=digest_seconds,
         resources=monitor.summary,
         torch_max_allocated_bytes=torch.cuda.max_memory_allocated(model.device) if cuda else None,
         torch_max_reserved_bytes=torch.cuda.max_memory_reserved(model.device) if cuda else None,
@@ -394,6 +410,9 @@ def unified_candidates():
         raise ValueError('unknown candidate protocol')
     launch = trainer.build_parser().parse_args(remaining)
     limits = protocol['diagnostic']
+    cohort_offset = limits.get('fresh_cohort_offset', 0)
+    if type(cohort_offset) is not int or cohort_offset < 0:
+        raise ValueError('fresh cohort offset must be a nonnegative integer')
     if (launch.continuous or launch.updates != 1 or launch.total_steps is not None
             or launch.fork_reset_environments or launch.resume_reset_environments
             or launch.training_state_dir is not None or launch.checkpoint_dir is not None
@@ -415,6 +434,25 @@ def unified_candidates():
         return result
     original_collect = trainer.AccumulatingMaskablePPO.collect_rollouts
     def collect(model, *a, **kw):
+        if cohort_offset:
+            previous = model.episode_rollout_stats
+            if (not model._recovery_environment_restored
+                    or previous.get('rollout') != model.episode_rollouts_completed
+                    or not previous.get('games')
+                    or previous.get('completed_games') != previous.get('games')
+                    or previous.get('censored_games') != 0
+                    or previous.get('unfinished_games') != 0
+                    or any(model._upper_pending)
+                    or any(model._nosl_is_az_pending_fights)):
+                raise ValueError('fresh cohort offset requires a fully restored natural boundary')
+            # Diagnostic-only selection of disjoint, previously unused games.
+            # Weights, Adam, RNG and source files remain unchanged. The next
+            # real collector begins these games normally; no partial game is dropped.
+            model.episode_rollout_seed_offset = (
+                getattr(model, 'episode_rollout_seed_offset', 0)
+                + cohort_offset * launch.world_size * launch.n_envs)
+        if not collection_only:
+            return original_collect(model, *a, **kw)
         setup_times['entry_to_collection_seconds'] = time.perf_counter() - entry_started
         ok, result = measure_frozen_rollout(model, original_collect, *a, **kw)
         collection.update(result)
@@ -469,8 +507,8 @@ def unified_candidates():
             with resources:
                 from contextlib import ExitStack
                 with ExitStack() as stack:
+                    stack.enter_context(patch.object(trainer.AccumulatingMaskablePPO, 'collect_rollouts', collect))
                     if collection_only:
-                        stack.enter_context(patch.object(trainer.AccumulatingMaskablePPO, 'collect_rollouts', collect))
                         stack.enter_context(patch.object(trainer, 'restore_learner', restore))
                     stack.enter_context(patch.object(trainer, 'update_upper', diagnose))
                     stack.enter_context(patch.object(

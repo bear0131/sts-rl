@@ -1117,7 +1117,7 @@
       "adopted_native_sha256": "54dfeb5385f9f2dfc609f17b24acfe96c8c48fa298cb3a9296bf25901fbf11ef"
     },
     "rollout_200s_and_large_critic": {
-      "status": "Source167 stopped exit0 and protected; isolated CPU build complete; semantic/fixed comparisons running",
+      "status": "Source167 protected; failed native candidates retired; 131072x4 nominated, fresh-cohort confirmation registered",
       "intent": "Continue current COMBAT37; target max-rank full1920-game rollout <200s, test critic effective batches >32768 with adjusted epochs/LR. Pauses for bounded tests authorized.",
       "source": {
         "round": 167,
@@ -1245,7 +1245,39 @@
         "interpretation": "Whole-game heldout target and MC MSE pre/post, paired game uncertainty, actual optimizer steps/sample uses/update time/resources; keep all arms. Larger batch with same epochs reduces Adam steps; e8 checks compensating reuse, LR2 separately. Rank by heldout target MSE, require >=3% and paired95% CI below0 to nominate, MC no worse by >1%. Selection is exploratory; use another fresh cohort for nominated vscontrol confirmation before deployment. Online evidence separate."
       },
       "maximum_first_pause_seconds": 7200,
-      "resume": "After bounded diagnosis restore original same full state and continuous identity unless candidate semantics and two production rounds have passed. Preserve original source/native/protected checkpoints; failure diagnosis before any restart; no automatic retrial."
+      "resume": "After bounded diagnosis restore original same full state and continuous identity unless candidate semantics and two production rounds have passed. Preserve original source/native/protected checkpoints; failure diagnosis before any restart; no automatic retrial.",
+      "critic_confirmation": {
+        "protocol": "unified-upper-candidate-screen-v1",
+        "seed": 20261105,
+        "diagnostic": {
+          "games_per_rank": 480,
+          "world_size": 4,
+          "holdout_games_per_rank": 96,
+          "max_probe_decisions_per_split_per_rank": 40000,
+          "maximum_wall_seconds": 1200,
+          "full_critic_mse": true,
+          "profile_updates": true,
+          "fresh_cohort_offset": 1
+        },
+        "arms": [
+          {
+            "id": "control",
+            "changes": {}
+          },
+          {
+            "id": "batch131072_e4",
+            "changes": {
+              "critic_effective_batch_size": 131072
+            }
+          },
+          {
+            "id": "control_repeat",
+            "changes": {}
+          }
+        ],
+        "process_timeout_seconds": 1500,
+        "interpretation": "Prespecified confirmation of sole nominated candidate; same frozen167 model/Adam, next disjoint1920-game seed interval, 384 whole-game holdout. Same >=3% target MSE reduction, paired game95%CI upper<0, MC regression<=1% gate. No online-training efficacy claim."
+      }
     }
   },
   "monitor": {
