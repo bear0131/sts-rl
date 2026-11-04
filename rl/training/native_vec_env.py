@@ -1,5 +1,6 @@
 """Resident Python environments with a GIL-free C++ search thread pool."""
 from copy import deepcopy
+from contextlib import contextmanager
 import time
 import gymnasium as gym
 import numpy as np
@@ -106,6 +107,26 @@ class NativeSearchVecEnv(DummyVecEnv):
         for i, action in actions.items():
             self.actions[i] = action
         return self._step_indices(indices, subset=True)
+
+    @contextmanager
+    def omit_unused_combat_value_observations(self):
+        """Independent small-policy collection has no combat-value consumer.
+
+        Keep ordinary observations and terminal labels, but avoid generating
+        legacy NOSL auxiliary observations. Restore even on callback failure;
+        ordinary NOSL and strategic outer-return callers keep their contract.
+        """
+        bases = [env.unwrapped for env in self.envs]
+        if any(base.outer_return_context for base in bases):
+            raise ValueError('outer-return collection requires combat value observations')
+        previous = [base._emit_nosl_value_observations for base in bases]
+        try:
+            for base in bases:
+                base._emit_nosl_value_observations = False
+            yield
+        finally:
+            for base, enabled in zip(bases, previous, strict=True):
+                base._emit_nosl_value_observations = enabled
 
     def _step_indices(self, indices, *, subset=False):
         cohort = getattr(self, 'episode_rollout_active', None)

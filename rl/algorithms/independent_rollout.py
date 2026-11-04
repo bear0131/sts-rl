@@ -137,7 +137,8 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                  selection_prefix_decisions=0, forced_end_turn_roots=0)
     model._independent_rollout_progress = stats
 
-    with SmallPlayoutStream(vec.small_playout_batch, threads=cfg.threads) as stream:
+    with (vec.omit_unused_combat_value_observations(),
+          SmallPlayoutStream(vec.small_playout_batch, threads=cfg.threads) as stream):
         while vec.episode_rollout_active.any():
             maximum = int(vec.episode_rollout_action_counts.max(initial=0))
             if (maximum >= session['config'].max_steps

@@ -73,3 +73,52 @@ def test_thin_metadata_omission_keeps_boundary_terminal_and_parent_state(
                 actual.close()
         expected_parent.close()
         actual_parent.close()
+
+
+def test_independent_scope_omits_only_unused_value_observations(
+        short_combat_env_type, monkeypatch):
+    from rl.training.native_vec_env import NativeSearchVecEnv
+
+    expected = short_combat_env_type(global_map_view=True, combat_action_contract='native-v1')
+    vec = NativeSearchVecEnv(
+        [lambda: short_combat_env_type(global_map_view=True, combat_action_contract='native-v1')], threads=1)
+    actual = vec.envs[0].unwrapped
+    omitted = {'nosl_value_boundary_observation', 'nosl_value_terminal_observation',
+               'nosl_value_terminal_max_hp'}
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError('unused combat value observation was still computed')
+
+    try:
+        np.testing.assert_equal(expected.reset(seed=123), actual.reset(seed=123))
+        saw_boundary = saw_terminal = False
+        with monkeypatch.context() as patch, vec.omit_unused_combat_value_observations():
+            patch.setattr(actual.thick, 'preview_native_end_turn_boundary', forbidden)
+            patch.setattr(actual, '_native_leaf_observation', forbidden)
+            for index in range(64):
+                legal = expected.native_combat_actions()
+                choices = [int(a) for a in legal if int(a) != (4 << 29)]
+                action = (4 << 29) if index == 0 else int((choices or legal)[0])
+                first, second = expected.step_native_combat(action), actual.step_native_combat(action)
+                np.testing.assert_equal(first[:4], second[:4])
+                assert not omitted.intersection(second[4])
+                np.testing.assert_equal({k: v for k, v in first[4].items() if k not in omitted}, second[4])
+                saw_boundary |= 'nosl_value_boundary_observation' in first[4]
+                saw_terminal |= 'nosl_value_terminal_target' in first[4]
+                if saw_terminal:
+                    assert 'nosl_value_terminal_observation' in first[4]
+                    assert 'nosl_value_terminal_outcome' in second[4]
+                    break
+        assert saw_boundary and saw_terminal
+        np.testing.assert_equal(expected.export_training_state(), actual.export_training_state())
+        # A failed collector must not disable subsequent ordinary NOSL calls.
+        with pytest.raises(RuntimeError, match='interrupted collection'):
+            with vec.omit_unused_combat_value_observations():
+                raise RuntimeError('interrupted collection')
+        np.testing.assert_equal(expected.reset(seed=123), actual.reset(seed=123))
+        first, second = expected.step_native_combat(4 << 29), actual.step_native_combat(4 << 29)
+        assert 'nosl_value_boundary_observation' in second[4]
+        np.testing.assert_equal(first, second)
+    finally:
+        expected.close()
+        vec.close()

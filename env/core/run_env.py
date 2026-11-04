@@ -431,6 +431,9 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_cpp_state_nonce = 0
         self._nosl_cpp_decision_index = 0
         self._nosl_value_capture_pending = False
+        # Operational collection scope, not checkpointed game state. Ordinary
+        # NOSL callers retain boundary/terminal value observations by default.
+        self._emit_nosl_value_observations = True
         self._episode_backend_seed = None
         self._episode_action_journal = []
 
@@ -876,7 +879,7 @@ class SlayTheSpireEnv(gym.Env):
         if self.outer_return_context and (not self.outer_return_objective or self.outer_return_monte_carlo):
             self._capture_nosl_context()
         before = (self.thick.gc.act, self.thick.gc.floor_num) if self.outer_return_context else None
-        capture_nosl_value = self._nosl_value_capture_pending
+        capture_nosl_value = self._nosl_value_capture_pending and self._emit_nosl_value_observations
         self._nosl_value_capture_pending = False
         boundary_observation = None
         if capture_nosl_value and not self.outer_return_objective and semantic == ga.combat(actions.END_TURN):
@@ -904,6 +907,7 @@ class SlayTheSpireEnv(gym.Env):
             self._capture_nosl_context()
         before = (self.thick.gc.act, self.thick.gc.floor_num) if self.outer_return_context else None
         self._nosl_value_capture_pending = False
+        capture_nosl_value = self._emit_nosl_value_observations
         step_native = getattr(self.thick, "step_native_combat", None)
         if step_native is None:
             raise RuntimeError("native combat step requires the simulator backend")
@@ -911,7 +915,7 @@ class SlayTheSpireEnv(gym.Env):
         preview_boundary = getattr(
             self.thick, "preview_native_end_turn_boundary", None
         )
-        if preview_boundary is not None and not self.outer_return_objective:
+        if capture_nosl_value and preview_boundary is not None and not self.outer_return_objective:
             raw_boundary = preview_boundary(int(action_bits))
             if raw_boundary is not None:
                 boundary_observation = self._native_leaf_observation(
@@ -921,7 +925,8 @@ class SlayTheSpireEnv(gym.Env):
         result = step_native(int(action_bits))
         self._invalidate_backend_cache()
         return self._with_nosl_value_observations(
-            result, boundary_observation=boundary_observation, include_terminal=True, before=before
+            result, boundary_observation=boundary_observation,
+            include_terminal=capture_nosl_value, before=before
         )
 
     def _with_nosl_value_observations(

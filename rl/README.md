@@ -31,6 +31,11 @@
 交叉熵更新、逐轮报告和保存恢复，并通过 `small-playout` 战斗策略接入整局上层 PPO。
 CPU/CUDA生命周期测试覆盖两轮更新、保存及恢复后两轮；四机生产验收记录在worklog。
 
+独立完整局采集只使用上层战略目标与small-playout搜索监督，不消费旧NOSL的
+回合边界/战斗终局value观测。该采集作用域省去这些辅助观测的预览、编码和复制，
+保留普通Gym观测及终局target/outcome；退出或异常时恢复默认行为。普通NOSL和
+outer-return路径继续提供原有value观测，此优化没有CLI或checkpoint开关。
+
 `sts1-small-playout-v1` 是纯 policy，无 value 头：32→64 ReLU→32 状态表示，
 24→32 动作投影与 24→1 线性项，加每动作 key 的32维向量和bias。
 StS1共785个key（结束/跳过/空选择3个、每卡基础/升级2个、药水），总30889参数，

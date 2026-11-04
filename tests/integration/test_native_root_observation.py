@@ -150,18 +150,19 @@ def native_wrapper_factories():
     from rl.training.environments import CheckpointObservationCompat, TrainingStateWrapper
     from rl.training.reward import ShapedRewardWrapper
 
-    def factory(index):
+    def factory(index, *, outer_return_context):
         def make():
             base = SlayTheSpireEnv(combat_action_contract='autoregressive-v2',
                  card_language=True, global_map_view=True, deck_size_observation=True,
-                 neow_observation=True, event_option_observation=True, outer_return_context=True,
+                 neow_observation=True, event_option_observation=True, outer_return_context=outer_return_context,
                  combat_value_objective='combat-outcome-means-v1')
             expected = gym.spaces.Dict({key: space for key, space in base.observation_space.spaces.items()
                                        if key != 'post_enemy_turn_boundary'})
             env = gym.wrappers.TimeLimit(ShapedRewardWrapper(base), max_episode_steps=41+index)
             return TrainingStateWrapper(CheckpointObservationCompat(env, expected))
         return make
-    return lambda count: [factory(i) for i in range(count)]
+    return lambda count, outer_return_context=True: [
+        factory(i, outer_return_context=outer_return_context) for i in range(count)]
 
 
 def test_vector_wrappers_autoreset_labels_journals_and_restore(monkeypatch, native_wrapper_factories):
@@ -276,7 +277,10 @@ def test_unknown_observation_wrapper_keeps_serial_path():
 
 
 @pytest.mark.parametrize('threads', [1, 4])
-def test_independent_games_match_recorded_transitions_and_samples(native_wrapper_factories, threads):
+@pytest.mark.parametrize('omit_value_observations', [False, True])
+def test_independent_games_match_recorded_transitions_and_samples(
+        native_wrapper_factories, threads, omit_value_observations):
+    from contextlib import nullcontext
     from env.search.small_playout import SmallPlayoutStream
     from rl.training.native_vec_env import NativeSearchVecEnv
     from rl.algorithms.small_playout import SmallPlayoutLearner
@@ -284,8 +288,9 @@ def test_independent_games_match_recorded_transitions_and_samples(native_wrapper
     from env.core import vocab as V
     pair = export_online_search_pair(SmallPlayoutLearner(seed=19).policy, collect_samples=True)
     pair.update(common_simulations=8, elite_simulations=8, boss_simulations=8, playout_depth=8)
-    reference = NativeSearchVecEnv(native_wrapper_factories(4), threads=threads)
-    candidate = NativeSearchVecEnv(native_wrapper_factories(4), threads=1)
+    factories = native_wrapper_factories(4, outer_return_context=not omit_value_observations)
+    reference = NativeSearchVecEnv(factories, threads=threads)
+    candidate = NativeSearchVecEnv(factories, threads=1)
     history = [[] for _ in range(4)]
     rng = np.random.default_rng(9001000)
     try:
@@ -294,6 +299,10 @@ def test_independent_games_match_recorded_transitions_and_samples(native_wrapper
             vec.configure_small_playout(pair)
         obs = reference.reset()
         assert_nested_equal(obs, candidate.reset())
+        if not omit_value_observations:
+            with pytest.raises(ValueError, match='outer-return'):
+                with candidate.omit_unused_combat_value_observations():
+                    pass
         for step in range(128):
             masks = reference.env_method('action_masks')
             actions = np.array([rng.choice(np.flatnonzero(m)) for m in masks])
@@ -308,7 +317,8 @@ def test_independent_games_match_recorded_transitions_and_samples(native_wrapper
                     ({k: v[i].copy() for k, v in obs.items()}, rewards[i], dones[i], infos[i])))
         steps = [0]*4
         ready, progressed = set(range(4)), set()
-        with SmallPlayoutStream(candidate.small_playout_batch, threads=threads) as stream:
+        scope = candidate.omit_unused_combat_value_observations() if omit_value_observations else nullcontext()
+        with scope, SmallPlayoutStream(candidate.small_playout_batch, threads=threads) as stream:
             while ready or stream.pending:
                 actions, calls = {}, {}
                 for i in sorted(ready, reverse=True):
@@ -333,7 +343,13 @@ def test_independent_games_match_recorded_transitions_and_samples(native_wrapper
                 obs, rewards, dones, infos = candidate.step_subset(actions)
                 for row, i in enumerate(rows):
                     actual = ({k: v[row] for k, v in obs.items()}, rewards[row], dones[row], infos[row])
-                    assert_nested_equal(actual, history[i][steps[i]][3])
+                    expected = history[i][steps[i]][3]
+                    if omit_value_observations:
+                        omitted = {'nosl_value_boundary_observation', 'nosl_value_terminal_observation',
+                                   'nosl_value_terminal_max_hp'}
+                        assert not omitted.intersection(infos[row])
+                        expected = (*expected[:3], {k: v for k, v in expected[3].items() if k not in omitted})
+                    assert_nested_equal(actual, expected)
                     steps[i] += 1
                     if steps[i] < 128:
                         ready.add(i)
