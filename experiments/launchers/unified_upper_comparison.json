@@ -1729,8 +1729,8 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "成熟167/1920局四机对照完成：161.79→159.14秒，语义核验通过但未达150秒。已从135/global92375405保护代普通恢复同一run/Adam/RNG与原超参，正在持续训练并等待恢复后的完整保存验收。",
-    "updated_at": "2026-11-05T07:12:54.906166+08:00"
+    "note": "原四机同一大critic对照持续训练；135普通恢复后136/137完整保存与原配置核验通过。成熟167/1920局速度对照161.79→159.14秒（6730原子操作/s），仍未达150秒；提速实验继续在25核机隔离进行。",
+    "updated_at": "2026-11-05T07:19:02.858897+08:00"
   },
   "large_critic_fresh_comparison": {
     "status": "continuous fresh training directly started on the original four hosts at user request; no staged qualification",
