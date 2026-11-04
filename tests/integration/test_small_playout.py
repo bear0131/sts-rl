@@ -158,6 +158,54 @@ def test_small_and_general_resampling_share_future_rng_without_hidden_cards(comb
         actual.execute(action)
 
 
+@pytest.mark.parametrize('threads', [1, 4])
+def test_parallel_search_callbacks_preserve_results_and_release_failed_batch(threads):
+    learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=16), threads=threads)
+    roots = [BattleFixture().create(seed) for seed in (42, 73, 81)]
+    configs = [learner.search.config.native()] * len(roots)
+    nonces = [7, 9, 11]
+    pool, net = learner.search.pool, learner.search.net
+    expected = sts.small_playout_search_batch(pool, net, roots, configs, nonces)
+    started, completed = [], {}
+    def ready(index, action):
+        assert index not in completed
+        completed[index] = action
+        # Roots were copied before callbacks start. Advancing the real game
+        # cannot alter a different search's retained snapshot.
+        roots[index].execute(sts.Action(action))
+    actual = sts.small_playout_search_batch(pool, net, roots, configs, nonces,
+        on_ready=ready, on_start=lambda: started.append(True))
+    assert started == [True]
+    assert completed == {i: result['action'] for i, result in enumerate(expected)}
+    for left, right in zip(expected, actual, strict=True):
+        for key in left:
+            if key == 'stats':
+                assert {k:v for k,v in left[key].items() if k != 'search_seconds'} == {
+                    k:v for k,v in right[key].items() if k != 'search_seconds'}
+            else:
+                np.testing.assert_equal(left[key], right[key])
+    roots = [BattleFixture().create(seed) for seed in (42, 73, 81)]
+    def fail(index, action):
+        if index == 0:
+            raise ValueError('callback diagnostic failure')
+    with pytest.raises(ValueError, match='callback diagnostic failure'):
+        sts.small_playout_search_batch(pool, net, roots, configs, nonces, on_ready=fail)
+    repeated = sts.small_playout_search_batch(pool, net, roots, configs, nonces)
+    assert [r['visits'] for r in repeated] == [r['visits'] for r in expected]
+    assert [r['values'] for r in repeated] == [r['values'] for r in expected]
+
+
+def test_search_can_finish_while_ordinary_step_callback_waits():
+    from threading import Event
+    learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=16), threads=2)
+    done = Event()
+    def ordinary():
+        assert done.wait(5), 'search worker must progress while ordinary callback releases GIL'
+    sts.small_playout_search_batch(learner.search.pool, learner.search.net,
+        [BattleFixture().create(42)], [learner.search.config.native()], [7],
+        on_start=ordinary, on_ready=lambda *args: done.set())
+
+
 def test_search_determinism_hidden_state_and_parallel_equivalence():
     learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=32), threads=2)
     bc = BattleFixture().create(42)

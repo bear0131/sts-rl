@@ -23,7 +23,7 @@ class SmallPlayoutBatch:
         room = env.thick.gc.cur_room
         return 'boss' if is_boss_room(room) else 'elite' if 'ELITE' in enum_name(room) else 'common'
 
-    def decisions(self, calls):
+    def decisions(self, calls, *, pre_step=None, start_steps=None):
         out, jobs = {}, []
         for index, (args, kw) in calls.items():
             if args or set(kw) != {'state_nonce'}:
@@ -59,8 +59,24 @@ class SmallPlayoutBatch:
         # A public, cheap cost hint avoids sending the longest bosses last.
         jobs.sort(key=lambda j: j[2].simulations, reverse=True)
         if jobs:
+            callbacks = {}
+            if pre_step is not None:
+                # Snapshot only inline decisions: worker callbacks can finish
+                # before the ordinary-step task acquires the GIL.
+                inline = tuple(out.items())
+                def started():
+                    if start_steps is not None:
+                        start_steps()
+                    for index, decision in inline:
+                        pre_step(index, decision['action'])
+                def ready(row, bits):
+                    index = jobs[row][0]
+                    out[index] = self.envs[index]._apply_rulebase_turn_decision(bits, {})
+                    pre_step(index, out[index]['action'])
+                callbacks = dict(on_ready=ready, on_start=started)
             results = sts.small_playout_search_batch(self.pool, self.net,
-                [self.envs[j[0]].thick.bc for j in jobs], [j[2] for j in jobs], [j[3] for j in jobs], self.prior)
+                [self.envs[j[0]].thick.bc for j in jobs], [j[2] for j in jobs], [j[3] for j in jobs], self.prior,
+                **callbacks)
             for (index, tier, _, _), result in zip(jobs, results, strict=True):
                 if self.pair.get('online') and len(result['action_bits']) > 1:
                     self.samples.append({key: np.asarray(result[key], dtype=dtype) for key, dtype in
@@ -76,7 +92,8 @@ class SmallPlayoutBatch:
                         self.stats[name] += value
                     else:
                         self.stats[name] = self.stats.get(name, 0)+value
-                out[index] = self.envs[index]._apply_rulebase_turn_decision(result['action'], {})
+                if index not in out:
+                    out[index] = self.envs[index]._apply_rulebase_turn_decision(result['action'], {})
         return {index: out[index] for index in calls}
 
     def scalar_stats(self):
