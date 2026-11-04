@@ -1117,7 +1117,7 @@
       "adopted_native_sha256": "54dfeb5385f9f2dfc609f17b24acfe96c8c48fa298cb3a9296bf25901fbf11ef"
     },
     "rollout_200s_and_large_critic": {
-      "status": "Independent critic131072x4 confirmation passed; original training config retained, native allocation/sparsity candidate under test",
+      "status": "CPU scalar/array candidate rejected on full collection; overlap native7af17 with75 passing Linux tests is collecting frozen167, resume original continuous before10:52:36Z",
       "intent": "Continue current COMBAT37; target max-rank full1920-game rollout <200s, test critic effective batches >32768 with adjusted epochs/LR. Pauses for bounded tests authorized.",
       "source": {
         "round": 167,
@@ -1176,7 +1176,42 @@
         "collection_internal_timeout_seconds": 415,
         "collection_process_timeout_seconds": 540,
         "resource_interval_seconds": 1,
-        "acceptance": "Same source/1920 natural games/no censor, actions/actual samples/search counts/state hashes compared; original repeat drift <=5%. Actual max-rank collector <200s on two complete rounds required to claim target reached. A faster partial result is not success."
+        "acceptance": "Same source/1920 natural games/no censor, actions/actual samples/search counts/state hashes compared; original repeat drift <=5%. Actual max-rank collector <200s on two complete rounds required to claim target reached. A faster partial result is not success.",
+        "completed_scalar_array_comparison": {
+          "native_sha256": "967e38f730857075af5efaf88fad28f285257edb773d2f4d85e50e2ae8d433f2",
+          "baseline_seconds": [
+            301.599162,
+            301.617037,
+            287.618491,
+            288.649622
+          ],
+          "candidate_seconds": [
+            304.722735,
+            305.040667,
+            291.215002,
+            290.53149
+          ],
+          "baseline_repeat_seconds": [
+            299.639716,
+            306.333278,
+            289.593809,
+            299.259571
+          ],
+          "all_semantic_hashes_equal": true,
+          "all_nontiming_counts_equal": true,
+          "accepted": false,
+          "evidence": "runs/local/takeover/rollouts-full.json"
+        },
+        "overlap_candidate": {
+          "commit": "8569cbdb",
+          "root": "/root/rollout-overlap-20261104",
+          "native_sha256": "7af1724a08721f46149deb2383c3fbddb5fa70a325c1cb8c54012103c5b6f1e4",
+          "linux_semantic_tests": 75,
+          "collection_name": "r200-rollout-overlap-s167",
+          "maximum_process_seconds": 540,
+          "source_round": 167,
+          "production_adopted": false
+        }
       },
       "critic": {
         "protocol": "unified-upper-candidate-screen-v1",
