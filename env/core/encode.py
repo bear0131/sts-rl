@@ -1080,7 +1080,7 @@ def _encode_global(o, canon):
     _encode_card_sequence(o, "deck", deck)
 
 
-def _encode_options(o, canon):
+def _encode_options(o, canon, *, _map_observation=None):
     """Fill phase-gated decision-context groups from canon['options'] /
     canon['global']['boss_relics']. Each group is only meaningful in its phase;
     encode() leaves the rest PAD."""
@@ -1144,6 +1144,12 @@ def _encode_options(o, canon):
             o["select_card_upgrades"][k] = up / UPGRADE_SCALE
             o["select_native_indices"][k] = k + 1
     elif phase == "map":
+        if _map_observation is not None:
+            # Internal read-only RunMap projections have already passed this
+            # same codec. Copy into this observation's independently owned rows.
+            for key, value in _map_observation.items():
+                o[key][...] = value
+            return
         nodes = opts.get("nodes", [])
         _require_capacity("options.nodes", nodes,
                           MAP_COLS if "map_full_rooms" in o else MAP_EDGES)
@@ -1273,11 +1279,14 @@ def encode(
     canon, *, global_map_view=False, card_language=False,
     combat_language=False, deck_size_observation=False, neow_observation=False,
     event_option_observation=False, interactive_reasoning=False, upper_public_context=False,
+    _map_observation=None,
 ):
     """obs canonical dict -> obs dict (numpy arrays matching obs_space()).
 
     `canon` may carry only the combat block (a normalize_sim result), only the
-    overworld block, or the full assembled dict — absent groups encode to PAD."""
+    overworld block, or the full assembled dict — absent groups encode to PAD.
+    _map_observation is an internal validated projection from a read-only
+    simulator RunMap; external canonical observations always use the codec."""
     if canon.get("strict_complete"):
         _validate_complete_canonical(canon)
     o = _empty(
@@ -1295,11 +1304,12 @@ def encode(
     o["pending_potion_slot"][0] = int(canon.get("pending_potion_slot", 0))
     _encode_combat(o, canon)
     _encode_global(o, canon)
-    _encode_options(o, canon)
+    _encode_options(o, canon, _map_observation=_map_observation)
     if upper_public_context and canon.get('phase') not in ('combat', 'map', 'none', 'terminal'):
         if 'public_map' not in canon:
             raise ValueError('upper-public-context-v1 requires the current public map on every upper screen')
-        _encode_options(o, dict(phase='map', options=canon['public_map']))
+        _encode_options(o, dict(phase='map', options=canon['public_map']),
+                        _map_observation=_map_observation)
     if upper_public_context:
         if canon.get('public_event'):
             o['event_id'][0] = _idx(V.EVENT_VOCAB_INDEX, canon['public_event'])

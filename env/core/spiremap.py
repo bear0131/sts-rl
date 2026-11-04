@@ -137,3 +137,34 @@ class RunMap:
 
     def __repr__(self):
         return repr(self._m)
+
+    def encoded_view(self, current_x, current_y, *, next_columns, global_map_view):
+        """One validated projection, reused only for identical live map inputs.
+
+        The native topology is immutable. Legal columns are supplied afresh by
+        GameContext, including Wing Boots, and their order affects the preview.
+        Returned arrays are internal read-only templates; encode copies them.
+        """
+        from . import encode
+
+        columns = tuple(next_columns)
+        key = current_x, current_y, columns, global_map_view
+        cached = getattr(self, '_encoded_view', None)
+        if cached is None or cached[0] is not self._m or cached[1] != key:
+            options = dict(nodes=[(x, 'BOSS' if current_y == MAX_Y else
+                                  self.room_type(x, max(0, current_y + 1)))
+                                 for x in columns])
+            if global_map_view:
+                options['full_map'] = self.full_view(
+                    current_x, current_y, next_columns=columns)
+            empty = encode._empty(global_map_view=global_map_view)
+            fields = {name: value for name, value in empty.items()
+                      if name.startswith('map_')}
+            # Preserve one codec and all its validation, including complete
+            # candidates, the frozen three-token preview and boss identity.
+            encode._encode_options(fields, dict(phase='map', options=options))
+            for value in fields.values():
+                value.setflags(write=False)
+            cached = self._m, key, fields
+            self._encoded_view = cached
+        return cached[2]

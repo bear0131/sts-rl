@@ -2780,8 +2780,10 @@ class SlayTheSpireEnv(gym.Env):
             cap = int(sel.get("pick_max", 0))
             sel["pick_remaining"] = max(0, cap - len(self._multi))
             canon["options"]["select"] = sel
+        map_projection = getattr(self.thick, 'encoding_map_observation', None)
         obs = encode.encode(
             canon,
+            _map_observation=map_projection(canon) if map_projection is not None else None,
             global_map_view=self._global_map_view,
             upper_public_context=self._upper_public_context,
             card_language=self._card_language,

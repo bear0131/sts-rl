@@ -298,6 +298,15 @@ class SimGameEnv:
         """Same tensor inputs, without unused differential-snapshot inventory."""
         return self._observation_canonical(for_encoding=True)
 
+    def encoding_map_observation(self, canon):
+        """Reuse only the current read-only map's validated numeric projection."""
+        phase = canon.get('phase')
+        if phase != 'map' and (not self._upper_public_context
+                              or phase in ('combat', 'none', 'terminal')):
+            return None
+        return self.rmap.encoded_view(self.gc.cur_map_node_x, self.gc.cur_map_node_y,
+            next_columns=self.gc.legal_map_options(), global_map_view=self._global_map_view)
+
     def _observation_canonical(self, *, for_encoding):
         d = self._canonical(for_encoding=for_encoding)
         d["global"] = normalize_sim_global(self.gc, combat=self.bc is not None,

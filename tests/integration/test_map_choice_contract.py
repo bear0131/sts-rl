@@ -48,7 +48,7 @@ def test_native_wing_boots_map_actions(game_context_executable, charges, ascensi
 
 
 @pytest.mark.parametrize('charges', [0, 1, 2, 3])
-def test_wing_boots_real_map_mask_full_graph_and_restored_charges(charges):
+def test_wing_boots_real_map_mask_full_graph_and_restored_charges(charges, monkeypatch):
     env = SlayTheSpireEnv(global_map_view=True)
     try:
         env.reset(seed=42)
@@ -77,6 +77,17 @@ def test_wing_boots_real_map_mask_full_graph_and_restored_charges(charges):
         assert [(n['x'], n['y']) for n in graph if n['choice']] == [(c, y + 1) for c in expected]
         assert next(n['children'] for n in graph if n['current']) == normal
         assert env.observation_space.contains(env._obs())
+        # Charges can change at the same coordinate. No cached projection may
+        # retain assisted choices after the last charge is consumed.
+        for count in (charges, 1, 0, charges):
+            gc.set_relic_state([{'id': 'WingedGreaves', 'counter': count}])
+            env._invalidate_backend_cache()
+            actual = env._obs()
+            with monkeypatch.context() as patch:
+                patch.setattr(env.thick, 'encoding_map_observation', lambda canon: None)
+                reference = env._obs()
+            for key in actual:
+                assert actual[key].tobytes() == reference[key].tobytes(), (count, key)
         assert [c for c in range(7) if env.action_masks()[A.seg_base('MAP_NODE') + c]] == expected
         if charges:
             env.step(A.seg_base('MAP_NODE') + off_path)
@@ -92,6 +103,39 @@ def test_wing_boots_real_map_mask_full_graph_and_restored_charges(charges):
             assert (gc.cur_map_node_x, gc.cur_map_node_y) == (x, y)
     finally:
         env.close()
+
+
+def test_map_projection_replacement_schema_order_and_output_ownership():
+    import copy
+    from env.core.spiremap import RunMap
+
+    rmap = RunMap(42, 0, 1)
+    rmap.encoded_view(-1, -1, next_columns=rmap.reachable(-1, -1), global_map_view=True)
+    branch = copy.copy(rmap)
+    for owner, replacement in ((rmap, None), (branch, None),
+                               (branch, RunMap(43, 0, 2)), (rmap, None)):
+        if replacement is not None:
+            owner._m = replacement._m
+        first = owner.reachable(-1, -1)
+        last = next(x for x in range(7) if owner.room_type(x, 14) == 'REST')
+        for x, y, columns, full in (
+                (-1, -1, first, True), (-1, -1, first[::-1], True),
+                (-1, -1, first[:3], False), (-1, -1, first, True),
+                (last, 14, [last], True), (-1, -1, first, True)):
+            options = dict(nodes=[(c, 'BOSS' if y == 14 else owner.room_type(c, 0))
+                                  for c in columns])
+            if full:
+                options['full_map'] = owner.full_view(x, y, next_columns=columns)
+            expected = encode.encode(dict(phase='map', options=options), global_map_view=full)
+            for _ in range(2):
+                projection = owner.encoded_view(x, y, next_columns=columns, global_map_view=full)
+                actual = encode.encode(dict(phase='map', options=options), global_map_view=full,
+                                       _map_observation=projection)
+                for key in expected:
+                    assert actual[key].tobytes() == expected[key].tobytes(), key
+                for key in projection:
+                    assert not projection[key].flags.writeable
+                    actual[key].fill(0)
 
 
 @pytest.mark.parametrize('full_map', [False, True])

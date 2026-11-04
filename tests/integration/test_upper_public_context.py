@@ -67,6 +67,11 @@ def test_all_upper_screens_preserve_context_and_network_reads_map(monkeypatch, p
             return c
         monkeypatch.setattr(game_env, 'normalize_sim_overworld', screen)
         obs = env._obs()
+        with monkeypatch.context() as patch:
+            patch.setattr(env.thick, 'encoding_map_observation', lambda canon: None)
+            uncached = env._obs()
+        for key in obs:
+            assert obs[key].tobytes() == uncached[key].tobytes(), key
         assert env.observation_space.contains(obs)
         assert obs['map_full_rooms'].any() and obs['map_full_features'][:, 4].any()
         reference = encode.encode(dict(phase='map', options=env.thick.public_map_context()), global_map_view=True)
@@ -88,7 +93,7 @@ def test_all_upper_screens_preserve_context_and_network_reads_map(monkeypatch, p
         env.close()
 
 
-def test_real_upper_route_context_and_exact_environment_restore():
+def test_real_upper_route_context_and_exact_environment_restore(monkeypatch):
     env = SlayTheSpireEnv(global_map_view=True, upper_public_context=True, card_language=True,
         combat_action_contract='autoregressive-v2', deck_size_observation=True,
         neow_observation=True, event_option_observation=True)
@@ -103,6 +108,11 @@ def test_real_upper_route_context_and_exact_environment_restore():
         checked_native = False
         for step in range(150):
             obs = env._obs(); phase = env._phase(); phases.add(phase)
+            with monkeypatch.context() as patch:
+                patch.setattr(env.thick, 'encoding_map_observation', lambda canon: None)
+                uncached = env._obs()
+            for key in obs:
+                assert obs[key].tobytes() == uncached[key].tobytes(), (step, key)
             if phase != 'combat':
                 assert obs['map_full_rooms'].any(), phase
             elif not checked_native:

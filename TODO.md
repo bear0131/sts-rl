@@ -556,9 +556,11 @@
 
 | BRIDGE-FIXTURE-MONSTER-STATE | 已在未改动版本复现，待修 | `tests/integration/test_combat_dynamic_exhaust.py::test_real_used_medical_kit_card_is_not_rejected_or_reset`使用的`tests/bridge_fixtures.py::real_combat_state`缺少当前`bridge/schemas/combat_state.py::_monster_real`要求的五个simulator状态字段，进入原生搜索前失败。验收为按真实export契约补齐共享fixture并让原断言通过，不放宽生产schema或skip；见worklog/2026-11-05.md#rollout-150s复用状态哈希牌堆缓冲并避免重复状态扫描。 |
 
-| ROLLOUT-150S | 进行中 | 现役1920自然局四机rollout≤150秒；不改训练与搜索统计语义，优先减少CPU计算。显式构建语义对照、生产长度计时/资源与env原子操作每秒；按用户最新分工，原四机大critic对照持续推进、25核进行提速实验。内联key完整480局均186.92→182.14秒，未达标；五项组合完整480局ABBA均186.29→183.45秒（-1.53%，CPU核秒-7.17%，单主机1440.81→1463.16原子操作/s），语义计数/动作/下层样本相同；主线程完整profile完成，省略独立采集未消费的旧战斗value观测通过Linux/CUDA17项及完整480局ABBA：均183.12→163.49秒（-10.72%，CPU核秒-4.62%，1465.77→1641.83原子操作/s），既定语义核验通过。native全局投影本地49项/同字节编码ABBA及Linux/CUDA113项通过，完整480局ABBA已接续启动（PID30732）；所有新候选仍未部署生产。见worklog/2026-11-05.md#rollout-150s新的性能目标与范围。 |
+| ROLLOUT-150S | 进行中 | 现役1920自然局四机rollout≤150秒；不改训练与搜索统计语义，优先减少CPU计算。显式构建语义对照、生产长度计时/资源与env原子操作每秒；按用户最新分工，原四机大critic对照持续推进、25核进行提速实验。内联key完整480局均186.92→182.14秒，未达标；五项组合完整480局ABBA均186.29→183.45秒（-1.53%，CPU核秒-7.17%，单主机1440.81→1463.16原子操作/s），语义计数/动作/下层样本相同；主线程完整profile完成，省略独立采集未消费的旧战斗value观测通过Linux/CUDA17项及完整480局ABBA：均183.12→163.49秒（-10.72%，CPU核秒-4.62%，1465.77→1641.83原子操作/s），既定语义核验通过。native全局投影本地49项/同字节编码ABBA及Linux/CUDA113项通过，完整480局ABBA已接续启动（PID30732）；同位置地图投影复用候选本地55项相关检查及同字节编码ABBA通过（旧bridge夹具36项基线同样失败，另记BRIDGE-FIXTURE-MAP-FRAME），Linux完整比较待前驱退出。所有新候选仍未部署生产。见worklog/2026-11-05.md#rollout-150s新的性能目标与范围。 |
 
 | COMBAT37-LARGE-CRITIC-FRESH | 已直接启动持续训练（用户取消资格阶段） | 原四机同初值新训critic131072×4/LR1e-4；其他统计参数保持，旧COMBAT37全状态备份25核机。用户要求不做验证直接完整训练，不再等待两轮或人为重启资格。独立监控对照、无总轮数上限，不自动重启失败任务。 |
 | BACKUP-25CORE | 已完成：2996文件逐SHA校验及四rank183恢复材料 | 25核机保存原COMBAT37参考/最终四rank全状态、初值、代码/native/配置/日志和相关实验结果；逐文件SHA与恢复材料检查，不保存凭据。 |
 
 | COMBAT37-SEARCH-BUDGET | 完成：三档各96自然完整局 | 同183模型/新seed/固定探索强度，基线54胜、两倍57胜、四倍62胜；成本与配对区间见worklog/2026-11-05.md#combat37-search-budget三档96局配对结果。仅冻结模型评测，未证明长期训练收益；四机预算不变。 |
+
+| BRIDGE-FIXTURE-MAP-FRAME | 未改动cf0cf534已复现，待修 | `tests/unit/test_bridge_map_contract.py`的旧外部frame夹具缺少`bridge/real_game_env.py::_required_bool`要求的ready_for_command或is_screen_up，36项在地图编码前失败。验收为按现行frame契约修复共享夹具并执行原断言，不放宽生产schema/skip；见worklog/2026-11-05.md#rollout-150s复用同位置的上层地图编码。 |
