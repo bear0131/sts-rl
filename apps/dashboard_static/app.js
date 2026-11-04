@@ -742,7 +742,7 @@ $("watchSearchApply").addEventListener("click", async () => {
     watchPolicyModeDirty = false;
     watchCombatStrategyDirty = false;
     renderWatch();
-    toast(appState.watch.combat_strategy === "planner" ? "回合规划下层已应用" : "Neural NOSL search settings applied");
+    toast(appState.watch.combat_strategy === "planner" ? "回合规划下层已应用" : appState.watch.small_playout ? "下层 MCTS 搜索次数已应用" : "Neural NOSL search settings applied");
   } catch (e) {
     toast(e.message);
   } finally {
@@ -1336,6 +1336,18 @@ function playCombatOutcome(before, after) {
 function renderWatch() {
   const w = appState?.watch;
   if (!w) return;
+  for (const id of ['watchLeafBatchSize', 'watchDepth', 'watchEndTurnAsLeaf', 'watchFixedWorldline',
+    'watchPriorTemperature', 'watchSearchMode', 'watchPaperFullGumbel', 'watchGumbelCandidates',
+    'watchGumbelScale', 'watchGumbelValueScale', 'watchGumbelMaxVisitInit', 'watchGumbelRescaleQ',
+    'watchGumbelMixedValue', 'watchGumbelInteriorUniformity', 'watchGumbelInteriorCoverageFraction',
+    'watchGumbelInteriorValueMode']) {
+    const control = $(id);
+    if (control) control.closest('label').style.display = w.small_playout ? 'none' : '';
+  }
+  $('watchSimulations').closest('label').title = w.small_playout
+    ? 'COMBAT37 UCT MCTS：每个战斗决策的搜索次数；0 使用小网直接抽样。Apply 后重新计算当前决策。'
+    : 'Neural NOSL simulations per combat decision';
+  $('watchSearchApply').title = w.small_playout ? '应用下层 MCTS 搜索次数' : 'Apply neural NOSL search settings';
   const dataset = appState?.boss_openings;
   if (trainingDatasetKey !== (dataset?.sha256 || "")) {
     trainingDatasetKey = dataset?.sha256 || "";
@@ -1473,7 +1485,9 @@ function renderWatch() {
   $("searchStatus").textContent = w.manual_mode ? "手动操作期间不预选模型动作" : turnPlannerActive
     ? `回合规划下层 · ${w.combat_strategy_version || "ironclad-turn-v8-awakened-phase"}${planner ? ` · ${planner.worlds_completed || 0} worlds · ${planner.native_transitions || 0} transitions` : ""} · 下方为 checkpoint prior 对照`
     : search
-    ? (search.method === "nosl_is_az_cpp"
+    ? (search.method === 'compact_uct_mcts'
+      ? `COMBAT37 · ${search.simulations ? `UCT MCTS · ${search.simulations} simulations` : '小网直接抽样'} · 终局评分`
+      : search.method === "nosl_is_az_cpp"
       ? `${search.paper_full_gumbel ? "Strict paper Full Gumbel" : search.search_mode_label || "Neural PUCT"} · ${search.simulations} simulations · depth ${search.depth === 0 ? "auto" : search.depth} · prior T ${Number(search.prior_temperature ?? 1).toFixed(2)}${search.search_mode === "gumbel" || search.search_mode === "full_gumbel" ? ` · candidates ${Number(search.gumbel_candidates || 0) || "all"} · G ${Number(search.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(search.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""}${search.fixed_worldline ? " · 固定未来" : ""} · ${search.stochastic ? "stochastic" : "deterministic"} · NOSL${search.root_value == null ? "" : ` · root V ${Number(search.root_value).toFixed(3)}`}`
       : `Direct policy fallback: ${search.error || "neural NOSL unavailable"}`)
     : `${w.stochastic ? "stochastic" : "deterministic"} direct policy${w.mcts_simulations > 0 && w.phase !== "combat" ? " (search is combat-only)" : ""}`;

@@ -53,6 +53,43 @@ def _dummy_model():
     )
 
 
+@pytest.mark.parametrize('contract', ['native-v1', 'autoregressive-v2'])
+def test_compact_mcts_budget_change_preserves_state_and_replays_native_action(contract):
+    from rl.policies.small_playout import SmallPlayoutPolicy
+    import slaythespire as sts
+    model = _dummy_model()
+    schema = dashboard.SlayTheSpireEnv(combat_action_contract=contract)
+    model.observation_space = schema.observation_space
+    schema.close()
+    model.policy.small_playout = SmallPlayoutPolicy(sts.small_playout_key_count())
+    session = _FixedModelOutputWatchSession(model, threading.Lock(), seed=0)
+    try:
+        session.configure_search(simulations=7)
+        for _ in range(40):
+            if session.info['phase'] == 'combat':
+                break
+            session.step()
+        assert session.info['phase'] == 'combat'
+        position = session.position
+        assert session.decision['search']['stats']['simulations'] == 7
+        before = session.env.unwrapped.thick.obs_canonical()
+        session.configure_search(simulations=19)
+        assert session.position == position
+        assert session.env.unwrapped.thick.obs_canonical() == before
+        assert session.decision['search']['stats']['simulations'] == 19
+        bits = session.decision['native_action_bits']
+        assert bits in session.env.unwrapped.native_combat_actions()
+        session.step()
+        session.undo()
+        assert session.position == position
+        assert session.decision['native_action_bits'] == bits
+        session.configure_search(simulations=0)
+        assert session.decision['source'] == 'compact_policy'
+        assert session.decision['native_action_bits'] in session.env.unwrapped.native_combat_actions()
+    finally:
+        session.close()
+
+
 def test_native_skip_battles_resolves_first_monster_without_combat():
     env = SimGameEnv(global_map_view=True)
     env.reset(seed=0)

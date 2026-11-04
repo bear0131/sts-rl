@@ -5,6 +5,13 @@
 旧 apps.dashboard / apps.watch / apps.play_gauntlet 入口继续可用。训练和算法不能反向依赖 apps；UI 只消费 env/policy/evaluation。
 日志、截图和 dashboard session JSON 写入 runs/local，不放仓库根目录。启动前查看 --help，自行指定端口/结果路径。
 
+包含 `small_playout` 的 COMBAT37 checkpoint 在 Watch 中使用自己的小网 UCT MCTS，
+上层默认使用 checkpoint 模型。Simulations 输入并 Apply 后重新计算当前决策，
+不推进游戏；该数值统一用于普通、精英和 Boss 战（训练原预算为250/250/1000），
+0 表示小网直接抽样。固定 playout/tree 深度200/1024及真实终局评分，隐藏不适用的
+NOSL/Gumbel 参数。Runic Dome 按训练的信息约束仅用小网。需要匹配
+`terminal-hp-boss-win-turn128-v1` 的原生扩展，保留完整 native 动作及撤销重放。
+
 ### 远端训练实时曲线
 
 `python -m apps.training_monitor --config runs/local/monitor/config.json --output runs/local/monitor/state.json`

@@ -626,6 +626,7 @@ class WatchSession:
             and hasattr(core, "combat_observation_keys")
         )
         self.env = SlayTheSpireEnv(
+            upper_public_context='upper_public_context' in model.observation_space.spaces,
             combat_action_contract=(C.policy_contract(model.observation_space) if "combat_legal" in model.observation_space.spaces else "native-v1"),
             global_map_view=_model.uses_global_map_observation(model),
             card_language=_model.uses_card_language(model),
@@ -731,7 +732,15 @@ class WatchSession:
         )
         self._apply_paper_full_gumbel_defaults()
         self.stochastic = False
-        self.upper_strategy = _UPPER_STRATEGY_RULES
+        self.small_playout = getattr(model.policy, 'small_playout', None)
+        self.small_net = sts.SmallPlayoutNet(self.small_playout.export()) if self.small_playout is not None else None
+        if self.small_net is not None:
+            from env.search.small_playout import SEARCH_CONTRACT
+            if sts.small_playout_search_contract != SEARCH_CONTRACT:
+                raise ValueError('incompatible compact MCTS native contract')
+            self.mcts_simulations = 250
+            self.mcts_paper_full_gumbel = False
+        self.upper_strategy = _UPPER_STRATEGY_MODEL if self.small_net is not None else _UPPER_STRATEGY_RULES
         self.combat_strategy = _COMBAT_STRATEGY_MODEL
         self._turn_planner = TurnPlannerStrategy(_TURN_PLANNER_CONFIG)
         self.precompute_enabled = False
@@ -1524,6 +1533,37 @@ class WatchSession:
                 label = f"{label} -> target monster #{int(action.target_idx) + 1}"
         return label
 
+    def _prepare_small_decision(self):
+        from env.core.boss_value import is_boss_room
+        base = self.env.unwrapped
+        cfg = sts.SmallPlayoutConfig()
+        cfg.simulations = max(1, self.mcts_simulations)
+        cfg.playout_depth, cfg.tree_depth = 200, 1024
+        cfg.boss = is_boss_room(base.thick.gc.cur_room)
+        nonce = self._mcts_sampler.nonce(state_nonce=self.seed & ((1 << 64)-1),
+                                         simulation_index=self.position)
+        dome = any(r['id'] == 'Runic Dome' for r in base.thick.gc.relic_state())
+        if base._rulebase_pending_multi is not None:
+            bits = (3 << 29) | base._rulebase_pending_multi
+            stats = {}
+        elif self.mcts_simulations == 0 or dome:
+            features = sts.small_playout_features(base.thick.bc)
+            logits = np.asarray(self.small_net.logits(base.thick.bc), dtype=np.float64)
+            weights = np.exp(logits-logits.max()); weights /= weights.sum()
+            index = np.random.default_rng(nonce).choice(len(weights), p=weights)
+            bits = int(features['action_bits'][index])
+            stats = {}
+        else:
+            result = self.small_net.search(base.thick.bc, cfg, nonce)
+            bits, stats = int(result['action']), dict(result['stats'])
+        mapped = base._apply_rulebase_turn_decision(bits, {})
+        action = mapped['action']
+        self.decision = dict(action=action, label=self._describe_native_action(bits, action),
+            value=None, model_action=None, source='compact_policy' if self.mcts_simulations == 0 or dome else 'compact_uct_mcts',
+            combat_planner=None, native_action_bits=bits, native_direct=False,
+            search=dict(method='compact_uct_mcts', simulations=0 if dome else self.mcts_simulations,
+                        stats=stats, root_actions=[]), animation=None, top_actions=[])
+
     def _prepare_decision(self):
         if self.terminated or self.truncated or self.manual_mode:
             self.decision = None
@@ -1540,6 +1580,10 @@ class WatchSession:
             pass
         mask = self.env.action_masks()
         base = self.env.unwrapped
+        if (self.small_net is not None and self.info.get('phase') == 'combat'
+                and self.combat_strategy == _COMBAT_STRATEGY_MODEL and not self.manual_mode):
+            self._prepare_small_decision()
+            return
         probs, value, root_logits = self._policy_outputs(self.obs, mask)
         legal = np.flatnonzero(mask)
         is_combat = self.info.get("phase") == "combat"
@@ -2376,6 +2420,7 @@ class WatchSession:
                     for mode in self.route_step_modes[:self.position]
                 ),
             },
+            "small_playout": self.small_net is not None,
             "mcts_simulations": self.mcts_simulations,
             "mcts_depth": self.mcts_depth,
             "mcts_end_turn_as_leaf": self.mcts_end_turn_as_leaf,
@@ -2517,7 +2562,7 @@ class DashboardState:
     def load_checkpoint(self, path: Path, episodes: int):
         suffix = path.suffix.lower()
         if suffix == ".zip":
-            model = _load_checkpoint(path, device="auto")
+            model = _load_checkpoint(path, device="cpu", inference_only=True)
             checkpoint_format = "sb3"
         else:
             raise ValueError("checkpoint must be an SB3 .zip")
