@@ -2,6 +2,7 @@
 from copy import deepcopy
 
 import numpy as np
+import pytest
 
 from rl.training.native_vec_env import _copy_step_infos
 
@@ -46,3 +47,36 @@ def test_step_info_copy_honors_subclasses_and_custom_copy_protocol():
     assert copied[1]['tuple'][0] is copied[1]['array'][0]
     assert copied[1]['tuple'][0] == expected[1]['tuple'][0] == [13]
     assert shared == [3]
+
+
+@pytest.mark.parametrize('layout', ['C', 'F', 'slice', 'scalar', 'structured'])
+def test_numeric_info_arrays_match_deepcopy_layout_and_aliases(layout):
+    array = np.arange(24, dtype=np.float32).reshape(4, 6)
+    if layout == 'F':
+        array = np.asfortranarray(array)
+    elif layout == 'slice':
+        array = array[::-2, ::2]
+    elif layout == 'scalar':
+        array = np.array(7, dtype=np.int64)
+    elif layout == 'structured':
+        array = np.array([(1, 2.)], dtype=[('id', 'i4'), ('value', 'f4')])
+    array.flags.writeable = False
+    source = [{'array': array, 'nested': (array,)}]
+    expected, copied = deepcopy(source), _copy_step_infos(source)
+    result = copied[0]['array']
+    assert result is copied[0]['nested'][0]
+    assert result.dtype == expected[0]['array'].dtype
+    assert result.strides == expected[0]['array'].strides
+    assert result.flags.writeable == expected[0]['array'].flags.writeable
+    assert result.tobytes() == expected[0]['array'].tobytes()
+    assert not np.shares_memory(result, array)
+
+
+def test_info_array_subclass_preserves_custom_deepcopy():
+    class Tagged(np.ndarray):
+        def __deepcopy__(self, memo):
+            return np.asarray(self).copy() + 100
+
+    original = np.array([1, 2]).view(Tagged)
+    result = _copy_step_infos([{'value': original}])
+    np.testing.assert_array_equal(result[0]['value'], [101, 102])

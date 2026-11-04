@@ -364,20 +364,20 @@ std::uint64_t publicStateKey(const BattleContext &bc,
 
     const int playerStatusCount = static_cast<int>(
         sizeof(playerStatusStrings) / sizeof(playerStatusStrings[0]));
+    std::array<int, playerStatusCount> activeStatusIds{};
     int activePlayerStatuses = 0;
     for (int i = 1; i < playerStatusCount; ++i) {
         const auto status = static_cast<PlayerStatus>(i);
         if (player.hasStatusRuntime(status)) {
-            ++activePlayerStatuses;
+            activeStatusIds[activePlayerStatuses++] = i;
         }
     }
     hashValue(hash, activePlayerStatuses);
-    for (int i = 1; i < playerStatusCount; ++i) {
+    for (int active = 0; active < activePlayerStatuses; ++active) {
+        const int i = activeStatusIds[active];
         const auto status = static_cast<PlayerStatus>(i);
-        if (player.hasStatusRuntime(status)) {
-            hashValue(hash, i);
-            hashValue(hash, player.getStatusRuntime(status));
-        }
+        hashValue(hash, i);
+        hashValue(hash, player.getStatusRuntime(status));
     }
 
     hashHandComposition(hash, bc, equivalentFutures);
@@ -733,7 +733,10 @@ std::uint64_t NoslCombatTrainer::actionKey(const BattleContext &bc, const Action
 }
 
 std::uint64_t NoslCombatTrainer::strongStateKey(const BattleContext &bc) {
-    return publicStateKey<StrongPublicHash>(bc);
+    // Scratch retains capacity, never state contents. Each call rebuilds and
+    // sorts the complete signature; worker teardown releases the allocation.
+    thread_local std::vector<CardSignature> scratch;
+    return publicStateKey<StrongPublicHash>(bc, &scratch);
 }
 
 std::uint64_t NoslCombatTrainer::strongActionKey(const BattleContext &bc, const Action &action) {

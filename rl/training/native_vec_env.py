@@ -14,8 +14,8 @@ _INFO_ATOMIC_TYPES = frozenset((type(None), bool, int, float, str, bytes))
 def _copy_step_infos(infos):
     """Copy Gym info containers without visiting every immutable scalar twice.
 
-    Keep deepcopy's shared-reference/cycle semantics and delegate arrays,
-    subclasses and custom objects to their existing copy protocol.
+    Keep deepcopy's shared-reference/cycle semantics. Plain numeric arrays
+    own their copied data; object arrays and subclasses retain their protocol.
     """
     memo = {}
     atomic = _INFO_ATOMIC_TYPES
@@ -27,6 +27,10 @@ def _copy_step_infos(infos):
         identity = id(value)
         if identity in memo:
             return memo[identity]
+        if kind is np.ndarray and not value.dtype.hasobject:
+            result = value.copy(order='K')
+            memo[identity] = result
+            return result
         if kind is dict and all(type(key) in atomic for key in value):
             result = {}
             memo[identity] = result
