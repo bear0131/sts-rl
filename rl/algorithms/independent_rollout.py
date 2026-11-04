@@ -195,7 +195,8 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             started = time.perf_counter()
             indices = sorted(actions)
             ordered = {i: actions[i] for i in indices}
-            old = {k: v[indices].copy() for k, v in model._last_obs.items()}
+            # Integer-array indexing already owns an independent snapshot.
+            old = {k: v[indices] for k, v in model._last_obs.items()}
             action_rows = np.array([actions.pop(i) for i in indices], dtype=np.int64)
             mask_rows = np.stack([masks.pop(i) for i in indices])
             value_rows, logp_rows = np.array([estimates.pop(i) for i in indices]).T

@@ -176,7 +176,8 @@ class NativeSearchVecEnv(DummyVecEnv):
                 self.buf_obs[key][pending_indices] = observations[key]
         if subset:
             rows = np.asarray(indices, dtype=np.intp)
-            return ({key: value[rows].copy() for key, value in self.buf_obs.items()},
+            # Advanced indexing copies each selected row; no second copy is needed.
+            return ({key: value[rows] for key, value in self.buf_obs.items()},
                     self.buf_rews[rows].copy(), self.buf_dones[rows].copy(),
                     _copy_step_infos([self.buf_infos[i] for i in indices]))
         return (self._obs_from_buf(), np.copy(self.buf_rews), np.copy(self.buf_dones), _copy_step_infos(self.buf_infos))
