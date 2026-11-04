@@ -198,7 +198,7 @@ std::vector<double> probabilities(const std::vector<float> &logits, double tempe
     return p;
 }
 std::uint64_t beliefKey(const BattleContext &s) {
-    auto k=NoslCombatTrainer::strongStateKey(s);
+    auto k=NoslCombatTrainer::streamingStateKey(s);
     const int known=s.player.hasRelic<R::FROZEN_EYE>() ? int(s.cards.drawPile.size()) :
         std::clamp(s.cards.knownDrawTop,0,int(s.cards.drawPile.size()));
     k=noslMix(k^known);

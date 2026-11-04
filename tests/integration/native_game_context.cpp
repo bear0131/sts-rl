@@ -1,3 +1,4 @@
+#include "sim/search/WordHash64.h"
 // Internal GameContext contracts, isolated by pytest so native faults are reported.
 #include "game/GameContext.h"
 #include "game/Game.h"
@@ -1087,6 +1088,18 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
+        if (mode == "word-hash64") {
+            sts::search::WordHash64 hash(std::stoull(argv[2]));
+            const auto count = std::stoul(argv[3]);
+            for (unsigned i=0; i<count; ++i) {
+                const auto prefix=std::uint64_t(hash);
+                require(prefix==std::uint64_t(hash), "digest must not mutate streaming state");
+                hash.add(std::uint64_t(i)*0x9e3779b97f4a7c15ULL^(i>>1));
+            }
+            std::cout << std::uint64_t(hash) << std::endl;
+            return 0;
+        }
+
         if (mode == "action-queue") {
             checkActionQueue(std::stoi(argv[2]), std::stoi(argv[3]));
             std::cout << "PASS" << std::endl;

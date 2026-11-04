@@ -1,4 +1,5 @@
 #include "sim/search/NoslCombatTrainer.h"
+#include "sim/search/WordHash64.h"
 #include "sim/search/CombatChoices.h"
 
 #include <algorithm>
@@ -88,6 +89,8 @@ struct StrongPublicHash {
 inline void hashCombine(StrongPublicHash &hash, std::uint64_t value) {
     hash.value = noslMix(hash.value ^ noslMix(value));
 }
+
+inline void hashCombine(WordHash64 &hash, std::uint64_t value) { hash.add(value); }
 
 template <typename H, typename T>
 inline void hashValue(H &hash, T value) {
@@ -734,6 +737,10 @@ std::uint64_t NoslCombatTrainer::actionKey(const BattleContext &bc, const Action
 
 std::uint64_t NoslCombatTrainer::strongStateKey(const BattleContext &bc) {
     return publicStateKey<StrongPublicHash>(bc);
+}
+
+std::uint64_t NoslCombatTrainer::streamingStateKey(const BattleContext &bc) {
+    return publicStateKey<WordHash64>(bc);
 }
 
 std::uint64_t NoslCombatTrainer::strongActionKey(const BattleContext &bc, const Action &action) {
