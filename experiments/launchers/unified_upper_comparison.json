@@ -1117,7 +1117,7 @@
       "adopted_native_sha256": "54dfeb5385f9f2dfc609f17b24acfe96c8c48fa298cb3a9296bf25901fbf11ef"
     },
     "rollout_200s_and_large_critic": {
-      "status": "CPU scalar/array candidate rejected on full collection; overlap native7af17 with75 passing Linux tests is collecting frozen167, resume original continuous before10:52:36Z",
+      "status": "Original continuous restored from protected167 at10:44:44Z; full overlap-v1 equivalent but no speedup; single-consumer candidate local75pass; critic131072x4 offline confirmation passed, production32768 retained",
       "intent": "Continue current COMBAT37; target max-rank full1920-game rollout <200s, test critic effective batches >32768 with adjusted epochs/LR. Pauses for bounded tests authorized.",
       "source": {
         "round": 167,
@@ -1210,7 +1210,19 @@
           "collection_name": "r200-rollout-overlap-s167",
           "maximum_process_seconds": 540,
           "source_round": 167,
-          "production_adopted": false
+          "production_adopted": false,
+          "result": {
+            "collector_seconds": [
+              307.968566,
+              297.778994,
+              290.682267,
+              296.664239
+            ],
+            "all_semantic_hashes_equal": true,
+            "all_nontiming_counts_equal": true,
+            "accepted": false,
+            "evidence": "runs/local/takeover/overlap-status5.json"
+          }
         }
       },
       "critic": {
@@ -1323,6 +1335,20 @@
           "evidence": "runs/local/takeover/confirm-results/summary.json",
           "production_adopted": false
         }
+      },
+      "ordinary_resume": {
+        "at": "2026-11-04T10:44:44Z",
+        "source_round": 167,
+        "native_sha256": "54dfeb5385f9f2dfc609f17b24acfe96c8c48fa298cb3a9296bf25901fbf11ef",
+        "pids": [
+          489982,
+          448641,
+          437672,
+          493513
+        ],
+        "continuous": true,
+        "first_complete_round_verified": false,
+        "evidence": "runs/local/takeover/resume-original.json"
       }
     }
   },
@@ -1334,8 +1360,8 @@
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
-    "status": "diagnostic",
-    "note": "Windows接管：167轮完整保存后计划暂停，保留166/167四机全状态；正在测试CPU专用编译与较大critic batch。测试结束恢复continuous。",
-    "updated_at": "2026-11-04T16:55:00+08:00"
+    "status": "running",
+    "note": "原配置已从167轮完整恢复持续训练。较大critic batch131072离线留出复核改善6.16%，正式仍32768；执行提速候选继续隔离验证，200s尚未达标。",
+    "updated_at": "2026-11-04T18:44:44+08:00"
   }
 }
