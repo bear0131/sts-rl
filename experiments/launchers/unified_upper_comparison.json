@@ -990,7 +990,7 @@
       "deferral_reason": "At fresh114 catch-up, only rolling113/114 retained and source61 absent from all registered run manifests. New fixed60-110 evidence shows no plateau and better recent outcomes versus equal cumulative-wall B from90 onward; lower updates naturally8->16 at62, so the original cadence premise must be reconsidered, not silently move source61 to a later checkpoint. No GPU qualification or candidate launch has occurred."
     },
     "native_projection_validation": {
-      "status": "registered; no stop or Linux execution yet",
+      "status": "full124 protected; Linux fixed gates and original full collection accepted; candidate collection running",
       "registered_at": "2026-11-04T11:44:29.665009+08:00",
       "intent": "Same-wall learning and stability via equivalent CPU search execution; not a new policy or statistical update rule.",
       "implementation_commit": "8dd403613b859a189fb546d017000b2cc9bb8c1f",
@@ -1100,7 +1100,14 @@
         "runs/local/upper-unified/candidates/projection-local-provenance.json",
         "runs/local/upper-unified/candidates/projection-linux-baseline-provenance.json"
       ],
-      "next_action": "Prepare isolated operation helpers and validations before requesting STOP; original continuous remains active."
+      "next_action": "Accept candidate, then original_repeat; summarize all gates before native-only qualification125/126. Never repeat completed build/test/deploy.",
+      "execution_evidence": {
+        "boundary": "runs/local/upper-unified/candidates/projection-boundary124-accepted.json",
+        "linux_fixed": "runs/local/upper-unified/candidates/projection-linux-fixed-accepted.json",
+        "deployment": "runs/local/upper-unified/candidates/projection-linux-deployment.json",
+        "candidate_native_sha256": "54dfeb5385f9f2dfc609f17b24acfe96c8c48fa298cb3a9296bf25901fbf11ef",
+        "original_collection": "runs/local/upper-unified/candidates/projection-collect-original-accepted.json"
+      }
     }
   },
   "monitor": {
