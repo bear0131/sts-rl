@@ -1570,7 +1570,39 @@
         "internal_budget_seconds": 415,
         "process_budget_seconds": 540,
         "semantic_contract": "All transitions/search budgets/game outcomes/root labels equal; real policy_calls/action_scores plus forced_policy_skips equal baseline counts",
-        "production_adopted": false
+        "production_adopted": false,
+        "result": {
+          "status": "frozen_full_cohort_passed",
+          "collector_seconds": [
+            188.67663611005992,
+            177.24359825626016,
+            187.31431376747787,
+            179.65070528537035
+          ],
+          "global_env_steps_per_second": 5676.61169968725,
+          "tree_cpu_seconds": [
+            2706.32,
+            2614.83,
+            2734.12,
+            2672.09
+          ],
+          "semantic": "All normalized search counts/environment/upper decisions/lower samples/global and per-game RNG exact; upper value/logp batching bytes may differ",
+          "native_sha256": "a736f74ca56de9c3a24974e51d444126264eabb364b631c4a7f4700651b7e98e",
+          "artifact": "runs/local/takeover/independent-forced-status2.json",
+          "production_adopted": false
+        }
+      },
+      "hardware_comparison": {
+        "status": "in_progress",
+        "candidate_cpu": "Intel Xeon Platinum 8470Q",
+        "candidate_cpu_quota": 25,
+        "baseline_cpu": "Intel Xeon Gold 6459C",
+        "baseline_cpu_quota": 16,
+        "root": "/root/rollout-hardware-20261104",
+        "source_round": 167,
+        "model_and_search_unchanged": true,
+        "native_same_binary": "a736f74ca56de9c3a24974e51d444126264eabb364b631c4a7f4700651b7e98e",
+        "production_migrated": false
       }
     }
   },
