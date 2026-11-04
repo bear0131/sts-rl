@@ -1723,13 +1723,20 @@
   "monitor": {
     "root": "/root/rollout-independent-training-20261104",
     "run_id": "combat37-upper-independent-r1",
-    "label": "COMBAT37 · 独立推进 / 持续训练",
+    "label": "COMBAT37 · 新初值 λ=.97 / 1920局",
     "branch_step": 0,
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
     "note": "continuous正常：170/171资格与普通恢复172均已完整训练保存，采样max190.93/188.92/187.96秒，5493–5604环境操作每秒。1920自然局/原学习参数，旧四机继续；25核对照无明显完整采样优势。",
-    "updated_at": "2026-11-04T23:50:55+08:00"
+    "updated_at": "2026-11-05T00:16:00+08:00",
+    "continuation_of": [
+      {
+        "root": "/root/upper-throughput-20261104",
+        "run_id": "combat37-upper-fresh-lambda097-r1",
+        "through_step": 132648816
+      }
+    ]
   }
 }
