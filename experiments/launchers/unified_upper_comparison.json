@@ -1412,7 +1412,7 @@
         }
       },
       "architecture_experiment": {
-        "status": "Independent2ms max203.226s;10ms no gain; same2ms plus streaming search fingerprint preregistered",
+        "status": "Streaming hash first max195.529s/5477.66 env steps/s; old native control repeat running; no production adoption",
         "commit": "8130b630",
         "root": "/root/rollout-independent-20261104",
         "native_sha256": "2ffc01cfa7fd6e2cfade03bbeefecb398facfb595b637f9414079e1b485c30b2",
@@ -1526,7 +1526,22 @@
           "semantic_timeout_seconds": 180,
           "collection_internal_timeout_seconds": 415,
           "collection_process_timeout_seconds": 540,
-          "plan": "Linux semantics then one complete candidate; if faster repeat complete old control then winner. Do not assume local noisy timings transfer."
+          "plan": "Linux semantics then one complete candidate; if faster repeat complete old control then winner. Do not assume local noisy timings transfer.",
+          "first_result": {
+            "seconds": [
+              195.52931994199753,
+              180.99853803403676,
+              186.99722307361662,
+              186.86866350099444
+            ],
+            "env_steps_per_second": 5477.664425558878,
+            "natural_games": 1920,
+            "censored_games": 0,
+            "all_exit_zero": true,
+            "non_timing_counts_equal": true,
+            "environment_decisions_lower_rng_equal": true,
+            "evidence": "runs/local/takeover/independent-hash-status2.json"
+          }
         }
       }
     }
