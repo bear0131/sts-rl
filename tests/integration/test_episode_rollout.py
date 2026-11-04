@@ -106,7 +106,8 @@ def test_unified_mc_cohort_update_payload_and_resume(tmp_path, monkeypatch, shor
 
 
 @pytest.mark.timeout(180)
-@pytest.mark.parametrize('device,natural_start', [('cpu', False), ('cpu', True), ('cuda', False)])
+@pytest.mark.parametrize('device,natural_start', [('cpu', False), ('cpu', True),
+                                               ('cuda', False), ('cuda', True)])
 def test_independent_cohort_updates_payload_and_plain_resume(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start):
     _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device,
                       natural_start, None, unified=True, independent=True)
