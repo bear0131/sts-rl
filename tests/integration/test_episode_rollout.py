@@ -439,8 +439,9 @@ def test_complete_cohort_growth_preserves_source_and_plain_resume(
         assert saved.policy.core.upper_config.critic_effective_batch_size == 3
 
 
+@pytest.mark.parametrize('scheduler', [None, 'barrier', 'independent'])
 def test_frozen_rollout_diagnostic_uses_real_collector_without_saving_updates(
-        tmp_path, monkeypatch, short_natural_game_env_type):
+        tmp_path, monkeypatch, short_natural_game_env_type, scheduler):
     from rl.training.checkpoints import restore_learner
     from rl.algorithms.upper_probe import state_digest
     from tools.analysis.probe_upper_learning import unified_candidates
@@ -454,7 +455,8 @@ def test_frozen_rollout_diagnostic_uses_real_collector_without_saving_updates(
                     lower=state_digest(model.policy.small_playout_optimizer.state_dict()))
     protocol = tmp_path/'scale.json'
     protocol.write_text(json.dumps(dict(protocol='unified-upper-rollout-scale-v1',
-        diagnostic=dict(games_per_rank=3, world_size=1, maximum_wall_seconds=60))))
+        diagnostic=dict(games_per_rank=3, world_size=1, maximum_wall_seconds=60),
+        **(dict(independent_scheduler=dict(mode=scheduler, threads=2, upper_batch=3)) if scheduler else {}))))
     argv, index = [], 1
     while index < len(setup['argv']):
         flag = setup['argv'][index]
@@ -482,6 +484,11 @@ def test_frozen_rollout_diagnostic_uses_real_collector_without_saving_updates(
     assert result['search_statistics']['common/simulations'] > 0
     assert result['unisolated_timing']['upper_forward_seconds'] is None
     assert result['optimizer_updates'] == 0 and result['policy_and_adam_unchanged']
+    if scheduler:
+        assert result['independent_scheduler']['random_stream'] == 'independent-games-pcg64-v1'
+        assert result['independent_scheduler']['mode'] == scheduler
+        assert result['independent_scheduler']['upper_rows'] == result['upper_samples']
+        assert result['lower_samples'] > 0
     assert result['state_digests'] == expected
     assert result['semantic_digest_seconds'] >= 0
     assert set(result['semantic_digests']) == {

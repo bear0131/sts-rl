@@ -70,6 +70,16 @@ small-playout 的候选列表使用动态 native handle，不受旧策略96个PI
 在线小网的两项batch覆盖参数仅改变下层分批，保留已有Adam/权重/环境恢复；省略时沿用checkpoint。日志以`small_playout_train/batch_size_per_rank`、`batch_size_global`、`micro_batch_size`及`upper/effective_batch_size_global`、`upper/micro_batch_size`区分含义。小网路径不再上报已禁用普通PPO的`train/effective_batch_size*`占位值。
 按全局有效样本量平均梯度；空rank/末尾不等长仍参加相同同步。没有旧replay，单动作根和Dome无搜索标签。
 下层权重、Adam、累计更新数与整局环境/RNG一起保存恢复，下一轮重建原生权重。
+
+独立游戏调度目前仅供 `tools.analysis.probe_upper_learning` 的有限冻结采集诊断：
+在 `unified-upper-rollout-scale-v1` 协议添加 `independent_scheduler` 对象，字段为
+`mode`（`barrier`/`independent`）、`threads`、`upper_batch`、`upper_wait_seconds`、`seed`。
+两模式复用相同游戏独立随机流、small-playout 和上层宏观回报构造；前者等待整批，
+后者完成即推进，只在上层需要决策时组批。每局政策/搜索随机流分离，版本为
+`independent-games-pcg64-v1`；这是显式的新采样合同，不承诺与旧全局Torch随机序列相同。
+支持FP32、resident native、joint small-playout、完整自然局、aux/replay关闭。
+不更新或保存生产模型；两模式均不生成旧大网未用于学习的战斗value诊断行。
+正式连续训练的配置、保存恢复与监控资格尚未完成，不提供生产开关。
 目标熵、CE减目标熵的KL、teacher top1、uniform CE与策略熵一同上报，避免把变化的标签难度误当学习进步。上层配置由实验args/checkpoint显式决定；当前完整游戏实验见`configs/train/small_playout_terminal_full960_distributed.args`，两遍192/rank小批、FP32和λ.97。历史全批设置不得当作当前入口默认值。
 用户授权的单回合保护使用引擎cardsPlayedThisTurn（含自动/重复打牌）：达到128后等待已开始的效果/选牌结算，只允许合法结束回合。实际搜索、模拟和Dome纯策略共用同一候选限制；这是预算约束，可能截短合法超长连招，不是特定卡牌偏好。
 完整游戏模式每rank启动240局，完成槽保持、不补局。新实验动作上限2424来自旧27/28共115200自然结束局观察最大1212的两倍，墙钟1800秒。`--episode-rollout-censored exclude`仅对这些预算超限剔除整局所有上下层样本并继续；不吞掉OOM、无效状态或一般异常。各槽种子/操作数/原因记录，有限现场快照单列；全删失批次零Adam、仍保存并推进下一批种子。自然结束+剔除=启动数，胜率分母仅自然结束，零分母省略，不能将删失当死亡或声称剔除无选择偏差。普通恢复必须保留该合同；历史error模式仍失败停止。

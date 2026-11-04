@@ -305,6 +305,37 @@ def test_caps_are_not_terminal_and_invalid_budgets_fail():
         learner.search.net.search(root, cfg, 4)
 
 
+def test_independent_stream_joins_native_failure_and_retains_root(combat_factory):
+    import threading
+    from env.search.small_playout import SmallPlayoutBatch, SmallPlayoutStream
+    from rl.policies.small_playout import export_online_search_pair
+    env = combat_factory(['STRIKE_RED', 'DEFEND_RED']*5,
+                         combat_action_contract='autoregressive-v2')
+    pair = export_online_search_pair(SmallPlayoutLearner(seed=19).policy, collect_samples=True)
+    pair.update(common_simulations=0, playout_depth=8)
+    batch = SmallPlayoutBatch([env], None, pair)
+    before = env.thick.bc.to_dict()
+    previous_threads = {t.ident for t in threading.enumerate()}
+    stream = SmallPlayoutStream(batch, threads=2)
+    stream.submit({0: ((), dict(state_nonce=19))})
+    with pytest.raises(ValueError, match='budget'):
+        while stream.pending:
+            stream.receive(timeout=.1)
+    assert not stream.pending
+    assert env.thick.bc.to_dict() == before
+    assert not [t for t in threading.enumerate()
+                if t.name.startswith('sts-search') and t.ident not in previous_threads]
+    with pytest.raises(RuntimeError, match='closed'):
+        stream.submit({0: ((), dict(state_nonce=19))})
+    pair['common_simulations'] = 8
+    with SmallPlayoutStream(batch, threads=2) as retry:
+        retry.submit({0: ((), dict(state_nonce=19))})
+        result = {}
+        while retry.pending:
+            result.update(retry.receive(timeout=.1))
+    assert set(result) == {0} and batch.samples
+
+
 def test_two_rounds_checkpoint_and_exact_continuation(tmp_path):
     learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=12), threads=2)
     collector = BattleCollector(n_envs=2)

@@ -85,10 +85,35 @@ class NativeSearchVecEnv(DummyVecEnv):
         cohort = getattr(self, 'episode_rollout_active', None)
         if self.native_root_observations is None and cohort is None:
             return super().step_wait()
+        return self._step_indices(range(self.num_envs))
+
+    def step_subset(self, actions):
+        """Advance only ready logical slots, preserving all other slot state.
+
+        Used by the independent-game diagnostic; caller owns search/step
+        exclusion per slot. Returned rows follow the mapping's insertion order.
+        """
+        indices = list(actions)
+        if (not indices or any(type(i) is not int or not 0 <= i < self.num_envs for i in indices)
+                or any(not self.action_space.contains(a) for a in actions.values())):
+            raise ValueError('invalid ready-slot actions')
+        if self._small_step_plan is not None or self._prefetched_steps:
+            raise RuntimeError('cannot partially step a pending vector batch')
+        cohort = getattr(self, 'episode_rollout_active', None)
+        if cohort is not None and any(not cohort[i] for i in indices):
+            raise ValueError('cannot advance a completed cohort slot')
+        self.actions = np.zeros(self.num_envs, dtype=np.int64)
+        for i, action in actions.items():
+            self.actions[i] = action
+        return self._step_indices(indices, subset=True)
+
+    def _step_indices(self, indices, *, subset=False):
+        cohort = getattr(self, 'episode_rollout_active', None)
         prefetched, self._prefetched_steps = self._prefetched_steps, {}
         self._small_step_plan = None
         pending = []
-        for index, env in enumerate(self.envs):
+        for index in indices:
+            env = self.envs[index]
             if cohort is not None and not cohort[index]:
                 self.buf_rews[index] = 0.
                 self.buf_dones[index] = False
@@ -144,11 +169,16 @@ class NativeSearchVecEnv(DummyVecEnv):
             raise RuntimeError('prefetched transition belongs to an inactive environment')
         if pending:
             observations = self.native_root_observations.encode([self.envs[i].unwrapped for i in pending])
-            indices = np.asarray(pending, dtype=np.intp)
+            pending_indices = np.asarray(pending, dtype=np.intp)
             # Respect the checkpoint's visible keys and leave reset/overworld
             # rows intact. The codec already returned one array per field.
             for key in self.keys:
-                self.buf_obs[key][indices] = observations[key]
+                self.buf_obs[key][pending_indices] = observations[key]
+        if subset:
+            rows = np.asarray(indices, dtype=np.intp)
+            return ({key: value[rows].copy() for key, value in self.buf_obs.items()},
+                    self.buf_rews[rows].copy(), self.buf_dones[rows].copy(),
+                    _copy_step_infos([self.buf_infos[i] for i in indices]))
         return (self._obs_from_buf(), np.copy(self.buf_rews), np.copy(self.buf_dones), _copy_step_infos(self.buf_infos))
 
     def _step_one(self, index, action):

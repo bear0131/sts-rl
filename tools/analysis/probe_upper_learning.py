@@ -406,6 +406,12 @@ def unified_candidates():
         raise ValueError('candidate diagnosis requires an isolated finite full-state fork')
     protocol = json.loads(args.unified_candidate_protocol.read_text())
     collection_only = protocol['protocol'] == 'unified-upper-rollout-scale-v1'
+    independent = protocol.get('independent_scheduler')
+    if independent is not None:
+        from rl.algorithms.independent_rollout import IndependentRolloutConfig
+        IndependentRolloutConfig(**independent)
+        if not collection_only:
+            raise ValueError('independent scheduling is an unsaved collection diagnostic only')
     if protocol['protocol'] not in ('unified-upper-candidate-screen-v1', 'unified-upper-rollout-scale-v1'):
         raise ValueError('unknown candidate protocol')
     launch = trainer.build_parser().parse_args(remaining)
@@ -454,7 +460,16 @@ def unified_candidates():
         if not collection_only:
             return original_collect(model, *a, **kw)
         setup_times['entry_to_collection_seconds'] = time.perf_counter() - entry_started
-        ok, result = measure_frozen_rollout(model, original_collect, *a, **kw)
+        collector = original_collect
+        if independent is not None:
+            from rl.algorithms.independent_rollout import collect as independent_collect
+            from functools import partial
+            collector = partial(independent_collect, config=independent)
+        ok, result = measure_frozen_rollout(model, collector, *a, **kw)
+        if independent is not None:
+            result['independent_scheduler'] = model._independent_rollout_diagnostic
+            from rl.algorithms.upper_probe import state_digest
+            result['game_rng_digest'] = state_digest(model._independent_rollout_rng)
         collection.update(result)
         return ok
     def diagnose(model, **kwargs):

@@ -24,6 +24,34 @@ class SmallPlayoutBatch:
         return 'boss' if is_boss_room(room) else 'elite' if 'ELITE' in enum_name(room) else 'common'
 
     def decisions(self, calls, *, pre_step=None, start_steps=None):
+        out, jobs = self.prepare(calls)
+        if jobs:
+            callbacks = {}
+            if pre_step is not None:
+                # Inline decisions must be captured before callbacks start.
+                inline = tuple(out.items())
+                def started():
+                    if start_steps is not None:
+                        start_steps()
+                    for index, decision in inline:
+                        pre_step(index, decision['action'])
+                def ready(row, bits):
+                    index = jobs[row][0]
+                    out[index] = self.envs[index]._apply_rulebase_turn_decision(bits, {})
+                    pre_step(index, out[index]['action'])
+                callbacks = dict(on_ready=ready, on_start=started)
+            results = sts.small_playout_search_batch(self.pool, self.net,
+                [self.envs[j[0]].thick.bc for j in jobs], [j[2] for j in jobs], [j[3] for j in jobs], self.prior,
+                **callbacks)
+            for job, result in zip(jobs, results, strict=True):
+                index = job[0]
+                decision = self.accept(job, result, apply_action=index not in out)
+                if decision is not None:
+                    out[index] = decision
+        return {index: out[index] for index in calls}
+
+    def prepare(self, calls):
+        """Prepare independent roots; only the owning control thread mutates envs."""
         out, jobs = {}, []
         for index, (args, kw) in calls.items():
             if args or set(kw) != {'state_nonce'}:
@@ -58,43 +86,26 @@ class SmallPlayoutBatch:
             jobs.append((index, tier, cfg, nonce))
         # A public, cheap cost hint avoids sending the longest bosses last.
         jobs.sort(key=lambda j: j[2].simulations, reverse=True)
-        if jobs:
-            callbacks = {}
-            if pre_step is not None:
-                # Snapshot only inline decisions: worker callbacks can finish
-                # before the ordinary-step task acquires the GIL.
-                inline = tuple(out.items())
-                def started():
-                    if start_steps is not None:
-                        start_steps()
-                    for index, decision in inline:
-                        pre_step(index, decision['action'])
-                def ready(row, bits):
-                    index = jobs[row][0]
-                    out[index] = self.envs[index]._apply_rulebase_turn_decision(bits, {})
-                    pre_step(index, out[index]['action'])
-                callbacks = dict(on_ready=ready, on_start=started)
-            results = sts.small_playout_search_batch(self.pool, self.net,
-                [self.envs[j[0]].thick.bc for j in jobs], [j[2] for j in jobs], [j[3] for j in jobs], self.prior,
-                **callbacks)
-            for (index, tier, _, _), result in zip(jobs, results, strict=True):
-                if self.pair.get('online') and len(result['action_bits']) > 1:
-                    self.samples.append({key: np.asarray(result[key], dtype=dtype) for key, dtype in
-                        (('state', np.float32), ('actions', np.float32), ('keys', np.int32),
-                         ('action_bits', np.uint32), ('visits', np.float32))})
-                    self.samples[-1]['recommended_action'] = int(result['action'])
-                    self.samples[-1]['env'] = index
-                self.stats[tier+'/decisions'] = self.stats.get(tier+'/decisions', 0)+1
-                for key, value in result['stats'].items():
-                    name = tier+'/'+key
-                    if key == 'playout_lengths':
-                        self.stats.setdefault(name, np.zeros(201, dtype=np.int64))
-                        self.stats[name] += value
-                    else:
-                        self.stats[name] = self.stats.get(name, 0)+value
-                if index not in out:
-                    out[index] = self.envs[index]._apply_rulebase_turn_decision(result['action'], {})
-        return {index: out[index] for index in calls}
+        return out, jobs
+
+    def accept(self, job, result, *, apply_action=True):
+        index, tier, _, _ = job
+        if self.pair.get('online') and len(result['action_bits']) > 1:
+            self.samples.append({key: np.asarray(result[key], dtype=dtype) for key, dtype in
+                (('state', np.float32), ('actions', np.float32), ('keys', np.int32),
+                 ('action_bits', np.uint32), ('visits', np.float32))})
+            self.samples[-1]['recommended_action'] = int(result['action'])
+            self.samples[-1]['env'] = index
+        self.stats[tier+'/decisions'] = self.stats.get(tier+'/decisions', 0)+1
+        for key, value in result['stats'].items():
+            name = tier+'/'+key
+            if key == 'playout_lengths':
+                self.stats.setdefault(name, np.zeros(201, dtype=np.int64))
+                self.stats[name] += value
+            else:
+                self.stats[name] = self.stats.get(name, 0)+value
+        if apply_action:
+            return self.envs[index]._apply_rulebase_turn_decision(result['action'], {})
 
     def scalar_stats(self):
         out = {k: float(v) for k, v in self.stats.items() if not k.endswith('playout_lengths')}
@@ -106,3 +117,72 @@ class SmallPlayoutBatch:
             for q in (.95, .99):
                 out[tier+f'/playout_length_p{int(q*100)}'] = float(np.searchsorted(hist.cumsum(), q*n)) if n else 0.
         return out
+
+
+class SmallPlayoutStream:
+    """Diagnostic independent-root scheduling on GIL-free native searches.
+
+    One controller submits, receives and steps environments. Each logical slot
+    has at most one outstanding root; weights remain immutable until close.
+    Completion order is explicit and must not be treated as learner sample order.
+    This is not enabled by the production collector.
+    """
+    def __init__(self, batch, *, threads):
+        from concurrent.futures import ThreadPoolExecutor
+        if type(threads) is not int or threads < 1:
+            raise ValueError('positive search thread count required')
+        self.batch = batch
+        self._executor = ThreadPoolExecutor(max_workers=threads, thread_name_prefix='sts-search')
+        self._pending = {}
+        self._inline = {}
+        self._closed = False
+
+    @property
+    def pending(self):
+        return bool(self._pending or self._inline)
+
+    def submit(self, calls):
+        if self._closed:
+            raise RuntimeError('search stream is closed')
+        occupied = set(self._inline) | {job[0] for job in self._pending.values()}
+        if occupied.intersection(calls):
+            raise RuntimeError('environment already has an outstanding search')
+        if any(type(i) is not int or not 0 <= i < len(self.batch.envs) for i in calls):
+            raise ValueError('search slot outside environment vector')
+        inline, jobs = self.batch.prepare(calls)
+        self._inline.update(inline)
+        for job in jobs:
+            index, _, config, nonce = job
+            future = self._executor.submit(self.batch.net.search,
+                self.batch.envs[index].thick.bc, config, nonce, self.batch.prior)
+            self._pending[future] = job
+
+    def receive(self, timeout=0.):
+        from concurrent.futures import FIRST_COMPLETED, wait
+        if self._closed:
+            raise RuntimeError('search stream is closed')
+        ready = [future for future in self._pending if future.done()]
+        if not ready and not self._inline and self._pending:
+            ready = wait(self._pending, timeout=timeout, return_when=FIRST_COMPLETED).done
+        out, self._inline = self._inline, {}
+        try:
+            for future in ready:
+                job = self._pending.pop(future)
+                out[job[0]] = self.batch.accept(job, future.result())
+        except BaseException:
+            self.close()
+            raise
+        return out
+
+    def close(self):
+        if not self._closed:
+            self._closed = True
+            self._executor.shutdown(wait=True, cancel_futures=True)
+            self._pending.clear()
+            self._inline.clear()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()

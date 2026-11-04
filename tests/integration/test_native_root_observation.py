@@ -273,3 +273,78 @@ def test_unknown_observation_wrapper_keeps_serial_path():
             vec.step([int(np.flatnonzero(vec.env_method('action_masks')[0])[0])])
     finally:
         vec.close()
+
+
+@pytest.mark.parametrize('threads', [1, 4])
+def test_independent_games_match_recorded_transitions_and_samples(native_wrapper_factories, threads):
+    from env.search.small_playout import SmallPlayoutStream
+    from rl.training.native_vec_env import NativeSearchVecEnv
+    from rl.algorithms.small_playout import SmallPlayoutLearner
+    from rl.policies.small_playout import export_online_search_pair
+    from env.core import vocab as V
+    pair = export_online_search_pair(SmallPlayoutLearner(seed=19).policy, collect_samples=True)
+    pair.update(common_simulations=8, elite_simulations=8, boss_simulations=8, playout_depth=8)
+    reference = NativeSearchVecEnv(native_wrapper_factories(4), threads=threads)
+    candidate = NativeSearchVecEnv(native_wrapper_factories(4), threads=1)
+    history = [[] for _ in range(4)]
+    rng = np.random.default_rng(9001000)
+    try:
+        for vec in (reference, candidate):
+            vec.seed(9001000)
+            vec.configure_small_playout(pair)
+        obs = reference.reset()
+        assert_nested_equal(obs, candidate.reset())
+        for step in range(128):
+            masks = reference.env_method('action_masks')
+            actions = np.array([rng.choice(np.flatnonzero(m)) for m in masks])
+            combat = [i for i in range(4) if obs['phase'][i, 0] == V.PHASE_VOCAB_INDEX['combat']]
+            decisions = reference.env_method_batch('small_playout_decision',
+                {i: ((), dict(state_nonce=9001000+step*4+i)) for i in combat})
+            for i, decision in decisions.items():
+                actions[i] = decision['action']
+            obs, rewards, dones, infos = reference.step(actions)
+            for i in range(4):
+                history[i].append((i in combat, int(actions[i]), masks[i],
+                    ({k: v[i].copy() for k, v in obs.items()}, rewards[i], dones[i], infos[i])))
+        steps = [0]*4
+        ready, progressed = set(range(4)), set()
+        with SmallPlayoutStream(candidate.small_playout_batch, threads=threads) as stream:
+            while ready or stream.pending:
+                actions, calls = {}, {}
+                for i in sorted(ready, reverse=True):
+                    combat, action, mask, _ = history[i][steps[i]]
+                    assert_nested_equal(candidate.env_method('action_masks', indices=i)[0], mask)
+                    if combat:
+                        calls[i] = ((), dict(state_nonce=9001000+steps[i]*4+i))
+                    else:
+                        actions[i] = action
+                ready.clear()
+                stream.submit(calls)
+                if calls:
+                    with pytest.raises(RuntimeError, match='outstanding'):
+                        stream.submit(calls)
+                decisions = stream.receive(timeout=.1 if not actions else 0.)
+                actions.update({i: d['action'] for i, d in decisions.items()})
+                if not actions:
+                    continue
+                rows = list(actions)
+                for i in rows:
+                    assert actions[i] == history[i][steps[i]][1]
+                obs, rewards, dones, infos = candidate.step_subset(actions)
+                for row, i in enumerate(rows):
+                    actual = ({k: v[row] for k, v in obs.items()}, rewards[row], dones[row], infos[row])
+                    assert_nested_equal(actual, history[i][steps[i]][3])
+                    steps[i] += 1
+                    if steps[i] < 128:
+                        ready.add(i)
+                progressed.add(tuple(steps))
+        assert steps == [128]*4
+        assert any(len(set(s)) > 1 for s in progressed), 'games must advance independently'
+        order = lambda samples: sorted(samples, key=lambda sample: sample['env'])
+        assert_nested_equal(order(reference.take_small_playout_samples()), order(candidate.take_small_playout_samples()))
+        assert_nested_equal(reference.env_method('export_training_state'), candidate.env_method('export_training_state'))
+        for key, value in reference.small_playout_stats().items():
+            if 'seconds' not in key and not key.startswith('overlap/'):
+                np.testing.assert_equal(value, candidate.small_playout_stats()[key])
+    finally:
+        reference.close(); candidate.close()

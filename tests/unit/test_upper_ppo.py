@@ -24,6 +24,32 @@ def test_reward_native_act3_victory_without_act_increment():
     assert strategic_reward(3, 50, dict(stats, outcome='PLAYER_LOSS'), done=True, censored=False) == 0
 
 
+def test_subset_strategic_capture_preserves_global_slot_and_pending_reward():
+    model = SimpleNamespace(_upper_pending=[None]*3, _upper_episode_ids=[7, 8, 9],
+        _upper_completed=[], _upper_censored=0, nosl_is_az_combat_strategy='small-playout')
+    def obs(phases):
+        return dict(phase=np.array([[V.PHASE_VOCAB_INDEX[p]] for p in phases]),
+            act=np.ones((len(phases), 1))/encode.ACT_SCALE,
+            floor=np.ones((len(phases), 1))/encode.FLOOR_SCALE)
+    info = dict(run_stats=dict(act=1, floor=1, outcome='UNDECIDED'))
+    capture_step(model, obs(['map', 'map']), [11, 12], np.ones((2, 198)), [.2, .3], [-1., -2.],
+                 obs(['combat', 'combat']), [False, False], [info, info], indices=[2, 0])
+    assert model._upper_pending[1] is None
+    assert model._upper_pending[2]['action'] == 11
+    capture_step(model, obs(['combat']), [0], np.ones((1, 198)), [0.], [0.], obs(['combat_reward']),
+                 [False], [info], indices=[0])
+    assert len(model._upper_completed) == 1
+    assert model._upper_completed[0]['env'] == 0 and model._upper_completed[0]['episode'] == 7
+    assert model._upper_pending[2] is not None
+    capture_step(model, obs(['combat']), [0], np.ones((1, 198)), [0.], [0.], obs(['combat']),
+                 [True], [dict(run_stats=dict(act=3, floor=50, outcome='PLAYER_VICTORY'))], indices=[2])
+    assert model._upper_completed[1]['env'] == 2
+    assert model._upper_completed[1]['episode'] == 9 and model._upper_completed[1]['terminal']
+    assert model._upper_episode_ids == [7, 8, 10]
+    assert model.small_playout_games_local == 1
+    assert model._upper_pending == [None]*3
+
+
 def test_pending_combat_survives_rollout_boundary_and_counts_once():
     def obs(phase, floor):
         return dict(phase=np.array([[V.PHASE_VOCAB_INDEX[phase]]]),

@@ -51,9 +51,16 @@ def combat_update(function):
     return call
 
 
-def capture_step(model, obs, actions, masks, values, log_probs, new_obs, dones, infos):
+def capture_step(model, obs, actions, masks, values, log_probs, new_obs, dones, infos, *, indices=None):
     """Hold the decision entering a fight across collections, until its real outcome."""
     count = len(dones)
+    slots = list(range(count)) if indices is None else list(indices)
+    if indices is not None:
+        if (len(slots) != count or len(set(slots)) != count
+                or not getattr(model, '_upper_pending', None)
+                or any(type(i) is not int or not 0 <= i < len(model._upper_pending) for i in slots)):
+            raise ValueError('invalid strategic subset slot mapping')
+        count = len(model._upper_pending)
     if not getattr(model, '_upper_pending', None):
         model._upper_pending = [None] * count
     if not getattr(model, '_upper_episode_ids', None):
@@ -62,41 +69,41 @@ def capture_step(model, obs, actions, masks, values, log_probs, new_obs, dones, 
         raise ValueError('strategic pending environment count changed')
     def row(source, index):
         return {k: np.array(v[index], copy=True) for k, v in source.items() if k in UPPER_KEYS}
-    for index in range(count):
-        if infos[index].get('episode_cohort_hold'):
+    for offset, index in enumerate(slots):
+        if infos[offset].get('episode_cohort_hold'):
             continue
-        if int(obs['phase'][index, 0]) != COMBAT_PHASE:
+        if int(obs['phase'][offset, 0]) != COMBAT_PHASE:
             if model._upper_pending[index] is not None:
                 raise RuntimeError('unresolved strategic action before next strategic decision')
             model._upper_pending[index] = dict(
-                observation=row(obs, index), action=int(actions[index]),
-                mask=np.array(masks[index], copy=True), value=float(values[index]),
-                log_prob=float(log_probs[index]), reward=0., env=index,
+                observation=row(obs, offset), action=int(actions[offset]),
+                mask=np.array(masks[offset], copy=True), value=float(values[offset]),
+                log_prob=float(log_probs[offset]), reward=0., env=index,
                 episode=model._upper_episode_ids[index],
             )
         pending = model._upper_pending[index]
-        censored = bool(infos[index].get('TimeLimit.truncated') or infos[index].get('dead_screen'))
+        censored = bool(infos[offset].get('TimeLimit.truncated') or infos[offset].get('dead_screen'))
         if pending is not None:
-            stats = infos[index].get('run_stats')
+            stats = infos[offset].get('run_stats')
             if stats is None:
                 raise ValueError('joint training requires whole-run outcome statistics')
             pending['reward'] += strategic_reward(
-                round(float(obs['act'][index, 0]) * encode.ACT_SCALE),
-                round(float(obs['floor'][index, 0]) * encode.FLOOR_SCALE),
-                stats, done=bool(dones[index]), censored=censored)
-            if dones[index] or int(new_obs['phase'][index, 0]) != COMBAT_PHASE:
+                round(float(obs['act'][offset, 0]) * encode.ACT_SCALE),
+                round(float(obs['floor'][offset, 0]) * encode.FLOOR_SCALE),
+                stats, done=bool(dones[offset]), censored=censored)
+            if dones[offset] or int(new_obs['phase'][offset, 0]) != COMBAT_PHASE:
                 if not censored:
-                    pending['terminal'] = bool(dones[index])
-                    pending['next_observation'] = None if dones[index] else row(new_obs, index)
+                    pending['terminal'] = bool(dones[offset])
+                    pending['next_observation'] = None if dones[offset] else row(new_obs, offset)
                     model._upper_completed.append(pending)
                 else:
                     model._upper_censored += 1
                 model._upper_pending[index] = None
-        if dones[index]:
+        if dones[offset]:
             model._upper_episode_ids[index] += 1
             if (getattr(model, 'nosl_is_az_combat_strategy', 'model') == 'small-playout'
-                    and not censored and not infos[index].get('startup_stagger_hold')
-                    and not infos[index].get('startup_occupancy_hold')):
+                    and not censored and not infos[offset].get('startup_stagger_hold')
+                    and not infos[offset].get('startup_occupancy_hold')):
                 model.small_playout_games_local = getattr(model, 'small_playout_games_local', 0) + 1
 
 
