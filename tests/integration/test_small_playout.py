@@ -53,10 +53,17 @@ def test_torch_native_logits_and_weight_refresh(combat_factory):
 
 
 @pytest.mark.parametrize('layer,parameter', [('fc1', 'weight'), ('fc1', 'bias'),
-                                           ('fc2', 'weight'), ('fc2', 'bias')])
-def test_hidden_layer_refresh_preserves_existing_snapshot(layer, parameter):
+                                           ('fc2', 'weight'), ('fc2', 'bias'),
+                                           ('projection', 'weight'), ('linear', 'weight'),
+                                           ('keys', 'weight'), ('bias', 'weight')])
+@pytest.mark.parametrize('selection', [False, True])
+def test_weight_refresh_preserves_existing_snapshot(combat_factory, layer, parameter, selection):
     learner = SmallPlayoutLearner(seed=19)
     root = BattleFixture().create(42)
+    if selection:
+        root = combat_factory(['PURITY', 'STRIKE_RED', 'DEFEND_RED'] * 3).thick.bc
+        root.apply_custom_state({'hand': ['PURITY', 'STRIKE_RED', 'DEFEND_RED']})
+        root.execute(sts.Action(sts.ActionType.CARD, 0, 0))
     features = sts.small_playout_features(root)
     snapshot = learner.search.net
     old = snapshot.logits(root)

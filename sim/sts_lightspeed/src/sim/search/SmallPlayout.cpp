@@ -131,6 +131,9 @@ SmallPlayoutNet::SmallPlayoutNet(std::vector<float> weights) : weights_(std::mov
         stateColumns_[j*64+i]=weights_[i*32+j];
     for (int j=0;j<64;++j) for (int i=0;i<32;++i)
         hiddenColumns_[j*32+i]=weights_[2112+i*64+j];
+    const float *projection=weights_.data()+4192+33*smallKeyCount();
+    for (int j=0;j<SMALL_ACTION;++j) for (int i=0;i<SMALL_EMBED;++i)
+        projectionColumns_[j*SMALL_EMBED+i]=projection[i*SMALL_ACTION+j];
 }
 std::vector<float> SmallPlayoutNet::logits(const SmallFeatures &f) const {
     float h[64], z[32];
@@ -146,7 +149,7 @@ std::vector<float> SmallPlayoutNet::logits(const SmallFeatures &f) const {
         for (int i=0;i<32;++i) z[i]+=column[i]*x;
     }
     const float *emb=weights_.data()+4192, *bias=emb+32*smallKeyCount();
-    const float *proj=bias+smallKeyCount(), *lin=proj+768;
+    const float *lin=bias+smallKeyCount()+SMALL_ACTION*SMALL_EMBED;
     std::vector<float> scores; scores.reserve(f.actions.size());
     for (const auto &a:f.actions) {
         // Native action features are sparse. Retain the original column order:
@@ -158,13 +161,21 @@ std::vector<float> SmallPlayoutNet::logits(const SmallFeatures &f) const {
         if (singleKey) v+=bias[a.keys.front()];
         else for (int k:a.keys) v+=bias[k]/float(a.keys.size());
         for (int col=0;col<count;++col) { const int j=columns[col]; v+=lin[j]*a.x[j]; }
-        for (int i=0;i<32;++i) {
-            float e=0;
-            if (singleKey) e+=emb[a.keys.front()*32+i];
-            else for (int k:a.keys) e+=emb[k*32+i]/float(a.keys.size());
-            for (int col=0;col<count;++col) { const int j=columns[col]; e+=proj[i*24+j]*a.x[j]; }
-            v+=z[i]*e;
+        float e[SMALL_EMBED]{};
+        if (singleKey) {
+            const float *embedding=emb+a.keys.front()*SMALL_EMBED;
+            for (int i=0;i<SMALL_EMBED;++i) e[i]+=embedding[i];
+        } else for (int k:a.keys) {
+            const float *embedding=emb+k*SMALL_EMBED;
+            for (int i=0;i<SMALL_EMBED;++i) e[i]+=embedding[i]/float(a.keys.size());
         }
+        // Vectorize independent outputs, retaining each output's input order.
+        for (int col=0;col<count;++col) {
+            const int j=columns[col];
+            const float x=a.x[j], *column=projectionColumns_.data()+j*SMALL_EMBED;
+            for (int i=0;i<SMALL_EMBED;++i) e[i]+=column[i]*x;
+        }
+        for (int i=0;i<SMALL_EMBED;++i) v+=z[i]*e[i];
         if (!std::isfinite(v)) throw std::runtime_error("nonfinite compact policy score");
         scores.push_back(v);
     }
