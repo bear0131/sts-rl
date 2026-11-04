@@ -36,6 +36,7 @@ class SmallPlayoutNet {
 public:
     explicit SmallPlayoutNet(std::vector<float> weights);
     std::vector<float> logits(const SmallFeatures &features) const;
+    void logits(const SmallFeatures &features, std::vector<float> &scores) const;
 };
 struct SmallSearchConfig {
     int simulations = 250, playoutDepth = 200, treeDepth = 1024;

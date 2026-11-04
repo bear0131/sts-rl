@@ -70,8 +70,9 @@ std::vector<Action> budgetActions(const BattleContext &bc) {
 }
 
 namespace {
-SmallFeatures featuresForActions(const BattleContext &bc, const std::vector<Action> &actions) {
-    SmallFeatures f;
+void featuresForActions(const BattleContext &bc, const std::vector<Action> &actions, SmallFeatures &f) {
+    // Every state field is assigned below; retain only the actions' capacity.
+    f.actions.clear();
     auto &s = f.state;
     s[0] = float(bc.player.curHp) / 200; s[1] = float(bc.player.maxHp) / 200;
     s[2] = float(bc.player.block) / 100; s[3] = float(bc.player.energy) / 10;
@@ -140,12 +141,13 @@ SmallFeatures featuresForActions(const BattleContext &bc, const std::vector<Acti
         }
         f.actions.push_back(std::move(a));
     }
-    return f;
 }
 }
 
 SmallFeatures smallFeatures(const BattleContext &bc) {
-    return featuresForActions(bc, budgetActions(bc));
+    SmallFeatures features;
+    featuresForActions(bc, budgetActions(bc), features);
+    return features;
 }
 
 SmallPlayoutNet::SmallPlayoutNet(std::vector<float> weights)
@@ -164,21 +166,28 @@ SmallPlayoutNet::SmallPlayoutNet(std::vector<float> weights)
         projectionColumns_[j*SMALL_EMBED+i]=projection[i*SMALL_ACTION+j];
 }
 std::vector<float> SmallPlayoutNet::logits(const SmallFeatures &f) const {
+    std::vector<float> scores;
+    logits(f,scores);
+    return scores;
+}
+void SmallPlayoutNet::logits(const SmallFeatures &f, std::vector<float> &scores) const {
     float h[64], z[32];
     std::copy_n(weights_.data()+2048,64,h);
     for (int j=0;j<32;++j) {
         const float x=f.state[j], *column=stateColumns_.data()+j*64;
+        if (x==0.f) continue;
         for (int i=0;i<64;++i) h[i]+=column[i]*x;
     }
     for (int i=0;i<64;++i) h[i]=std::max(0.f,h[i]);
     std::copy_n(weights_.data()+4160,32,z);
     for (int j=0;j<64;++j) {
         const float x=h[j], *column=hiddenColumns_.data()+j*32;
+        if (x==0.f) continue;
         for (int i=0;i<32;++i) z[i]+=column[i]*x;
     }
     const float *emb=weights_.data()+4192, *bias=emb+32*smallKeyCount();
     const float *lin=bias+smallKeyCount()+SMALL_ACTION*SMALL_EMBED;
-    std::vector<float> scores; scores.reserve(f.actions.size());
+    scores.clear(); scores.reserve(f.actions.size());
     for (const auto &a:f.actions) {
         // Native action features are sparse. Retain the original column order:
         // factoring z through the projection would change float cancellation.
@@ -227,7 +236,6 @@ std::vector<float> SmallPlayoutNet::logits(const SmallFeatures &f) const {
         if (!std::isfinite(v)) throw std::runtime_error("nonfinite compact policy score");
         scores.push_back(v);
     }
-    return scores;
 }
 
 double smallTerminalValue(const BattleContext &bc, bool boss) {
@@ -238,12 +246,11 @@ double smallTerminalValue(const BattleContext &bc, bool boss) {
 }
 
 namespace {
-std::vector<double> probabilities(const std::vector<float> &logits, double temperature, double mix=1.) {
+void probabilities(const std::vector<float> &logits, double temperature, std::vector<double> &p, double mix=1.) {
     const auto top=*std::max_element(logits.begin(),logits.end());
-    std::vector<double> p; p.reserve(logits.size()); double sum=0;
+    p.clear(); p.reserve(logits.size()); double sum=0;
     for(auto l:logits){p.push_back(std::exp((l-top)/temperature));sum+=p.back();}
     for(auto &v:p) v=mix*v/sum+(1.-mix)/p.size();
-    return p;
 }
 std::uint64_t beliefKey(const BattleContext &s) {
     auto k=NoslCombatTrainer::streamingStateKey(s);
@@ -281,7 +288,8 @@ void expand(Node &node,const BattleContext &s,SmallSearchStats &stats,
         node.edges.push_back({a,NoslCombatTrainer::strongActionKey(s,a),0,0,{}});
     if(node.edges.empty()) throw std::runtime_error("nonterminal has no legal compact action");
     if(cfg.usePrior) {
-        auto p=probabilities(prior->logits(smallFeatures(s)),cfg.priorTemperature,cfg.priorMix);
+        std::vector<double> p;
+        probabilities(prior->logits(smallFeatures(s)),cfg.priorTemperature,p,cfg.priorMix);
         for(std::size_t i=0;i<p.size();++i) node.edges[i].prior=p[i];
         ++stats.priorCalls;
     }
@@ -299,6 +307,9 @@ Action resolve(const Edge &e,const BattleContext &s) {
 double playout(BattleContext &s,const SmallPlayoutNet &net,const SmallSearchConfig &cfg,
                std::mt19937_64 &rng,SmallSearchStats &stats,SmallPlayoutTrace *trace=nullptr) {
     int steps=0;
+    SmallFeatures f;
+    std::vector<float> logits;
+    std::vector<double> weights;
     while(s.outcome==Outcome::UNDECIDED && steps<cfg.playoutDepth) {
         stats.turnCardLimitSimulated += smallTurnCardLimitReached(s);
         const auto actions=budgetActions(s);
@@ -312,10 +323,10 @@ double playout(BattleContext &s,const SmallPlayoutNet &net,const SmallSearchConf
             ++steps; ++stats.playoutTransitions;
             continue;
         }
-        auto f=featuresForActions(s,actions); auto logits=net.logits(f);
+        featuresForActions(s,actions,f); net.logits(f,logits);
         if(logits.empty()) throw std::runtime_error("nonterminal playout without actions");
         ++stats.policyCalls; stats.actionScores+=logits.size();
-        auto weights=probabilities(logits,cfg.temperature);
+        probabilities(logits,cfg.temperature,weights);
         std::discrete_distribution<int> pick(weights.begin(),weights.end());
         const int choice=pick(rng);
         const auto bits=f.actions[choice].bits;
