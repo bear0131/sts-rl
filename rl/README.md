@@ -73,12 +73,15 @@ small-playout 的候选列表使用动态 native handle，不受旧策略96个PI
 
 独立游戏调度目前仅供 `tools.analysis.probe_upper_learning` 的有限冻结采集诊断：
 在 `unified-upper-rollout-scale-v1` 协议添加 `independent_scheduler` 对象，字段为
-`mode`（`barrier`/`independent`）、`threads`、`upper_batch`、`upper_wait_seconds`、`seed`。
+`mode`（`barrier`/`independent`/`pipeline`）、`threads`、`upper_batch`、`upper_wait_seconds`、`seed`。
 两模式复用相同游戏独立随机流、small-playout 和上层宏观回报构造；前者等待整批，
 后者完成即推进，只在上层需要决策时组批。每局政策/搜索随机流分离，版本为
 `independent-games-pcg64-v1`；这是显式的新采样合同，不承诺与旧全局Torch随机序列相同。
 支持FP32、resident native、joint small-playout、完整自然局、aux/replay关闭。
-不更新或保存生产模型；两模式均不生成旧大网未用于学习的战斗value诊断行。
+不更新或保存生产模型；三种模式均不生成旧大网未用于学习的战斗value诊断行。
+`pipeline` 仅用于冻结诊断：单独的上层推理线程持有私有输入、最多一个在途批，
+主线程可继续推进其他游戏；退出/异常会等待所有推理及搜索结束，之后才可改变权重。
+该模式的 `root_policy_seconds` 为推理线程墙钟，可能与环境/搜索计时重叠，不能相加。
 正式入口的 `--independent-rollout-config config.json` 接受同样字段，但只允许
 `mode=independent`、完整自然局error预算且reasoning关闭。旧checkpoint默认不切换；
 已训练源必须用 `--fork-state` 在完整自然局边界显式迁移。配置随model/manifest保存，

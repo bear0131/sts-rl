@@ -523,7 +523,7 @@ def test_complete_cohort_growth_preserves_source_and_plain_resume(
         assert saved.policy.core.upper_config.critic_effective_batch_size == 3
 
 
-@pytest.mark.parametrize('scheduler', [None, 'barrier', 'independent', 'independent-natural'])
+@pytest.mark.parametrize('scheduler', [None, 'barrier', 'independent', 'independent-natural', 'pipeline', 'pipeline-natural'])
 def test_frozen_rollout_diagnostic_uses_real_collector_without_saving_updates(
         tmp_path, monkeypatch, short_natural_game_env_type, scheduler):
     from rl.training.checkpoints import restore_learner
@@ -539,9 +539,9 @@ def test_frozen_rollout_diagnostic_uses_real_collector_without_saving_updates(
         measured_monitors.append((reward_monitor.counts(model), campfire_monitor.counts(model)))
         return result
     monkeypatch.setattr(probe_upper_learning, 'measure_frozen_rollout', observed_measure)
-    natural_start = scheduler == 'independent-natural'
+    natural_start = scheduler in ('independent-natural', 'pipeline-natural')
     if natural_start:
-        scheduler = 'independent'
+        scheduler = scheduler.removesuffix('-natural')
     setup = _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type,
                               'cpu', natural_start, None, unified=True, critic_batch=3)
     source = setup['last_bundle']
@@ -600,7 +600,7 @@ def test_frozen_rollout_diagnostic_uses_real_collector_without_saving_updates(
     monkeypatch.setattr(sys, 'argv', repeated)
     unified_candidates()
     repeat = json.loads((repeat_output/'rank0/rollout.json').read_text())
-    if scheduler == 'independent':
+    if scheduler in ('independent', 'pipeline'):
         # Completion timing changes inference batch shapes. Require identical
         # trajectories/labels/RNG here, and bound FP32 reduction differences.
         for key in ('environment', 'upper_decisions', 'lower_samples', 'rng'):
@@ -626,3 +626,23 @@ def test_frozen_rollout_diagnostic_uses_real_collector_without_saving_updates(
     assert fresh['semantic_digests']['environment'] != result['semantic_digests']['environment']
     assert read_bundle(source, rank=0, world_size=1) == manifest
     assert len(setup['payloads']) == 4
+    if scheduler == 'pipeline' and not natural_start:
+        import threading
+        from rl.policies.entity_joint import EntityJointCore
+        called_on = []
+        def failed_inference(*args, **kwargs):
+            called_on.append(threading.current_thread().name)
+            raise RuntimeError('injected upper inference failure')
+        with monkeypatch.context() as failure:
+            failure.setattr(EntityJointCore, 'actor_critic', failed_inference)
+            repeated[repeated.index('--probe-output') + 1] = str(tmp_path/'pipeline-failure')
+            failure.setattr(sys, 'argv', repeated)
+            with pytest.raises(RuntimeError, match='injected upper inference failure'):
+                unified_candidates()
+        assert called_on and all(name.startswith('sts-upper-inference') for name in called_on)
+        assert not any(t.name.startswith('sts-upper-inference') for t in threading.enumerate())
+        repeated[repeated.index('--probe-output') + 1] = str(tmp_path/'pipeline-recovery')
+        monkeypatch.setattr(sys, 'argv', repeated)
+        unified_candidates()
+        assert read_bundle(source, rank=0, world_size=1) == manifest
+        assert not any(t.name.startswith('sts-upper-inference') for t in threading.enumerate())

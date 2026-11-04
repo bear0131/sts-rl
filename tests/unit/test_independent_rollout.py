@@ -62,5 +62,6 @@ def test_scheduler_migration_requires_complete_fork_and_resume_keeps_contract():
         configure(model, dict(config, seed=44))
     assert model.independent_rollout_config == config
     assert model.independent_rollout_migration['source_round'] == 3
-    with pytest.raises(ValueError, match='diagnostic'):
-        configure(model, dict(config, mode='barrier'), fork=True)
+    for mode in ('barrier', 'pipeline'):
+        with pytest.raises(ValueError, match='diagnostic'):
+            configure(model, dict(config, mode=mode), fork=True)

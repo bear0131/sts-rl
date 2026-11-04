@@ -5,6 +5,7 @@ The barrier control uses the same new random streams and sample construction.
 Neither mode updates weights or changes search/terminal/return definitions.
 """
 from dataclasses import asdict, dataclass
+from concurrent.futures import ThreadPoolExecutor
 import time
 
 import numpy as np
@@ -27,7 +28,7 @@ class IndependentRolloutConfig:
     seed: int = 20261104
 
     def __post_init__(self):
-        if (self.mode not in ('barrier', 'independent')
+        if (self.mode not in ('barrier', 'independent', 'pipeline')
                 or any(type(x) is not int or x < 1 for x in (self.threads, self.upper_batch))
                 or type(self.seed) is not int or self.seed < 0
                 or not np.isfinite(self.upper_wait_seconds) or self.upper_wait_seconds < 0):
@@ -77,7 +78,7 @@ def configure(model, config, *, fork=False):
     if selected is None:
         return None
     if selected['mode'] != 'independent':
-        raise ValueError('barrier mode is a frozen diagnostic control only')
+        raise ValueError('barrier/pipeline modes are frozen diagnostics only')
     cohort = getattr(model, 'episode_rollout_config', None)
     if cohort is None or cohort['censored_games'] != 'error':
         raise ValueError('independent training requires complete natural cohorts with error budgets')
@@ -92,6 +93,25 @@ def configure(model, config, *, fork=False):
             previous=old, random_stream=GameRandomStreams.version)
     model.independent_rollout_config = selected
     return selected
+
+
+def _infer_upper(model, obs, action_masks, rows, randoms):
+    started = time.perf_counter()
+    with torch.inference_mode():
+        logits, values = model.policy.core.actor_critic(observation_as_tensor(obs, model.device))
+        dist = model.policy.action_dist.proba_distribution(action_logits=logits.float())
+        dist.apply_masking(action_masks)
+        ps = dist.distribution.probs.detach().cpu().numpy()
+        chosen = [randoms.action(i, ps[j]) for j, i in enumerate(rows)]
+        logps = dist.log_prob(torch.as_tensor(chosen, device=model.device)).float().cpu().numpy()
+        values = values.float().flatten().cpu().numpy()
+        reward_policy = reward_monitor.policy_probabilities(dist, obs)
+        campfire_policy = campfire_monitor.policy_probabilities(dist, obs)
+    reward_rows = {int(j): p for j, p in zip(*reward_policy)}
+    campfire_rows = {int(j): p for j, p in zip(*campfire_policy)}
+    result = {i: (chosen[j], float(values[j]), float(logps[j]),
+                  reward_rows.get(j), campfire_rows.get(j)) for j, i in enumerate(rows)}
+    return result, time.perf_counter()-started
 
 
 def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=True, *, config):
@@ -137,7 +157,17 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                  selection_prefix_decisions=0, forced_end_turn_roots=0)
     model._independent_rollout_progress = stats
 
-    with SmallPlayoutStream(vec.small_playout_batch, threads=cfg.threads) as stream:
+    upper_future = None
+    def accept_upper(result):
+        decisions, seconds = result
+        for i, (action, value, logp, reward_policy, campfire_policy) in decisions.items():
+            actions[i] = action
+            estimates[i] = (value, logp)
+            upper_policy[i] = (reward_policy, campfire_policy)
+        stats['root_policy_seconds'] += seconds  # Worker wall; may overlap environment/search.
+
+    with SmallPlayoutStream(vec.small_playout_batch, threads=cfg.threads) as stream, \
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix='sts-upper-inference') as inference:
         while vec.episode_rollout_active.any():
             maximum = int(vec.episode_rollout_action_counts.max(initial=0))
             if (maximum >= session['config'].max_steps
@@ -158,30 +188,21 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                     upper_waiting[i] = time.monotonic()
             ready.clear()
             stream.submit(calls)
-            if upper_waiting and (len(upper_waiting) >= cfg.upper_batch or not stream.pending
+            if upper_future is not None and (upper_future.done() or (not actions and not stream.pending)):
+                accept_upper(upper_future.result())
+                upper_future = None
+            if upper_future is None and upper_waiting and (len(upper_waiting) >= cfg.upper_batch or not stream.pending
                     or time.monotonic() - min(upper_waiting.values()) >= cfg.upper_wait_seconds):
-                started = time.perf_counter()
                 rows = sorted(upper_waiting)[:cfg.upper_batch]
+                # Advanced indexing owns private input arrays for the worker.
                 obs = {k: v[rows] for k, v in model._last_obs.items()}
                 action_masks = np.stack([masks[i] for i in rows])
-                with torch.inference_mode():
-                    logits, values = model.policy.core.actor_critic(observation_as_tensor(obs, model.device))
-                    dist = model.policy.action_dist.proba_distribution(action_logits=logits.float())
-                    dist.apply_masking(action_masks)
-                    ps = dist.distribution.probs.detach().cpu().numpy()
-                    chosen = [randoms.action(i, ps[j]) for j, i in enumerate(rows)]
-                    logps = dist.log_prob(torch.as_tensor(chosen, device=model.device)).float().cpu().numpy()
-                    values = values.float().flatten().cpu().numpy()
-                    reward_policy = reward_monitor.policy_probabilities(dist, obs)
-                    campfire_policy = campfire_monitor.policy_probabilities(dist, obs)
-                reward_rows = {int(j): p for j, p in zip(*reward_policy)}
-                campfire_rows = {int(j): p for j, p in zip(*campfire_policy)}
-                for j, i in enumerate(rows):
+                for i in rows:
                     del upper_waiting[i]
-                    actions[i] = chosen[j]
-                    estimates[i] = (float(values[j]), float(logps[j]))
-                    upper_policy[i] = (reward_rows.get(j), campfire_rows.get(j))
-                stats['root_policy_seconds'] += time.perf_counter() - started
+                if cfg.mode == 'pipeline':
+                    upper_future = inference.submit(_infer_upper, model, obs, action_masks, rows, randoms)
+                else:
+                    accept_upper(_infer_upper(model, obs, action_masks, rows, randoms))
                 stats['upper_batches'] += 1
                 stats['upper_rows'] += len(rows)
             waiting = not actions or (cfg.mode == 'barrier'
@@ -238,7 +259,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             callback.update_locals(locals())
             if not callback.on_step():
                 return False
-        if stream.pending or upper_waiting or actions:
+        if stream.pending or upper_waiting or actions or upper_future is not None:
             raise RuntimeError('completed cohort retained pending work')
     model._small_playout_stats = vec.small_playout_stats()
     model._small_playout_samples = sorted(vec.take_small_playout_samples(), key=lambda r: r['env'])
