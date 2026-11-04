@@ -1728,9 +1728,9 @@
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
-    "status": "training",
-    "note": "continuous正常：170/171资格与普通恢复172均已完整训练保存，采样max190.93/188.92/187.96秒，5493–5604环境操作每秒。1920自然局/原学习参数，旧四机继续；25核对照无明显完整采样优势。",
-    "updated_at": "2026-11-05T00:16:00+08:00",
+    "status": "paused",
+    "note": "原COMBAT37已正常保存到183轮；正在备份完整状态，并准备同初值critic131072新对照。25核机器继续提速实验。",
+    "updated_at": "2026-11-05T00:43:03.590763+08:00",
     "continuation_of": [
       {
         "root": "/root/upper-throughput-20261104",
@@ -1738,5 +1738,62 @@
         "through_step": 132648816
       }
     ]
+  },
+  "large_critic_fresh_comparison": {
+    "status": "prepared; backup and initial-state audit before launch",
+    "intent": "User requests a fresh large-critic comparison on the original four hosts; the 25-core host stores backups and continues rollout optimization.",
+    "root": "/root/critic131072-training-20261105",
+    "run_id": "combat37-critic131072-fresh-r1",
+    "label": "COMBAT37 对照 · critic131072",
+    "source_initial": "/root/upper-unified-20261103/material/unified-initial.zip",
+    "source_initial_sha256": "3c2462eafb7ee5aaf30d99d0587e8fe19ddc07a6cf70eb46261e56e05ca24658",
+    "initialization": "Same original COMBAT37 upper/lower weights; zero training counters and empty upper/lower Adam; not continued from mature weights.",
+    "world_size": 4,
+    "games_per_rank": 480,
+    "seed": 20261103,
+    "actor": {
+      "batch": 6144,
+      "epochs": 2,
+      "learning_rate": 0.00012
+    },
+    "critic": {
+      "batch": 131072,
+      "epochs": 4,
+      "learning_rate": 0.0001,
+      "target": "frozen-lambda",
+      "gae_lambda": 0.97
+    },
+    "lower": {
+      "batch_per_rank": 102400,
+      "micro_batch": 8192,
+      "epochs": 8,
+      "learning_rate": 0.003
+    },
+    "scheduler": {
+      "mode": "independent",
+      "threads": 16,
+      "upper_batch": 64,
+      "upper_wait_seconds": 0.002,
+      "seed": 20261104
+    },
+    "native_sha256": "a736f74ca56de9c3a24974e51d444126264eabb364b631c4a7f4700651b7e98e",
+    "runtime_commit": "c755139d8d2618d7a58a2c2c2b00f83005174276",
+    "ring_port": 30141,
+    "qualification_rounds": 2,
+    "continuous_after_qualification": true,
+    "automatic_restart": false,
+    "limits": {
+      "atomic_actions_per_game": 2424,
+      "cohort_seconds": 1800,
+      "iteration_seconds": 415,
+      "censored_games": "error"
+    },
+    "reference": {
+      "run": "combat37-upper-independent-r1",
+      "final_round": 183,
+      "global_step": 147390654,
+      "critic_batch": 32768
+    },
+    "limitations": "Historical COMBAT37 early rounds used a different scheduler/RNG and pre-repair native versions; comparison of training curves alone cannot isolate critic batch causality. Compare fixed complete-game and complete-wall budgets; report actual Adam counts and pre/post MC/target MSE. No held-out claim."
   }
 }

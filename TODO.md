@@ -555,3 +555,6 @@
 | RECOVERY-LEGACY-OPTIONS-CAPACITY | 已复现，未修 | `tests/integration/test_learner_recovery.py`的`test_schema2_restores_live_vec_monitor_and_next_transition`与`test_schema2_fork_reset_restores_learner_rng_after_env_reset`在真实原生b3a扩展/legacy观察的model.learn阶段报`options.nodes contains 4 entries, exceeding capacity 3`；改动前checkpoints.py同样复现，尚未进入恢复逻辑。修复需核对legacy观察ABI与保留checkpoint，不能在扩容实验顺手扩大容量或skip掩盖；验收两项原测试与兼容性通过。证据见2026-11-04 worklog。 |
 
 | ROLLOUT-150S | 进行中 | 现役1920自然局四机rollout≤150秒；不改训练与搜索统计语义，优先减少CPU计算。显式构建语义对照、生产长度计时/资源与env原子操作每秒，恢复同一COMBAT37连续训练。见worklog/2026-11-05.md#rollout-150s新的性能目标与范围。 |
+
+| COMBAT37-LARGE-CRITIC-FRESH | 进行中 | 原四机从同一初值新训critic131072×4/LR1e-4；其他统计参数保持，旧COMBAT37全状态保留。初始审计、两轮真实生命周期与普通恢复、独立监控对照。 |
+| BACKUP-25CORE | 进行中 | 25核机保存原COMBAT37参考/最终四rank全状态、初值、代码/native/配置/日志和相关实验结果；逐文件SHA与恢复材料检查，不保存凭据。 |
