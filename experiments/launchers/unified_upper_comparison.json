@@ -1117,7 +1117,7 @@
       "adopted_native_sha256": "54dfeb5385f9f2dfc609f17b24acfe96c8c48fa298cb3a9296bf25901fbf11ef"
     },
     "rollout_200s_and_large_critic": {
-      "status": "Protected169 paused; independent full1920 games max203.226s; bounded10ms batching trial registered",
+      "status": "Protected169 paused; max203.2s/5270 env steps per second; streaming search fingerprint trial next",
       "intent": "Continue current COMBAT37; target max-rank full1920-game rollout <200s, test critic effective batches >32768 with adjusted epochs/LR. Pauses for bounded tests authorized.",
       "source": {
         "round": 167,
@@ -1412,7 +1412,7 @@
         }
       },
       "architecture_experiment": {
-        "status": "Independent complete all4 exit0; 10ms upper coalescing single-factor trial next",
+        "status": "Independent2ms max203.226s;10ms no gain; same2ms plus streaming search fingerprint preregistered",
         "commit": "8130b630",
         "root": "/root/rollout-independent-20261104",
         "native_sha256": "2ffc01cfa7fd6e2cfade03bbeefecb398facfb595b637f9414079e1b485c30b2",
@@ -1496,7 +1496,37 @@
           "same_source_seed_native_threads_batch": true,
           "process_budget_seconds": 540,
           "internal_budget_seconds": 415,
-          "decision": "Compare complete workload and resources against2ms; if below200 repeat winning configuration before production lifecycle qualification."
+          "decision": "Compare complete workload and resources against2ms; if below200 repeat winning configuration before production lifecycle qualification.",
+          "result": {
+            "seconds": [
+              203.19082288630307,
+              189.90678307181224,
+              197.65854780189693,
+              193.62188103608787
+            ],
+            "accepted": false,
+            "reason": "max203.191 versus203.226 essentially unchanged; no claim of improvement",
+            "evidence": "runs/local/takeover/independent-wait10-status4.json"
+          }
+        },
+        "stream_hash_trial": {
+          "commit": "5383eecd",
+          "root": "/root/rollout-independent-hash-20261104",
+          "base_python_commit": "8130b630",
+          "only_change": "SmallPlayout transient public-state fingerprint uses streaming XXH64; all state fields/other search contracts unchanged",
+          "mode": "independent",
+          "upper_wait_seconds": 0.002,
+          "threads": 16,
+          "upper_batch": 64,
+          "seed": 20261104,
+          "source_round": 167,
+          "games_per_rank": 480,
+          "world_size": 4,
+          "build_timeout_seconds": 300,
+          "semantic_timeout_seconds": 180,
+          "collection_internal_timeout_seconds": 415,
+          "collection_process_timeout_seconds": 540,
+          "plan": "Linux semantics then one complete candidate; if faster repeat complete old control then winner. Do not assume local noisy timings transfer."
         }
       }
     }
