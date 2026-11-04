@@ -1347,8 +1347,30 @@
           493513
         ],
         "continuous": true,
-        "first_complete_round_verified": false,
+        "first_complete_round_verified": 168,
         "evidence": "runs/local/takeover/resume-original.json"
+      },
+      "second_pause": {
+        "status": "registered; continuous169 in progress, request STOP at natural169 boundary",
+        "maximum_seconds": 2700,
+        "protect_rounds": [
+          168,
+          169
+        ],
+        "diagnostic_source_round": 167,
+        "candidate_commit": "1e574840",
+        "candidate_root": "/root/rollout-overlap-queue-20261104",
+        "build_timeout_seconds": 300,
+        "semantic_timeout_seconds": 180,
+        "collection_timeout_seconds": 540,
+        "collection_internal_timeout_seconds": 415,
+        "plan": [
+          "original16 frozen167 control",
+          "single-consumer16 frozen167",
+          "if candidate beats control max by at least5%, single-consumer32; otherwise original32; if already<200 then repeat winning16 instead"
+        ],
+        "qualification": "A promising result requires exact same per-rank hashes and all nontiming counts. Before adoption, two full real training/update/checkpoint rounds and ordinary resume validation; only if remaining2700s budget fits. Otherwise original169 continuous restored. No fewer games/searches, no discarded cold warmup. No automatic failed retry.",
+        "fallback": "Resume original169 before pause deadline; compare current control against original frozen167 references; investigate drift>5%."
       }
     }
   },
