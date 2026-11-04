@@ -1412,7 +1412,7 @@
         }
       },
       "architecture_experiment": {
-        "status": "Streaming hash first max195.529s/5477.66 env steps/s; old native control repeat running; no production adoption",
+        "status": "Adopted after two actual full training rounds, max190.93/188.92s; continuous resumed171",
         "commit": "8130b630",
         "root": "/root/rollout-independent-20261104",
         "native_sha256": "2ffc01cfa7fd6e2cfade03bbeefecb398facfb595b637f9414079e1b485c30b2",
@@ -1570,7 +1570,7 @@
         "internal_budget_seconds": 415,
         "process_budget_seconds": 540,
         "semantic_contract": "All transitions/search budgets/game outcomes/root labels equal; real policy_calls/action_scores plus forced_policy_skips equal baseline counts",
-        "production_adopted": false,
+        "production_adopted": true,
         "result": {
           "status": "frozen_full_cohort_passed",
           "collector_seconds": [
@@ -1589,11 +1589,11 @@
           "semantic": "All normalized search counts/environment/upper decisions/lower samples/global and per-game RNG exact; upper value/logp batching bytes may differ",
           "native_sha256": "a736f74ca56de9c3a24974e51d444126264eabb364b631c4a7f4700651b7e98e",
           "artifact": "runs/local/takeover/independent-forced-status2.json",
-          "production_adopted": false
+          "production_adopted": true
         }
       },
       "hardware_comparison": {
-        "status": "in_progress",
+        "status": "completed_no_material_rollout_advantage",
         "candidate_cpu": "Intel Xeon Platinum 8470Q",
         "candidate_cpu_quota": 25,
         "baseline_cpu": "Intel Xeon Gold 6459C",
@@ -1602,10 +1602,38 @@
         "source_round": 167,
         "model_and_search_unchanged": true,
         "native_same_binary": "a736f74ca56de9c3a24974e51d444126264eabb364b631c4a7f4700651b7e98e",
-        "production_migrated": false
+        "production_migrated": false,
+        "matched_runtime": "Python3.11.15/Torch2.12.0+cu132/NumPy2.4.6/psutil7.2.2; same native binary",
+        "baseline_full_seconds": [
+          188.67663611005992,
+          193.9776212023571
+        ],
+        "candidate_full_seconds": [
+          187.48647928144783,
+          190.00411304552108
+        ],
+        "single_host_games": 480,
+        "env_operations_per_cohort": 268415,
+        "candidate_env_steps_per_second": [
+          1431.6499036555338,
+          1412.6799451740987
+        ],
+        "candidate_cpu_core_seconds": [
+          3519.57,
+          3551.49
+        ],
+        "baseline_cpu_core_seconds": 2772.5,
+        "conclusion": "25-thread native search is faster, but full rollout differences overlap observed repeat variation; keep existing four training hosts",
+        "artifacts": [
+          "runs/local/takeover/host16-cpu-suite.json",
+          "runs/local/takeover/host25-cpu-suite.json",
+          "runs/local/takeover/host16-full-status.json",
+          "runs/local/takeover/host25-full25.json",
+          "runs/local/takeover/host25-full25-repeat.json"
+        ]
       },
       "training_qualification": {
-        "status": "running",
+        "status": "passed_continuous_resumed_171_pending_first_saved_round",
         "root": "/root/rollout-independent-training-20261104",
         "run_id": "combat37-upper-independent-r1",
         "wandb_id": "combat37independent1",
@@ -1627,20 +1655,66 @@
           "seed": 20261104
         },
         "acceptance": "Each max-rank rollout <200s, all 1920 games natural without exclusions, real upper/lower updates and full save; audit states then ordinary continuous resume",
-        "lifecycle_validation": "14 passed in 43.17s; CPU/CUDA, full source/Adam/env restoration, ordinary resume, PPO/NOSL payload/checkpoint"
+        "lifecycle_validation": "14 passed in 43.17s; CPU/CUDA, full source/Adam/env restoration, ordinary resume, PPO/NOSL payload/checkpoint",
+        "results": [
+          {
+            "round": 170,
+            "step": 133697651,
+            "rollout_seconds": [
+              190.92949424684048,
+              182.713167630136,
+              178.49342389870435,
+              175.67596005275846
+            ],
+            "max_rollout": 190.92949424684048,
+            "global_env_steps_s": 5493.310670591728,
+            "wall_seconds": [
+              267.87653547897935,
+              269.43517872225493,
+              269.3752276869491,
+              269.49677391909063
+            ],
+            "games": 1920,
+            "censored": 0,
+            "cross_rank_policy_and_adam_equal": true
+          },
+          {
+            "round": 171,
+            "step": 134750622,
+            "rollout_seconds": [
+              183.49495185166597,
+              178.6455892790109,
+              188.91531958058476,
+              175.66357237659395
+            ],
+            "max_rollout": 188.91531958058476,
+            "global_env_steps_s": 5573.772603510255,
+            "wall_seconds": [
+              267.6603215429932,
+              267.67492112191394,
+              267.70908540673554,
+              267.707017282024
+            ],
+            "games": 1920,
+            "censored": 0,
+            "cross_rank_policy_and_adam_equal": true
+          }
+        ],
+        "audit": "runs/local/takeover/independent-qualification-audit.json",
+        "resume": "runs/local/takeover/independent-continuous-resume.json"
       }
     }
   },
   "monitor": {
     "root": "/root/rollout-independent-training-20261104",
     "run_id": "combat37-upper-independent-r1",
-    "label": "COMBAT37 · 独立推进 / 169续训资格",
+    "label": "COMBAT37 · 独立推进 / 持续训练",
     "branch_step": 0,
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "从保护169完整状态续接；原学习参数，独立16线程与等价CPU优化，两轮真实训练/保存资格进行中。新25核机器另作冻结比较。",
-    "updated_at": "2026-11-04T23:27:41+08:00"
+    "note": "真实170/171两轮采样max190.93/188.92秒；完整保存核验后由171普通恢复continuous。1920自然局、原学习参数；新25核机器无明显完整采样优势，保留旧四机。",
+    "updated_at": "2026-11-04T23:41:47+08:00"
   }
 }
