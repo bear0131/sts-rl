@@ -1729,11 +1729,11 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "同COMBAT37原始初值从零训练，critic131072×4，其余学习配置保持；前两轮完整资格验证中。原线183轮及全部历史已备份到25核机，25核继续提速实验。",
-    "updated_at": "2026-11-05T00:57:02.917965+08:00"
+    "note": "按用户要求直接从相同初值持续训练，不设两轮资格阶段；critic131072×4，其余学习配置保持。原线183轮已完整备份，25核机继续提速实验。",
+    "updated_at": "2026-11-05T01:01:16.304781+08:00"
   },
   "large_critic_fresh_comparison": {
-    "status": "fresh qualification rounds1-2 running on original four hosts; backup verified on25-core host",
+    "status": "continuous fresh training directly started on the original four hosts at user request; no staged qualification",
     "intent": "User requests a fresh large-critic comparison on the original four hosts; the 25-core host stores backups and continues rollout optimization.",
     "root": "/root/critic131072-training-20261105",
     "run_id": "combat37-critic131072-fresh-r1",
@@ -1772,8 +1772,7 @@
     "native_sha256": "a736f74ca56de9c3a24974e51d444126264eabb364b631c4a7f4700651b7e98e",
     "runtime_commit": "c755139d8d2618d7a58a2c2c2b00f83005174276",
     "ring_port": 30141,
-    "qualification_rounds": 2,
-    "continuous_after_qualification": true,
+    "qualification_rounds": 0,
     "automatic_restart": false,
     "limits": {
       "atomic_actions_per_game": 2424,
@@ -1795,6 +1794,8 @@
       "source_round": 183,
       "global_step": 147390654,
       "receipt": "verified.json"
-    }
+    },
+    "continuous": true,
+    "user_override": "不做验证，直接启动完整训练，有问题再说"
   }
 }
