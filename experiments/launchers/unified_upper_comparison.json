@@ -1117,7 +1117,7 @@
       "adopted_native_sha256": "54dfeb5385f9f2dfc609f17b24acfe96c8c48fa298cb3a9296bf25901fbf11ef"
     },
     "rollout_200s_and_large_critic": {
-      "status": "Second bounded pause at protected169, queue Linux75pass; original16 source167 control collecting",
+      "status": "User removed overall resume deadline; original169 protected and paused, prioritize rollout optimization; individual test budgets remain",
       "intent": "Continue current COMBAT37; target max-rank full1920-game rollout <200s, test critic effective batches >32768 with adjusted epochs/LR. Pauses for bounded tests authorized.",
       "source": {
         "round": 167,
@@ -1355,7 +1355,7 @@
       },
       "second_pause": {
         "status": "active",
-        "maximum_seconds": 2700,
+        "maximum_seconds": null,
         "protect_rounds": [
           168,
           169
@@ -1372,13 +1372,14 @@
           "single-consumer16 frozen167",
           "if candidate beats control max by at least5%, single-consumer32; otherwise original32; if already<200 then repeat winning16 instead"
         ],
-        "qualification": "A promising result requires exact same per-rank hashes and all nontiming counts. Before adoption, two full real training/update/checkpoint rounds and ordinary resume validation; only if remaining2700s budget fits. Otherwise original169 continuous restored. No fewer games/searches, no discarded cold warmup. No automatic failed retry.",
-        "fallback": "Resume original169 before pause deadline; compare current control against original frozen167 references; investigate drift>5%.",
+        "qualification": "Prioritize rollout<200s with exact semantic comparisons; two full real training/update/checkpoint rounds and ordinary resume validation before adoption. Individual experiments remain fixed-workload and timeout bounded; no fixed overall resume deadline.",
+        "fallback": "Preserve original169 full state and native; diagnose failed candidates individually. Resume original only if optimization is ended/blocked or user requests, not merely because a wall-clock deadline arrived.",
         "stopped_at": "2026-11-04T10:58:57Z",
-        "resume_deadline": "2026-11-04T11:43:57Z",
+        "resume_deadline": null,
         "source_global_step": 132648816,
         "checkpoint_audit": "runs/local/takeover/second-boundary-audit.json",
-        "native_sha256": "2ffc01cfa7fd6e2cfade03bbeefecb398facfb595b637f9414079e1b485c30b2"
+        "native_sha256": "2ffc01cfa7fd6e2cfade03bbeefecb398facfb595b637f9414079e1b485c30b2",
+        "user_override": "用户明确：不用限定恢复训练的时间，你先专注于压缩时间。固定恢复deadline取消；单项实验仍有固定工作量/超时，保留169完整源，优化通过后恢复持续训练。"
       }
     }
   },
@@ -1391,7 +1392,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "diagnostic",
-    "note": "168/169两轮完整训练已验收；169自然保存后做第二次有界提速测试，最迟19:43:57恢复continuous。较大critic batch131072已离线确认，正式仍32768。",
-    "updated_at": "2026-11-04T19:03:00+08:00"
+    "note": "按用户新指令，取消固定恢复时间，优先压缩rollout。169轮完整状态已保护；当前进行同源性能对照，测试各自有超时。",
+    "updated_at": "2026-11-04T19:06:00+08:00"
   }
 }
