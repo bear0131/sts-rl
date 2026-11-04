@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| UPPER-POLICY-PRE | 进行中 | rl/algorithms/unified_upper.py及真实训练上报；新增全部更新前固定actor的policy loss并分析，测量不改变权重/Adam/RNG或目标，CPU/CUDA及两轮生产/保存恢复验收，监控合并COMBAT37。 |
+| UPPER-POLICY-PRE | 已完成：四机180–183真实采集更新保存 | rl/algorithms/unified_upper.py及真实训练上报；新增全部更新前固定actor的policy loss并分析，测量不改变权重/Adam/RNG或目标，CPU/CUDA及两轮生产/保存恢复验收，监控合并COMBAT37。 |
 
 | UPPER-ROLLOUT-200S | 已完成：170/171/172真实采样190.93/188.92/187.96s；普通恢复与保存通过，旧四机continuous运行；25核比较完成 | 接管 COMBAT37 continuous，1920自然局/原搜索预算不变，目标四rank最大完整rollout<200s。用户取消整体恢复deadline，优先事件驱动线程调度；先同轨迹语义/完整采集，再两轮真实更新保存恢复。不以删局/少搜索达标；协议 post_screen.rollout_200s_and_large_critic。 |
 | UPPER-LARGE-CRITIC-BATCH | 离线确认通过；在线效果待测 | 同源完整游戏80/20训练留出，32768对照与65536/131072、4/8遍和独立LR2倍对照，含控制重复；实际λ目标和MC pre/post、真实Adam/样本使用/时间资源。留出初筛后独立cohort确认，不能只看训练loss宣称更优；源状态还原、持续训练保持。 |
@@ -557,4 +557,4 @@
 | ROLLOUT-150S | 进行中 | 现役1920自然局四机rollout≤150秒；不改训练与搜索统计语义，优先减少CPU计算。显式构建语义对照、生产长度计时/资源与env原子操作每秒，恢复同一COMBAT37连续训练。见worklog/2026-11-05.md#rollout-150s新的性能目标与范围。 |
 
 | COMBAT37-LARGE-CRITIC-FRESH | 进行中 | 原四机从同一初值新训critic131072×4/LR1e-4；其他统计参数保持，旧COMBAT37全状态保留。初始审计、两轮真实生命周期与普通恢复、独立监控对照。 |
-| BACKUP-25CORE | 进行中 | 25核机保存原COMBAT37参考/最终四rank全状态、初值、代码/native/配置/日志和相关实验结果；逐文件SHA与恢复材料检查，不保存凭据。 |
+| BACKUP-25CORE | 已完成：2996文件逐SHA校验及四rank183恢复材料 | 25核机保存原COMBAT37参考/最终四rank全状态、初值、代码/native/配置/日志和相关实验结果；逐文件SHA与恢复材料检查，不保存凭据。 |
