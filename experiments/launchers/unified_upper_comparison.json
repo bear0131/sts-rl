@@ -1117,9 +1117,20 @@
       "adopted_native_sha256": "54dfeb5385f9f2dfc609f17b24acfe96c8c48fa298cb3a9296bf25901fbf11ef"
     },
     "rollout_200s_and_large_critic": {
-      "status": "preparing; Windows owns operations from USER-TRAINING-TAKEOVER-20261104",
+      "status": "Source167 stopped exit0 and protected; isolated CPU build complete; semantic/fixed comparisons running",
       "intent": "Continue current COMBAT37; target max-rank full1920-game rollout <200s, test critic effective batches >32768 with adjusted epochs/LR. Pauses for bounded tests authorized.",
-      "source": "Next coordinated complete boundary after fresh166; record actual identical rank round/step before any benchmark. Do not reset or replace live environments.",
+      "source": {
+        "round": 167,
+        "global_step": 130537628,
+        "reference": "/root/upper-throughput-20261104/runs/combat37-upper-fresh-lambda097-r1/references/rollout-200s-167",
+        "rank_pids": [
+          423682,
+          387854,
+          376332,
+          432084
+        ],
+        "exit_utc": "2026-11-04T08:52:36Z"
+      },
       "preserve": {
         "games": 1920,
         "world_size": 4,
@@ -1245,8 +1256,8 @@
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
-    "status": "training",
-    "note": "COMBAT37 native projection adopted after frozen1920-game controls, complete125/126 qualification and ordinary127 full-state acceptance (345.629s). Continuous without total round cap; next fixed130. Learning/search settings unchanged; collector speedup is not learning-causality evidence.",
-    "updated_at": "2026-11-04T12:51:33.002146+08:00"
+    "status": "diagnostic",
+    "note": "Windows接管：167轮完整保存后计划暂停，保留166/167四机全状态；正在测试CPU专用编译与较大critic batch。测试结束恢复continuous。",
+    "updated_at": "2026-11-04T16:55:00+08:00"
   }
 }
