@@ -5,6 +5,11 @@
 #include "sim/search/NeuralSearchBatch.h"
 #include <cstring>
 #include <cmath>
+#include <condition_variable>
+#include <deque>
+#include <exception>
+#include <mutex>
+#include <thread>
 namespace py = pybind11;
 using namespace sts::search;
 namespace {
@@ -86,12 +91,54 @@ void bindSmallPlayout(py::module_ &m) {
         for(auto root:roots){if(!root)throw std::invalid_argument("null compact root");copies.push_back(*root);}
         std::vector<SmallSearchResult> results(roots.size());
         auto lock=pool.acquire();
-        {py::gil_scoped_release release;pool.runIndependent(roots.size()+start,[&](std::size_t task){
-            if(start && task==0){py::gil_scoped_acquire acquire;onStart();return;}
-            const auto i=task-start;
-            results[i]=smallSearch(copies[i],net,configs[i],nonces[i],prior.get());
-            if(ready){py::gil_scoped_acquire acquire;onReady(i,results[i].action);}
-        });}
+        if(!ready && !start) {
+            py::gil_scoped_release release;
+            pool.runIndependent(roots.size(),[&](std::size_t i){
+                results[i]=smallSearch(copies[i],net,configs[i],nonces[i],prior.get());
+            });
+        } else {
+            // Native workers publish completion without waiting for the GIL.
+            // One consumer owns Python callbacks, avoiding GIL contention that
+            // otherwise stalls all search workers at once. Roots and weights
+            // remain retained until both the pool and consumer have joined.
+            std::mutex mutex;
+            std::condition_variable available;
+            std::deque<std::size_t> completed;
+            bool finished=false;
+            std::exception_ptr searchFailure, callbackFailure;
+            {
+                py::gil_scoped_release release;
+                std::thread consumer([&]{
+                    py::gil_scoped_acquire acquire;
+                    try {
+                        if(start) onStart();
+                        while(true) {
+                            std::size_t i=0;
+                            {
+                                py::gil_scoped_release waitRelease;
+                                std::unique_lock<std::mutex> guard(mutex);
+                                available.wait(guard,[&]{return finished || !completed.empty();});
+                                if(completed.empty()) break;
+                                i=completed.front();completed.pop_front();
+                            }
+                            if(ready) onReady(i,results[i].action);
+                        }
+                    } catch(...) { callbackFailure=std::current_exception(); }
+                });
+                try {
+                    pool.runIndependent(roots.size(),[&](std::size_t i){
+                        results[i]=smallSearch(copies[i],net,configs[i],nonces[i],prior.get());
+                        {std::lock_guard<std::mutex> guard(mutex);completed.push_back(i);}
+                        available.notify_one();
+                    });
+                } catch(...) { searchFailure=std::current_exception(); }
+                {std::lock_guard<std::mutex> guard(mutex);finished=true;}
+                available.notify_one();
+                consumer.join();
+            }
+            if(callbackFailure) std::rethrow_exception(callbackFailure);
+            if(searchFailure) std::rethrow_exception(searchFailure);
+        }
         py::list out;for(const auto &r:results)out.append(result(r));return out;
     },py::arg("pool"),py::arg("net"),py::arg("roots"),py::arg("configs"),py::arg("nonces"),py::arg("prior")=nullptr,
        py::arg("on_ready")=py::none(),py::arg("on_start")=py::none());
