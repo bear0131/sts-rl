@@ -639,6 +639,36 @@ def test_terminal_value_uses_only_hp_or_boss_victory(run_combat_factory, escape)
     assert sts.small_playout_value(bc, True) == (0 if escape else 1)
 
 
+@pytest.mark.parametrize('threads', [1, 3])
+def test_search_state_scratch_does_not_leak_between_different_piles(combat_factory, threads):
+    small = combat_factory(['STRIKE_RED', 'DEFEND_RED', 'BASH'] * 3).thick.bc
+    large = small.clone()
+    large.apply_custom_state({
+        'draw': ['STRIKE_RED', 'DEFEND_RED', 'BASH'] * 43,
+        'discard': ['POMMEL_STRIKE'] * 17,
+        'exhaust': ['ANGER'] * 7,
+        'player': {'powers': [('STRENGTH', 3), ('ARTIFACT', 2), ('BARRICADE', 1)]},
+    })
+    before = [bc.to_dict() for bc in (small, large)]
+    learner = SmallPlayoutLearner(
+        config=SmallSearchConfig(simulations=16, tree_depth=4, playout_depth=8), threads=threads)
+    expected = learner.search.search([small], [41])[0]
+    # Reuse the pool after a different, larger state and after it is released.
+    first = learner.search.search([large, small, large, small], [42, 41, 43, 41])
+    assert [bc.to_dict() for bc in (small, large)] == before
+    del large
+    repeated = learner.search.search([small] * 6, [41] * 6)
+    for actual in [first[1], first[3], *repeated]:
+        assert actual.keys() == expected.keys()
+        for field, value in expected.items():
+            if isinstance(value, np.ndarray):
+                np.testing.assert_array_equal(actual[field], value)
+            elif field != 'stats':
+                assert actual[field] == value
+        assert {k: v for k, v in actual['stats'].items() if k != 'search_seconds'} == {
+            k: v for k, v in expected['stats'].items() if k != 'search_seconds'}
+
+
 @pytest.mark.parametrize('tree_depth', [1, 1024])
 def test_chance_widening_and_worker_failure_recovery(combat_factory, tree_depth):
     bc = combat_factory(['SHRUG_IT_OFF'] * 5).thick.bc

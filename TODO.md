@@ -554,6 +554,8 @@
 
 | RECOVERY-LEGACY-OPTIONS-CAPACITY | 已复现，未修 | `tests/integration/test_learner_recovery.py`的`test_schema2_restores_live_vec_monitor_and_next_transition`与`test_schema2_fork_reset_restores_learner_rng_after_env_reset`在真实原生b3a扩展/legacy观察的model.learn阶段报`options.nodes contains 4 entries, exceeding capacity 3`；改动前checkpoints.py同样复现，尚未进入恢复逻辑。修复需核对legacy观察ABI与保留checkpoint，不能在扩容实验顺手扩大容量或skip掩盖；验收两项原测试与兼容性通过。证据见2026-11-04 worklog。 |
 
+| BRIDGE-FIXTURE-MONSTER-STATE | 已在未改动版本复现，待修 | `tests/integration/test_combat_dynamic_exhaust.py::test_real_used_medical_kit_card_is_not_rejected_or_reset`使用的`tests/bridge_fixtures.py::real_combat_state`缺少当前`bridge/schemas/combat_state.py::_monster_real`要求的五个simulator状态字段，进入原生搜索前失败。验收为按真实export契约补齐共享fixture并让原断言通过，不放宽生产schema或skip；见worklog/2026-11-05.md#rollout-150s复用状态哈希牌堆缓冲并避免重复状态扫描。 |
+
 | ROLLOUT-150S | 进行中 | 现役1920自然局四机rollout≤150秒；不改训练与搜索统计语义，优先减少CPU计算。显式构建语义对照、生产长度计时/资源与env原子操作每秒；按用户最新分工，原四机大critic对照持续推进、25核进行提速实验。内联key完整480局均186.92→182.14秒，未达标；树存储、动作投影和playout缓冲候选语义/微基准通过，延后hash评测及组合完整480局对照进行中，未部署生产。见worklog/2026-11-05.md#rollout-150s新的性能目标与范围。 |
 
 | COMBAT37-LARGE-CRITIC-FRESH | 已直接启动持续训练（用户取消资格阶段） | 原四机同初值新训critic131072×4/LR1e-4；其他统计参数保持，旧COMBAT37全状态备份25核机。用户要求不做验证直接完整训练，不再等待两轮或人为重启资格。独立监控对照、无总轮数上限，不自动重启失败任务。 |

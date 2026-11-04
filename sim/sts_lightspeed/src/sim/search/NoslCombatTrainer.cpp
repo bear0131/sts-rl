@@ -367,20 +367,20 @@ std::uint64_t publicStateKey(const BattleContext &bc,
 
     const int playerStatusCount = static_cast<int>(
         sizeof(playerStatusStrings) / sizeof(playerStatusStrings[0]));
+    std::array<int, playerStatusCount> activeStatusIds;
     int activePlayerStatuses = 0;
     for (int i = 1; i < playerStatusCount; ++i) {
         const auto status = static_cast<PlayerStatus>(i);
         if (player.hasStatusRuntime(status)) {
-            ++activePlayerStatuses;
+            activeStatusIds[activePlayerStatuses++] = i;
         }
     }
     hashValue(hash, activePlayerStatuses);
-    for (int i = 1; i < playerStatusCount; ++i) {
+    for (int active = 0; active < activePlayerStatuses; ++active) {
+        const int i = activeStatusIds[active];
         const auto status = static_cast<PlayerStatus>(i);
-        if (player.hasStatusRuntime(status)) {
-            hashValue(hash, i);
-            hashValue(hash, player.getStatusRuntime(status));
-        }
+        hashValue(hash, i);
+        hashValue(hash, player.getStatusRuntime(status));
     }
 
     hashHandComposition(hash, bc, equivalentFutures);
@@ -740,7 +740,11 @@ std::uint64_t NoslCombatTrainer::strongStateKey(const BattleContext &bc) {
 }
 
 std::uint64_t NoslCombatTrainer::streamingStateKey(const BattleContext &bc) {
-    return publicStateKey<WordHash64>(bc);
+    // Only capacity is reused. Each pile rebuilds and sorts all signatures;
+    // no state result or pointer survives the call. The hashing path is not
+    // recursive and performs no callbacks into search.
+    thread_local std::vector<CardSignature> scratch;
+    return publicStateKey<WordHash64>(bc, &scratch);
 }
 
 std::uint64_t NoslCombatTrainer::strongActionKey(const BattleContext &bc, const Action &action) {
