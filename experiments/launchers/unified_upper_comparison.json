@@ -1115,6 +1115,126 @@
         "ordinary_resume": "runs/local/upper-unified/candidates/projection-resume127-accepted.json"
       },
       "adopted_native_sha256": "54dfeb5385f9f2dfc609f17b24acfe96c8c48fa298cb3a9296bf25901fbf11ef"
+    },
+    "rollout_200s_and_large_critic": {
+      "status": "preparing; Windows owns operations from USER-TRAINING-TAKEOVER-20261104",
+      "intent": "Continue current COMBAT37; target max-rank full1920-game rollout <200s, test critic effective batches >32768 with adjusted epochs/LR. Pauses for bounded tests authorized.",
+      "source": "Next coordinated complete boundary after fresh166; record actual identical rank round/step before any benchmark. Do not reset or replace live environments.",
+      "preserve": {
+        "games": 1920,
+        "world_size": 4,
+        "games_per_rank": 480,
+        "seed": 20261103,
+        "search_simulations": [
+          250,
+          250,
+          1000
+        ],
+        "playout_depth": 200,
+        "tree_depth": 1024,
+        "critic_target": "frozen-lambda",
+        "lambda": 0.97,
+        "actor_batch": 6144,
+        "actor_epochs": 2,
+        "actor_lr": 0.00012
+      },
+      "performance": {
+        "first_candidate": "Same native source, Release build specialized for observed Xeon6459C (-march=native, ffp-contract=off, no fast-math). Profile serial environment/encoding before choosing any further changes.",
+        "build_timeout_seconds": 300,
+        "semantic_test_timeout_seconds": 180,
+        "fixed_search_seeds": [
+          42,
+          87,
+          177,
+          691,
+          20261103,
+          20261104
+        ],
+        "fixed_benchmark_order": [
+          "baseline",
+          "candidate",
+          "candidate",
+          "baseline"
+        ],
+        "fixed_process_timeout_seconds": 120,
+        "collection_order": [
+          "baseline",
+          "candidate",
+          "baseline_repeat"
+        ],
+        "collection_internal_timeout_seconds": 415,
+        "collection_process_timeout_seconds": 540,
+        "resource_interval_seconds": 1,
+        "acceptance": "Same source/1920 natural games/no censor, actions/actual samples/search counts/state hashes compared; original repeat drift <=5%. Actual max-rank collector <200s on two complete rounds required to claim target reached. A faster partial result is not success."
+      },
+      "critic": {
+        "protocol": "unified-upper-candidate-screen-v1",
+        "seed": 20261104,
+        "diagnostic": {
+          "games_per_rank": 480,
+          "world_size": 4,
+          "holdout_games_per_rank": 96,
+          "max_probe_decisions_per_split_per_rank": 40000,
+          "maximum_wall_seconds": 1800,
+          "full_critic_mse": true,
+          "profile_updates": true
+        },
+        "arms": [
+          {
+            "id": "control",
+            "changes": {}
+          },
+          {
+            "id": "batch65536_e4",
+            "changes": {
+              "critic_effective_batch_size": 65536
+            }
+          },
+          {
+            "id": "batch131072_e4",
+            "changes": {
+              "critic_effective_batch_size": 131072
+            }
+          },
+          {
+            "id": "batch65536_e8",
+            "changes": {
+              "critic_effective_batch_size": 65536,
+              "critic_epochs": 8
+            }
+          },
+          {
+            "id": "batch131072_e8",
+            "changes": {
+              "critic_effective_batch_size": 131072,
+              "critic_epochs": 8
+            }
+          },
+          {
+            "id": "batch65536_e4_lr2",
+            "changes": {
+              "critic_effective_batch_size": 65536,
+              "value_learning_rate": 0.0002
+            }
+          },
+          {
+            "id": "batch131072_e8_lr2",
+            "changes": {
+              "critic_effective_batch_size": 131072,
+              "critic_epochs": 8,
+              "value_learning_rate": 0.0002
+            }
+          },
+          {
+            "id": "control_repeat",
+            "changes": {}
+          }
+        ],
+        "process_timeout_seconds": 2100,
+        "interpretation": "Whole-game heldout target and MC MSE pre/post, paired game uncertainty, actual optimizer steps/sample uses/update time/resources; keep all arms. Larger batch with same epochs reduces Adam steps; e8 checks compensating reuse, LR2 separately. Rank by heldout target MSE, require >=3% and paired95% CI below0 to nominate, MC no worse by >1%. Selection is exploratory; use another fresh cohort for nominated vscontrol confirmation before deployment. Online evidence separate."
+      },
+      "maximum_first_pause_seconds": 7200,
+      "resume": "After bounded diagnosis restore original same full state and continuous identity unless candidate semantics and two production rounds have passed. Preserve original source/native/protected checkpoints; failure diagnosis before any restart; no automatic retrial."
     }
   },
   "monitor": {
