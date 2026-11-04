@@ -195,15 +195,37 @@ def test_parallel_search_callbacks_preserve_results_and_release_failed_batch(thr
     assert [r['values'] for r in repeated] == [r['values'] for r in expected]
 
 
-def test_search_can_finish_while_ordinary_step_callback_waits():
-    from threading import Event
-    learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=16), threads=2)
-    done = Event()
+def test_callbacks_are_serial_on_one_consumer_and_failures_release_pool():
+    from threading import get_ident
+    learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=16), threads=4)
+    roots = [BattleFixture().create(seed) for seed in (42, 73, 81)]
+    configs = [learner.search.config.native()] * len(roots)
+    calls = []
     def ordinary():
-        assert done.wait(5), 'search worker must progress while ordinary callback releases GIL'
+        calls.append(('start', get_ident()))
+    def ready(index, action):
+        assert calls[0][0] == 'start'
+        calls.append((index, get_ident()))
     sts.small_playout_search_batch(learner.search.pool, learner.search.net,
-        [BattleFixture().create(42)], [learner.search.config.native()], [7],
-        on_start=ordinary, on_ready=lambda *args: done.set())
+        roots, configs, [7, 9, 11], on_start=ordinary, on_ready=ready)
+    assert sorted(c[0] for c in calls[1:]) == [0, 1, 2]
+    assert len({c[1] for c in calls}) == 1
+    def fail():
+        raise ValueError('ordinary callback failed')
+    with pytest.raises(ValueError, match='ordinary callback failed'):
+        sts.small_playout_search_batch(learner.search.pool, learner.search.net,
+            roots, configs, [7, 9, 11], on_start=fail)
+    actual = sts.small_playout_search_batch(learner.search.pool, learner.search.net,
+        roots, configs, [7, 9, 11], on_start=ordinary, on_ready=ready)
+    assert len(actual) == len(roots)
+    bad = learner.search.config.native()
+    bad.simulations = 0
+    with pytest.raises(ValueError, match='budget'):
+        sts.small_playout_search_batch(learner.search.pool, learner.search.net,
+            roots, [bad] * len(roots), [7, 9, 11], on_start=ordinary, on_ready=ready)
+    repeated = sts.small_playout_search_batch(learner.search.pool, learner.search.net,
+        roots, configs, [7, 9, 11], on_ready=ready)
+    assert [r['visits'] for r in actual] == [r['visits'] for r in repeated]
 
 
 def test_search_determinism_hidden_state_and_parallel_equivalence():
