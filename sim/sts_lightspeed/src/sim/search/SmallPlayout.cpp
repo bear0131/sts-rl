@@ -274,13 +274,19 @@ struct Node { int visits=0; std::vector<Edge> edges; };
 struct OutcomeNode {
     BattleContext state;
     std::uint64_t key;
+    bool keyReady;
     int samples=1;
     Node node;
 
     // BattleContext has no move constructor. Keep it at a stable address so
     // growing an edge's outcomes never deep-copies already sampled states.
-    OutcomeNode(const BattleContext &source, std::uint64_t belief)
-        : state(source), key(belief) {}
+    OutcomeNode(const BattleContext &source, std::uint64_t belief, bool hasKey)
+        : state(source), key(belief), keyReady(hasKey) {}
+
+    std::uint64_t belief() {
+        if (!keyReady) { key=beliefKey(state); keyReady=true; }
+        return key;
+    }
 };
 void expand(Node &node,const BattleContext &s,SmallSearchStats &stats,
             const SmallSearchConfig &cfg,const SmallPlayoutNet *prior) {
@@ -437,8 +443,11 @@ SmallSearchResult smallSearch(const BattleContext &root,const SmallPlayoutNet &n
             OutcomeNode *outcome=nullptr;
             if(int(edge.outcomes.size())<cap) {
                 resolve(edge,state).execute(state); ++result.stats.treeTransitions;
-                const auto key=beliefKey(state);
-                for(auto &o:edge.outcomes) if(o->key==key){
+                // The first outcome needs no equality comparison. Hash its
+                // immutable snapshot only if another outcome is generated.
+                const bool needsKey=!edge.outcomes.empty();
+                const auto key=needsKey ? beliefKey(state) : std::uint64_t{0};
+                for(auto &o:edge.outcomes) if(o->belief()==key){
                     if(state.inputState==InputState::CARD_SELECT && o->state.cardSelectInfo.cards!=state.cardSelectInfo.cards) {
                         std::ostringstream d; d << "generated choice key collision: ";
                         for(auto c:o->state.cardSelectInfo.cards) d << int(c) << ',';
@@ -448,7 +457,7 @@ SmallSearchResult smallSearch(const BattleContext &root,const SmallPlayoutNet &n
                     outcome=o.get();++o->samples;break;
                 }
                 if(!outcome){
-                    edge.outcomes.push_back(std::make_unique<OutcomeNode>(state,key));
+                    edge.outcomes.push_back(std::make_unique<OutcomeNode>(state,key,needsKey));
                     outcome=edge.outcomes.back().get(); newLeaf=true;
                 }
             } else {
