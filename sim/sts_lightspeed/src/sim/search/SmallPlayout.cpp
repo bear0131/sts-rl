@@ -140,14 +140,12 @@ std::vector<float> SmallPlayoutNet::logits(const SmallFeatures &f) const {
     std::copy_n(weights_.data()+2048,64,h);
     for (int j=0;j<32;++j) {
         const float x=f.state[j], *column=stateColumns_.data()+j*64;
-        if (x==0.f) continue;
         for (int i=0;i<64;++i) h[i]+=column[i]*x;
     }
     for (int i=0;i<64;++i) h[i]=std::max(0.f,h[i]);
     std::copy_n(weights_.data()+4160,32,z);
     for (int j=0;j<64;++j) {
         const float x=h[j], *column=hiddenColumns_.data()+j*32;
-        if (x==0.f) continue;
         for (int i=0;i<32;++i) z[i]+=column[i]*x;
     }
     const float *emb=weights_.data()+4192, *bias=emb+32*smallKeyCount();
@@ -268,9 +266,9 @@ double playout(BattleContext &s,const SmallPlayoutNet &net,const SmallSearchConf
 }
 
 void smallRedeterminize(BattleContext &bc,std::uint64_t nonce) {
-    // The general NOSL permutation was immediately discarded here. Retain
-    // its independent RNG reseeding, then permute only the hidden cards.
-    noslReseed(bc,nonce);
+    auto draw=bc.cards.drawPile;
+    noslRedeterminize(bc,nonce);
+    bc.cards.drawPile=std::move(draw);
     const int known=bc.player.hasRelic<R::FROZEN_EYE>() ? int(bc.cards.drawPile.size()) :
         std::clamp(bc.cards.knownDrawTop,0,int(bc.cards.drawPile.size()));
     auto end=bc.cards.drawPile.end()-known;
@@ -332,23 +330,17 @@ SmallSearchResult smallSearch(const BattleContext &root,const SmallPlayoutNet &n
     const double exploration=cfg.exploration>=0?cfg.exploration:(cfg.simulations<500?.8:cfg.simulations<1000?1.41:2.5);
     Node tree; expand(tree,root,result.stats,cfg,prior);
     std::mt19937_64 rng(noslMix(nonce));
-    BattleContext state;
-    std::vector<Node*> nodes;
-    std::vector<Edge*> edges;
-    std::vector<int> unvisited, counts;
     for(int sim=0;sim<cfg.simulations;++sim) {
-        // Assignment preserves vector capacity across independent simulations;
-        // all observable fields and RNG streams are still reset from the root.
-        state=root;
+        BattleContext state(root);
 #ifdef STS_ENABLE_RULE_TRACE
         state.atomicStepObserver = {};
 #endif
         smallRedeterminize(state,noslMix(nonce+sim));
-        Node *node=&tree; nodes.clear(); nodes.push_back(node); edges.clear();
+        Node *node=&tree; std::vector<Node*> nodes{node}; std::vector<Edge*> edges;
         double value=0; bool newLeaf=false; int depth=0;
         while(state.outcome==Outcome::UNDECIDED && depth<cfg.treeDepth) {
             result.stats.turnCardLimitSimulated += smallTurnCardLimitReached(state);
-            unvisited.clear();
+            std::vector<int> unvisited;
             for(int i=0;i<int(node->edges.size());++i) if(!node->edges[i].visits) unvisited.push_back(i);
             int chosen=0;
             if(!cfg.usePrior && !unvisited.empty()) chosen=unvisited[std::uniform_int_distribution<int>(0,int(unvisited.size())-1)(rng)];
@@ -385,7 +377,7 @@ SmallSearchResult smallSearch(const BattleContext &root,const SmallPlayoutNet &n
                     outcome=&edge.outcomes.back(); newLeaf=true;
                 }
             } else {
-                counts.clear(); for(const auto &o:edge.outcomes) counts.push_back(o.samples);
+                std::vector<int> counts; for(const auto &o:edge.outcomes) counts.push_back(o.samples);
                 std::discrete_distribution<int> choose(counts.begin(),counts.end());
                 outcome=&edge.outcomes[choose(rng)]; state=outcome->state;
                 smallRedeterminize(state,rng()); ++result.stats.chanceReplays;
