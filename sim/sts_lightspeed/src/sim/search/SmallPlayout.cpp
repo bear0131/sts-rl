@@ -3,8 +3,10 @@
 #include "sim/search/Nosl.h"
 #include "sim/search/NoslCombatTrainer.h"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <random>
 #include <sstream>
@@ -15,6 +17,26 @@ namespace {
 constexpr int CARD_KEYS = 2 * static_cast<int>(CardId::ZAP);
 constexpr int POTION_FIRST = static_cast<int>(Potion::AMBROSIA);
 constexpr int POTION_KEYS = static_cast<int>(Potion::WEAK_POTION) - POTION_FIRST + 1;
+std::atomic<std::uint64_t> nextSnapshotId{1};
+constexpr int ACTION_PREFIX = 16;
+struct ActionPrefixEntry {
+    std::uint64_t snapshot = 0;
+    int key = -1;
+    std::array<float,ACTION_PREFIX> input{};
+    std::array<float,SMALL_EMBED> embedding{};
+    float bias = 0;
+};
+ActionPrefixEntry &prefixEntry(const SmallActionFeatures &action) {
+    thread_local std::array<ActionPrefixEntry,1024> entries{};
+    std::uint64_t hash = action.keys.front();
+    // Cheap index only; every input byte is compared before a hit is accepted.
+    for (const int j : {5,6,8,13,14,15}) {
+        std::uint32_t bits;
+        std::memcpy(&bits,&action.x[j],sizeof(bits));
+        hash = (hash << 7) ^ (hash >> 3) ^ bits;
+    }
+    return entries[noslMix(hash) & (entries.size()-1)];
+}
 int cardKey(const CardInstance &c) {
     if (c.id == CardId::INVALID) throw std::logic_error("invalid compact card");
     return 3 + 2 * (static_cast<int>(c.id) - 1) + int(c.getUpgradeCount() > 0);
@@ -126,7 +148,8 @@ SmallFeatures smallFeatures(const BattleContext &bc) {
     return featuresForActions(bc, budgetActions(bc));
 }
 
-SmallPlayoutNet::SmallPlayoutNet(std::vector<float> weights) : weights_(std::move(weights)) {
+SmallPlayoutNet::SmallPlayoutNet(std::vector<float> weights)
+    : snapshotId_(nextSnapshotId.fetch_add(1,std::memory_order_relaxed)), weights_(std::move(weights)) {
     if (weights_.size() != std::size_t(4984 + 33 * smallKeyCount()) ||
         !std::all_of(weights_.begin(), weights_.end(), [](float x){ return std::isfinite(x); }))
         throw std::invalid_argument("compact policy parameter shape/finite contract");
@@ -162,21 +185,41 @@ std::vector<float> SmallPlayoutNet::logits(const SmallFeatures &f) const {
         int columns[SMALL_ACTION], count=0;
         for (int j=0;j<SMALL_ACTION;++j) if (a.x[j]!=0.f) columns[count++]=j;
         const bool singleKey=a.keyCount==1;
+        int prefix=0;
+        while (prefix<count && columns[prefix]<ACTION_PREFIX) ++prefix;
+        auto *cached=singleKey ? &prefixEntry(a) : nullptr;
         float v=0;
-        if (singleKey) v+=bias[a.keys.front()];
-        else for (int j=0;j<a.keyCount;++j) v+=bias[a.keys[j]]/float(a.keyCount);
-        for (int col=0;col<count;++col) { const int j=columns[col]; v+=lin[j]*a.x[j]; }
         float e[SMALL_EMBED]{};
-        if (singleKey) {
-            const float *embedding=emb+a.keys.front()*SMALL_EMBED;
-            for (int i=0;i<SMALL_EMBED;++i) e[i]+=embedding[i];
-        } else for (int j=0;j<a.keyCount;++j) {
-            const float *embedding=emb+a.keys[j]*SMALL_EMBED;
-            for (int i=0;i<SMALL_EMBED;++i) e[i]+=embedding[i]/float(a.keyCount);
+        if (cached && cached->snapshot==snapshotId_ && cached->key==a.keys.front() &&
+                std::memcmp(cached->input.data(),a.x.data(),ACTION_PREFIX*sizeof(float))==0) {
+            v=cached->bias;
+            std::copy(cached->embedding.begin(),cached->embedding.end(),e);
+        } else {
+            if (singleKey) v+=bias[a.keys.front()];
+            else for (int j=0;j<a.keyCount;++j) v+=bias[a.keys[j]]/float(a.keyCount);
+            for (int col=0;col<prefix;++col) { const int j=columns[col]; v+=lin[j]*a.x[j]; }
+            if (singleKey) {
+                const float *embedding=emb+a.keys.front()*SMALL_EMBED;
+                for (int i=0;i<SMALL_EMBED;++i) e[i]+=embedding[i];
+            } else for (int j=0;j<a.keyCount;++j) {
+                const float *embedding=emb+a.keys[j]*SMALL_EMBED;
+                for (int i=0;i<SMALL_EMBED;++i) e[i]+=embedding[i]/float(a.keyCount);
+            }
+            for (int col=0;col<prefix;++col) {
+                const int j=columns[col];
+                const float x=a.x[j], *column=projectionColumns_.data()+j*SMALL_EMBED;
+                for (int i=0;i<SMALL_EMBED;++i) e[i]+=column[i]*x;
+            }
+            if (cached) {
+                cached->snapshot=snapshotId_; cached->key=a.keys.front(); cached->bias=v;
+                std::copy_n(a.x.data(),ACTION_PREFIX,cached->input.data());
+                std::copy_n(e,SMALL_EMBED,cached->embedding.data());
+            }
         }
         // Vectorize independent outputs, retaining each output's input order.
-        for (int col=0;col<count;++col) {
+        for (int col=prefix;col<count;++col) {
             const int j=columns[col];
+            v+=lin[j]*a.x[j];
             const float x=a.x[j], *column=projectionColumns_.data()+j*SMALL_EMBED;
             for (int i=0;i<SMALL_EMBED;++i) e[i]+=column[i]*x;
         }

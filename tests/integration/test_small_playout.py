@@ -176,6 +176,49 @@ def test_zero_state_and_inactive_hidden_channels_ignore_coefficients():
     assert learner.search.net.logits(root) == expected
 
 
+def test_action_projection_handles_input_eviction_and_dynamic_targets(combat_factory):
+    bc = combat_factory(['STRIKE_RED'] * 5).thick.bc
+    bc.apply_custom_state({'hand': ['STRIKE_RED']})
+    learner = SmallPlayoutLearner(seed=19)
+    original = learner.search.net.logits(bc)
+    state = bc.card_state()
+    # More distinct card feature prefixes than the bounded inference cache.
+    # Repeated calls must remain correct both before and after collisions.
+    for growth in range(4097):
+        state['hand'][0]['special_data'] = growth
+        bc.set_card_state(state)
+        actual = learner.search.net.logits(bc)
+        assert learner.search.net.logits(bc) == actual
+        if growth % 257 == 0:
+            with torch.inference_mode():
+                expected = learner.policy(*collate_features([sts.small_playout_features(bc)])).numpy()[0]
+            np.testing.assert_allclose(actual, expected, atol=2e-5, rtol=2e-5)
+    state['hand'][0]['special_data'] = 0
+    bc.set_card_state(state)
+    assert learner.search.net.logits(bc) == original
+    for hp in [17, 31, 29, 17]:
+        bc.apply_custom_state({'monsters': [{'hp': hp}]})
+        with torch.inference_mode():
+            expected = learner.policy(*collate_features([sts.small_playout_features(bc)])).numpy()[0]
+        np.testing.assert_allclose(learner.search.net.logits(bc), expected, atol=2e-5, rtol=2e-5)
+
+
+def test_released_native_snapshots_cannot_reuse_old_action_projections():
+    import gc
+    root = BattleFixture().create(42)
+    learner = SmallPlayoutLearner(seed=19)
+    features = collate_features([sts.small_playout_features(root)])
+    for _ in range(64):
+        with torch.no_grad():
+            learner.policy.keys.weight.add_(1 / 128)
+            learner.policy.linear.weight.add_(1 / 128)
+            expected = learner.policy(*features).numpy()[0]
+        snapshot = sts.SmallPlayoutNet(learner.policy.export())
+        np.testing.assert_allclose(snapshot.logits(root), expected, atol=2e-5, rtol=2e-5)
+        del snapshot
+        gc.collect()
+
+
 @pytest.mark.parametrize('nonce', [0, 1, 73, 2**63 + 7])
 def test_small_and_general_resampling_share_future_rng_without_hidden_cards(combat_factory, nonce):
     root = combat_factory(['STRIKE_RED', 'DEFEND_RED'] * 5).thick.bc

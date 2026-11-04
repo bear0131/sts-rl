@@ -28,6 +28,7 @@ constexpr int SMALL_MAX_CARDS_PER_TURN = 128;
 bool smallTurnCardLimitReached(const BattleContext &bc);
 // Parameter order is the versioned Python export contract, not a Torch ABI.
 class SmallPlayoutNet {
+    std::uint64_t snapshotId_;
     std::vector<float> weights_;
     std::array<float, SMALL_STATE * SMALL_HIDDEN> stateColumns_;
     std::array<float, SMALL_HIDDEN * SMALL_EMBED> hiddenColumns_;
