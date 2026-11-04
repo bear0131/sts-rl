@@ -596,20 +596,30 @@ def test_terminal_value_uses_only_hp_or_boss_victory(run_combat_factory, escape)
     assert sts.small_playout_value(bc, True) == (0 if escape else 1)
 
 
-def test_chance_widening_and_worker_failure_recovery(combat_factory):
+@pytest.mark.parametrize('tree_depth', [1, 1024])
+def test_chance_widening_and_worker_failure_recovery(combat_factory, tree_depth):
     bc = combat_factory(['SHRUG_IT_OFF'] * 5).thick.bc
     bc.apply_custom_state({'hand': ['BATTLE_TRANCE'], 'draw': [
         'STRIKE_RED', 'DEFEND_RED', 'BASH', 'INFLAME', 'HEAVY_BLADE', 'ANGER', 'DISARM', 'CLEAVE'],
         'discard': []})
-    learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=500, tree_depth=1), threads=2)
+    before = bc.to_dict()
+    learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=500, tree_depth=tree_depth), threads=2)
     first = learner.search.search([bc, bc], [23, 24])
     assert sum(r['stats']['chance_replays'] for r in first) > 0
-    assert all(r['stats']['tree_cuts'] == 500 for r in first)
+    if tree_depth == 1:
+        assert all(r['stats']['tree_cuts'] == 500 for r in first)
+    else:
+        assert all(r['stats']['nodes'] > len(r['action_bits']) for r in first)
     bad = replace(learner.search.config, simulations=0).native()
     with pytest.raises(ValueError, match='budget'):
         sts.small_playout_search_batch(learner.search.pool, learner.search.net, [bc, bc], [bad, bad], [23, 24])
     after = learner.search.search([bc, bc], [23, 24])
-    assert [r['visits'] for r in first] == [r['visits'] for r in after]
+    for initial, repeated in zip(first, after):
+        for field in ('action', 'action_bits', 'visits', 'values'):
+            assert initial[field] == repeated[field]
+        assert {k: v for k, v in initial['stats'].items() if k != 'search_seconds'} == {
+            k: v for k, v in repeated['stats'].items() if k != 'search_seconds'}
+    assert bc.to_dict() == before
 
 
 def test_codex_generated_choices_do_not_merge_colliding_legacy_keys():

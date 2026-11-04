@@ -210,23 +210,28 @@ std::uint64_t beliefKey(const BattleContext &s) {
     for(int i=0;i<known;++i) k=noslMix(k^noslMix(s.cards.drawPile[s.cards.drawPile.size()-1-i].getUniqueId()+1));
     return k;
 }
-struct Node;
-struct OutcomeNode {
-    BattleContext state;
-    std::uint64_t key;
-    int samples=1;
-    std::unique_ptr<Node> node;
-};
+struct OutcomeNode;
 struct Edge {
     Action action;
     std::uint64_t semantic;
     int visits=0;
     double sum=0;
-    std::vector<OutcomeNode> outcomes;
+    std::vector<std::unique_ptr<OutcomeNode>> outcomes;
     double prior=0;
     int terminalVisits=0;
 };
 struct Node { int visits=0; std::vector<Edge> edges; };
+struct OutcomeNode {
+    BattleContext state;
+    std::uint64_t key;
+    int samples=1;
+    Node node;
+
+    // BattleContext has no move constructor. Keep it at a stable address so
+    // growing an edge's outcomes never deep-copies already sampled states.
+    OutcomeNode(const BattleContext &source, std::uint64_t belief)
+        : state(source), key(belief) {}
+};
 void expand(Node &node,const BattleContext &s,SmallSearchStats &stats,
             const SmallSearchConfig &cfg,const SmallPlayoutNet *prior) {
     for (auto a:budgetActions(s))
@@ -379,26 +384,26 @@ SmallSearchResult smallSearch(const BattleContext &root,const SmallPlayoutNet &n
             if(int(edge.outcomes.size())<cap) {
                 resolve(edge,state).execute(state); ++result.stats.treeTransitions;
                 const auto key=beliefKey(state);
-                for(auto &o:edge.outcomes) if(o.key==key){
-                    if(state.inputState==InputState::CARD_SELECT && o.state.cardSelectInfo.cards!=state.cardSelectInfo.cards) {
+                for(auto &o:edge.outcomes) if(o->key==key){
+                    if(state.inputState==InputState::CARD_SELECT && o->state.cardSelectInfo.cards!=state.cardSelectInfo.cards) {
                         std::ostringstream d; d << "generated choice key collision: ";
-                        for(auto c:o.state.cardSelectInfo.cards) d << int(c) << ',';
+                        for(auto c:o->state.cardSelectInfo.cards) d << int(c) << ',';
                         d << " vs ";for(auto c:state.cardSelectInfo.cards) d << int(c) << ',';
                         throw std::logic_error(d.str());
                     }
-                    outcome=&o;++o.samples;break;
+                    outcome=o.get();++o->samples;break;
                 }
                 if(!outcome){
-                    edge.outcomes.push_back({state,key,1,std::make_unique<Node>()});
-                    outcome=&edge.outcomes.back(); newLeaf=true;
+                    edge.outcomes.push_back(std::make_unique<OutcomeNode>(state,key));
+                    outcome=edge.outcomes.back().get(); newLeaf=true;
                 }
             } else {
-                std::vector<int> counts; for(const auto &o:edge.outcomes) counts.push_back(o.samples);
+                std::vector<int> counts; for(const auto &o:edge.outcomes) counts.push_back(o->samples);
                 std::discrete_distribution<int> choose(counts.begin(),counts.end());
-                outcome=&edge.outcomes[choose(rng)]; state=outcome->state;
+                outcome=edge.outcomes[choose(rng)].get(); state=outcome->state;
                 smallRedeterminize(state,rng()); ++result.stats.chanceReplays;
             }
-            node=outcome->node.get(); nodes.push_back(node); ++depth;
+            node=&outcome->node; nodes.push_back(node); ++depth;
             if(state.outcome!=Outcome::UNDECIDED) break;
             if(newLeaf){expand(*node,state,result.stats,cfg,prior);break;}
         }
