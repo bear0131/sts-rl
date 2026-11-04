@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| MONITOR-C37-POLICY-PRE | 进行中 | apps/training_monitor.py、dashboard_static/training.html；显式合并原COMBAT37与续训为同条曲线，保留历史来源；policy图只读更新前测量，重启/实时更新/缺失值与其他对照不受影响。 |
+| MONITOR-C37-POLICY-PRE | 已完成：连续1–183/真实180–183更新前测量 | apps/training_monitor.py、dashboard_static/training.html；显式合并原COMBAT37与续训为同条曲线，保留历史来源；policy图只读更新前测量，重启/实时更新/缺失值与其他对照不受影响。 |
 
 同步来源固定为main 2a7eafc..26bcb97；下列新增项的原验证记录已并入worklog/2026-10-19.md，当前分支合并后的结果单独记录，不能沿用来源的通过数量。main的BRIDGE29与本分支战斗升级费用编号冲突，房间回放统一记为BRIDGE39；既有BRIDGE17/28/F20实现保留，采用新增回归复验而不降级合同。
 
