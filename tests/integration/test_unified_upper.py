@@ -185,6 +185,10 @@ def test_unequal_empty_ranks_match_global_weighted_update(unified_env, tmp_path,
     with ThreadPoolExecutor(3) as pool:
         results = list(pool.map(train, range(3)))
     for model, result in zip(models, results):
+        assert result['policy_measurement_samples'] == 7
+        for key in ('loss', 'kl', 'entropy', 'nll', 'ratio_abs_error'):
+            assert result[f'policy_{key}_pre_update'] == pytest.approx(
+                reference_result[f'policy_{key}_pre_update'], rel=2e-5, abs=3e-6)
         assert result['samples_used'] == 14 and result['critic_samples_used'] == 21
         assert result['updates'] == 2 and result['critic_updates'] == (6 if critic_batch else 3)
         if measure:
@@ -689,3 +693,84 @@ def test_microbatch_partition_preserves_weighted_update(unified_env, tmp_path, d
     for state, rng in zip(states[1:], rngs[1:]):
         torch.testing.assert_close(state, states[0], rtol=2e-5, atol=3e-6)
         np.testing.assert_equal(rng, rngs[0])
+
+
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_actor_pre_measurement_is_real_and_preserves_training(unified_env, tmp_path, monkeypatch, device):
+    import random
+    from rl.algorithms import unified_upper as U
+    from rl.algorithms.upper_probe import state_digest
+    if device == 'cuda':
+        assert torch.cuda.is_available(), 'CUDA qualification requires CUDA'
+    model = make_model(unified_env, device=device)
+    model.set_logger(configure(str(tmp_path), []))
+    obs, _ = unified_env.reset(seed=41)
+    mask = unified_env.action_masks()
+    with torch.no_grad():
+        action, value, logp = model.policy({k: v.to(device) for k, v in tensor(obs).items()}, action_masks=mask[None])
+    observations = {k: np.stack([v, v]) for k, v in obs.items()}
+    actions = np.array([int(action), int(action)])
+    masks = np.stack([mask, mask])
+    old = np.full(2, float(logp), dtype=np.float32)
+    adv = np.array([1., -1.])
+    network = model.policy.core.upper_actor
+    network.train()
+    list(network.modules())[-1].training = False
+    for parameter in network.parameters():
+        parameter.grad = torch.ones_like(parameter)
+    def snapshot():
+        return state_digest((model.policy.state_dict(), model.policy.upper_optimizer.state_dict(),
+            [p.grad for p in network.parameters()], [m.training for m in network.modules()],
+            random.getstate(), np.random.get_state(), torch.get_rng_state(),
+            torch.cuda.get_rng_state_all() if device == 'cuda' else None))
+    before = snapshot()
+    measured, seconds = U.measure_actor_surrogate(model, observations, actions, masks, old, adv)
+    assert abs(measured['loss']) < 2e-6
+    assert measured['ratio_abs_error'] < 2e-6
+    assert measured['nll'] == pytest.approx(-float(logp), abs=2e-6)
+    assert seconds > 0 and snapshot() == before
+    # Ratios 1.01 and .99 with advantages +1/-1 yield a nonzero -0.01.
+    changed, _ = U.measure_actor_surrogate(model, observations, actions, masks,
+                                          old - np.log([1.01, .99]), adv)
+    assert changed['loss'] == pytest.approx(-.01, abs=2e-6)
+    assert snapshot() == before
+    rows = [dict(observation=copy.deepcopy(obs), action=int(action), mask=mask.copy(),
+        value=float(value), log_prob=float(logp), reward=i/7, terminal=True, env=i, episode=0)
+        for i in range(7)]
+    model._upper_completed = copy.deepcopy(rows)
+    update_upper(model)  # Seed nonempty Adam, then compare two rounds and reload.
+    source = tmp_path/'actor-source.zip'; model.save(source)
+    control = AccumulatingMaskablePPO.load(source, device=device)
+    measured_model = AccumulatingMaskablePPO.load(source, device=device)
+    original_measure = U.measure_actor_surrogate
+    for iteration in range(2):
+        rngs = []
+        for learner in (control, measured_model):
+            learner.set_logger(configure(str(tmp_path), []))
+            learner._upper_completed = copy.deepcopy(rows)
+            random.seed(910+iteration); np.random.seed(910+iteration); torch.manual_seed(910+iteration)
+            with monkeypatch.context() as patch:
+                if learner is control:
+                    patch.setattr(U, 'measure_actor_surrogate', lambda *a, **kw: ({}, 0.))
+                result = update_upper(learner)
+            if learner is measured_model:
+                assert result['policy_measurement_samples'] == 7
+                assert np.isfinite(result['policy_loss_pre_update'])
+            rngs.append(state_digest((random.getstate(), np.random.get_state(), torch.get_rng_state(),
+                torch.cuda.get_rng_state_all() if device == 'cuda' else None)))
+        assert rngs[0] == rngs[1]
+        for getter in (lambda m: m.policy.state_dict(), lambda m: m.policy.upper_optimizer.state_dict()):
+            torch.testing.assert_close(getter(control), getter(measured_model),
+                rtol=0 if device == 'cpu' else 1e-5, atol=0 if device == 'cpu' else 2e-6)
+        for name, learner in [('control', control), ('measured', measured_model)]:
+            learner.save(tmp_path/f'actor-{name}.zip')
+        control = AccumulatingMaskablePPO.load(tmp_path/'actor-control.zip', device=device)
+        measured_model = AccumulatingMaskablePPO.load(tmp_path/'actor-measured.zip', device=device)
+    def fail(*args, **kwargs):
+        random.random(); np.random.random(); torch.rand(1, device=device)
+        raise RuntimeError('actor measurement failed')
+    monkeypatch.setattr(network, 'forward', fail)
+    before = snapshot()
+    with pytest.raises(RuntimeError, match='actor measurement failed'):
+        original_measure(model, observations, actions, masks, old, adv)
+    assert snapshot() == before

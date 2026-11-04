@@ -597,3 +597,16 @@ actor 的冻结 GAE、奖励、终局定义、搜索、样本遍数和上下层 
 `unified-upper-candidate-screen-v1` 的 `diagnostic.profile_updates: true` 为每个临时更新臂
 记录1秒资源采样及精确Torch峰值；固定有效batch/样本顺序时可比较microbatch执行分块。
 CPU资源缺GPU项填null；单次诊断吞吐不是完整训练资格，也不能证明同墙钟学习收益。
+
+
+统一上层每轮还记录 `upper/policy_loss_pre_update`：在任何actor/critic更新前，
+固定actor对本轮全部上层决策重新前向，使用采集时old_logp和本轮全局标准化优势，
+计算与训练一致的clipped PPO surrogate（不含entropy正则）。不是首遍移动参数的均值，
+也不是交叉熵预测误差；ratio约1且mean(A)约0，因此接近0是预期行为。
+同步记录 `policy_kl_pre_update`、`policy_entropy_pre_update`、`policy_nll_pre_update`
+（采集动作负对数概率）、`policy_ratio_abs_error_pre_update`（mean(abs(ratio-1)))，
+帮助区分策略分布变化和相对目标归零。NLL/熵也来自当前训练分布，不是独立评测。
+`policy_measurement_samples/version` 标记全局分母与版本；本地FP64求和后按现有
+SSH归约协议汇总，`policy_measurement_pre_seconds_rank` 包含GPU同步和归约，
+计入整轮时间。保留模式、Python/NumPy/Torch RNG与梯度/Adam，不改变更新配置；
+空rank也参加归约。此项仅统一上层模型支持，旧模型/旧日志不补零。

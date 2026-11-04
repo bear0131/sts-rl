@@ -1,5 +1,7 @@
 # 仓库总 TODO
 
+| UPPER-POLICY-PRE | 进行中 | rl/algorithms/unified_upper.py及真实训练上报；新增全部更新前固定actor的policy loss并分析，测量不改变权重/Adam/RNG或目标，CPU/CUDA及两轮生产/保存恢复验收，监控合并COMBAT37。 |
+
 | UPPER-ROLLOUT-200S | 已完成：170/171/172真实采样190.93/188.92/187.96s；普通恢复与保存通过，旧四机continuous运行；25核比较完成 | 接管 COMBAT37 continuous，1920自然局/原搜索预算不变，目标四rank最大完整rollout<200s。用户取消整体恢复deadline，优先事件驱动线程调度；先同轨迹语义/完整采集，再两轮真实更新保存恢复。不以删局/少搜索达标；协议 post_screen.rollout_200s_and_large_critic。 |
 | UPPER-LARGE-CRITIC-BATCH | 离线确认通过；在线效果待测 | 同源完整游戏80/20训练留出，32768对照与65536/131072、4/8遍和独立LR2倍对照，含控制重复；实际λ目标和MC pre/post、真实Adam/样本使用/时间资源。留出初筛后独立cohort确认，不能只看训练loss宣称更优；源状态还原、持续训练保持。 |
 
@@ -551,3 +553,5 @@
 | TRAIN-FAILURE-SCENE | 已部署：本机与四机真实资格通过 | 异常关闭前保存故障槽canonical/战斗JSON与可回放journal；无明确槽最多4个在途槽。连续native截断reset前最多4次/进程留档，不改训练/保护语义；记录失败不遮蔽原异常。真实native截断可回放、生产生命周期异常钩子与普通保存恢复须过。 |
 
 | RECOVERY-LEGACY-OPTIONS-CAPACITY | 已复现，未修 | `tests/integration/test_learner_recovery.py`的`test_schema2_restores_live_vec_monitor_and_next_transition`与`test_schema2_fork_reset_restores_learner_rng_after_env_reset`在真实原生b3a扩展/legacy观察的model.learn阶段报`options.nodes contains 4 entries, exceeding capacity 3`；改动前checkpoints.py同样复现，尚未进入恢复逻辑。修复需核对legacy观察ABI与保留checkpoint，不能在扩容实验顺手扩大容量或skip掩盖；验收两项原测试与兼容性通过。证据见2026-11-04 worklog。 |
+
+| ROLLOUT-150S | 进行中 | 现役1920自然局四机rollout≤150秒；不改训练与搜索统计语义，优先减少CPU计算。显式构建语义对照、生产长度计时/资源与env原子操作每秒，恢复同一COMBAT37连续训练。见worklog/2026-11-05.md#rollout-150s新的性能目标与范围。 |

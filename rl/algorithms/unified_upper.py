@@ -72,6 +72,55 @@ def measure_critic_mse(model, observations, targets, *, average=lambda x: x):
     return result, time.perf_counter() - started
 
 
+def measure_actor_surrogate(model, observations, actions, masks, old_logp, advantages, *, average=lambda x: x):
+    """Full-cohort PPO surrogate before updates, using collection-time logp.
+
+    This is a relative objective, not a prediction error: normalized advantages
+    and an unchanged policy make its mean approximately zero. Preserve RNG,
+    module modes, gradients and optimizer state; empty ranks still reduce sums.
+    """
+    network, cfg = model.policy.core.upper_actor, model.policy.core.upper_config
+    count = len(actions)
+    if any(len(v) != count for v in (masks, old_logp, advantages)):
+        raise ValueError('actor measurement inputs have different sample counts')
+    device = torch.device(model.device)
+    devices = [device.index if device.index is not None else torch.cuda.current_device()] if device.type == 'cuda' else []
+    if devices:
+        torch.cuda.synchronize(device)
+    started = time.perf_counter()
+    modes = [(module, module.training) for module in network.modules()]
+    python_rng, numpy_rng = random.getstate(), np.random.get_state()
+    names = ('loss', 'kl', 'entropy', 'nll', 'ratio_abs_error')
+    try:
+        with torch.random.fork_rng(devices=devices), torch.no_grad():
+            network.eval()
+            sums = torch.zeros(len(names), dtype=torch.float64, device=device)
+            for start in range(0, count, cfg.micro_batch_size):
+                stop = min(start + cfg.micro_batch_size, count)
+                obs = {k: torch.as_tensor(v[start:stop], device=device) for k, v in observations.items()}
+                logits = network(obs).masked_fill(~torch.as_tensor(masks[start:stop], device=device), -1e9)
+                logp_all = logits.log_softmax(-1)
+                logp = logp_all.gather(1, torch.as_tensor(actions[start:stop, None], device=device)).flatten()
+                delta = logp - torch.as_tensor(old_logp[start:stop], dtype=torch.float32, device=device)
+                ratio = delta.exp()
+                adv = torch.as_tensor(advantages[start:stop], dtype=torch.float32, device=device)
+                metrics = (-torch.minimum(adv * ratio, adv * ratio.clamp(1-cfg.clip, 1+cfg.clip)),
+                           (ratio-1)-delta, -(logp_all.exp()*logp_all).sum(-1), -logp, (ratio-1).abs())
+                sums += torch.stack([v.double().sum() for v in metrics])
+            reduced = average(dict(count=float(count), **dict(zip(names, sums.cpu().tolist()))))
+            if not all(np.isfinite(v) for v in reduced.values()):
+                raise FloatingPointError('nonfinite frozen actor measurement')
+            result = {k: reduced[k] / reduced['count'] if reduced['count'] else None for k in names}
+    finally:
+        for module, training in modes:
+            module.training = training
+        random.setstate(python_rng)
+        np.random.set_state(numpy_rng)
+    if devices:
+        torch.cuda.synchronize(device)
+    return result, time.perf_counter() - started
+
+
 def update_unified_upper(model, *, rank=0, world_size=1, average=lambda x: x, synchronize=None):
     records, core = model._upper_completed, model.policy.core
     cfg, count = core.upper_config, len(records)
@@ -116,6 +165,11 @@ def update_unified_upper(model, *, rank=0, world_size=1, average=lambda x: x, sy
                effective_batch_size_global=total / actor_batches,
                critic_effective_batch_size_global=total / critic_batches)
     measurement_seconds = 0.
+    actor_measured, actor_measurement_seconds = measure_actor_surrogate(
+        model, observations, actions, masks, old_logp, advantages, average=average)
+    out.update({f'policy_{key}_pre_update': value for key, value in actor_measured.items()})
+    out.update(policy_measurement_pre_seconds_rank=actor_measurement_seconds,
+               policy_measurement_samples=float(total), policy_measurement_version=1.)
     if cfg.measure_value_loss:
         measured, measurement_seconds = measure_critic_mse(model, observations,
             dict(mc=mc_returns, target=returns), average=average)

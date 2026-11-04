@@ -306,6 +306,13 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
             assert cfg.critic_effective_batch_size == (critic_batch or 0)
             assert manifest['config']['upper_config']['critic_effective_batch_size'] == (critic_batch or 0)
             samples = payloads[i]['upper/samples']
+            if samples:
+                assert payloads[i]['upper/policy_measurement_samples'] == samples
+                assert payloads[i]['upper/policy_measurement_version'] == 1
+                assert payloads[i]['upper/policy_measurement_pre_seconds_rank'] > 0
+                assert abs(payloads[i]['upper/policy_loss_pre_update']) < 2e-5
+                assert payloads[i]['upper/policy_ratio_abs_error_pre_update'] < 2e-5
+                assert payloads[i]['upper/policy_entropy_pre_update'] >= 0
             assert payloads[i]['upper/updates'] == 2 * math.ceil(samples / 8)
             assert payloads[i]['upper/critic_updates'] == 3 * math.ceil(samples / (critic_batch or 8))
             assert payloads[i]['upper/critic_samples_used'] == 3 * samples
