@@ -1728,9 +1728,9 @@
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
-    "status": "diagnostic",
-    "note": "当前轮完整保存后临时暂停，保护并备份同一run的最新模型、优化器与随机状态；进行上层图推理的成熟167/1920自然局速度对照，完成后普通恢复，训练配置不变。",
-    "updated_at": "2026-11-05T06:50:38.941678+08:00"
+    "status": "training",
+    "note": "成熟167/1920局四机对照完成：161.79→159.14秒，语义核验通过但未达150秒。已从135/global92375405保护代普通恢复同一run/Adam/RNG与原超参，正在持续训练并等待恢复后的完整保存验收。",
+    "updated_at": "2026-11-05T07:12:54.906166+08:00"
   },
   "large_critic_fresh_comparison": {
     "status": "continuous fresh training directly started on the original four hosts at user request; no staged qualification",
