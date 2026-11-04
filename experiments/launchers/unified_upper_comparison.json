@@ -1117,7 +1117,7 @@
       "adopted_native_sha256": "54dfeb5385f9f2dfc609f17b24acfe96c8c48fa298cb3a9296bf25901fbf11ef"
     },
     "rollout_200s_and_large_critic": {
-      "status": "Source167 protected; failed native candidates retired; 131072x4 nominated, fresh-cohort confirmation registered",
+      "status": "Independent critic131072x4 confirmation passed; original training config retained, native allocation/sparsity candidate under test",
       "intent": "Continue current COMBAT37; target max-rank full1920-game rollout <200s, test critic effective batches >32768 with adjusted epochs/LR. Pauses for bounded tests authorized.",
       "source": {
         "round": 167,
@@ -1276,7 +1276,18 @@
           }
         ],
         "process_timeout_seconds": 1500,
-        "interpretation": "Prespecified confirmation of sole nominated candidate; same frozen167 model/Adam, next disjoint1920-game seed interval, 384 whole-game holdout. Same >=3% target MSE reduction, paired game95%CI upper<0, MC regression<=1% gate. No online-training efficacy claim."
+        "interpretation": "Prespecified confirmation of sole nominated candidate; same frozen167 model/Adam, next disjoint1920-game seed interval, 384 whole-game holdout. Same >=3% target MSE reduction, paired game95%CI upper<0, MC regression<=1% gate. No online-training efficacy claim.",
+        "result": {
+          "passed": true,
+          "target_relative_improvement": 0.06157681002236903,
+          "mc_relative_improvement": 0.011319845238767057,
+          "target_delta_ci95": [
+            -0.0036694173301646303,
+            -0.0010527774426735486
+          ],
+          "evidence": "runs/local/takeover/confirm-results/summary.json",
+          "production_adopted": false
+        }
       }
     }
   },
