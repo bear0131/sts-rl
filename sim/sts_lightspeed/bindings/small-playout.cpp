@@ -18,14 +18,13 @@ py::dict features(const SmallFeatures &f) {
     std::memcpy(state.mutable_data(),f.state.data(),SMALL_STATE*sizeof(float));
     const auto n=py::ssize_t(f.actions.size());
     py::array_t<float> actions({n,py::ssize_t(SMALL_ACTION)});
-    py::array_t<int> keys({n,py::ssize_t(10)});
-    std::fill(keys.mutable_data(),keys.mutable_data()+n*10,-1);
+    py::array_t<int> keys({n,py::ssize_t(SMALL_KEYS)});
+    std::fill(keys.mutable_data(),keys.mutable_data()+n*SMALL_KEYS,-1);
     std::vector<std::uint32_t> bits;
     for(py::ssize_t i=0;i<n;++i){
         const auto &a=f.actions[i]; bits.push_back(a.bits);
         std::memcpy(actions.mutable_data()+i*SMALL_ACTION,a.x.data(),SMALL_ACTION*sizeof(float));
-        if(a.keys.size()>10) throw std::logic_error("too many compact action keys");
-        std::copy(a.keys.begin(),a.keys.end(),keys.mutable_data()+i*10);
+        std::copy_n(a.keys.begin(),a.keyCount,keys.mutable_data()+i*SMALL_KEYS);
     }
     py::dict d;d["state"]=state;d["actions"]=actions;d["keys"]=keys;d["action_bits"]=bits;return d;
 }

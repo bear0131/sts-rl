@@ -2,14 +2,21 @@
 #include "sim/search/Action.h"
 #include <array>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 namespace sts::search {
 constexpr int SMALL_STATE = 32, SMALL_ACTION = 24, SMALL_HIDDEN = 64, SMALL_EMBED = 32;
+constexpr int SMALL_KEYS = 10; // Existing exported action-key width / maximum hand size.
 int smallKeyCount();
 struct SmallActionFeatures {
     std::uint32_t bits;
-    std::vector<int> keys;
+    std::array<int, SMALL_KEYS> keys{};
+    int keyCount = 0;
+    void addKey(int key) {
+        if (keyCount == SMALL_KEYS) throw std::logic_error("too many compact action keys");
+        keys[keyCount++] = key;
+    }
     std::array<float, SMALL_ACTION> x{};
 };
 struct SmallFeatures {

@@ -137,6 +137,28 @@ def test_selected_card_embeddings_are_averaged_not_summed(combat_factory):
     assert learner.search.net.logits(bc) == expected
 
 
+def test_all_ten_card_keys_survive_complete_subset_features(combat_factory):
+    bc = combat_factory(['STRIKE_RED'] * 5).thick.bc
+    bc.apply_custom_state({'hand': ['STRIKE_RED', 'DEFEND_RED'] * 5, 'potions': ['Gamblers Brew']})
+    bc.execute(sts.Action(sts.ActionType.POTION, 0))
+    features = sts.small_playout_features(bc)
+    assert features['keys'].shape == (1024, 10)
+    all_selected = features['action_bits'].index((int(sts.ActionType.MULTI_CARD_SELECT) << 29) | 1023)
+    assert np.all(features['keys'][all_selected] >= 0)
+    assert len(set(features['keys'][all_selected])) == 2
+    assert np.array_equal(features['keys'][all_selected][::2], np.repeat(features['keys'][all_selected][0], 5))
+    learner = SmallPlayoutLearner(seed=19)
+    with torch.no_grad():
+        for parameter in learner.policy.parameters():
+            parameter.zero_()
+        learner.policy.fc2.bias[0] = 1
+        learner.policy.keys.weight[:, 0] = torch.arange(learner.policy.key_count) / 4
+        learner.policy.bias.weight[:, 0] = torch.arange(learner.policy.key_count) / 8
+    learner.search.refresh(learner.policy)
+    expected = [float(row[row >= 0].mean() * 3 / 8) for row in features['keys']]
+    np.testing.assert_allclose(learner.search.net.logits(bc), expected, rtol=1e-6, atol=1e-6)
+
+
 def test_zero_state_and_inactive_hidden_channels_ignore_coefficients():
     learner = SmallPlayoutLearner(seed=19)
     root = BattleFixture().create(42)

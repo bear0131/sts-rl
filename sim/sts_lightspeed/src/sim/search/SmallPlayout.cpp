@@ -25,7 +25,7 @@ float incoming(const BattleContext &bc, const Monster &m) {
     return float(m.getIntentDamage(bc, damage.damage) * damage.attackCount);
 }
 void addCard(SmallActionFeatures &f, const CardInstance &c) {
-    f.keys.push_back(cardKey(c));
+    f.addKey(cardKey(c));
     f.x[5] += float(c.costForTurn) / 5;
     f.x[6] += float(c.getUpgradeCount()) / 10;
     f.x[7] += float(c.getType()) / 5;
@@ -93,16 +93,16 @@ SmallFeatures featuresForActions(const BattleContext &bc, const std::vector<Acti
             const int p = int(bc.potions[action.getSourceIdx()]);
             if (p < POTION_FIRST || p >= POTION_FIRST + POTION_KEYS)
                 throw std::logic_error("invalid compact potion");
-            a.keys.push_back(3 + CARD_KEYS + p - POTION_FIRST);
+            a.addKey(3 + CARD_KEYS + p - POTION_FIRST);
         } else if (kind == ActionType::SINGLE_CARD_SELECT) {
             if (bc.cardSelectInfo.cardSelectTask == CardSelectTask::CODEX && action.getSelectIdx() == 3)
-                a.keys.push_back(1);
+                a.addKey(1);
             else append(combatChoiceCard(bc, choices.zone, action.getSelectIdx()));
         } else if (kind == ActionType::MULTI_CARD_SELECT) {
             for (int index : action.getSelectedIdxs()) append(bc.cards.hand[index]);
-            a.x[15] = float(a.keys.size()) / 10;
-            if (a.keys.empty()) a.keys.push_back(2);
-        } else a.keys.push_back(0);
+            a.x[15] = float(a.keyCount) / 10;
+            if (a.keyCount==0) a.addKey(2);
+        } else a.addKey(0);
         const bool targeted =
             (kind == ActionType::CARD && bc.cards.hand[action.getSourceIdx()].requiresTarget()) ||
             (kind == ActionType::POTION && potionRequiresTarget(bc.potions[action.getSourceIdx()]));
@@ -161,18 +161,18 @@ std::vector<float> SmallPlayoutNet::logits(const SmallFeatures &f) const {
         // factoring z through the projection would change float cancellation.
         int columns[SMALL_ACTION], count=0;
         for (int j=0;j<SMALL_ACTION;++j) if (a.x[j]!=0.f) columns[count++]=j;
-        const bool singleKey=a.keys.size()==1;
+        const bool singleKey=a.keyCount==1;
         float v=0;
         if (singleKey) v+=bias[a.keys.front()];
-        else for (int k:a.keys) v+=bias[k]/float(a.keys.size());
+        else for (int j=0;j<a.keyCount;++j) v+=bias[a.keys[j]]/float(a.keyCount);
         for (int col=0;col<count;++col) { const int j=columns[col]; v+=lin[j]*a.x[j]; }
         float e[SMALL_EMBED]{};
         if (singleKey) {
             const float *embedding=emb+a.keys.front()*SMALL_EMBED;
             for (int i=0;i<SMALL_EMBED;++i) e[i]+=embedding[i];
-        } else for (int k:a.keys) {
-            const float *embedding=emb+k*SMALL_EMBED;
-            for (int i=0;i<SMALL_EMBED;++i) e[i]+=embedding[i]/float(a.keys.size());
+        } else for (int j=0;j<a.keyCount;++j) {
+            const float *embedding=emb+a.keys[j]*SMALL_EMBED;
+            for (int i=0;i<SMALL_EMBED;++i) e[i]+=embedding[i]/float(a.keyCount);
         }
         // Vectorize independent outputs, retaining each output's input order.
         for (int col=0;col<count;++col) {
