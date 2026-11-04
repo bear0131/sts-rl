@@ -304,7 +304,7 @@ class Monitor:
                           interval=interval, rows=[], ranks=[], updated_at=None, polling=False)
         if saved.get('run_id') == config['run_id']:
             self.state.update(saved)
-        self.state.update(interval=interval, polling=False)
+        self.state.update(interval=interval, polling=False, polling_ended=False, poll_error=None)
         self.state['label'] = config.get('label', config['run_id'])
         self.state['branch_step'] = config.get('branch_step', 0)
         self.state['iteration_steps'] = config['iteration_steps']
@@ -399,13 +399,20 @@ class Monitor:
         with self.lock:
             rows = [row for rank in ranks for row in rank.pop('rows', [])]
             self.state['rows'] = merge_rows(self.state['rows'], rows)
-            self.state.update(ranks=ranks, updated_at=time.time(), polling=False)
+            self.state.update(ranks=ranks, updated_at=time.time(), polling=False, poll_error=None)
             self.save_locked()
 
     def watch(self, max_hours):
         deadline = time.monotonic() + max_hours * 3600 if max_hours else math.inf
         while not self.stop.is_set() and time.monotonic() < deadline:
-            self.poll()
+            try:
+                self.poll()
+            except OSError:
+                # Keep in-memory rows/cursors and retry after transient storage
+                # failures; a live HTTP server must not hide a dead collector.
+                with self.lock:
+                    self.state.update(polling=False,
+                        poll_error='训练数据缓存写入失败，正在自动重试')
             self.stop.wait(self.interval)
         with self.lock:
             self.state['polling_ended'] = True

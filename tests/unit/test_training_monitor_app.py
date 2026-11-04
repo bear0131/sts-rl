@@ -128,6 +128,39 @@ def test_unbounded_polling_keeps_running_until_stopped(tmp_path):
     assert monitor.state['polling_ended']
 
 
+def test_cache_write_failure_keeps_polling_and_recovers_without_losing_rows(tmp_path):
+    import os
+    output = tmp_path/'state.json'
+    monitor = Monitor(dict(run_id='continuous', iteration_steps=1, ports=[2200]), output, 30)
+    replace = os.replace
+    writes, snapshots = [], []
+
+    def fail_once(source, destination):
+        writes.append(1)
+        if len(writes) == 1:
+            raise OSError(28, 'No space left on device')
+        replace(source, destination)
+
+    def observe(_timeout):
+        snapshots.append(json.loads(monitor.snapshot()))
+        if len(snapshots) == 2:
+            monitor.stop.set()
+
+    ranks = [dict(rank=0, alive=True, cursor=dict(offset=i),
+                  rows=[dict(global_timesteps=i)]) for i in (10, 20)]
+    with patch.object(monitor, 'read_rank', side_effect=ranks), \
+            patch('apps.training_monitor.os.replace', side_effect=fail_once), \
+            patch.object(monitor.stop, 'wait', side_effect=observe):
+        monitor.watch(0)
+    assert len(writes) == len(snapshots) == 2
+    assert snapshots[0]['poll_error'] and not snapshots[0]['polling']
+    assert snapshots[0]['rows'] == [dict(global_timesteps=10)]
+    assert snapshots[1]['poll_error'] is None
+    assert snapshots[1]['rows'] == [dict(global_timesteps=10), dict(global_timesteps=20)]
+    assert snapshots[1]['ranks'][0]['cursor'] == dict(offset=20)
+    assert json.loads(output.read_text()) == snapshots[1]
+
+
 def test_dashboard_uses_complete_cohorts_and_epoch_summaries(tmp_path):
     """Render conflicting legacy/complete metrics without a browser dependency."""
     from pathlib import Path
@@ -199,6 +232,10 @@ assert.equal(displayRow({...last,'episode_rollout/completed_games_global':900},s
 assert.ok($('chart0').previousElementSibling.children[0].textContent.includes('最近400个完成局'));
 assert.ok($('comparison-status').children.some(n=>n.textContent.includes('legacy')&&n.textContent.includes('最近400个完成局')));
 assert.equal(JSON.stringify(state),before); // Display must not rewrite raw/history data.
+state.poll_error='训练数据缓存写入失败，正在自动重试';render();
+assert.ok($('connection').textContent.includes(state.poll_error));
+assert.equal($('connection').className,'bad');
+state.poll_error=null;render();assert.equal($('connection').className,'');
 assert.ok(!specs.flatMap(s=>s[1]).some(k=>['game/win_rate','game/floor_mean','upper/policy_loss','upper/value_loss','upper/kl'].includes(k)));
 const reference={...first,global_timesteps:8,rollout_round:1};
 state.comparisons.push({run_id:'lambda-reference',label:'lambda-reference',rollout_mode:'complete_games',branch_step:0,branch_round:0,rows:[reference]});
