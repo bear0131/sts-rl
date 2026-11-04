@@ -1797,5 +1797,50 @@
     },
     "continuous": true,
     "user_override": "不做验证，直接启动完整训练，有问题再说"
+  },
+  "search_budget_probe": {
+    "status": "queued_after_inline_key_full_abba",
+    "source_round": 183,
+    "source_global_step": 147390654,
+    "host": "25-core auxiliary",
+    "root": "/root/search-budget-20261105",
+    "supervisor_pid": 12826,
+    "model_source": "/root/combat37-backup-20261105/restore/rank0/rollout-independent-training-20261104/runs/combat37-upper-independent-r1/references/large-critic-control-baseline-183/rank0/step-000147390654/model.zip",
+    "driver_sha256": "9ae7e7698d8d8e38567062abaabdbe2a1723beab5ca0e654864229052a68b934",
+    "budgets_common_elite_boss": [
+      [
+        250,
+        250,
+        1000
+      ],
+      [
+        500,
+        500,
+        2000
+      ],
+      [
+        1000,
+        1000,
+        4000
+      ]
+    ],
+    "exploration_common_elite_boss": [
+      0.8,
+      0.8,
+      2.5
+    ],
+    "temperature": 1.0,
+    "playout_depth": 200,
+    "tree_depth": 1024,
+    "episodes": 96,
+    "first_seed": 202611050,
+    "num_envs": 96,
+    "native_threads": 25,
+    "upper_deterministic": true,
+    "internal_seconds_per_arm": 550,
+    "external_seconds_per_arm": 600,
+    "learning": false,
+    "native_sha256": "a736f74ca56de9c3a24974e51d444126264eabb364b631c4a7f4700651b7e98e",
+    "report": "paired seed bootstrap 10000 resamples, seed20261105; win rate, floor, cost; inference-only conclusions"
   }
 }
