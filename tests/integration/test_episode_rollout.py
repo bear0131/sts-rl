@@ -439,14 +439,27 @@ def test_complete_cohort_growth_preserves_source_and_plain_resume(
         assert saved.policy.core.upper_config.critic_effective_batch_size == 3
 
 
-@pytest.mark.parametrize('scheduler', [None, 'barrier', 'independent'])
+@pytest.mark.parametrize('scheduler', [None, 'barrier', 'independent', 'independent-natural'])
 def test_frozen_rollout_diagnostic_uses_real_collector_without_saving_updates(
         tmp_path, monkeypatch, short_natural_game_env_type, scheduler):
     from rl.training.checkpoints import restore_learner
     from rl.algorithms.upper_probe import state_digest
     from tools.analysis.probe_upper_learning import unified_candidates
+    from tools.analysis import probe_upper_learning
+    from rl.training import reward_monitor, campfire_monitor
+    measured_upper, measured_monitors = [], []
+    measure = probe_upper_learning.measure_frozen_rollout
+    def observed_measure(model, *args, **kwargs):
+        result = measure(model, *args, **kwargs)
+        measured_upper.append(np.asarray([(r['value'], r['log_prob']) for r in model._upper_completed]))
+        measured_monitors.append((reward_monitor.counts(model), campfire_monitor.counts(model)))
+        return result
+    monkeypatch.setattr(probe_upper_learning, 'measure_frozen_rollout', observed_measure)
+    natural_start = scheduler == 'independent-natural'
+    if natural_start:
+        scheduler = 'independent'
     setup = _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type,
-                              'cpu', False, None, unified=True, critic_batch=3)
+                              'cpu', natural_start, None, unified=True, critic_batch=3)
     source = setup['last_bundle']
     manifest = read_bundle(source, rank=0, world_size=1)
     model = AccumulatingMaskablePPO.load(source/'model.zip', device='cpu')
@@ -503,7 +516,17 @@ def test_frozen_rollout_diagnostic_uses_real_collector_without_saving_updates(
     monkeypatch.setattr(sys, 'argv', repeated)
     unified_candidates()
     repeat = json.loads((repeat_output/'rank0/rollout.json').read_text())
-    assert repeat['semantic_digests'] == result['semantic_digests']
+    if scheduler == 'independent':
+        # Completion timing changes inference batch shapes. Require identical
+        # trajectories/labels/RNG here, and bound FP32 reduction differences.
+        for key in ('environment', 'upper_decisions', 'lower_samples', 'rng'):
+            assert repeat['semantic_digests'][key] == result['semantic_digests'][key]
+        assert repeat['game_rng_digest'] == result['game_rng_digest']
+        np.testing.assert_allclose(measured_upper[0], measured_upper[1], atol=2e-6, rtol=2e-5)
+    else:
+        assert repeat['semantic_digests'] == result['semantic_digests']
+    if natural_start:
+        assert measured_monitors[0][0]['reward_gold_policy_decisions'] > 0
     assert repeat['state_digests'] == expected
     assert len(setup['payloads']) == 4
     config = json.loads(protocol.read_text())
