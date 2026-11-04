@@ -13,7 +13,7 @@ import torch
 from env.core import native_actions as C, vocab as V
 from env.search.small_playout import SmallPlayoutStream
 from rl.algorithms.upper_ppo import capture_step
-from rl.search.native import observation_as_tensor
+from rl.search.rollout_inference import UpperPolicyInference
 from rl.training import episode_rollout, reward_monitor, campfire_monitor
 from rl.training.small_playout import configure_collection
 
@@ -138,6 +138,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     model._independent_rollout_progress = stats
 
     with (vec.omit_unused_combat_value_observations(),
+          UpperPolicyInference(model.policy.core, model.device) as upper_inference,
           SmallPlayoutStream(vec.small_playout_batch, threads=cfg.threads) as stream):
         while vec.episode_rollout_active.any():
             maximum = int(vec.episode_rollout_action_counts.max(initial=0))
@@ -166,7 +167,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 obs = {k: v[rows] for k, v in model._last_obs.items()}
                 action_masks = np.stack([masks[i] for i in rows])
                 with torch.inference_mode():
-                    logits, values = model.policy.core.actor_critic(observation_as_tensor(obs, model.device))
+                    logits, values = upper_inference(obs)
                     dist = model.policy.action_dist.proba_distribution(action_logits=logits.float())
                     dist.apply_masking(action_masks)
                     ps = dist.distribution.probs.detach().cpu().numpy()
@@ -242,6 +243,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 return False
         if stream.pending or upper_waiting or actions:
             raise RuntimeError('completed cohort retained pending work')
+        stats.update(upper_inference.statistics())
     model._small_playout_stats = vec.small_playout_stats()
     model._small_playout_samples = sorted(vec.take_small_playout_samples(), key=lambda r: r['env'])
     model._upper_completed.sort(key=lambda r: (r['env'], r['episode']))

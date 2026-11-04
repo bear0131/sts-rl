@@ -40,6 +40,12 @@ outer-return路径继续提供原有value观测，此优化没有CLI或checkpoin
 公开Gym观测、向量返回值和终局观测仍独立持有数据；TimeLimit截断在自动重置前
 保存独立终局观测。未知用户包装器保留普通路径，异常也会释放内部写入作用域。
 
+独立采集中的CUDA统一上层在最多64行时复用已有CUDA graph传输与缓存，按8行分桶，
+最多保留8个图。静态推理保留全部实体槽及原attention mask；训练仍按原方式压缩
+masked PAD。图只属于一次collection，正常结束或异常均释放，不进入checkpoint；
+每轮重新捕获当前权重。CPU、旧上层和更大batch沿普通前推。采样随机流、FP32精度、
+mask/log-prob计算及学习目标保持，图计数和耗时进入既有upper_graph指标。
+
 `sts1-small-playout-v1` 是纯 policy，无 value 头：32→64 ReLU→32 状态表示，
 24→32 动作投影与 24→1 线性项，加每动作 key 的32维向量和bias。
 StS1共785个key（结束/跳过/空选择3个、每卡基础/升级2个、药水），总30889参数，

@@ -39,6 +39,125 @@ def tensor(obs):
     return {k: torch.as_tensor(v[None]) for k, v in obs.items()}
 
 
+def test_static_public_memory_preserves_masks_named_slots_and_predictions(unified_env):
+    model = make_model(unified_env)
+    model.policy.set_training_mode(False)
+    obs, _ = unified_env.reset(seed=9)
+    reward = copy.deepcopy(obs)
+    reward['phase'][0] = V.PHASE_VOCAB_INDEX['combat_reward']
+    reward['offer_card_ids'][[0, 2]] = [1, 2]
+    reward['offer_card_upgrades'][2] = 1
+    reward['reward_gold'][0] = 25
+    reward['relics'][[0, 3]] = [1, 2]
+    reward['deck_ids'][1::3] = 0
+    batch = {k: torch.stack((torch.as_tensor(obs[k]), torch.as_tensor(reward[k]))) for k in obs}
+    with torch.inference_mode():
+        for network in (model.policy.core.upper_actor, model.policy.core.upper_critic):
+            compact, valid, named = network.tokens(batch)
+            full, full_valid, full_named = network.tokens(batch, compact=False)
+            assert full.shape[1] > compact.shape[1]
+            kept = full_valid.any(0)
+            torch.testing.assert_close(full[:, kept], compact, rtol=0, atol=0)
+            torch.testing.assert_close(full_valid[:, kept], valid, rtol=0, atol=0)
+            torch.testing.assert_close(named, full_named, rtol=0, atol=0)
+            torch.testing.assert_close(network(batch), network(batch, compact=False), rtol=2e-5, atol=2e-5)
+
+
+def test_upper_policy_inference_cpu_fallback_and_scope(unified_env):
+    from rl.search.rollout_inference import UpperPolicyInference
+    model = make_model(unified_env)
+    model.policy.set_training_mode(False)
+    obs, _ = unified_env.reset(seed=17)
+    batch = {k: v[None].copy() for k, v in obs.items()}
+    core = model.policy.core
+    with UpperPolicyInference(core, 'cpu') as inference, torch.inference_mode():
+        assert inference.graphs is None
+        actual = inference(batch)
+        torch.testing.assert_close(actual, core.actor_critic(tensor(obs)), rtol=0, atol=0)
+        before = actual[1].clone()
+        core.upper_critic.score.bias.add_(.125)
+        changed = inference(batch)
+        torch.testing.assert_close(changed, core.actor_critic(tensor(obs)), rtol=0, atol=0)
+        assert abs(float(changed[1][0]-before[0])) > .1
+        assert not any(inference.statistics().values())
+    with pytest.raises(RuntimeError, match='already closed'):
+        inference(batch)
+
+
+def test_upper_policy_inference_legacy_fallback(unified_env):
+    from rl.policies.entity_combat import EntityCombatConfig
+    from rl.policies.entity_joint import EntityJointCore, UpperConfig
+    from rl.search.rollout_inference import UpperPolicyInference
+    core = EntityJointCore(unified_env.observation_space,
+        EntityCombatConfig(width=32, layers=1, heads=4, quantiles=8),
+        UpperConfig(width=32, layers=1, heads=4)).eval()
+    obs, _ = unified_env.reset(seed=17)
+    with UpperPolicyInference(core, 'cpu') as inference, torch.inference_mode():
+        assert inference.graphs is None
+        actual = inference({key: value[None] for key, value in obs.items()})
+        torch.testing.assert_close(actual, core.actor_critic(tensor(obs)), rtol=0, atol=0)
+
+
+def test_upper_cuda_graph_shapes_eviction_release_and_live_weights(unified_env):
+    import gc
+    from rl.search.rollout_inference import UpperPolicyInference
+    assert torch.cuda.is_available(), 'explicit graph qualification requires CUDA'
+    previous = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision('highest')
+    model = make_model(unified_env, 'cuda')
+    model.policy.set_training_mode(False)
+    core = model.policy.core
+    obs, _ = unified_env.reset(seed=17)
+    def batch(count):
+        data = {k: np.stack([v]*count) for k, v in obs.items()}
+        data['run_hp'][:, 0] += np.arange(count, dtype=np.float32)*.001
+        if count > 1:
+            data['phase'][1, 0] = V.PHASE_VOCAB_INDEX['combat_reward']
+            data['offer_card_ids'][1, [0, 2]] = [1, 2]
+            data['deck_ids'][1, 1::3] = 0
+        return data
+    def reference(data):
+        return core.actor_critic({k: torch.as_tensor(v, device='cuda') for k, v in data.items()})
+    try:
+        with UpperPolicyInference(core, 'cuda') as inference, torch.inference_mode():
+            inference.graphs.capacity = 2
+            anchor = batch(1)
+            anchor_result = inference(anchor)
+            saved = tuple(x.clone() for x in anchor_result)
+            for count in (9, 17, 25, 33, 49, 64):
+                data = batch(count)
+                torch.testing.assert_close(inference(data), reference(data), atol=2e-5, rtol=2e-5)
+                temporary = torch.empty(8*1024*1024, device='cuda').fill_(.125)
+                del temporary
+                gc.collect()
+                torch._C._cuda_clearCublasWorkspaces()
+                torch.cuda.empty_cache()
+                torch.testing.assert_close(inference(anchor), reference(anchor), atol=2e-5, rtol=2e-5)
+            torch.testing.assert_close(anchor_result, saved, rtol=0, atol=0)
+            assert inference.graphs.evictions >= 5 and inference.graphs.hits >= 5
+            captures = inference.graphs.captures
+            large = batch(65)
+            torch.testing.assert_close(inference(large), reference(large), rtol=0, atol=0)
+            assert inference.graphs.captures == captures
+            core.upper_critic.score.bias.add_(.125)
+            updated = inference(anchor)
+            torch.testing.assert_close(updated, reference(anchor), atol=2e-5, rtol=2e-5)
+            assert abs(float(updated[1][0]-saved[1][0])) > .1
+        assert not inference.graphs.entries
+        torch.cuda.empty_cache()
+        with pytest.raises(RuntimeError, match='already closed'):
+            inference(anchor)
+        with pytest.raises(RuntimeError, match='abort collection'):
+            with UpperPolicyInference(core, 'cuda') as aborted:
+                aborted(anchor)
+                raise RuntimeError('abort collection')
+        assert aborted.closed and not aborted.graphs.entries
+    finally:
+        core.to('cpu')
+        torch.cuda.empty_cache()
+        torch.set_float32_matmul_precision(previous)
+
+
 def test_independent_parameters_mixed_screen_and_entity_permutation(unified_env):
     model = make_model(unified_env)
     core = model.policy.core

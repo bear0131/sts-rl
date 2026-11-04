@@ -91,7 +91,7 @@ class PublicTokens(nn.Module):
             self.event_kind = nn.Embedding(len(encode.EVENT_CHOICE_KINDS), width)
             self.event_detail = nn.Linear(4, width)
 
-    def forward(self, obs):
+    def forward(self, obs, *, compact=True):
         phase = obs['phase'].long().flatten()
         b, device = len(phase), phase.device
         def get(key):
@@ -155,7 +155,9 @@ class PublicTokens(nn.Module):
         add('neow', neow, bonus.ne(0) & active('event')[:, None], 17)
         tokens, valid = torch.cat(blocks, 1), torch.cat(validity, 1)
         # Batch-wide compaction preserves internal slots and named action references.
-        keep = valid.any(0)
+        # Graph inference retains masked PAD slots to keep device shapes static.
+        # Training and ordinary prediction retain the established compaction.
+        keep = valid.any(0) if compact else slice(None)
         return tokens[:, keep], valid[:, keep], named
 
 
@@ -186,8 +188,8 @@ class UnifiedUpperNetwork(nn.Module):
         else:
             self.score = nn.Linear(cfg.width, 1)
 
-    def forward(self, obs):
-        memory, valid, named = self.tokens(obs)
+    def forward(self, obs, *, compact=True):
+        memory, valid, named = self.tokens(obs, compact=compact)
         latent = self.latents[None].expand(len(memory), -1, -1)
         latent = self.norm(self.blocks(latent + self.read(latent, self.input_norm(memory), valid)))
         if not self.actor:

@@ -24,6 +24,68 @@ ROLLOUT_INFERENCE_METRICS = (
 )
 
 
+class _UnifiedUpperCore:
+    """Static, all-upper forward consumed by the existing graph transport."""
+    def __init__(self, core):
+        self.core = core
+
+    @property
+    def training(self):
+        return self.core.training
+
+    def combat_actor_critic(self, observations, *, active_relic_width):
+        return (self.core.upper_actor(observations, compact=False),
+                self.core.upper_critic(observations, compact=False))
+
+
+class UpperPolicyInference:
+    """One collection's upper inference; no graph state enters a checkpoint.
+
+    Only CUDA unified-upper batches of at most 64 rows use bounded graphs.
+    Other devices, older policies and larger batches keep ordinary prediction.
+    The caller owns phase scheduling and categorical sampling, as before.
+    """
+    def __init__(self, core, device):
+        self.core, self.device = core, device
+        self.graphs = None
+        self.closed = False
+        if (torch.device(device).type == 'cuda'
+                and getattr(getattr(core, 'upper_config', None), 'architecture', None)
+                    == 'upper-latent-actions-v1'):
+            self.graphs = CombatLeafGraphs(_UnifiedUpperCore(core), device, amp='off',
+                capacity=8, batch_multiple=8, compile_forward=False)
+
+    def __enter__(self):
+        if self.closed:
+            raise RuntimeError('upper inference collection already closed')
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.closed = True
+        if self.graphs is not None:
+            self.graphs.clear()
+
+    def __call__(self, observations):
+        if self.closed:
+            raise RuntimeError('upper inference collection already closed')
+        from env.core import vocab as V
+        from rl.search.native import observation_as_tensor
+        count = len(observations['phase'])
+        if (self.graphs is None or count > 64
+                or np.any(observations['phase'] == V.PHASE_VOCAB_INDEX['combat'])):
+            with torch.inference_mode():
+                return self.core.actor_critic(observation_as_tensor(observations, self.device))
+        logits, values = self.graphs(observations, None)
+        # Keep the existing device-side masking/log-probability computation and
+        # per-game CPU categorical RNG. These small tensors own their storage.
+        return (torch.as_tensor(logits, device=self.device),
+                torch.as_tensor(values[:, None], device=self.device))
+
+    def statistics(self):
+        values = self.graphs.statistics() if self.graphs is not None else dict.fromkeys(GRAPH_METRICS, 0)
+        return {f'upper_graph_{key}': values[key] for key in GRAPH_METRICS}
+
+
 class ExactInputCache:
     def __init__(self, max_bytes):
         if max_bytes < 0:

@@ -285,6 +285,15 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
             assert payloads[i]['dist/rollout_sec_max'] == payloads[i]['dist/rollout_sec']
             assert payloads[i]['small_playout_train/updates'] > 0
             assert current.policy.upper_optimizer.state and current.policy.small_playout_optimizer.state
+            captures = payloads[i]['nosl_is_az/upper_graph_captures']
+            if device == 'cuda' and natural_start:
+                assert captures > 0
+                assert payloads[i]['nosl_is_az/upper_graph_hits'] > 0
+            elif device == 'cpu':
+                assert captures == payloads[i]['nosl_is_az/upper_graph_hits'] == 0
+            # The runtime belongs only to collect(), not either saved object.
+            assert 'upper_inference' not in vars(current)
+            assert 'upper_inference' not in vars(current.policy.core)
         assert current.small_playout_search_contract == 'terminal-hp-boss-win-turn128-v1'
         assert manifest['config']['small_playout_search_contract'] == 'terminal-hp-boss-win-turn128-v1'
         assert current.policy.core.upper_config.gae_lambda == (lambda_override or .97)
