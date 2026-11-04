@@ -23,6 +23,21 @@ def assert_legal(bc, bits):
     assert action_identity(sts.Action(bits)) in {action_identity(a) for a in bc.legal_actions()}
 
 
+def test_forced_playout_skips_network_without_reducing_simulations(combat_factory):
+    bc = combat_factory(['WOUND'] * 10).thick.bc
+    features = sts.small_playout_features(bc)
+    assert len(features['action_bits']) == 1
+    assert sts.Action(features['action_bits'][0]).action_type == sts.ActionType.END_TURN
+    learner = SmallPlayoutLearner(seed=42, config=SmallSearchConfig(simulations=8))
+    result = learner.search.search([bc], [42])[0]
+    stats = result['stats']
+    assert stats['simulations'] == 8
+    assert stats['policy_calls'] == stats['action_scores'] == 0
+    assert stats['forced_policy_skips'] == stats['playout_transitions'] > 0
+    assert stats['terminal_losses'] == 8
+    assert result['visits'] == [8] and result['action'] == features['action_bits'][0]
+
+
 def test_torch_native_logits_and_weight_refresh(combat_factory):
     learner = SmallPlayoutLearner(seed=19)
     env = combat_factory(['POMMEL_STRIKE', 'DEFEND_RED', 'BASH', 'BATTLE_TRANCE', 'SHRUG_IT_OFF'] * 2)

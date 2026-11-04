@@ -47,7 +47,8 @@ std::vector<Action> budgetActions(const BattleContext &bc) {
 }
 }
 
-SmallFeatures smallFeatures(const BattleContext &bc) {
+namespace {
+SmallFeatures featuresForActions(const BattleContext &bc, const std::vector<Action> &actions) {
     SmallFeatures f;
     auto &s = f.state;
     s[0] = float(bc.player.curHp) / 200; s[1] = float(bc.player.maxHp) / 200;
@@ -69,7 +70,6 @@ SmallFeatures smallFeatures(const BattleContext &bc) {
         s[18 + 3*i] = incoming(bc, m) / 50;
     }
     s[31] = bc.inputState == InputState::CARD_SELECT ? 1.f : 0.f;
-    const auto actions = budgetActions(bc);
     f.actions.reserve(actions.size());
     const auto choices = bc.inputState == InputState::CARD_SELECT
         ? combatChoices(bc, CombatChoiceContract::NativeHandles) : CombatChoices{};
@@ -119,6 +119,11 @@ SmallFeatures smallFeatures(const BattleContext &bc) {
         f.actions.push_back(std::move(a));
     }
     return f;
+}
+}
+
+SmallFeatures smallFeatures(const BattleContext &bc) {
+    return featuresForActions(bc, budgetActions(bc));
 }
 
 SmallPlayoutNet::SmallPlayoutNet(std::vector<float> weights) : weights_(std::move(weights)) {
@@ -248,7 +253,18 @@ double playout(BattleContext &s,const SmallPlayoutNet &net,const SmallSearchConf
     int steps=0;
     while(s.outcome==Outcome::UNDECIDED && steps<cfg.playoutDepth) {
         stats.turnCardLimitSimulated += smallTurnCardLimitReached(s);
-        auto f=smallFeatures(s); auto logits=net.logits(f);
+        const auto actions=budgetActions(s);
+        if(actions.size()==1 && !trace) {
+            // A one-action categorical distribution is exactly {1}, regardless
+            // of its logit. Preserve the library's one-element RNG behavior.
+            std::discrete_distribution<int> pick({1.});
+            const auto bits=actions[pick(rng)].bits;
+            ++stats.forcedPolicySkips;
+            Action(bits).execute(s);
+            ++steps; ++stats.playoutTransitions;
+            continue;
+        }
+        auto f=featuresForActions(s,actions); auto logits=net.logits(f);
         if(logits.empty()) throw std::runtime_error("nonterminal playout without actions");
         ++stats.policyCalls; stats.actionScores+=logits.size();
         auto weights=probabilities(logits,cfg.temperature);

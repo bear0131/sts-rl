@@ -39,6 +39,7 @@ py::dict result(const SmallSearchResult &r) {
     st["terminal_losses"]=s.terminalLosses;st["terminal_escapes"]=s.terminalEscapes;
     st["depth_cuts"]=s.depthCuts;st["tree_cuts"]=s.treeCuts;st["chance_replays"]=s.chanceReplays;
     st["nodes"]=s.nodes;st["policy_calls"]=s.policyCalls;st["action_scores"]=s.actionScores;
+    st["forced_policy_skips"]=s.forcedPolicySkips;
     st["prior_calls"]=s.priorCalls;st["draw_edges"]=s.drawEdges;
     st["guard_transitions"]=s.guardTransitions;
     st["turn_card_limit_decisions"]=s.turnCardLimitDecisions;
