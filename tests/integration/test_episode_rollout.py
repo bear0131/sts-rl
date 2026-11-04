@@ -302,6 +302,73 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
 
 
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_lower_batch_fork_preserves_nonempty_state_and_plain_resume(
+        tmp_path, monkeypatch, short_natural_game_env_type, device):
+    """Real CLI batch override keeps a trained source and survives ordinary resume."""
+    import random
+    from rl.training.checkpoints import restore_learner, _observation_sha256
+    from tests.integration.test_training_smoke import assert_nested_equal
+    setup = _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type,
+                              device, False, None, unified=True, critic_batch=3)
+    source = setup['last_bundle']
+    source_manifest = read_bundle(source, rank=0, world_size=1)
+    restored_rounds = []
+    def observed_restore(model, path, **kwargs):
+        expected = AccumulatingMaskablePPO.load(path/'model.zip', device=device)
+        learner = torch.load(path/'learner.pt', weights_only=False)
+        environment = torch.load(path/'environment.pt', weights_only=False)
+        result = restore_learner(model, path, **kwargs)
+        assert expected.policy.upper_optimizer.state and expected.policy.small_playout_optimizer.state
+        for actual, saved in [(model.policy.state_dict(), expected.policy.state_dict()),
+                (model.policy.upper_optimizer.state_dict(), expected.policy.upper_optimizer.state_dict()),
+                (model.policy.small_playout_optimizer.state_dict(), expected.policy.small_playout_optimizer.state_dict())]:
+            torch.testing.assert_close(actual, saved, rtol=0, atol=0, check_device=False)
+        assert model.policy.upper_config == expected.policy.upper_config
+        assert model.policy.small_playout_config == dict(expected.policy.small_playout_config, batch_size=4)
+        assert model.policy_kwargs['small_playout_config'] == model.policy.small_playout_config
+        assert_nested_equal(model.env.env_method('export_training_state'), environment['states'])
+        assert _observation_sha256(model._last_obs) == environment['last_observation_sha256']
+        assert_nested_equal(model._upper_episode_ids, learner['upper_episode_ids'])
+        assert_nested_equal(model._upper_pending, learner['upper_pending'])
+        assert random.getstate() == learner['python_rng']
+        np.testing.assert_equal(np.random.get_state(), learner['numpy_rng'])
+        assert torch.equal(torch.get_rng_state(), learner['torch_rng'])
+        if learner['cuda_rng'] is not None:
+            assert_nested_equal(torch.cuda.get_rng_state_all(), learner['cuda_rng'])
+        restored_rounds.append(model.episode_rollouts_completed)
+        return result
+    monkeypatch.setattr(distributed_sb3, 'restore_learner', observed_restore)
+    argv = [*setup['argv'], '--run-id', 'lower-batch-fork', '--wandb-id', 'lower-batch-fork',
+            '--training-state-dir', str(tmp_path/'lower-state'), '--output', str(tmp_path/'lower.zip')]
+    monkeypatch.setattr(sys, 'argv', [*argv, '--small-playout-batch-size', '4', '--fork-state', str(source)])
+    distributed_sb3.main()
+    boundary = sorted((tmp_path/'lower-state/rank0').glob('step-*'))[-1]
+    # Omit the override entirely: the checkpoint must carry the new batch.
+    monkeypatch.setattr(sys, 'argv', [*argv, '--resume-state', str(boundary)])
+    distributed_sb3.main()
+    assert restored_rounds == [4, 6]
+    assert read_bundle(source, rank=0, world_size=1) == source_manifest
+    payloads = setup['payloads']
+    assert [p['legacy_step'] for p in payloads] == list(range(1, 9))
+    assert all(p['episode_rollout/completed_games_global'] == 2 for p in payloads)
+    assert all(p['episode_rollout/censored_games_global'] == 0 for p in payloads)
+    assert all(p['small_playout_train/batch_size_per_rank'] == 4 for p in payloads[4:])
+    for path in sorted((tmp_path/'lower-state/rank0').glob('step-*')):
+        manifest = read_bundle(path, rank=0, world_size=1)
+        saved = AccumulatingMaskablePPO.load(path/'model.zip', device='cpu')
+        n = saved.episode_rollouts_completed
+        assert manifest['config']['small_playout_config']['batch_size'] == 4
+        assert saved.policy.small_playout_config['batch_size'] == 4
+        assert saved.policy_kwargs['small_playout_config']['batch_size'] == 4
+        assert saved.episode_rollout_stats['first_seed'] == 42 + (n-1)*2
+        assert saved.episode_rollout_stats['last_seed'] == 43 + (n-1)*2
+        assert len(torch.load(path/'environment.pt', weights_only=False)['states']) == 2
+        steps = sum(p['small_playout_train/updates'] for p in payloads[:n])
+        assert saved.small_playout_optimizer_steps == steps
+        assert {int(v['step']) for v in saved.policy.small_playout_optimizer.state.values()} == {steps}
+
+
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
 def test_complete_cohort_growth_preserves_source_and_plain_resume(
         tmp_path, monkeypatch, short_natural_game_env_type, device):
     import random

@@ -13,17 +13,18 @@ from rl.policies.small_playout import OnlinePlayoutConfig, SmallPlayoutPolicy, s
 from rl.training.distributed_sb3 import install_flat_gradients, pack_gradients
 
 
-def model_for(state, samples):
+def model_for(state, samples, device='cpu'):
     policy = torch.nn.Module()
-    policy.small_playout = SmallPlayoutPolicy(785)
+    policy.small_playout = SmallPlayoutPolicy(785).to(device)
     policy.small_playout.load_state_dict(state)
     policy.small_playout_config = asdict(OnlinePlayoutConfig(batch_size=16, micro_batch_size=2))
     policy.small_playout_optimizer = torch.optim.Adam(policy.small_playout.parameters(), lr=3e-4)
-    policy.core = torch.nn.Linear(1, 1)
+    policy.core = torch.nn.Linear(1, 1).to(device)
     policy.core.joint_upper = True
     policy.set_training_mode = policy.train
-    return SimpleNamespace(policy=policy, device=torch.device('cpu'), _small_playout_samples=samples,
-        _sync_device=lambda: None, max_grad_norm=1., logger=SimpleNamespace(record=lambda *args: None))
+    return SimpleNamespace(policy=policy, device=torch.device(device), _small_playout_samples=samples,
+        _sync_device=lambda: torch.cuda.synchronize() if device == 'cuda' else None,
+        max_grad_norm=1., logger=SimpleNamespace(record=lambda *args: None))
 
 
 @pytest.mark.parametrize('sizes', [(0, 3, 7), (0, 0, 0)])
@@ -74,6 +75,88 @@ def test_unequal_and_empty_ranks_match_global_batch(sizes):
 def test_invalid_online_configuration_is_rejected(cfg):
     with pytest.raises(ValueError, match='invalid online'):
         OnlinePlayoutConfig(**cfg)
+
+
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+@pytest.mark.parametrize('batch_size,expected_updates', [(16, 8), (4, 24)])
+def test_batch_change_keeps_eight_passes_and_nonempty_adam(
+        monkeypatch, device, batch_size, expected_updates):
+    """Empty ranks/tails still join every step; batch changes never drop samples."""
+    import copy
+    from collections import Counter
+    from threading import local
+    from rl.policies.small_playout import PreparedPlayoutSamples
+    if device == 'cuda':
+        assert torch.cuda.is_available(), 'explicit lower-batch CUDA qualification requires CUDA'
+    torch.manual_seed(57)
+    np.random.seed(57)
+    rng = np.random.default_rng(57)
+    sizes = [0, 3, 7, 9]
+    samples = [dict(state=rng.normal(size=32).astype(np.float32),
+        actions=rng.normal(size=(3, 24)).astype(np.float32),
+        keys=np.pad(np.array([[5], [10], [15]]), ((0, 0), (0, 9)), constant_values=-1),
+        action_bits=[1, 2, 3], visits=[1, 3, 6], recommended_action=2)
+        for _ in range(sum(sizes))]
+    source = model_for(SmallPlayoutPolicy(785).state_dict(), samples, device)
+    cfg = asdict(OnlinePlayoutConfig(epochs=8, batch_size=32, micro_batch_size=2,
+        learning_rate=.003, target_mix=.2, optimizer='adamw', weight_decay=.0001, max_grad_norm=0))
+    source.policy.small_playout_config = cfg
+    source.policy.small_playout_optimizer = torch.optim.AdamW(
+        source.policy.small_playout.parameters(), lr=.003, weight_decay=.0001)
+    assert update_online(source)['updates'] == 8
+    source_state = copy.deepcopy(source.policy.small_playout.state_dict())
+    source_adam = copy.deepcopy(source.policy.small_playout_optimizer.state_dict())
+    assert {int(v['step']) for v in source_adam['state'].values()} == {8}
+    offsets = np.cumsum([0, *sizes])
+    models = []
+    for rank in range(4):
+        model = model_for(source_state, samples[offsets[rank]:offsets[rank+1]], device)
+        model.policy.small_playout_config = dict(cfg, batch_size=batch_size)
+        optimizer = torch.optim.AdamW(model.policy.small_playout.parameters(), lr=.003, weight_decay=.0001)
+        optimizer.load_state_dict(copy.deepcopy(source_adam))
+        model.policy.small_playout_optimizer = optimizer
+        model.small_playout_optimizer_steps = 8
+        models.append(model)
+    upper_before = [copy.deepcopy(m.policy.core.state_dict()) for m in models]
+    seen = [Counter() for _ in models]
+    owner = local()
+    original_batch = PreparedPlayoutSamples.batch
+    def observed_batch(self, indices, target_device):
+        seen[owner.rank].update(map(int, indices))
+        return original_batch(self, indices, target_device)
+    monkeypatch.setattr(PreparedPlayoutSamples, 'batch', observed_batch)
+    barrier = Barrier(4, timeout=30)
+    slots = [None]*4
+    def average(rank, values):
+        slots[rank] = values
+        barrier.wait()
+        result = {k: sum(row[k] for row in slots)/4 for k in values}
+        barrier.wait()
+        return result
+    def train(rank):
+        owner.rank = rank
+        model = models[rank]
+        def sync(step):
+            reduced = average(rank, {'gradient': pack_gradients(model)})
+            install_flat_gradients(model, reduced['gradient'])
+        return update_online(model, rank=rank, world_size=4,
+            average=lambda values: average(rank, values), synchronize=sync)
+    with ThreadPoolExecutor(4) as executor:
+        results = list(executor.map(train, range(4)))
+    for rank, (model, report) in enumerate(zip(models, results, strict=True)):
+        assert seen[rank] == Counter({i: 8 for i in range(sizes[rank])})
+        assert report['samples'] == 19 and report['updates'] == expected_updates
+        assert report['optimizer_steps_total'] == 8 + expected_updates
+        assert {int(v['step']) for v in model.policy.small_playout_optimizer.state.values()} == {8 + expected_updates}
+        assert not model._small_playout_samples
+        assert np.isfinite(report['loss']) and report['parameter_l2_change'] > 1e-6
+        assert model.policy.small_playout_optimizer.param_groups[0]['lr'] == .003
+        torch.testing.assert_close(model.policy.core.state_dict(), upper_before[rank], rtol=0, atol=0)
+        assert all(p.requires_grad and p.grad is None for p in model.policy.core.parameters())
+        torch.testing.assert_close(model.policy.small_playout.state_dict(),
+                                   models[0].policy.small_playout.state_dict(), rtol=2e-5, atol=2e-6)
+    torch.testing.assert_close(source.policy.small_playout.state_dict(), source_state, rtol=0, atol=0)
+    torch.testing.assert_close(source.policy.small_playout_optimizer.state_dict(), source_adam, rtol=0, atol=0)
 
 
 def test_recommendation_is_not_the_most_visited_action():
