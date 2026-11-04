@@ -18,6 +18,22 @@ constexpr int CARD_KEYS = 2 * static_cast<int>(CardId::ZAP);
 constexpr int POTION_FIRST = static_cast<int>(Potion::AMBROSIA);
 constexpr int POTION_KEYS = static_cast<int>(Potion::WEAK_POTION) - POTION_FIRST + 1;
 std::atomic<std::uint64_t> nextSnapshotId{1};
+struct StateEmbeddingEntry {
+    std::uint64_t snapshot = 0;
+    std::array<float,SMALL_STATE> input{};
+    std::array<float,SMALL_EMBED> embedding{};
+};
+StateEmbeddingEntry &stateEntry(const std::array<float,SMALL_STATE> &input) {
+    thread_local std::array<StateEmbeddingEntry,256> entries{};
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (int j=0;j<SMALL_STATE;j+=2) {
+        std::uint64_t bits;
+        std::memcpy(&bits,input.data()+j,sizeof(bits));
+        hash = (hash ^ bits) * 1099511628211ULL;
+    }
+    // The hash only chooses a slot; every state byte and snapshot must match.
+    return entries[noslMix(hash) & (entries.size()-1)];
+}
 constexpr int ACTION_PREFIX = 16;
 struct ActionPrefixEntry {
     std::uint64_t snapshot = 0;
@@ -172,18 +188,27 @@ std::vector<float> SmallPlayoutNet::logits(const SmallFeatures &f) const {
 }
 void SmallPlayoutNet::logits(const SmallFeatures &f, std::vector<float> &scores) const {
     float h[64], z[32];
-    std::copy_n(weights_.data()+2048,64,h);
-    for (int j=0;j<32;++j) {
-        const float x=f.state[j], *column=stateColumns_.data()+j*64;
-        if (x==0.f) continue;
-        for (int i=0;i<64;++i) h[i]+=column[i]*x;
-    }
-    for (int i=0;i<64;++i) h[i]=std::max(0.f,h[i]);
-    std::copy_n(weights_.data()+4160,32,z);
-    for (int j=0;j<64;++j) {
-        const float x=h[j], *column=hiddenColumns_.data()+j*32;
-        if (x==0.f) continue;
-        for (int i=0;i<32;++i) z[i]+=column[i]*x;
+    auto &stateCache=stateEntry(f.state);
+    if (stateCache.snapshot==snapshotId_ &&
+            std::memcmp(stateCache.input.data(),f.state.data(),SMALL_STATE*sizeof(float))==0) {
+        std::copy(stateCache.embedding.begin(),stateCache.embedding.end(),z);
+    } else {
+        std::copy_n(weights_.data()+2048,64,h);
+        for (int j=0;j<32;++j) {
+            const float x=f.state[j], *column=stateColumns_.data()+j*64;
+            if (x==0.f) continue;
+            for (int i=0;i<64;++i) h[i]+=column[i]*x;
+        }
+        for (int i=0;i<64;++i) h[i]=std::max(0.f,h[i]);
+        std::copy_n(weights_.data()+4160,32,z);
+        for (int j=0;j<64;++j) {
+            const float x=h[j], *column=hiddenColumns_.data()+j*32;
+            if (x==0.f) continue;
+            for (int i=0;i<32;++i) z[i]+=column[i]*x;
+        }
+        stateCache.input=f.state;
+        std::copy_n(z,SMALL_EMBED,stateCache.embedding.begin());
+        stateCache.snapshot=snapshotId_;
     }
     const float *emb=weights_.data()+4192, *bias=emb+32*smallKeyCount();
     const float *lin=bias+smallKeyCount()+SMALL_ACTION*SMALL_EMBED;

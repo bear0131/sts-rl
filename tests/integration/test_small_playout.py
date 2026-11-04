@@ -203,15 +203,40 @@ def test_action_projection_handles_input_eviction_and_dynamic_targets(combat_fac
         np.testing.assert_allclose(learner.search.net.logits(bc), expected, atol=2e-5, rtol=2e-5)
 
 
-def test_released_native_snapshots_cannot_reuse_old_action_projections():
+def test_state_embedding_handles_changing_inputs_and_eviction():
+    root = BattleFixture().create(42)
+    learner = SmallPlayoutLearner(seed=19)
+    original = learner.search.net.logits(root)
+    initial = root.to_dict()['player']
+    scores = []
+    # Exceed the bounded state cache with distinct real feature vectors. Scores
+    # must also remain correct when a previously evicted input is revisited.
+    for block in range(769):
+        root.apply_custom_state({'player': {'block': block, 'hp': 1 + block % 71}})
+        features = sts.small_playout_features(root)
+        with torch.inference_mode():
+            expected = learner.policy(*collate_features([features])).numpy()[0]
+        actual = learner.search.net.logits(root)
+        np.testing.assert_allclose(actual, expected, atol=2e-5, rtol=2e-5)
+        assert learner.search.net.logits(root) == actual
+        scores.append(actual)
+    for block, expected in enumerate(scores):
+        root.apply_custom_state({'player': {'block': block, 'hp': 1 + block % 71}})
+        assert learner.search.net.logits(root) == expected
+    root.apply_custom_state({'player': {'block': initial['block'], 'hp': initial['hp']}})
+    assert learner.search.net.logits(root) == original
+
+
+@pytest.mark.parametrize('layers', [('keys', 'linear'), ('fc1', 'fc2')])
+def test_released_native_snapshots_cannot_reuse_old_embeddings(layers):
     import gc
     root = BattleFixture().create(42)
     learner = SmallPlayoutLearner(seed=19)
     features = collate_features([sts.small_playout_features(root)])
     for _ in range(64):
         with torch.no_grad():
-            learner.policy.keys.weight.add_(1 / 128)
-            learner.policy.linear.weight.add_(1 / 128)
+            for layer in layers:
+                getattr(learner.policy, layer).weight.add_(1 / 128)
             expected = learner.policy(*features).numpy()[0]
         snapshot = sts.SmallPlayoutNet(learner.policy.export())
         np.testing.assert_allclose(snapshot.logits(root), expected, atol=2e-5, rtol=2e-5)
