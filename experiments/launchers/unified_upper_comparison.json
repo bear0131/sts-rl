@@ -759,7 +759,7 @@
       }
     },
     "critic_stability_diagnostic": {
-      "status": "Both sources40r2 and51r1 accepted/analyzed; no candidate passed both gates. Original unchanged ordinary resume51 and full resumed52 state accepted; continuous, next fixed60.",
+      "status": "Both sources40r2 and51r1 accepted/analyzed; no candidate passed both gates. Original unchanged ordinary resume51 and full resumed52 state accepted; continuous, subsequent learning reviews tracked in fresh lineage ledger.",
       "issue": "UPPER-CRITIC-UPDATE-STABILITY",
       "registered_at": "2026-11-04T04:46:26.860726+08:00",
       "motivation": "Fixed31-40 target MSE increased in32/36/37/39;32+18.697% and39+48.213%, with epoch4 worsening. Same-cohort optimization nonmonotonicity, not heldout-overfit proof; learning windows still improve, no production parameter change.",
@@ -858,7 +858,7 @@
       "resume_audit_evidence": "runs/local/upper-unified/candidates/critic-stability-resume52-accepted.json"
     },
     "lower_batch_comparison": {
-      "status": "Registered next single-factor online candidate; preparation only. Production unchanged; no boundary request or candidate launch yet.",
+      "status": "DEFERRED: registered source61 no longer retained; no candidate/STOP executed. CPU semantics passed9259753c. Current production improves and lower Adam naturally rose to16 from62; any future comparison needs new explicit registration.",
       "issue": "UPPER-LOWER-BATCH-CADENCE",
       "registered_at": "2026-11-04T05:59:16.752702+08:00",
       "user_intention": "Improve same-wall learning and stability autonomously after the requested fewer-upper-updates/smaller-LR routes were actually tested; do not adopt on loss or historical correlation.",
@@ -981,7 +981,13 @@
         "limitations": "One paired training trajectory per arm, evolving policies/data and path-dependent seeds; common-wall endpoints can have different game counts and policies. Historical B motivated the hypothesis but is not this control. Screening cannot prove optimality or causal frozen endpoint win-rate."
       },
       "after_screen": "Full stopped endpoint audits, then restore original control81 continuously without total cap while considering results. If gate passes, register a separate matched frozen-policy confirmation before promoting the candidate. If no gate passes, retain original and archive candidate. Do not leave training stopped simply to write reports.",
-      "failure": "Missing source, failed prerequisite,415 timeout, nonfinite or incomplete save requires diagnosis; preserve logs/partial attempt and no automatic restart. Never cut games/search or force a past boundary stop."
+      "failure": "Missing source, failed prerequisite,415 timeout, nonfinite or incomplete save requires diagnosis; preserve logs/partial attempt and no automatic restart. Never cut games/search or force a past boundary stop.",
+      "execution_disabled": true,
+      "source_unavailable_evidence": "runs/local/upper-unified/candidates/lower-batch-source61-unavailable.json",
+      "preparation_test_commit": "9259753c",
+      "preparation_test_evidence": "runs/local/upper-unified/candidates/lower-batch-cpu-semantics.json",
+      "future_requires_reregistration": true,
+      "deferral_reason": "At fresh114 catch-up, only rolling113/114 retained and source61 absent from all registered run manifests. New fixed60-110 evidence shows no plateau and better recent outcomes versus equal cumulative-wall B from90 onward; lower updates naturally8->16 at62, so the original cadence premise must be reconsidered, not silently move source61 to a later checkpoint. No GPU qualification or candidate launch has occurred."
     }
   },
   "monitor": {

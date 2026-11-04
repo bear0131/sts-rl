@@ -2,12 +2,13 @@
 
 记录时间：2026-11-03 11:45（Asia/Shanghai）。用户要求“把当前的任务记录下来推上去，我交给其他会话”。本文件是交接快照；实时身份和下一复核点以本地 ledger 为准，TODO.md 仍是唯一任务清单。
 
-> **11月4日当前 Mac 接续：** COMBAT37 `combat37-upper-fresh-lambda097-r1`，`/root/upper-throughput-20261104`，源码b12c01d4、native f35674a6（build-capacity）保持。源40/51各五臂critic稳定性诊断已全部验收/分析、共3840自然局0剔除，没有候选通过双源门槛；原配置已从完整51普通resume，四PID354069/319634/307355/362972及创建时间见ledger与critic-stability-continuous-launch.json。52全包验收已通过：global29645931、Adam2684/1104/416、480环境/RNG/lower衔接，1920自然局0剔除、245.918秒。86282已exit0，唯一固定60只读watcher80278（review 3600），日志fresh-lambda-60-wait.log。50学习复核已完成、下一固定60为31–40/41–50/51–60及六5/共同墙钟/近期9600局。所有已完成报告禁止重生成，实时状态以ledger/新证据为准。
+> **11月4日11:05 Mac 当前接续：** COMBAT37 `combat37-upper-fresh-lambda097-r1`，`/root/upper-throughput-20261104`，源码b12c01d4、native f35674a6（build-capacity）保持；PID354069/319634/307355/362972及创建时间见ledger。最新健康115、四机CPU推进/noSTOP/exit/异常；固定60–110已顺序补齐，下一120固定91–100/101–110/111–120。唯一只读watcher59239（review 3600），日志fresh-lambda-120-wait.log；旧80278在06:36达到60已exit0，06:36–10:58本机无中间健康快照，不冒称持续巡检。
 
-- 当前1920自然局/每rank480、micro1024，actor6144×2/LR.00012、critic32768×4/LR.0001、整局frozen-lambda .97；lower8遍及搜索250/250/1000、深200/tree1024保持。正式训练continuous无总限；415失败保护/420门禁，不截局/削搜索/reset或自动重启。没有更优方案结论，固定50近期同累计wall参考仍落后旧B。
-- 实际完整51保护/四机停止/618源码和native核验、四机各7项CPU/CUDA、两源临时臂源状态还原与控制重复均已通过。首次40r1因协议缺字段零采样exit1，证据保留；已修标准schema、真实CLI前置验证后另执行40r2成功，不是自动重试。critic-stability-{40,51}-accepted/analysis.json保存完整证据，不再执行STOP51、旧测试或两源launch。
-- critic-stability-resume52-accepted.json及references/critic-stability-resume-52已验保存，不重复恢复或验收；接续固定60只读watcher80278，按ledger顺序复核。普通恢复后使用新身份，不沿用旧29恢复PID。完整包last_fresh_verified、last_health和学习点分别更新；历史last_verified31仅属旧B。原native28故障/资格28–29/普通恢复30及早期3/27共18臂均完成并保留，不重复。
-- Mac工作区`/Users/xb.zhong/my/sts-rl`、分支codex/upper-unified-420s，SSH key `/Users/xb.zhong/.ssh/sts_upper_monitor_ed25519`；四rank端口42228/41309/49038/33203。先fetch共享worklog新“用户发言 · USER-…”并完整回复，该入口已授权。唯一heartbeat b；Windows8773由原会话管理，旧巡检保持暂停。原B停192、191/192与trial30保护，A/C/C35/COMBAT30保持停；旧critic1/配对终点评测按新fresh请求暂缓。已完成与未完成须区分，完整历史在worklog。
+- 正式训练continuous无总限；1920自然局/每rank480、micro1024，actor6144×2/LR.00012、critic32768×4/LR.0001、frozen-lambda .97。lower8遍/batch102400/micro8192/LR.003不变，但实际Adam从62起因样本跨批阈值自然8→16，不能把它当改了epochs。搜索250/250/1000、深200/tree1024保持；415失败/420门禁，不截局/削搜索/reset或自动重启。114完整max357.209秒；两相邻≥380时watcher提示诊断并结束观察，训练不自动停止/重启。
+- 110三10楼层34.193594/36.496823/38.369531、胜2132/3556/5228，各19200自然局0剔除，未停滞。共同累计wall近期9600局fresh2819胜/29.3646%/38.9854层，B1725胜/17.9688%/35.8468层，仍是历史单轨迹参考而非冻结因果。100/110等总局数B参考不足，已标不可用，但独立共同wall可用；既有40–90报告逐字段不变。四类新报告已保存，不重生成；70–110端到端只知10:58首保留观测，含目标轮后健康训练的观察滞后，不全部当停机。
+- 源40/51五臂全部验收/分析，无候选过双源门槛，原51普通恢复与52全状态已验，保护52/global29645931/Adam2684/1104/416/480环境与RNG/lower衔接。last_fresh_verified仍52、学习点110、旧B历史last_verified31分开。源40r1入口失败证据保留；GPU语义/CLI修复/两源诊断、旧native28修复及28–29资格/普通30、早期3/27十八臂均已完成，不重复。
+- **旧lower_batch_comparison执行禁用**：四机已核注册源61未保留，STOP81/候选COMBAT38从未执行；不可追发或静默换源。9259753c的4rank空尾批8遍/非空Adam及真实CLI fork/普通resume CPU测试通过，GPU未执行。新下层容量建议USER-79869ae9已完整答复：当前上层3206017参数、actor/critic各3层，下层30889；扩容仅候选建议，先效率/契约验证，未改生产。未来任何batch/容量实验须按新证据重新登记。
+- Mac工作区`/Users/xb.zhong/my/sts-rl`、分支codex/upper-unified-420s，SSH key `/Users/xb.zhong/.ssh/sts_upper_monitor_ed25519`；端口42228/41309/49038/33203。fetch共享worklog新“用户发言 · USER-…”并完整回复，入口已授权。唯一heartbeat b；Windows8773由原会话管理，旧巡检暂停。原B停192、191/192与trial30保护，A/C/C35/COMBAT30停；旧critic1/配对终点评测按新fresh请求暂缓，不假称完成。
 
 以下保留11月3日Windows交接原文，作为历史来源，不是当前入口/身份或待执行指令。
 
