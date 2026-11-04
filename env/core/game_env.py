@@ -208,7 +208,7 @@ class SimGameEnv:
             return "combat"
         return sim_phase(self.gc)
 
-    def _canonical(self, *, for_encoding=False):
+    def _canonical(self, *, for_encoding=False, _map_observation=None):
         """Backend-agnostic state dict. In combat: the combat canonical (+phase).
         Out of combat: the overworld canonical, with map options filled in from
         the rebuilt SpireMap (the schema can't do that without depending on env)."""
@@ -245,7 +245,7 @@ class SimGameEnv:
             # current event id + legal button index.  This lets the pointer head
             # score EVENT_OPT[i] from a per-option token instead of a flat column.
             d["options"]["event_options"] = list(self.gc.legal_event_options())
-        if d["phase"] == "map":
+        if d["phase"] == "map" and _map_observation is None:
             x, y = self.gc.cur_map_node_x, self.gc.cur_map_node_y
             opts = self.gc.legal_map_options()
             d["options"] = {
@@ -256,7 +256,11 @@ class SimGameEnv:
             if self._global_map_view:
                 d["options"]["full_map"] = self.rmap.full_view(x, y, next_columns=opts)
         if self._upper_public_context and d['phase'] not in ('map', 'terminal'):
-            d['public_map'] = self.public_map_context()
+            # Only the internal encoder can supply an already-validated
+            # numeric map. Its presence still marks this upper screen as
+            # carrying public context; external canonical callers get the DAG.
+            d['public_map'] = (self.public_map_context()
+                               if _map_observation is None else {})
             if d['phase'] == 'card_select' and self.gc.cur_event_name not in ('INVALID', 'Invalid'):
                 d['public_event'] = self.gc.cur_event_name
         return d
@@ -294,9 +298,13 @@ class SimGameEnv:
         This is what encode.encode() consumes."""
         return self._observation_canonical(for_encoding=False)
 
-    def encoding_canonical(self):
-        """Same tensor inputs, without unused differential-snapshot inventory."""
-        return self._observation_canonical(for_encoding=True)
+    def encoding_canonical(self, *, _map_observation=None):
+        """Same tensor inputs, without unused differential-snapshot inventory.
+
+        A caller holding the validated numeric map may omit its intermediate
+        canonical graph. Without that explicit input this remains complete.
+        """
+        return self._observation_canonical(for_encoding=True, _map_observation=_map_observation)
 
     def encoding_map_observation(self, canon):
         """Reuse only the current read-only map's validated numeric projection."""
@@ -307,8 +315,8 @@ class SimGameEnv:
         return self.rmap.encoded_view(self.gc.cur_map_node_x, self.gc.cur_map_node_y,
             next_columns=self.gc.legal_map_options(), global_map_view=self._global_map_view)
 
-    def _observation_canonical(self, *, for_encoding):
-        d = self._canonical(for_encoding=for_encoding)
+    def _observation_canonical(self, *, for_encoding, _map_observation=None):
+        d = self._canonical(for_encoding=for_encoding, _map_observation=_map_observation)
         d["global"] = normalize_sim_global(self.gc, combat=self.bc is not None,
                                            for_encoding=for_encoding)
         if self.bc is not None:
@@ -319,8 +327,10 @@ class SimGameEnv:
 
     def obs(self):
         """The structured Dict observation (encode v2) for the current state."""
+        projection = self.encoding_map_observation(dict(phase=self.phase()))
         return encode.encode(
-            self.encoding_canonical(), global_map_view=self._global_map_view,
+            self.encoding_canonical(_map_observation=projection),
+            _map_observation=projection, global_map_view=self._global_map_view,
             upper_public_context=self._upper_public_context, event_option_observation=self._upper_public_context
         )
 

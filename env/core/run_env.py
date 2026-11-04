@@ -2763,7 +2763,12 @@ class SlayTheSpireEnv(gym.Env):
         if upper_value_only and self._phase() == 'combat':
             raise ValueError('upper value observations require a settled noncombat state')
         self._multi_desc()
-        canon = getattr(self.thick, 'encoding_canonical', self.thick.obs_canonical)()
+        canonical = getattr(self.thick, 'encoding_canonical', self.thick.obs_canonical)
+        map_projection = getattr(self.thick, 'encoding_map_observation', None)
+        projection = (map_projection(dict(phase=self._phase()))
+                      if map_projection is not None else None)
+        canon = (canonical() if projection is None
+                 else canonical(_map_observation=projection))
         # Search's upper-value transport consumes neither a combat action mask
         # nor permanent combat card growth. Outside combat the argument step
         # depends only on pending/phase, so it needs no legal-action enumeration.
@@ -2785,11 +2790,10 @@ class SlayTheSpireEnv(gym.Env):
             cap = int(sel.get("pick_max", 0))
             sel["pick_remaining"] = max(0, cap - len(self._multi))
             canon["options"]["select"] = sel
-        map_projection = getattr(self.thick, 'encoding_map_observation', None)
         obs = encode.encode(
             canon,
             _out=_out,
-            _map_observation=map_projection(canon) if map_projection is not None else None,
+            _map_observation=projection,
             global_map_view=self._global_map_view,
             upper_public_context=self._upper_public_context,
             card_language=self._card_language,

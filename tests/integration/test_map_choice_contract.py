@@ -138,6 +138,47 @@ def test_map_projection_replacement_schema_order_and_output_ownership():
                     actual[key].fill(0)
 
 
+@pytest.mark.parametrize('full,public', [(False, False), (True, False), (True, True)])
+def test_warmed_numeric_map_avoids_unused_canonical_graph(monkeypatch, full, public):
+    env = SlayTheSpireEnv(global_map_view=full, upper_public_context=public,
+                         event_option_observation=public)
+    try:
+        env.reset(seed=42)
+        for _ in range(12):
+            if env.thick.phase() == 'map':
+                break
+            env.step(int(np.flatnonzero(env.action_masks())[0]))
+        assert env.thick.phase() == 'map'
+        canonical = env.thick.obs_canonical()
+        complete = env.thick.encoding_canonical()
+        assert complete['options'] == canonical['options']
+        if full:
+            assert complete['options']['full_map']
+        expected = env._obs()  # Warm the validated projection for this position.
+        thick_expected = encode.encode(canonical, global_map_view=full,
+            upper_public_context=public, event_option_observation=public)
+        def unexpected(*args, **kwargs):
+            raise AssertionError('numeric map already exists for this position')
+        with monkeypatch.context() as patch:
+            patch.setattr(env.thick.rmap, 'full_view', unexpected)
+            patch.setattr(env.thick.rmap, 'room_type', unexpected)
+            actual = env._obs()
+            thick_actual = env.thick.obs()
+        for actual_row, expected_row in ((actual, expected), (thick_actual, thick_expected)):
+            assert actual_row.keys() == expected_row.keys()
+            for key in actual_row:
+                assert actual_row[key].dtype == expected_row[key].dtype
+                assert actual_row[key].tobytes() == expected_row[key].tobytes(), key
+                assert not np.shares_memory(actual_row[key], expected_row[key])
+        # Human-facing canonical data still contains the complete graph and
+        # remains independent of callers mutating their returned node lists.
+        assert env.thick.obs_canonical() == canonical
+        canonical['options']['nodes'].clear()
+        assert env.thick.obs_canonical()['options']['nodes']
+    finally:
+        env.close()
+
+
 @pytest.mark.parametrize('full_map', [False, True])
 def test_native_boss_entry_has_real_room_identity_and_enters_boss(full_map):
     env = SlayTheSpireEnv(global_map_view=full_map)

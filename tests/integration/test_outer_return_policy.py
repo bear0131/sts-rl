@@ -70,7 +70,7 @@ def test_tensor_encoding_omits_only_unused_snapshot_inventory(outer_return_core,
         assert 'deck_state' not in compact['global']
         actual = env._obs()
         with monkeypatch.context() as patch:
-            patch.setattr(env.thick, 'encoding_canonical', env.thick.obs_canonical)
+            patch.setattr(env.thick, 'encoding_canonical', lambda **_: env.thick.obs_canonical())
             expected = env._obs()
         assert actual.keys() == expected.keys()
         for key in actual:
