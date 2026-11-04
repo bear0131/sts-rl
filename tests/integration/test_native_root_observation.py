@@ -29,6 +29,7 @@ def test_root_batch_all_fields_mutable_globals_and_ownership(combat_factory, lan
                           combat_action_contract='autoregressive-v2')
             for i, encounter in enumerate(('Two Louse', 'Automaton', 'Collector'))]
     encoder = NativeRootObservationBatch(envs[0])
+    assert encoder.global_encoder is not None, 'rebuild the explicitly selected native global encoder'
     before = copy.deepcopy(assert_roots(encoder, envs))
     for i, env in enumerate(envs):
         env.thick.gc.gold = 101+i
@@ -49,6 +50,48 @@ def test_root_batch_all_fields_mutable_globals_and_ownership(combat_factory, lan
     for key in actual:
         another[key][...] = 0
         np.testing.assert_array_equal(actual[key], saved[key], err_msg=key)
+
+
+def test_native_globals_read_live_metadata_and_preserve_legacy_projection(combat_factory, monkeypatch):
+    from env.core import native_observation
+    envs = [combat_factory(['STRIKE_RED']*5+['DEFEND_RED']*4+['BASH'],
+                          seed=41+i, card_language=True, combat_action_contract='autoregressive-v2')
+            for i in range(2)]
+    encoder = NativeRootObservationBatch(envs[0])
+    assert encoder.global_encoder is not None, 'new native projection must actually run'
+    assert_roots(encoder, envs)
+    for i, env in enumerate(envs):
+        env.thick.gc.set_deck([('BASH', 1), ('STRIKE_RED', 0), ('BASH', 0),
+                              ('SEARING_BLOW', 130), ('STRIKE_RED', 1)])
+        env.thick.gc.set_relic_state([dict(id='Pen Nib', counter=7+i),
+                                     dict(id='Ancient Tea Set', counter=1)])
+        env.thick.gc.gold = 234+i
+        env.thick.bc.apply_custom_state({'player': {'hp': 17+i, 'max_hp': 97+i, 'gold': 432+i}})
+        env._invalidate_backend_cache()
+    expected = assert_roots(encoder, envs)
+    with monkeypatch.context() as patch:
+        patch.delattr(sts, 'CombatGlobalObservationEncoder')
+        legacy = NativeRootObservationBatch(envs[0])
+        assert legacy.global_encoder is None
+        reference = legacy.encode(envs)
+        for key in expected:
+            assert expected[key].tobytes() == reference[key].tobytes(), key
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError('native global projection called the Python canonicalizer')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(native_observation, 'normalize_sim_global', forbidden)
+        actual = encoder.encode(list(reversed(envs)))
+        for key in actual:
+            assert actual[key].tobytes() == expected[key][::-1].tobytes(), key
+        # Reuse the encoder at a different batch size and after mutating a
+        # returned row; neither cached metadata nor shared storage may leak.
+        saved = {key: value.copy() for key, value in actual.items()}
+        smaller = encoder.encode(envs[:1])
+        for key in smaller:
+            smaller[key].fill(99)
+            assert actual[key].tobytes() == saved[key].tobytes(), key
 
 
 def test_root_batch_pending_selection_and_nonhand_handles(combat_factory):

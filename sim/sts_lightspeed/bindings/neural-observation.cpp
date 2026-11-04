@@ -16,14 +16,36 @@ namespace py = pybind11;
 namespace {
 template<class T> using Array = py::array_t<T, py::array::c_style | py::array::forcecast>;
 
-// Read-only numeric projection after the ordinary battle-exit transaction.
-// The Python codec supplies vocabularies, shapes and double-precision scales;
-// no rewards, RNG or game transitions are generated in this encoder.
-class UpperRewardObservationEncoder {
+// Shared numeric writer for reward rows and batched combat-global rows.
+// Vocabulary and scales remain owned by the canonical Python codec.
+class ObservationWriter {
+    upper_observation::Row &row_;
+public:
+    explicit ObservationWriter(upper_observation::Row &row):row_(row) {}
+    void capacity(const char *key,int n) const {
+        if(n<0 || static_cast<std::size_t>(n)>row_.layout->at(key).size)
+            throw std::invalid_argument(std::string("global observation capacity exceeded: ")+key);
+    }
+    void cat(const char *key,int i,std::int64_t value) const {
+        const auto &field=row_.layout->at(key);capacity(key,i+1);
+        if(field.floating) throw std::invalid_argument("global categorical dtype mismatch");
+        std::memcpy(row_.data(field)+i*sizeof(value),&value,sizeof(value));
+    }
+    void scalar(const char *key,int i,double value) const {
+        const auto &field=row_.layout->at(key);capacity(key,i+1);
+        if(!field.floating) throw std::invalid_argument("global scalar dtype mismatch");
+        const float stored=static_cast<float>(value);
+        std::memcpy(row_.data(field)+i*sizeof(stored),&stored,sizeof(stored));
+    }
+};
+
+class RunGlobalObservationEncoder {
+protected:
     std::shared_ptr<const upper_observation::Layout> layout_;
     std::map<std::string, double> scales_;
     std::vector<std::int64_t> cards_, relics_, heldPotions_, rewardPotions_, bosses_, characters_;
     std::int64_t phase_, argStep_;
+    std::vector<unsigned char> languageCards_;
 
     template<std::size_t N>
     static std::vector<std::int64_t> lookup(py::dict mapping, const char *const (&names)[N]) {
@@ -39,7 +61,7 @@ class UpperRewardObservationEncoder {
         return lut[i];
     }
 public:
-    UpperRewardObservationEncoder(py::dict shapes, py::dict vocab, py::dict scales)
+    RunGlobalObservationEncoder(py::dict shapes, py::dict vocab, py::dict scales)
         :layout_(std::make_shared<upper_observation::Layout>(shapes)) {
         for(auto item:scales) {
             const double value=py::cast<double>(item.second);
@@ -57,8 +79,74 @@ public:
         characters_=lookup(py::cast<py::dict>(vocab["character"]),sts::characterClassEnumNames);
         phase_=py::cast<std::int64_t>(vocab["phase"]);
         argStep_=py::cast<std::int64_t>(vocab["arg_step"]);
+        languageCards_.resize(*std::max_element(cards_.begin(),cards_.end())+1,0);
+        if(vocab.contains("language_cards"))
+            for(const auto cid:py::cast<std::vector<std::int64_t>>(vocab["language_cards"])) {
+                if(cid<0 || static_cast<std::size_t>(cid)>=languageCards_.size())
+                    throw std::invalid_argument("global language card outside vocabulary");
+                languageCards_[cid]=1;
+            }
     }
 
+    void writeGlobal(upper_observation::Row &row,const sts::GameContext &gc,
+                     double hp,double maxHp,double gold,std::int64_t argStep,bool combat) const {
+        ObservationWriter w(row);
+        w.cat("phase",0,phase_);w.cat("arg_step",0,argStep);
+        if(layout_->indices.count("combat_is_boss")) w.scalar("combat_is_boss",0,gc.curRoom==sts::Room::BOSS);
+        w.cat("character",0,id(characters_,gc.cc));w.cat("next_boss",0,id(bosses_,gc.boss));
+        w.scalar("ascension",0,gc.ascension/scales_.at("ASCENSION"));
+        w.scalar("act",0,gc.act/scales_.at("ACT"));
+        w.scalar("floor",0,gc.floorNum/scales_.at("FLOOR"));
+        w.scalar("gold",0,gold/scales_.at("GOLD"));
+        const auto hpScale=scales_.at("HP");
+        w.scalar("run_hp",0,std::min<double>(hp,hpScale)/hpScale);
+        w.scalar("run_hp",1,std::min<double>(maxHp,hpScale)/hpScale);
+        w.scalar("run_hp",2,maxHp?double(hp)/maxHp:0.);
+        w.scalar("run_keys",0,gc.redKey);w.scalar("run_keys",1,gc.greenKey);w.scalar("run_keys",2,gc.blueKey);
+        w.capacity("relics",gc.relics.relics.size());w.capacity("relic_counters",gc.relics.relics.size());
+        int i=0;
+        for(const auto &r:gc.relics.relics) {
+            if(r.data<0) throw std::invalid_argument("global native relic counter must be nonnegative");
+            w.cat("relics",i,id(relics_,r.id));w.scalar("relic_counters",i,(combat && r.id==sts::RelicId::ANCIENT_TEA_SET ? 0 : r.data)/scales_.at("COUNTER"));++i;
+        }
+        w.capacity("potions",gc.potionCapacity);
+        if(gc.potionCapacity>int(gc.potions.size())) throw std::invalid_argument("invalid native potion capacity");
+        for(i=0;i<gc.potionCapacity;++i) w.cat("potions",i,id(heldPotions_,gc.potions[i]));
+        w.capacity("deck_ids",gc.deck.cards.size());w.capacity("deck_upgrades",gc.deck.cards.size());
+        i=0;
+        for(const auto &card:gc.deck.cards) {
+            w.cat("deck_ids",i,id(cards_,card.getId()));
+            w.scalar("deck_upgrades",i,card.getUpgraded()/scales_.at("UPGRADE"));++i;
+        }
+        if(layout_->indices.count("deck_size")) w.scalar("deck_size",0,std::min(i/scales_.at("DECK_SIZE"),1.));
+        if(layout_->indices.count("deck_card_ids")) {
+            // Preserve canonical first-occurrence order and all duplicates;
+            // upgrades > 1 retain their exact sum, not a binary approximation.
+            struct Group { std::int64_t id, count=0, upgraded=0, upgradeSum=0; };
+            std::vector<Group> groups;
+            std::vector<int> slots(languageCards_.size(),-1);
+            for(const auto &card:gc.deck.cards) {
+                const auto cid=id(cards_,card.getId());
+                if(!languageCards_.at(cid)) continue;
+                auto &slot=slots.at(cid);
+                if(slot<0) {slot=groups.size();groups.push_back({cid});}
+                auto &group=groups[slot];++group.count;
+                group.upgraded+=card.getUpgraded()>0;group.upgradeSum+=card.getUpgraded();
+            }
+            w.capacity("deck_card_ids",groups.size());
+            for(int j=0;j<int(groups.size());++j) {
+                const auto &g=groups[j];
+                w.cat("deck_card_ids",j,g.id);w.scalar("deck_card_counts",j,g.count);
+                w.scalar("deck_card_upgraded_counts",j,g.upgraded);
+                w.scalar("deck_card_upgrades",j,g.upgradeSum/scales_.at("UPGRADE"));
+            }
+        }
+    }
+};
+
+class UpperRewardObservationEncoder : public RunGlobalObservationEncoder {
+public:
+    using RunGlobalObservationEncoder::RunGlobalObservationEncoder;
     py::object settleReward(const sts::GameContext &base, const sts::BattleContext &battle, bool packed=false) const {
         if(battle.outcome==sts::Outcome::UNDECIDED)
             throw std::invalid_argument("combat exit requires a terminal battle");
@@ -81,69 +169,64 @@ public:
         if(gc.screenState!=sts::ScreenState::REWARDS || gc.outcome!=sts::GameOutcome::UNDECIDED)
             throw std::invalid_argument("upper reward observation requires a live settled reward screen");
         auto out=std::make_shared<upper_observation::Row>(layout_);
-        auto capacity=[&](const char *key,int n) {
-            const auto &field=layout_->at(key);
-            if(n<0 || static_cast<std::size_t>(n)>field.size)
-                throw std::invalid_argument(std::string("upper observation capacity exceeded: ")+key);
-        };
-        auto cat=[&](const char *key,int i,std::int64_t value) {
-            const auto &field=layout_->at(key);capacity(key,i+1);
-            if(field.floating) throw std::invalid_argument("upper categorical dtype mismatch");
-            std::memcpy(out->data(field)+i*sizeof(value),&value,sizeof(value));
-        };
-        auto scalar=[&](const char *key,int i,double value) {
-            const auto &field=layout_->at(key);capacity(key,i+1);
-            if(!field.floating) throw std::invalid_argument("upper scalar dtype mismatch");
-            const float stored=static_cast<float>(value);
-            std::memcpy(out->data(field)+i*sizeof(stored),&stored,sizeof(stored));
-        };
-        cat("phase",0,phase_);cat("arg_step",0,argStep_);
-        cat("character",0,id(characters_,gc.cc));cat("next_boss",0,id(bosses_,gc.boss));
-        scalar("ascension",0,gc.ascension/scales_.at("ASCENSION"));
-        scalar("act",0,gc.act/scales_.at("ACT"));
-        scalar("floor",0,gc.floorNum/scales_.at("FLOOR"));
-        scalar("gold",0,gc.gold/scales_.at("GOLD"));
-        const auto hpScale=scales_.at("HP");
-        scalar("run_hp",0,std::min<double>(gc.curHp,hpScale)/hpScale);
-        scalar("run_hp",1,std::min<double>(gc.maxHp,hpScale)/hpScale);
-        scalar("run_hp",2,gc.maxHp?double(gc.curHp)/gc.maxHp:0.);
-        scalar("run_keys",0,gc.redKey);scalar("run_keys",1,gc.greenKey);scalar("run_keys",2,gc.blueKey);
-        capacity("relics",gc.relics.relics.size());capacity("relic_counters",gc.relics.relics.size());
+        writeGlobal(*out,gc,gc.curHp,gc.maxHp,gc.gold,argStep_,false);
+        ObservationWriter w(*out);
         int i=0;
-        for(const auto &r:gc.relics.relics) {
-            if(r.data<0) throw std::invalid_argument("global native relic counter must be nonnegative");
-            cat("relics",i,id(relics_,r.id));scalar("relic_counters",i,r.data/scales_.at("COUNTER"));++i;
-        }
-        capacity("potions",gc.potionCapacity);
-        if(gc.potionCapacity>int(gc.potions.size())) throw std::invalid_argument("invalid native potion capacity");
-        for(i=0;i<gc.potionCapacity;++i) cat("potions",i,id(heldPotions_,gc.potions[i]));
-        capacity("deck_ids",gc.deck.cards.size());capacity("deck_upgrades",gc.deck.cards.size());
-        i=0;
-        for(const auto &card:gc.deck.cards) {
-            cat("deck_ids",i,id(cards_,card.getId()));
-            scalar("deck_upgrades",i,card.getUpgraded()/scales_.at("UPGRADE"));++i;
-        }
-        if(layout_->indices.count("deck_size")) scalar("deck_size",0,std::min(i/scales_.at("DECK_SIZE"),1.));
         const auto &reward=gc.info.rewardsContainer;
         if(reward.cardRewardCount<0 || reward.cardRewardCount>int(reward.cardRewards.size()))
             throw std::invalid_argument("invalid native card reward count");
         if(reward.cardRewardCount) {
             const auto &offer=reward.cardRewards[reward.cardRewardCount-1];
-            capacity("offer_card_ids",offer.size());capacity("offer_card_upgrades",offer.size());
+            w.capacity("offer_card_ids",offer.size());w.capacity("offer_card_upgrades",offer.size());
             for(i=0;i<offer.size();++i) {
-                cat("offer_card_ids",i,id(cards_,offer[i].getId()));
-                scalar("offer_card_upgrades",i,offer[i].getUpgraded()/scales_.at("UPGRADE"));
+                w.cat("offer_card_ids",i,id(cards_,offer[i].getId()));
+                w.scalar("offer_card_upgrades",i,offer[i].getUpgraded()/scales_.at("UPGRADE"));
             }
         }
-        capacity("reward_gold",reward.goldRewardCount);
-        capacity("reward_relic_ids",reward.relicCount);capacity("reward_potion_ids",reward.potionCount);
+        w.capacity("reward_gold",reward.goldRewardCount);
+        w.capacity("reward_relic_ids",reward.relicCount);w.capacity("reward_potion_ids",reward.potionCount);
         if(reward.goldRewardCount>int(reward.gold.size()) || reward.relicCount>int(reward.relics.size()) ||
                 reward.potionCount>int(reward.potions.size()) || (reward.emeraldKey && reward.sapphireKey))
             throw std::invalid_argument("native reward capacity exceeded");
-        for(i=0;i<reward.goldRewardCount;++i) scalar("reward_gold",i,reward.gold[i]/scales_.at("GOLD"));
-        for(i=0;i<reward.relicCount;++i) cat("reward_relic_ids",i,id(relics_,reward.relics[i]));
-        for(i=0;i<reward.potionCount;++i) cat("reward_potion_ids",i,id(rewardPotions_,reward.potions[i]));
-        scalar("reward_keys",0,reward.emeraldKey);scalar("reward_keys",1,reward.sapphireKey);
+        for(i=0;i<reward.goldRewardCount;++i) w.scalar("reward_gold",i,reward.gold[i]/scales_.at("GOLD"));
+        for(i=0;i<reward.relicCount;++i) w.cat("reward_relic_ids",i,id(relics_,reward.relics[i]));
+        for(i=0;i<reward.potionCount;++i) w.cat("reward_potion_ids",i,id(rewardPotions_,reward.potions[i]));
+        w.scalar("reward_keys",0,reward.emeraldKey);w.scalar("reward_keys",1,reward.sapphireKey);
+        return out;
+    }
+};
+
+class CombatGlobalObservationEncoder : public RunGlobalObservationEncoder {
+public:
+    using RunGlobalObservationEncoder::RunGlobalObservationEncoder;
+    py::dict encode(const std::vector<const sts::GameContext *> &games,
+                    Array<float> scalars,const std::vector<std::int64_t> &argSteps) const {
+        const auto n=static_cast<py::ssize_t>(games.size());
+        if(n==0 || scalars.ndim()!=2 || scalars.shape(0)!=n || scalars.shape(1)<6 || argSteps.size()!=games.size())
+            throw std::invalid_argument("combat global batch shape mismatch");
+        py::dict out;
+        std::vector<char *> destinations;
+        for(const auto &field:layout_->fields) {
+            const auto dtype=field.floating?py::dtype::of<float>():py::dtype::of<std::int64_t>();
+            py::array values(dtype,std::vector<py::ssize_t>{n,static_cast<py::ssize_t>(field.size)});
+            destinations.push_back(static_cast<char *>(values.mutable_data()));
+            out[py::str(field.name)]=std::move(values);
+        }
+        upper_observation::Row row(layout_);
+        for(py::ssize_t i=0;i<n;++i) {
+            if(!games[i]) throw std::invalid_argument("missing combat global game context");
+            const float *player=scalars.data()+i*scalars.shape(1);
+            if(!std::isfinite(player[0]) || !std::isfinite(player[1]) || !std::isfinite(player[5]))
+                throw std::invalid_argument("nonfinite combat global player field");
+            std::fill(row.storage.begin(),row.storage.end(),0);
+            // Match int(packed_float) -> Python double division -> FP32 storage.
+            writeGlobal(row,*games[i],std::trunc(double(player[0])),std::trunc(double(player[1])),
+                        std::trunc(double(player[5])),argSteps[i],true);
+            for(std::size_t j=0;j<layout_->fields.size();++j) {
+                const auto &field=layout_->fields[j];
+                std::memcpy(destinations[j]+i*field.bytes,row.data(field),field.bytes);
+            }
+        }
         return out;
     }
 };
@@ -601,6 +684,9 @@ void bindNeuralObservation(py::module_ &module) {
              py::arg("base"),py::arg("battle"),py::arg("packed")=false)
         .def("encode_packed",&UpperRewardObservationEncoder::encodePacked)
         .def("encode",&UpperRewardObservationEncoder::encode);
+    py::class_<CombatGlobalObservationEncoder>(module,"CombatGlobalObservationEncoder")
+        .def(py::init<py::dict,py::dict,py::dict>())
+        .def("encode",&CombatGlobalObservationEncoder::encode);
     py::class_<NeuralObservationDecoder>(module,"NeuralObservationDecoder")
         .def(py::init<py::dict,py::dict,py::dict,py::dict,py::dict,int,int,bool>())
         .def("set_card_stats", &NeuralObservationDecoder::setCardStats)

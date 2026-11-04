@@ -35,19 +35,8 @@ def upper_value_runtime(teacher, max_bytes, *, pad):
     return sts.UpperValueRuntime(schemas, encode.V.PHASE_VOCAB_INDEX['combat'], max_bytes, pad)
 
 
-@lru_cache(maxsize=2)
-def upper_reward_encoder(deck_size_observation):
-    """Native projection of settled reward screens, with canonical vocab/units.
-
-    The encoder owns immutable schema only, never a GameContext or row cache.
-    Other upper phases keep the canonical path (including full map semantics).
-    """
-    phase = encode.V.PHASE_VOCAB_INDEX['combat_reward']
-    keys = (encode.OVERWORLD_OBSERVATION_KEYS |
-            encode.OVERWORLD_PHASE_OBSERVATION_KEYS[phase])
-    prototypes = {key: value for key, value in
-                  encode._empty(deck_size_observation=deck_size_observation).items()
-                  if key in keys}
+def _global_projection_schema(phase):
+    """One canonical vocabulary/scale source for native run-global projections."""
     from schemas.combat_state import _sim_card_id
     layout = _nosl_compact_lut()['layout']
     cards = {str(name): encode._card_id_idx(_sim_card_id(str(name)))
@@ -56,10 +45,23 @@ def upper_reward_encoder(deck_size_observation):
                  potion=encode.V.POTION_VOCAB_INDEX,
                  boss=encode.V.BOSS_VOCAB_INDEX,
                  character=encode.V.CHARACTER_VOCAB_INDEX,
+                 language_cards=[encode._card_id_idx(name) for name in encode.LANGUAGE_CARDS],
                  phase=phase, arg_step=encode.V.ARG_STEP_VOCAB_INDEX['root'])
     scales = {key: getattr(encode, key+'_SCALE') for key in
               ('HP', 'GOLD', 'ASCENSION', 'ACT', 'FLOOR', 'COUNTER', 'UPGRADE', 'DECK_SIZE')}
-    return sts.UpperRewardObservationEncoder(prototypes, vocab, scales)
+    return vocab, scales
+
+
+@lru_cache(maxsize=2)
+def upper_reward_encoder(deck_size_observation):
+    """Native projection of settled rewards; schema only, no game-state cache."""
+    phase = encode.V.PHASE_VOCAB_INDEX['combat_reward']
+    keys = (encode.OVERWORLD_OBSERVATION_KEYS |
+            encode.OVERWORLD_PHASE_OBSERVATION_KEYS[phase])
+    prototypes = {key: value for key, value in
+                  encode._empty(deck_size_observation=deck_size_observation).items()
+                  if key in keys}
+    return sts.UpperRewardObservationEncoder(prototypes, *_global_projection_schema(phase))
 
 
 class NativeRootObservationBatch:
@@ -80,6 +82,10 @@ class NativeRootObservationBatch:
                  'deck_ids', 'deck_upgrades', 'deck_size', 'outer_deck_misc', 'combat_mc_exit'}
         names.update(key for key in self.prototypes if key.startswith('deck_card_'))
         self.global_keys = frozenset(names.intersection(self.prototypes))
+        self.global_encoder = (sts.CombatGlobalObservationEncoder(
+            {key: self.prototypes[key] for key in self.global_keys},
+            *_global_projection_schema(encode.V.PHASE_VOCAB_INDEX['combat']))
+            if hasattr(sts, 'CombatGlobalObservationEncoder') else None)
         self.stats = _nosl_card_stats()
         self.decoder = sts.NeuralObservationDecoder(
             self.prototypes, _nosl_compact_lut(), self.stats,
@@ -109,19 +115,23 @@ class NativeRootObservationBatch:
         if needed > self.stats['damage'].shape[1]:
             self.stats = _nosl_card_stats(needed)
             self.decoder.set_card_stats(self.stats)
-        globals = {key: np.zeros((len(envs), *self.prototypes[key].shape),
-                                 dtype=self.prototypes[key].dtype) for key in self.global_keys}
+        if self.global_encoder is not None:
+            globals = self.global_encoder.encode(
+                [env.thick.gc for env in envs], payload['scalars'],
+                [encode.V.ARG_STEP_VOCAB_INDEX[env._arg_step()] for env in envs])
+        else:
+            # Retained native builds still use the canonical numeric projection.
+            globals = {key: np.zeros((len(envs), *self.prototypes[key].shape),
+                                     dtype=self.prototypes[key].dtype) for key in self.global_keys}
+            for row, env in enumerate(envs):
+                scalar = payload['scalars'][row]
+                canon = {'phase': 'combat', 'arg_step': env._arg_step(),
+                         'global': normalize_sim_global(env.thick.gc, combat=True, for_encoding=True),
+                         'player': dict(hp=int(scalar[0]), max_hp=int(scalar[1]), gold=int(scalar[5]))}
+                encode._encode_global({key: value[row] for key, value in globals.items()}, canon)
         for row, env in enumerate(envs):
-            scalar = payload['scalars'][row]
-            # Use the canonical global encoder, including float64 division
-            # followed by float32 storage for run_hp, not ratios of scaled HP.
-            canon = {'phase': 'combat', 'arg_step': env._arg_step(),
-                     'global': normalize_sim_global(env.thick.gc, combat=True, for_encoding=True),
-                     'player': dict(hp=int(scalar[0]), max_hp=int(scalar[1]), gold=int(scalar[5]))}
-            fields = {key: value[row] for key, value in globals.items()}
-            encode._encode_global(fields, canon)
             if env.outer_return_context:
-                fields['outer_deck_misc'][:] = permanent_misc(env.thick.gc, env.thick.bc)
+                globals['outer_deck_misc'][row] = permanent_misc(env.thick.gc, env.thick.bc)
         result = self.decoder.decode(payload, globals)
         if 'upper_public_context' in result:
             result['upper_public_context'].fill(1.)
