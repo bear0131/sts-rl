@@ -988,6 +988,119 @@
       "preparation_test_evidence": "runs/local/upper-unified/candidates/lower-batch-cpu-semantics.json",
       "future_requires_reregistration": true,
       "deferral_reason": "At fresh114 catch-up, only rolling113/114 retained and source61 absent from all registered run manifests. New fixed60-110 evidence shows no plateau and better recent outcomes versus equal cumulative-wall B from90 onward; lower updates naturally8->16 at62, so the original cadence premise must be reconsidered, not silently move source61 to a later checkpoint. No GPU qualification or candidate launch has occurred."
+    },
+    "native_projection_validation": {
+      "status": "registered; no stop or Linux execution yet",
+      "registered_at": "2026-11-04T11:44:29.665009+08:00",
+      "intent": "Same-wall learning and stability via equivalent CPU search execution; not a new policy or statistical update rule.",
+      "implementation_commit": "8dd403613b859a189fb546d017000b2cc9bb8c1f",
+      "only_changed_native_files": [
+        "sim/sts_lightspeed/include/sim/search/SmallPlayout.h",
+        "sim/sts_lightspeed/src/sim/search/SmallPlayout.cpp"
+      ],
+      "preserve": [
+        "weight export ABI and 30889 lower parameters",
+        "per-output floating reduction order and sparse zero-feature skipping",
+        "multi-key embedding averaging",
+        "all upper/lower training settings and actual optimizer continuity",
+        "1920 natural games; search250/250/1000/depth200/tree1024",
+        "original source/native and all protected references"
+      ],
+      "source_policy": {
+        "run_id": "combat37-upper-fresh-lambda097-r1",
+        "runtime_commit": "b12c01d4",
+        "root": "/root/upper-throughput-20261104",
+        "request_when_all_complete": 123,
+        "boundary_stop_round": 124,
+        "protect_rounds": [
+          123,
+          124
+        ],
+        "original_native_sha256": "f35674a6ab8f7a6d7b0851da6cf19e72ccce8bc2810f6fe79fba5ad8ff603a1e",
+        "rule": "Request only after helpers ready and all four123 identities rechecked; natural STOP124, four exit0 and full model/Adam/env/RNG acceptance before isolated build/bench. If boundary missed do not silently change source or restart."
+      },
+      "isolated_root": "/root/upper-native-projection-20261104",
+      "linux_build": {
+        "base": "Current f356 native deployment manifest, all1336 source files; exact baseline header/cpp matched to0fffaa4d",
+        "runtime": "Copy immutable b12 full618 Python/test support files, then replace only current small-playout test file; no production changes",
+        "configuration": "Same Linux compiler/Release/trace ON/FP flags as original; archive source/binary hashes and commands",
+        "build_process_seconds": 300,
+        "semantic_test_process_seconds": 180,
+        "required": "Explicit original/candidate native same-device logits tolerance2e-5, actual saved lower52 and124, immutable refresh/multi-key/zero features/search/terminal/lifecycle tests; no skipped native tests."
+      },
+      "linux_fixed_benchmark": {
+        "seeds": [
+          42,
+          87,
+          177,
+          691,
+          20261103,
+          20261104
+        ],
+        "source_round": 124,
+        "simulations": 250,
+        "playout_depth": 200,
+        "tree_depth": 1024,
+        "threads": 1,
+        "battle_action_failure_budget": 256,
+        "unique_fixture_battles": 6,
+        "repetitions_per_process": 20,
+        "order": [
+          "original",
+          "candidate",
+          "candidate",
+          "original",
+          "original",
+          "candidate"
+        ],
+        "process_timeout_seconds": 120,
+        "resource_interval_seconds": 0.1,
+        "warmup": "One separate fixed-seed17 search each process; no removed slow samples.",
+        "gate": "Candidate median search and full measured fixture workload at least5% shorter; original drift range/median<=5%; no changed legal actions/outcomes/search counts. Inspect numerical differences using tolerances, not universal bitwise equality. Failed/inconclusive gate retains original; no repeated attempts without diagnosis."
+      },
+      "frozen_collection": {
+        "entry": "tools.analysis.probe_upper_learning existing unified-upper-rollout-scale-v1 collection-only mode",
+        "source_round": 124,
+        "seed": 20261103,
+        "world_size": 4,
+        "games_per_rank": 480,
+        "arm_ids": [
+          "original",
+          "candidate",
+          "original_repeat"
+        ],
+        "total_natural_games": 5760,
+        "maximum_wall_seconds": 415,
+        "rank_process_timeout_seconds": 480,
+        "optimizer_updates": 0,
+        "persistent_saves": 0,
+        "reset_environments": false,
+        "grow_environments": false,
+        "resource_interval_seconds": 1,
+        "gate": "Zero censored/unfinished games; original source policy/upperAdam/lowerAdam/RNG preserved and restored each arm; identical source seeds and natural-game workload/statistics, tolerated floating values with original repeat control. Candidate max-rank collector wall at least3% below both originals; original max-rank drift<=5%; no memory/resource regression requiring capacity change. Differences require diagnosis, never delete games or cherry-pick arms.",
+        "limits": "Frozen collection excludes update/save; not full420s acceptance or learning evidence."
+      },
+      "training_qualification": {
+        "condition": "All prior semantic, benchmark, source preservation and frozen-collection gates accepted; otherwise ordinary original124 resume and verify125",
+        "run_id": "combat37-upper-fresh-lambda097-r1",
+        "resume_source_round": 124,
+        "finite_rounds": [
+          125,
+          126
+        ],
+        "maximum_complete_round_seconds": 420,
+        "failure_protection_seconds": 415,
+        "maximum_complete_wall_seconds": 840,
+        "action": "Only native path changes; ordinary full-state resume, no fork/reset/initial or upper overrides. Protect125/126 and verify all fourexit0/full state, then ordinary continuous resume126 and verify127. No automatic failed-run restart.",
+        "next_fixed_review": 130,
+        "interpretation": "Equivalent execution candidate; qualification success is not independent learning-effect proof."
+      },
+      "local_evidence": [
+        "runs/local/upper-unified/candidates/projection-local-summary.json",
+        "runs/local/upper-unified/candidates/projection-local-provenance.json",
+        "runs/local/upper-unified/candidates/projection-linux-baseline-provenance.json"
+      ],
+      "next_action": "Prepare isolated operation helpers and validations before requesting STOP; original continuous remains active."
     }
   },
   "monitor": {
