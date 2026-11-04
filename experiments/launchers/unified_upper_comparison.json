@@ -1117,7 +1117,7 @@
       "adopted_native_sha256": "54dfeb5385f9f2dfc609f17b24acfe96c8c48fa298cb3a9296bf25901fbf11ef"
     },
     "rollout_200s_and_large_critic": {
-      "status": "Protected169 paused; fixed scheduler8130b630 passed Linux natural-game regression; full barrier2 running before independent comparison",
+      "status": "Protected169 paused; full barrier control completed, independent-game candidate running",
       "intent": "Continue current COMBAT37; target max-rank full1920-game rollout <200s, test critic effective batches >32768 with adjusted epochs/LR. Pauses for bounded tests authorized.",
       "source": {
         "round": 167,
@@ -1412,7 +1412,7 @@
         }
       },
       "architecture_experiment": {
-        "status": "Monitor packet failure diagnosed and fixed; Linux4 real probe tests passed; barrier2 launched",
+        "status": "Full barrier2 all4 exit0; independent mode launched",
         "commit": "8130b630",
         "root": "/root/rollout-independent-20261104",
         "native_sha256": "2ffc01cfa7fd6e2cfade03bbeefecb398facfb595b637f9414079e1b485c30b2",
@@ -1445,7 +1445,26 @@
           ],
           "reason": "reward/campfire monitor expected 2D arrays, prototype passed lists; fixed8130b630",
           "valid_performance_result": false
-        }
+        },
+        "barrier_result": {
+          "collector_seconds": [
+            332.969948,
+            308.523618,
+            319.153505,
+            320.974258
+          ],
+          "transitions": [
+            268415,
+            265022,
+            271592,
+            266015
+          ],
+          "natural_games": 1920,
+          "censored_games": 0,
+          "policy_and_adam_unchanged": true,
+          "evidence": "runs/local/takeover/independent-barrier2-status5.json"
+        },
+        "independent_launch": "runs/local/takeover/independent-ready-launch.json"
       }
     }
   },
