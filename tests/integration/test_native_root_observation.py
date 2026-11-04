@@ -144,10 +144,9 @@ def assert_nested_equal(left, right):
         assert left == right
 
 
-def test_vector_wrappers_autoreset_labels_journals_and_restore(monkeypatch):
+@pytest.fixture
+def native_wrapper_factories():
     import gymnasium as gym
-    from stable_baselines3.common.vec_env import DummyVecEnv
-    from rl.training.native_vec_env import NativeSearchVecEnv
     from rl.training.environments import CheckpointObservationCompat, TrainingStateWrapper
     from rl.training.reward import ShapedRewardWrapper
 
@@ -162,8 +161,13 @@ def test_vector_wrappers_autoreset_labels_journals_and_restore(monkeypatch):
             env = gym.wrappers.TimeLimit(ShapedRewardWrapper(base), max_episode_steps=41+index)
             return TrainingStateWrapper(CheckpointObservationCompat(env, expected))
         return make
+    return lambda count: [factory(i) for i in range(count)]
 
-    factories = [factory(i) for i in range(8)]
+
+def test_vector_wrappers_autoreset_labels_journals_and_restore(monkeypatch, native_wrapper_factories):
+    from stable_baselines3.common.vec_env import DummyVecEnv
+    from rl.training.native_vec_env import NativeSearchVecEnv
+    factories = native_wrapper_factories(8)
     reference, candidate = DummyVecEnv(factories), NativeSearchVecEnv(factories, threads=2)
     rng = np.random.default_rng(9001000)
     try:
@@ -194,6 +198,59 @@ def test_vector_wrappers_autoreset_labels_journals_and_restore(monkeypatch):
         assert all(not env.unwrapped._defer_combat_observation for env in candidate.envs)
         assert any(len(rows) < len(factories) and any(b-a > 1 for a,b in zip(rows, rows[1:]))
                    for rows in pending_batches), 'fixture must mix noncontiguous combat rows with other phases/reset'
+    finally:
+        reference.close(); candidate.close()
+
+
+@pytest.mark.parametrize('threads', [1, 4])
+def test_small_playout_overlap_matches_serial_transitions_samples_and_restore(native_wrapper_factories, threads):
+    from rl.training.native_vec_env import NativeSearchVecEnv
+    from rl.algorithms.small_playout import SmallPlayoutLearner
+    from rl.policies.small_playout import export_online_search_pair
+    from env.core import vocab as V
+    pair = export_online_search_pair(SmallPlayoutLearner(seed=19).policy, collect_samples=True)
+    pair.update(common_simulations=8, elite_simulations=8, boss_simulations=8, playout_depth=8)
+    reference = NativeSearchVecEnv(native_wrapper_factories(4), threads=threads)
+    candidate = NativeSearchVecEnv(native_wrapper_factories(4), threads=threads)
+    rng = np.random.default_rng(9001000)
+    overlap_steps = 0
+    try:
+        for vec in (reference, candidate):
+            vec.seed(9001000)
+            vec.configure_small_playout(pair)
+        observations = reference.reset()
+        assert_nested_equal(observations, candidate.reset())
+        for step in range(128):
+            masks = reference.env_method('action_masks')
+            assert_nested_equal(masks, candidate.env_method('action_masks'))
+            actions = np.array([rng.choice(np.flatnonzero(mask)) for mask in masks])
+            combat = [i for i in range(4) if observations['phase'][i, 0] == V.PHASE_VOCAB_INDEX['combat']]
+            if combat:
+                calls = {i: ((), {'state_nonce': 9001000 + step * 4 + i}) for i in combat}
+                expected_decisions = reference.env_method_batch('small_playout_decision', calls)
+                assert candidate.prepare_small_playout_steps(actions, [i for i in range(4) if i not in combat])
+                actual_decisions = candidate.env_method_batch('small_playout_decision', calls)
+                assert_nested_equal(expected_decisions, actual_decisions)
+                overlap_steps += bool(candidate._prefetched_steps)
+                for i, decision in expected_decisions.items():
+                    actions[i] = decision['action']
+            expected, actual = reference.step(actions), candidate.step(actions)
+            assert_nested_equal(expected, actual)
+            observations = expected[0]
+            assert not candidate._prefetched_steps and candidate._small_step_plan is None
+            if step == 63:
+                snapshots = candidate.env_method('export_training_state')
+                assert_nested_equal(reference.env_method('export_training_state'), snapshots)
+                for env, state in zip(candidate.envs, snapshots, strict=True):
+                    env.restore_training_state(state)
+        assert overlap_steps > 10
+        assert_nested_equal(reference.take_small_playout_samples(), candidate.take_small_playout_samples())
+        assert_nested_equal(reference.env_method('export_training_state'), candidate.env_method('export_training_state'))
+        for key, value in reference.small_playout_stats().items():
+            if not key.endswith('search_seconds') and not key.startswith('overlap/'):
+                np.testing.assert_equal(value, candidate.small_playout_stats()[key])
+        assert reference.small_playout_stats()['overlap/prefetched_steps'] == 0
+        assert candidate.small_playout_stats()['overlap/prefetched_steps'] > 0
     finally:
         reference.close(); candidate.close()
 

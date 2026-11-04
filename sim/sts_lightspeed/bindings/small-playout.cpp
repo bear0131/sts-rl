@@ -75,18 +75,27 @@ void bindSmallPlayout(py::module_ &m) {
     // Existing pool owns and joins its worker threads; each call retains all roots/weights.
     m.def("small_playout_search_batch",[](NeuralSearchBatch &pool,const SmallPlayoutNet &net,
             const std::vector<sts::BattleContext*> &roots,const std::vector<SmallSearchConfig> &configs,
-            const std::vector<std::uint64_t> &nonces,const std::shared_ptr<SmallPlayoutNet> &prior){
+            const std::vector<std::uint64_t> &nonces,const std::shared_ptr<SmallPlayoutNet> &prior,
+            const py::object &onReady,const py::object &onStart){
         if(roots.size()!=configs.size() || roots.size()!=nonces.size())
             throw std::invalid_argument("compact batch lengths differ");
+        const bool ready=!onReady.is_none(), start=!onStart.is_none();
+        if((ready && !PyCallable_Check(onReady.ptr())) || (start && !PyCallable_Check(onStart.ptr())))
+            throw std::invalid_argument("compact callbacks must be callable");
         std::vector<sts::BattleContext> copies;copies.reserve(roots.size());
         for(auto root:roots){if(!root)throw std::invalid_argument("null compact root");copies.push_back(*root);}
         std::vector<SmallSearchResult> results(roots.size());
         auto lock=pool.acquire();
-        {py::gil_scoped_release release;pool.runIndependent(roots.size(),[&](std::size_t i){
+        {py::gil_scoped_release release;pool.runIndependent(roots.size()+start,[&](std::size_t task){
+            if(start && task==0){py::gil_scoped_acquire acquire;onStart();return;}
+            const auto i=task-start;
             results[i]=smallSearch(copies[i],net,configs[i],nonces[i],prior.get());
+            if(ready){py::gil_scoped_acquire acquire;onReady(i,results[i].action);}
         });}
         py::list out;for(const auto &r:results)out.append(result(r));return out;
-    },py::arg("pool"),py::arg("net"),py::arg("roots"),py::arg("configs"),py::arg("nonces"),py::arg("prior")=nullptr);
+    },py::arg("pool"),py::arg("net"),py::arg("roots"),py::arg("configs"),py::arg("nonces"),py::arg("prior")=nullptr,
+       py::arg("on_ready")=py::none(),py::arg("on_start")=py::none());
+    m.attr("small_playout_parallel_steps")=true;
     m.def("small_playout_collect_batch",[](NeuralSearchBatch &pool,const SmallPlayoutNet &net,
             const std::vector<sts::BattleContext*> &roots,const SmallSearchConfig &cfg,
             const std::vector<std::uint64_t> &nonces){

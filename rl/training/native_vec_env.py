@@ -1,5 +1,6 @@
 """Resident Python environments with a GIL-free C++ search thread pool."""
 from copy import deepcopy
+import time
 import gymnasium as gym
 import numpy as np
 from stable_baselines3.common.vec_env import DummyVecEnv
@@ -46,6 +47,9 @@ def _copy_step_infos(infos):
 class NativeSearchVecEnv(DummyVecEnv):
     def __init__(self, env_fns, *, threads=4):
         super().__init__(env_fns)
+        self._small_step_plan = None
+        self._prefetched_steps = {}
+        self._small_overlap_stats = dict(prefetched_steps=0, step_call_seconds_sum=0.)
         try:
             self.native_search_batch = NativeSearchBatch(self.envs, threads, direct_observations=True)
             self.native_root_observations = None
@@ -81,6 +85,8 @@ class NativeSearchVecEnv(DummyVecEnv):
         cohort = getattr(self, 'episode_rollout_active', None)
         if self.native_root_observations is None and cohort is None:
             return super().step_wait()
+        prefetched, self._prefetched_steps = self._prefetched_steps, {}
+        self._small_step_plan = None
         pending = []
         for index, env in enumerate(self.envs):
             if cohort is not None and not cohort[index]:
@@ -89,19 +95,14 @@ class NativeSearchVecEnv(DummyVecEnv):
                 self.buf_infos[index] = dict(episode_cohort_hold=True, simulator_transition=False)
                 continue
             base = env.unwrapped
-            base._combat_observation_pending = False
-            base._defer_combat_observation = self.native_root_observations is not None
-            try:
-                obs, self.buf_rews[index], terminated, truncated, self.buf_infos[index] = env.step(self.actions[index])
-                if cohort is not None:
-                    self.episode_rollout_action_counts[index] += 1
-            except BaseException:
-                self._step_failure = dict(slot=index, action=int(self.actions[index]), reason='step-exception')
-                raise
-            finally:
-                base._defer_combat_observation = False
-            deferred = base._combat_observation_pending
-            base._combat_observation_pending = False
+            ready = prefetched.pop(index, None)
+            if ready is None:
+                transition = self._step_one(index, self.actions[index])
+            else:
+                action, transition = ready
+                if action != int(self.actions[index]) or transition is None:
+                    raise RuntimeError('prefetched environment action/result disagrees with step')
+            obs, self.buf_rews[index], terminated, truncated, self.buf_infos[index], deferred = transition
             self.buf_dones[index] = terminated or truncated
             self.buf_infos[index]['TimeLimit.truncated'] = truncated and not terminated
             if cohort is not None and ((truncated and not terminated) or self.buf_infos[index].get('dead_screen')):
@@ -139,6 +140,8 @@ class NativeSearchVecEnv(DummyVecEnv):
                 pending.append(index)
                 continue
             self._save_obs(index, obs)
+        if prefetched:
+            raise RuntimeError('prefetched transition belongs to an inactive environment')
         if pending:
             observations = self.native_root_observations.encode([self.envs[i].unwrapped for i in pending])
             indices = np.asarray(pending, dtype=np.intp)
@@ -147,6 +150,60 @@ class NativeSearchVecEnv(DummyVecEnv):
             for key in self.keys:
                 self.buf_obs[key][indices] = observations[key]
         return (self._obs_from_buf(), np.copy(self.buf_rews), np.copy(self.buf_dones), _copy_step_infos(self.buf_infos))
+
+    def _step_one(self, index, action):
+        base = self.envs[index].unwrapped
+        base._combat_observation_pending = False
+        base._defer_combat_observation = self.native_root_observations is not None
+        try:
+            transition = self.envs[index].step(action)
+            if getattr(self, 'episode_rollout_active', None) is not None:
+                self.episode_rollout_action_counts[index] += 1
+        except BaseException:
+            self._step_failure = dict(slot=index, action=int(action), reason='step-exception')
+            raise
+        finally:
+            base._defer_combat_observation = False
+        deferred = base._combat_observation_pending
+        base._combat_observation_pending = False
+        return (*transition, deferred)
+
+    def prepare_small_playout_steps(self, actions, ordinary_indices):
+        if self._small_step_plan is not None or self._prefetched_steps:
+            raise RuntimeError('previous prefetched step was not consumed')
+        if (self.native_root_observations is None
+                or not getattr(sts, 'small_playout_parallel_steps', False)):
+            return False
+        actions = np.asarray(actions).copy()
+        indices = tuple(int(i) for i in ordinary_indices)
+        if actions.shape != (self.num_envs,) or len(set(indices)) != len(indices):
+            raise ValueError('invalid small-playout step plan')
+        if any(not 0 <= i < self.num_envs for i in indices):
+            raise ValueError('small-playout step slot outside vector')
+        self._small_step_plan = (actions, indices)
+        return True
+
+    def _prefetch_step(self, index, action):
+        cohort = getattr(self, 'episode_rollout_active', None)
+        if index in self._prefetched_steps or (cohort is not None and not cohort[index]):
+            raise RuntimeError('duplicate or inactive prefetched environment step')
+        self._prefetched_steps[index] = (int(action), None)
+        started = time.perf_counter()
+        self._prefetched_steps[index] = (int(action), self._step_one(index, action))
+        self._small_overlap_stats['prefetched_steps'] += 1
+        # Callback wall durations can overlap while native code releases the
+        # GIL. This sum is diagnostic, never additive with collector wall time.
+        self._small_overlap_stats['step_call_seconds_sum'] += time.perf_counter() - started
+
+    def _prefetch_ordinary_steps(self):
+        actions, indices = self._small_step_plan
+        for index in indices:
+            self._prefetch_step(index, actions[index])
+
+    def reset(self):
+        if getattr(self, '_small_step_plan', None) is not None or getattr(self, '_prefetched_steps', None):
+            raise RuntimeError('cannot reset before consuming a prefetched step')
+        return super().reset()
 
     def begin_episode_rollout(self, first_seed, *, censored_games='error'):
         if censored_games not in ('error', 'exclude'):
@@ -198,7 +255,10 @@ class NativeSearchVecEnv(DummyVecEnv):
 
     def env_method_batch(self, method_name, calls):
         if method_name == 'small_playout_decision':
-            return self.small_playout_batch.decisions(calls)
+            enabled = self._small_step_plan is not None
+            return self.small_playout_batch.decisions(calls,
+                pre_step=self._prefetch_step if enabled else None,
+                start_steps=self._prefetch_ordinary_steps if enabled else None)
         if method_name == 'rulebase_turn_decision':
             return self.native_search_batch.rulebase_turn_decisions(calls)
         return {index: self.env_method(method_name, *args, indices=index, **kwargs)[0]
@@ -212,9 +272,11 @@ class NativeSearchVecEnv(DummyVecEnv):
             self.small_playout_batch = SmallPlayoutBatch(self.native_search_batch.envs,
                                                        self.native_search_batch.pool, pair)
         self.small_playout_batch.stats = {}
+        self._small_overlap_stats = dict(prefetched_steps=0, step_call_seconds_sum=0.)
 
     def small_playout_stats(self):
-        return self.small_playout_batch.scalar_stats()
+        return {**self.small_playout_batch.scalar_stats(),
+                **{f'overlap/{key}': float(value) for key, value in self._small_overlap_stats.items()}}
 
     def take_small_playout_samples(self):
         samples, self.small_playout_batch.samples = self.small_playout_batch.samples, []

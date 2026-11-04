@@ -1310,6 +1310,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
             result_by_index = {}
             if combat_indices and small_lower:
                 small_started = time.perf_counter()
+                prepare_steps = getattr(env, 'prepare_small_playout_steps', None)
+                if prepare_steps is not None:
+                    prepare_steps(actions_np, [index for index in range(env.num_envs)
+                        if int(phase[index]) != combat_phase and index not in startup_paused])
                 result_by_index = call_workers('small_playout_decision', {
                     index: ((), {'state_nonce': (int(self.nosl_is_az_master_nonce)
                         ^ int(self.num_timesteps) * 0x9E3779B97F4A7C15
