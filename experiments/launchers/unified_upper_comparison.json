@@ -1117,7 +1117,7 @@
       "adopted_native_sha256": "54dfeb5385f9f2dfc609f17b24acfe96c8c48fa298cb3a9296bf25901fbf11ef"
     },
     "rollout_200s_and_large_critic": {
-      "status": "Protected169 paused; hash repeats195.53/194.39s; CPU-equivalent forced-action inference elimination next",
+      "status": "Complete: real rounds170/171/172 max190.93/188.92/187.96s; ordinary continuous resume verified, original four hosts retained; large-critic offline confirmation recorded",
       "intent": "Continue current COMBAT37; target max-rank full1920-game rollout <200s, test critic effective batches >32768 with adjusted epochs/LR. Pauses for bounded tests authorized.",
       "source": {
         "round": 167,
@@ -1292,7 +1292,7 @@
         "interpretation": "Whole-game heldout target and MC MSE pre/post, paired game uncertainty, actual optimizer steps/sample uses/update time/resources; keep all arms. Larger batch with same epochs reduces Adam steps; e8 checks compensating reuse, LR2 separately. Rank by heldout target MSE, require >=3% and paired95% CI below0 to nominate, MC no worse by >1%. Selection is exploratory; use another fresh cohort for nominated vscontrol confirmation before deployment. Online evidence separate."
       },
       "maximum_first_pause_seconds": 7200,
-      "resume": "After bounded diagnosis restore original same full state and continuous identity unless candidate semantics and two production rounds have passed. Preserve original source/native/protected checkpoints; failure diagnosis before any restart; no automatic retrial.",
+      "resume": "Ordinary resume from protected independent171/full global134750622 completed172 and continues173 with saved scheduler/config/Adam/env/RNG; original169 remains protected. Each iteration retains415s safety budget; no automatic restart on failure.",
       "critic_confirmation": {
         "protocol": "unified-upper-candidate-screen-v1",
         "seed": 20261105,
@@ -1555,7 +1555,8 @@
             182.05848017893732
           ],
           "repeat_env_steps_per_second": 5509.635660178993
-        }
+        },
+        "production_adopted": true
       },
       "compute_reduction": {
         "intent": "User: CPU saturated; prioritize reducing computation without changing effects. Pipeline prototype archived, not performance priority.",
@@ -1633,7 +1634,7 @@
         ]
       },
       "training_qualification": {
-        "status": "passed_continuous_resumed_171_pending_first_saved_round",
+        "status": "passed_and_ordinary_continuous_resume_verified",
         "root": "/root/rollout-independent-training-20261104",
         "run_id": "combat37-upper-independent-r1",
         "wandb_id": "combat37independent1",
@@ -1701,7 +1702,21 @@
           }
         ],
         "audit": "runs/local/takeover/independent-qualification-audit.json",
-        "resume": "runs/local/takeover/independent-continuous-resume.json"
+        "resume": "runs/local/takeover/independent-continuous-resume.json",
+        "ordinary_resume_result": {
+          "source_round": 171,
+          "restored_global_step": 134750622,
+          "completed_round": 172,
+          "global_step": 135803979,
+          "max_rollout_seconds": 187.9632144831121,
+          "global_env_steps_per_second": 5604.059401103573,
+          "games": 1920,
+          "censored_games": 0,
+          "max_iteration_wall_seconds": 264.56811504624784,
+          "all_four_policy_and_adam_equal": true,
+          "all_four_alive_next_round": true,
+          "artifact": "runs/local/takeover/independent-resume-audit.json"
+        }
       }
     }
   },
@@ -1714,7 +1729,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "真实170/171两轮采样max190.93/188.92秒；完整保存核验后由171普通恢复continuous。1920自然局、原学习参数；新25核机器无明显完整采样优势，保留旧四机。",
-    "updated_at": "2026-11-04T23:41:47+08:00"
+    "note": "continuous正常：170/171资格与普通恢复172均已完整训练保存，采样max190.93/188.92/187.96秒，5493–5604环境操作每秒。1920自然局/原学习参数，旧四机继续；25核对照无明显完整采样优势。",
+    "updated_at": "2026-11-04T23:50:55+08:00"
   }
 }
