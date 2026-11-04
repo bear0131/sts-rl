@@ -1799,7 +1799,7 @@
     "user_override": "不做验证，直接启动完整训练，有问题再说"
   },
   "search_budget_probe": {
-    "status": "queued_after_inline_key_full_abba",
+    "status": "complete",
     "source_round": 183,
     "source_global_step": 147390654,
     "host": "25-core auxiliary",
@@ -1841,6 +1841,10 @@
     "external_seconds_per_arm": 600,
     "learning": false,
     "native_sha256": "a736f74ca56de9c3a24974e51d444126264eabb364b631c4a7f4700651b7e98e",
-    "report": "paired seed bootstrap 10000 resamples, seed20261105; win rate, floor, cost; inference-only conclusions"
+    "report": "paired seed bootstrap 10000 resamples, seed20261105; win rate, floor, cost; inference-only conclusions",
+    "source_model_sha256": "87c3c9c015a7fbc3fc346622e863c769b8c820ee6b53d60fd9945f341bbcac3d",
+    "result_path": "/root/search-budget-20261105/results.json",
+    "local_summary": "runs/local/search-budget/summary.json",
+    "worklog": "worklog/2026-11-05.md#combat37-search-budget三档96局配对结果"
   }
 }

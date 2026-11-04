@@ -554,9 +554,9 @@
 
 | RECOVERY-LEGACY-OPTIONS-CAPACITY | 已复现，未修 | `tests/integration/test_learner_recovery.py`的`test_schema2_restores_live_vec_monitor_and_next_transition`与`test_schema2_fork_reset_restores_learner_rng_after_env_reset`在真实原生b3a扩展/legacy观察的model.learn阶段报`options.nodes contains 4 entries, exceeding capacity 3`；改动前checkpoints.py同样复现，尚未进入恢复逻辑。修复需核对legacy观察ABI与保留checkpoint，不能在扩容实验顺手扩大容量或skip掩盖；验收两项原测试与兼容性通过。证据见2026-11-04 worklog。 |
 
-| ROLLOUT-150S | 进行中 | 现役1920自然局四机rollout≤150秒；不改训练与搜索统计语义，优先减少CPU计算。显式构建语义对照、生产长度计时/资源与env原子操作每秒，恢复同一COMBAT37连续训练。见worklog/2026-11-05.md#rollout-150s新的性能目标与范围。 |
+| ROLLOUT-150S | 进行中 | 现役1920自然局四机rollout≤150秒；不改训练与搜索统计语义，优先减少CPU计算。显式构建语义对照、生产长度计时/资源与env原子操作每秒；按用户最新分工，原四机大critic对照持续推进、25核进行提速实验。内联key完整480局均186.92→182.14秒，未达标；树存储候选继续。见worklog/2026-11-05.md#rollout-150s新的性能目标与范围。 |
 
 | COMBAT37-LARGE-CRITIC-FRESH | 已直接启动持续训练（用户取消资格阶段） | 原四机同初值新训critic131072×4/LR1e-4；其他统计参数保持，旧COMBAT37全状态备份25核机。用户要求不做验证直接完整训练，不再等待两轮或人为重启资格。独立监控对照、无总轮数上限，不自动重启失败任务。 |
 | BACKUP-25CORE | 已完成：2996文件逐SHA校验及四rank183恢复材料 | 25核机保存原COMBAT37参考/最终四rank全状态、初值、代码/native/配置/日志和相关实验结果；逐文件SHA与恢复材料检查，不保存凭据。 |
 
-| COMBAT37-SEARCH-BUDGET | 进行中：25核同183模型配对评测 | 固定upper/lower模型、96新游戏seed与当前探索系数，比较250/250/1000、500/500/2000、1000/1000/4000；报告胜率/层数配对差、区间和计算成本。不更新模型，不替换四机训练预算。 |
+| COMBAT37-SEARCH-BUDGET | 完成：三档各96自然完整局 | 同183模型/新seed/固定探索强度，基线54胜、两倍57胜、四倍62胜；成本与配对区间见worklog/2026-11-05.md#combat37-search-budget三档96局配对结果。仅冻结模型评测，未证明长期训练收益；四机预算不变。 |
