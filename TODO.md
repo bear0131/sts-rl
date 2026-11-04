@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| UPPER-ROLLOUT-200S | 进行中；169受保护暂停，队列16完整286s；优先独立游戏推进架构实验 | 接管 COMBAT37 continuous，1920自然局/原搜索预算不变，目标四rank最大完整rollout<200s。用户取消整体恢复deadline，优先事件驱动线程调度；先同轨迹语义/完整采集，再两轮真实更新保存恢复。不以删局/少搜索达标；协议 post_screen.rollout_200s_and_large_critic。 |
+| UPPER-ROLLOUT-200S | 进行中；169受保护暂停，独立线程完整203.23s/5270环境操作每秒；继续合批实验 | 接管 COMBAT37 continuous，1920自然局/原搜索预算不变，目标四rank最大完整rollout<200s。用户取消整体恢复deadline，优先事件驱动线程调度；先同轨迹语义/完整采集，再两轮真实更新保存恢复。不以删局/少搜索达标；协议 post_screen.rollout_200s_and_large_critic。 |
 | UPPER-LARGE-CRITIC-BATCH | 离线确认通过；在线效果待测 | 同源完整游戏80/20训练留出，32768对照与65536/131072、4/8遍和独立LR2倍对照，含控制重复；实际λ目标和MC pre/post、真实Adam/样本使用/时间资源。留出初筛后独立cohort确认，不能只看训练loss宣称更优；源状态还原、持续训练保持。 |
 
 同步来源固定为main 2a7eafc..26bcb97；下列新增项的原验证记录已并入worklog/2026-10-19.md，当前分支合并后的结果单独记录，不能沿用来源的通过数量。main的BRIDGE29与本分支战斗升级费用编号冲突，房间回放统一记为BRIDGE39；既有BRIDGE17/28/F20实现保留，采用新增回归复验而不降级合同。
