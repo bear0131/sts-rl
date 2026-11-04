@@ -145,12 +145,14 @@ std::vector<float> SmallPlayoutNet::logits(const SmallFeatures &f) const {
     std::copy_n(weights_.data()+2048,64,h);
     for (int j=0;j<32;++j) {
         const float x=f.state[j], *column=stateColumns_.data()+j*64;
+        if(x==0.f) continue;
         for (int i=0;i<64;++i) h[i]+=column[i]*x;
     }
     for (int i=0;i<64;++i) h[i]=std::max(0.f,h[i]);
     std::copy_n(weights_.data()+4160,32,z);
     for (int j=0;j<64;++j) {
         const float x=h[j], *column=hiddenColumns_.data()+j*32;
+        if(x==0.f) continue;
         for (int i=0;i<32;++i) z[i]+=column[i]*x;
     }
     const float *emb=weights_.data()+4192, *bias=emb+32*smallKeyCount();
