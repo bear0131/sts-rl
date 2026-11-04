@@ -19,18 +19,15 @@ std::uint64_t streamSeed(std::uint64_t nonce, std::uint64_t stream) {
 }
 }
 
-void noslReseed(BattleContext &bc, std::uint64_t nonce) {
+void redeterminize(BattleContext &bc, std::uint64_t nonce,
+                   bool canonicalizeDrawPile) {
     bc.aiRng = sts::Random(streamSeed(nonce, 1));
     bc.cardRandomRng = sts::Random(streamSeed(nonce, 2));
     bc.miscRng = sts::Random(streamSeed(nonce, 3));
     bc.monsterHpRng = sts::Random(streamSeed(nonce, 4));
     bc.potionRng = sts::Random(streamSeed(nonce, 5));
     bc.shuffleRng = sts::Random(streamSeed(nonce, 6));
-}
 
-void redeterminize(BattleContext &bc, std::uint64_t nonce,
-                   bool canonicalizeDrawPile) {
-    noslReseed(bc, nonce);
     // The remaining-card multiset is observable but its order is hidden.
     // Canonicalization prevents the result from depending on the source
     // world's hidden order before sampling an independent permutation.

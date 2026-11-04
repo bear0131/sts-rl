@@ -11,10 +11,6 @@ namespace sts::search {
 // simulator RNG streams. This is the stream root for NOSL samples.
 std::uint64_t noslMix(std::uint64_t value);
 
-// Reset the six independent future RNG streams without touching card order.
-// Search variants own their public-information-aware draw-pile permutation.
-void noslReseed(BattleContext &bc, std::uint64_t nonce);
-
 // Re-determinize only hidden future randomness for one search simulation.
 // The observable multiset of cards remaining in the draw pile is preserved,
 // while its hidden order is replaced by an independent Java-compatible
