@@ -410,6 +410,8 @@ public:
 
     static std::uint64_t stateKey(const BattleContext &bc);
     static std::uint64_t strongStateKey(const BattleContext &bc);
+    // Same field visitor, different non-persisted streaming fingerprint.
+    static std::uint64_t streamingStateKey(const BattleContext &bc);
     static std::uint64_t strongActionKey(const BattleContext &bc, const Action &action);
     static std::uint64_t actionKey(const BattleContext &bc, const Action &action);
     void clearTable();
