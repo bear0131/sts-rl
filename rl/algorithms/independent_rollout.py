@@ -193,9 +193,9 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 if cp is not None:
                     campfire_rows.append((offset, cp))
             reward_monitor.record_step(model, old, action_rows, mask_rows,
-                ([r[0] for r in reward_rows], [r[1] for r in reward_rows]), infos)
+                ([r[0] for r in reward_rows], np.asarray([r[1] for r in reward_rows], dtype=np.float32)), infos)
             campfire_monitor.record_step(model, action_rows, mask_rows,
-                ([r[0] for r in campfire_rows], [r[1] for r in campfire_rows]), infos)
+                ([r[0] for r in campfire_rows], np.asarray([r[1] for r in campfire_rows], dtype=np.float32)), infos)
             episode_rollout.record_terminals(session, dones, infos)
             prefix = sum(info.get('simulator_transition') is False for info in infos)
             stats['selection_prefix_decisions'] += prefix
