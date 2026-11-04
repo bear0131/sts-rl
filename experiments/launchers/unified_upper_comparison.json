@@ -1117,7 +1117,7 @@
       "adopted_native_sha256": "54dfeb5385f9f2dfc609f17b24acfe96c8c48fa298cb3a9296bf25901fbf11ef"
     },
     "rollout_200s_and_large_critic": {
-      "status": "User removed overall resume deadline; original169 protected and paused, prioritize rollout optimization; individual test budgets remain",
+      "status": "Protected169 paused by user authorization; independent-game threaded diagnostic118b0578, Linux validation then full1920-game barrier/independent comparison; no overall resume deadline",
       "intent": "Continue current COMBAT37; target max-rank full1920-game rollout <200s, test critic effective batches >32768 with adjusted epochs/LR. Pauses for bounded tests authorized.",
       "source": {
         "round": 167,
@@ -1379,7 +1379,61 @@
         "source_global_step": 132648816,
         "checkpoint_audit": "runs/local/takeover/second-boundary-audit.json",
         "native_sha256": "2ffc01cfa7fd6e2cfade03bbeefecb398facfb595b637f9414079e1b485c30b2",
-        "user_override": "用户明确：不用限定恢复训练的时间，你先专注于压缩时间。固定恢复deadline取消；单项实验仍有固定工作量/超时，保留169完整源，优化通过后恢复持续训练。"
+        "user_override": "用户明确：不用限定恢复训练的时间，你先专注于压缩时间。固定恢复deadline取消；单项实验仍有固定工作量/超时，保留169完整源，优化通过后恢复持续训练。",
+        "result": {
+          "source_round": 167,
+          "control16_seconds": [
+            311.149286,
+            302.386741,
+            288.273282,
+            305.673112
+          ],
+          "queue16_seconds": [
+            286.451179,
+            281.172274,
+            263.476136,
+            277.671561
+          ],
+          "queue32_seconds": [
+            301.346872,
+            303.261981,
+            283.636801,
+            302.040877
+          ],
+          "all_semantic_digests_equal": true,
+          "all_original_nontiming_counts_equal": true,
+          "production_adopted": false,
+          "thread32_accepted": false,
+          "evidence": [
+            "runs/local/takeover/queue-control-status4.json",
+            "runs/local/takeover/queue-candidate-status1.json",
+            "runs/local/takeover/queue-candidate32-status2.json"
+          ]
+        }
+      },
+      "architecture_experiment": {
+        "status": "Linux103+3 tests passed; full barrier arm launched on all four ranks, no result yet",
+        "commit": "118b0578",
+        "root": "/root/rollout-independent-20261104",
+        "native_sha256": "2ffc01cfa7fd6e2cfade03bbeefecb398facfb595b637f9414079e1b485c30b2",
+        "intent": "User prioritizes independent game progress in one process with threads; no repeat of the historical multi-process approach. New random streams may differ from previous global RNG provided stochastic design requirements hold.",
+        "random_stream": "independent-games-pcg64-v1",
+        "modes": [
+          "barrier",
+          "independent"
+        ],
+        "threads": 16,
+        "upper_batch": 64,
+        "upper_wait_seconds": 0.002,
+        "seed": 20261104,
+        "source_round": 167,
+        "games_per_rank": 480,
+        "world_size": 4,
+        "collection_internal_timeout_seconds": 415,
+        "collection_process_timeout_seconds": 540,
+        "qualification": "Frozen real-policy collection only, zero update/save; preserve complete natural games/search budgets/upper macro and lower CE targets. Both modes omit unused legacy big-model combat-value diagnostic rows. Compare workload counts and per-game provenance; old global RNG equality is not required. Full continuous training/checkpoint/monitor migration is not qualified.",
+        "linux_evidence": "runs/local/takeover/independent-linux-tests.json",
+        "barrier_launch": "runs/local/takeover/independent-barrier-launch.json"
       }
     }
   },
