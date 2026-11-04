@@ -25,6 +25,7 @@ class SmallPlayoutNet {
     std::array<float, SMALL_STATE * SMALL_HIDDEN> stateColumns_;
     std::array<float, SMALL_HIDDEN * SMALL_EMBED> hiddenColumns_;
     std::array<float, SMALL_ACTION * SMALL_EMBED> projectionColumns_;
+    std::uint64_t cacheIdentity_;
 public:
     explicit SmallPlayoutNet(std::vector<float> weights);
     std::vector<float> logits(const SmallFeatures &features) const;

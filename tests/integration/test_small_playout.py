@@ -122,6 +122,76 @@ def test_selected_card_embeddings_are_averaged_not_summed(combat_factory):
     assert learner.search.net.logits(bc) == expected
 
 
+def test_state_projection_cache_eviction_and_snapshot_lifetime(combat_factory):
+    import gc
+
+    learner = SmallPlayoutLearner(seed=19)
+    bc = combat_factory(['STRIKE_RED', 'DEFEND_RED', 'BASH'] * 3).thick.bc
+    bc.apply_custom_state({'player': {'block': 0, 'energy': 3}})
+    expected = learner.search.net.logits(bc)
+    # More distinct states than the bounded 4096-entry table; collisions must
+    # recompute, and an evicted state must return the original exact result.
+    for block in range(8193):
+        bc.apply_custom_state({'player': {'block': block, 'energy': 1 + block % 4}})
+        actual = learner.search.net.logits(bc)
+        if block % 1024 == 0:
+            with torch.inference_mode():
+                reference = learner.policy(*collate_features([sts.small_playout_features(bc)])).numpy()[0]
+            np.testing.assert_allclose(actual, reference, rtol=2e-5, atol=2e-5)
+    bc.apply_custom_state({'player': {'block': 0, 'energy': 3}})
+    assert learner.search.net.logits(bc) == expected
+    # Reused allocator addresses cannot make a new immutable snapshot inherit
+    # the preceding model's projection. Keep the original snapshot alive too.
+    for generation in range(64):
+        with torch.no_grad():
+            learner.policy.fc2.bias.add_(.125 if generation % 2 == 0 else -.25)
+        temporary = sts.SmallPlayoutNet(learner.policy.export())
+        actual = temporary.logits(bc)
+        with torch.inference_mode():
+            reference = learner.policy(*collate_features([sts.small_playout_features(bc)])).numpy()[0]
+        np.testing.assert_allclose(actual, reference, rtol=2e-5, atol=2e-5)
+        del temporary
+        if generation % 8 == 0:
+            gc.collect()
+        assert learner.search.net.logits(bc) == expected
+
+
+def test_state_projection_cache_does_not_cache_action_candidates(combat_factory):
+    learner = SmallPlayoutLearner(seed=19)
+    bc = combat_factory(['STRIKE_RED', 'DEFEND_RED', 'BASH'] * 3).thick.bc
+    states = []
+    for hand in (['STRIKE_RED', 'DEFEND_RED', 'BASH'],
+                 ['ANGER', 'POMMEL_STRIKE', 'SHRUG_IT_OFF'],
+                 ['PURITY', 'DEFEND_RED', 'BASH']):
+        bc.apply_custom_state({'hand': hand})
+        features = sts.small_playout_features(bc)
+        states.append(features['state'])
+        with torch.inference_mode():
+            reference = learner.policy(*collate_features([features])).numpy()[0]
+        np.testing.assert_allclose(learner.search.net.logits(bc), reference, rtol=2e-5, atol=2e-5)
+    for state in states[1:]:
+        np.testing.assert_array_equal(state, states[0])
+
+
+def test_state_projection_cache_survives_search_pool_recreation():
+    import gc
+    from rl.search.small_playout import SmallPlayoutSearch
+
+    learner = SmallPlayoutLearner(seed=19)
+    root = BattleFixture().create(42)
+    config = SmallSearchConfig(simulations=32)
+    for threads in (1, 4, 2, 4, 1):
+        with torch.no_grad():
+            learner.policy.fc2.bias.add_(.125)
+        search = SmallPlayoutSearch(learner.policy, config=config, threads=threads)
+        expected = search.net.search(root, config.native(), 81)
+        for actual in search.search([root] * 9, [81] * 9):
+            for key in ('action', 'visits', 'values', 'terminal_visits', 'action_bits'):
+                assert actual[key] == expected[key]
+        del search
+        gc.collect()
+
+
 def test_search_determinism_hidden_state_and_parallel_equivalence():
     learner = SmallPlayoutLearner(config=SmallSearchConfig(simulations=32), threads=2)
     bc = BattleFixture().create(42)
