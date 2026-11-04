@@ -494,7 +494,7 @@
       "failure": "No retry on timeout/OOM/nonfinite/source-restore failure; no automatic promotion from MSE or speed alone. Larger micro must pass numerical comparison and full production-length qualification."
     },
     "fresh_lambda_training": {
-      "status": "Fixed40 review complete, learning improves and common-wall recent level near historicalB; continuous unchanged, next50. Same-cohort critic spikes32/39 require registered isolated diagnostic after full51 boundary.",
+      "status": "Fixed120 accepted; full124 planned pause/protected for native_projection_validation, ordinary full-state resume pending; next learning130. Continuous training has no total round cap.",
       "user_message": "USER-b1cb9f48-083c-4bd1-8dba-8c38c0e5849d",
       "intent": "After tests start a genuinely new training run from the original unified initialization; prioritize complete-game frozen lambda-return critic with lambda0.97.",
       "initialization": {
@@ -1118,8 +1118,8 @@
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
-    "status": "training",
-    "note": "固定40复核：三10窗楼层22.47→24.23→26.46、胜局30→56→145；同墙钟近期9600局与B接近，未证更优。保持2/4续训至固定50；critic32/39拟合波动已登记51完整边界后的隔离诊断，尚未暂停。",
-    "updated_at": "2026-11-04T04:46:26.860740+08:00"
+    "status": "diagnostic",
+    "note": "COMBAT37 complete124 protected, all4 exit0 for preregistered native projection validation. Linux fixed gates and frozen original1920 games accepted; candidate collection running. Learning120 accepted, next130; not a total training cap.",
+    "updated_at": "2026-11-04T12:18:09.937622+08:00"
   }
 }
