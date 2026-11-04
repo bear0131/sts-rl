@@ -494,7 +494,7 @@
       "failure": "No retry on timeout/OOM/nonfinite/source-restore failure; no automatic promotion from MSE or speed alone. Larger micro must pass numerical comparison and full production-length qualification."
     },
     "fresh_lambda_training": {
-      "status": "Fixed120 accepted; full124 planned pause/protected for native_projection_validation, ordinary full-state resume pending; next learning130. Continuous training has no total round cap.",
+      "status": "Fixed120 accepted; full124 protected; native-only ordinary resumed qualification125/126 running, then full audit and continuous ordinary resume126/verify127. Next fixed130; no total training cap.",
       "user_message": "USER-b1cb9f48-083c-4bd1-8dba-8c38c0e5849d",
       "intent": "After tests start a genuinely new training run from the original unified initialization; prioritize complete-game frozen lambda-return critic with lambda0.97.",
       "initialization": {
@@ -990,7 +990,7 @@
       "deferral_reason": "At fresh114 catch-up, only rolling113/114 retained and source61 absent from all registered run manifests. New fixed60-110 evidence shows no plateau and better recent outcomes versus equal cumulative-wall B from90 onward; lower updates naturally8->16 at62, so the original cadence premise must be reconsidered, not silently move source61 to a later checkpoint. No GPU qualification or candidate launch has occurred."
     },
     "native_projection_validation": {
-      "status": "full124 protected; Linux fixed gates and original full collection accepted; candidate collection running",
+      "status": "All Linux/frozen collection gates accepted; ordinary124 native-only qualification125/126 running",
       "registered_at": "2026-11-04T11:44:29.665009+08:00",
       "intent": "Same-wall learning and stability via equivalent CPU search execution; not a new policy or statistical update rule.",
       "implementation_commit": "8dd403613b859a189fb546d017000b2cc9bb8c1f",
@@ -1100,13 +1100,16 @@
         "runs/local/upper-unified/candidates/projection-local-provenance.json",
         "runs/local/upper-unified/candidates/projection-linux-baseline-provenance.json"
       ],
-      "next_action": "Accept candidate, then original_repeat; summarize all gates before native-only qualification125/126. Never repeat completed build/test/deploy.",
+      "next_action": "Observe existing qualification identities to all4exit0, audit full125/126 and time headroom; only then ordinary continuous126 resume and verify127. No repeat launches or tests.",
       "execution_evidence": {
         "boundary": "runs/local/upper-unified/candidates/projection-boundary124-accepted.json",
         "linux_fixed": "runs/local/upper-unified/candidates/projection-linux-fixed-accepted.json",
         "deployment": "runs/local/upper-unified/candidates/projection-linux-deployment.json",
         "candidate_native_sha256": "54dfeb5385f9f2dfc609f17b24acfe96c8c48fa298cb3a9296bf25901fbf11ef",
-        "original_collection": "runs/local/upper-unified/candidates/projection-collect-original-accepted.json"
+        "original_collection": "runs/local/upper-unified/candidates/projection-collect-original-accepted.json",
+        "frozen_collection": "runs/local/upper-unified/candidates/projection-full-collection-accepted.json",
+        "resources": "runs/local/upper-unified/candidates/projection-full-collection-resources.json",
+        "qualification_launch": "runs/local/upper-unified/candidates/projection-qualification-launch.json"
       }
     }
   },
@@ -1118,8 +1121,8 @@
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
-    "status": "diagnostic",
-    "note": "COMBAT37 complete124 protected, all4 exit0 for preregistered native projection validation. Linux fixed gates and frozen original1920 games accepted; candidate collection running. Learning120 accepted, next130; not a total training cap.",
-    "updated_at": "2026-11-04T12:18:09.937622+08:00"
+    "status": "training",
+    "note": "COMBAT37 full124 preserved. Native projection passed Linux/frozen1920-game original/candidate/repeat gates (7.39-7.82% collector reduction); ordinary124 native-only qualification125/126 running. Full-state audit and continuous resume still pending; no learning hyperparameter change.",
+    "updated_at": "2026-11-04T12:29:21.833475+08:00"
   }
 }
