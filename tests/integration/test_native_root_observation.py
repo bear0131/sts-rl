@@ -246,6 +246,100 @@ def test_vector_wrappers_autoreset_labels_journals_and_restore(monkeypatch, nati
         reference.close(); candidate.close()
 
 
+def test_upper_vector_step_reuses_rows_but_public_results_remain_independent(
+        monkeypatch, native_wrapper_factories):
+    from env.core import encode
+    from stable_baselines3.common.vec_env import DummyVecEnv
+    from rl.training.native_vec_env import NativeSearchVecEnv
+
+    factories = native_wrapper_factories(2, outer_return_context=False)
+    reference, candidate = DummyVecEnv(factories), NativeSearchVecEnv(factories, threads=1)
+    try:
+        for vec in (reference, candidate):
+            vec.seed(42); vec.reset()
+        actions = np.array([np.flatnonzero(mask)[0] for mask in reference.env_method('action_masks')])
+        expected = reference.step(actions)
+        assert not expected[2].any()
+        assert all(env.unwrapped._phase() not in ('combat', 'none') for env in reference.envs)
+        assert all(info.get('simulator_transition') is not False for info in expected[3])
+        for env in candidate.envs:
+            base = env.unwrapped
+            base.thick.rmap.encoded_view(-1, -1,
+                next_columns=base.thick.gc.legal_map_options(), global_map_view=True)
+        def unexpected(*args, **kwargs):
+            raise AssertionError('upper vector step must not allocate/copy a temporary observation')
+        with monkeypatch.context() as patch:
+            patch.setattr(encode, '_empty', unexpected)
+            patch.setattr(candidate, '_save_obs', unexpected)
+            actual = candidate.step(actions)
+        assert_nested_equal(expected, actual)
+        retained = copy.deepcopy(actual)
+        for env in candidate.envs:
+            assert env.unwrapped._step_observation_buffer is None
+            assert not env.unwrapped._step_observation_buffer_used
+        for key in actual[0]:
+            assert not np.shares_memory(actual[0][key], candidate.buf_obs[key])
+        candidate.reset()
+        assert_nested_equal(retained, actual)
+    finally:
+        reference.close(); candidate.close()
+
+
+def test_vector_observation_write_failure_releases_private_destination(
+        monkeypatch, native_wrapper_factories):
+    from env.core import encode
+    from rl.training.native_vec_env import NativeSearchVecEnv
+
+    vec = NativeSearchVecEnv(native_wrapper_factories(1, outer_return_context=False), threads=1)
+    try:
+        vec.seed(42); vec.reset()
+        action = np.flatnonzero(vec.env_method('action_masks')[0])[0]
+        def fail(*args, **kwargs):
+            raise RuntimeError('injected observation write failure')
+        with monkeypatch.context() as patch:
+            patch.setattr(encode, '_encode_global', fail)
+            with pytest.raises(RuntimeError, match='injected observation write failure'):
+                vec.step(np.array([action]))
+        base = vec.envs[0].unwrapped
+        assert base._step_observation_buffer is None and not base._step_observation_buffer_used
+        assert not base._defer_combat_observation
+        public = base._obs()
+        for key in vec.buf_obs:
+            assert not np.shares_memory(public[key], vec.buf_obs[key])
+        assert base.observation_space.contains(public)
+    finally:
+        vec.close()
+
+
+def test_upper_buffered_timelimit_preserves_terminal_before_autoreset(native_wrapper_factories):
+    import gymnasium as gym
+    from stable_baselines3.common.vec_env import DummyVecEnv
+    from rl.training.native_vec_env import NativeSearchVecEnv
+
+    factories = native_wrapper_factories(2, outer_return_context=False)
+    reference, candidate = DummyVecEnv(factories), NativeSearchVecEnv(factories, threads=1)
+    try:
+        for vec in (reference, candidate):
+            for env in vec.envs:
+                while not isinstance(env, gym.wrappers.TimeLimit):
+                    env = env.env
+                env._max_episode_steps = 1
+            vec.seed(42); vec.reset()
+        actions = np.array([np.flatnonzero(mask)[0] for mask in reference.env_method('action_masks')])
+        expected, actual = reference.step(actions), candidate.step(actions)
+        assert_nested_equal(expected, actual)
+        assert actual[2].all() and all(info['TimeLimit.truncated'] for info in actual[3])
+        for info in actual[3]:
+            assert 'terminal_observation' in info
+            for key, value in info['terminal_observation'].items():
+                assert not np.shares_memory(value, candidate.buf_obs[key])
+        retained = copy.deepcopy(actual)
+        candidate.reset()
+        assert_nested_equal(retained, actual)
+    finally:
+        reference.close(); candidate.close()
+
+
 @pytest.mark.parametrize('threads', [1, 4])
 def test_small_playout_overlap_matches_serial_transitions_samples_and_restore(native_wrapper_factories, threads):
     from rl.training.native_vec_env import NativeSearchVecEnv

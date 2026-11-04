@@ -341,6 +341,8 @@ class SlayTheSpireEnv(gym.Env):
         # Ordinary Gym/evaluation calls always construct their observation here.
         self._defer_combat_observation = False
         self._combat_observation_pending = False
+        self._step_observation_buffer = None
+        self._step_observation_buffer_used = False
         self.outer_return_context = bool(outer_return_context)
         from .outer_return import OBJECTIVE, SCALAR_OBJECTIVES, FINITE_OBJECTIVE, NORMALIZED_OBJECTIVE, MIXED_RAW_OBJECTIVE, MC_OBJECTIVE
         self.outer_return_monte_carlo = combat_value_objective == MC_OBJECTIVE
@@ -1222,7 +1224,10 @@ class SlayTheSpireEnv(gym.Env):
             # The native vector owner fills this before returning to callers.
             # Allowed wrappers only pass/project observations during step.
             return {}, reward, terminated, False, info
-        return self._obs(), reward, terminated, False, info
+        destination = None if terminated else self._step_observation_buffer
+        observation = self._obs() if destination is None else self._obs(_out=destination)
+        self._step_observation_buffer_used = destination is not None
+        return observation, reward, terminated, False, info
 
     def _step_impl(self, action_id):
         if self._joint_actions and self._phase() == 'combat':
@@ -2744,7 +2749,7 @@ class SlayTheSpireEnv(gym.Env):
             return A.PICK_HAND
         return A.arg_step_name(self._pending, self._legal(), self._phase())
 
-    def _obs(self, *, upper_value_only=False):
+    def _obs(self, *, upper_value_only=False, _out=None):
         """Structured Dict obs (encode v3): the thick layer's assembled canonical
         plus the thin layer's `arg_step` (which the backend cannot know). On a
         combat MULTI screen we also patch the thin-only progress into the select
@@ -2783,6 +2788,7 @@ class SlayTheSpireEnv(gym.Env):
         map_projection = getattr(self.thick, 'encoding_map_observation', None)
         obs = encode.encode(
             canon,
+            _out=_out,
             _map_observation=map_projection(canon) if map_projection is not None else None,
             global_map_view=self._global_map_view,
             upper_public_context=self._upper_public_context,
@@ -2795,14 +2801,22 @@ class SlayTheSpireEnv(gym.Env):
         )
 
         if self._joint_actions and not upper_value_only:
-            obs['combat_legal'] = self.action_masks()[self._policy_offset:]
+            legal = self.action_masks()[self._policy_offset:]
+            if _out is None:
+                obs['combat_legal'] = legal
+            else:
+                obs['combat_legal'][...] = legal
         if self.outer_return_context and not upper_value_only:
             from .outer_return import CONTEXT_KEYS, permanent_misc
-            obs['outer_deck_misc'] = permanent_misc(self.thick.gc, self.thick.bc)
+            misc = permanent_misc(self.thick.gc, self.thick.bc)
+            if _out is None:
+                obs['outer_deck_misc'] = misc
+            else:
+                obs['outer_deck_misc'][...] = misc
             # A vector environment may reuse or mutate its observation storage.
             # These small arrays must survive that and the upcoming transition.
             self._nosl_current_context = {key: obs[key].copy() for key in CONTEXT_KEYS}
-        if self.outer_return_monte_carlo and not upper_value_only:
+        if self.outer_return_monte_carlo and not upper_value_only and _out is None:
             obs['combat_mc_exit'] = np.zeros(1, dtype=np.float32)
         return obs
 

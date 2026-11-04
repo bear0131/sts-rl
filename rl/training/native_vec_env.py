@@ -51,6 +51,7 @@ class NativeSearchVecEnv(DummyVecEnv):
         self._small_step_plan = None
         self._prefetched_steps = {}
         self._small_overlap_stats = dict(prefetched_steps=0, step_call_seconds_sum=0.)
+        self._step_observation_buffers = None
         try:
             self.native_search_batch = NativeSearchBatch(self.envs, threads, direct_observations=True)
             self.native_root_observations = None
@@ -59,6 +60,14 @@ class NativeSearchVecEnv(DummyVecEnv):
                             for env in self.envs)):
                 from env.core.native_observation import NativeRootObservationBatch
                 self.native_root_observations = NativeRootObservationBatch(self.envs[0].unwrapped)
+                # The base encoder sees its full schema, including fields an
+                # older checkpoint hides. Visible fields write directly into
+                # their existing vector row; public vector outputs still copy.
+                self._step_observation_buffers = [
+                    {key: self.buf_obs[key][index] if key in self.buf_obs
+                     else np.empty(space.shape, dtype=space.dtype)
+                     for key, space in env.unwrapped.observation_space.spaces.items()}
+                    for index, env in enumerate(self.envs)]
         except BaseException:
             if hasattr(self, 'native_search_batch'):
                 self.native_search_batch.close()
@@ -148,7 +157,7 @@ class NativeSearchVecEnv(DummyVecEnv):
                 action, transition = ready
                 if action != int(self.actions[index]) or transition is None:
                     raise RuntimeError('prefetched environment action/result disagrees with step')
-            obs, self.buf_rews[index], terminated, truncated, self.buf_infos[index], deferred = transition
+            obs, self.buf_rews[index], terminated, truncated, self.buf_infos[index], deferred, buffered = transition
             self.buf_dones[index] = terminated or truncated
             self.buf_infos[index]['TimeLimit.truncated'] = truncated and not terminated
             if cohort is not None and ((truncated and not terminated) or self.buf_infos[index].get('dead_screen')):
@@ -185,7 +194,8 @@ class NativeSearchVecEnv(DummyVecEnv):
             elif deferred:
                 pending.append(index)
                 continue
-            self._save_obs(index, obs)
+            if not buffered:
+                self._save_obs(index, obs)
         if prefetched:
             raise RuntimeError('prefetched transition belongs to an inactive environment')
         if pending:
@@ -207,8 +217,19 @@ class NativeSearchVecEnv(DummyVecEnv):
         base = self.envs[index].unwrapped
         base._combat_observation_pending = False
         base._defer_combat_observation = self.native_root_observations is not None
+        base._step_observation_buffer = (None if self._step_observation_buffers is None
+                                        else self._step_observation_buffers[index])
+        base._step_observation_buffer_used = False
         try:
             transition = self.envs[index].step(action)
+            buffered = base._step_observation_buffer_used
+            if buffered and (transition[2] or transition[3]):
+                # A wrapper such as TimeLimit can terminate after the base has
+                # written a live row. Keep this final observation across reset
+                # and the subsequent writes to the same vector slot.
+                transition = ({key: value.copy() for key, value in transition[0].items()},
+                              *transition[1:])
+                buffered = False
             if getattr(self, 'episode_rollout_active', None) is not None:
                 self.episode_rollout_action_counts[index] += 1
         except BaseException:
@@ -216,9 +237,11 @@ class NativeSearchVecEnv(DummyVecEnv):
             raise
         finally:
             base._defer_combat_observation = False
+            base._step_observation_buffer = None
+            base._step_observation_buffer_used = False
         deferred = base._combat_observation_pending
         base._combat_observation_pending = False
-        return (*transition, deferred)
+        return (*transition, deferred, buffered)
 
     def prepare_small_playout_steps(self, actions, ordinary_indices):
         if self._small_step_plan is not None or self._prefetched_steps:

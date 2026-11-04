@@ -1279,14 +1279,16 @@ def encode(
     canon, *, global_map_view=False, card_language=False,
     combat_language=False, deck_size_observation=False, neow_observation=False,
     event_option_observation=False, interactive_reasoning=False, upper_public_context=False,
-    _map_observation=None,
+    _map_observation=None, _out=None,
 ):
     """obs canonical dict -> obs dict (numpy arrays matching obs_space()).
 
     `canon` may carry only the combat block (a normalize_sim result), only the
     overworld block, or the full assembled dict — absent groups encode to PAD.
     _map_observation is an internal validated projection from a read-only
-    simulator RunMap; external canonical observations always use the codec."""
+    simulator RunMap; external canonical observations always use the codec.
+    _out is a complete, matching internal vector row whose owner controls its
+    lifetime. Public callers receive independently allocated arrays."""
     if canon.get("strict_complete"):
         _validate_complete_canonical(canon)
     o = _empty(
@@ -1298,7 +1300,12 @@ def encode(
         event_option_observation=event_option_observation,
         interactive_reasoning=interactive_reasoning,
         upper_public_context=upper_public_context,
-    )
+    ) if _out is None else _out
+    if _out is not None:
+        for value in o.values():
+            value.fill(0)
+        if upper_public_context:
+            o['upper_public_context'].fill(1)
     if "pending_card_slot" in o:
         o["pending_card_slot"][0] = int(canon.get("pending_card_slot", 0))
     o["pending_potion_slot"][0] = int(canon.get("pending_potion_slot", 0))
