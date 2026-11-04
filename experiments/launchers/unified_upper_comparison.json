@@ -1639,7 +1639,7 @@
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
-    "status": "qualification",
+    "status": "training",
     "note": "从保护169完整状态续接；原学习参数，独立16线程与等价CPU优化，两轮真实训练/保存资格进行中。新25核机器另作冻结比较。",
     "updated_at": "2026-11-04T23:27:41+08:00"
   }
