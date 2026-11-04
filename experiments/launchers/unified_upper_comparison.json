@@ -494,7 +494,7 @@
       "failure": "No retry on timeout/OOM/nonfinite/source-restore failure; no automatic promotion from MSE or speed alone. Larger micro must pass numerical comparison and full production-length qualification."
     },
     "fresh_lambda_training": {
-      "status": "Fixed120 accepted; full124 protected; native-only ordinary resumed qualification125/126 running, then full audit and continuous ordinary resume126/verify127. Next fixed130; no total training cap.",
+      "status": "Fixed120 accepted; native-only qualification125/126 full-state accepted; ordinary126 continuous resumed without total cap, first127 state acceptance pending; next fixed130.",
       "user_message": "USER-b1cb9f48-083c-4bd1-8dba-8c38c0e5849d",
       "intent": "After tests start a genuinely new training run from the original unified initialization; prioritize complete-game frozen lambda-return critic with lambda0.97.",
       "initialization": {
@@ -990,7 +990,7 @@
       "deferral_reason": "At fresh114 catch-up, only rolling113/114 retained and source61 absent from all registered run manifests. New fixed60-110 evidence shows no plateau and better recent outcomes versus equal cumulative-wall B from90 onward; lower updates naturally8->16 at62, so the original cadence premise must be reconsidered, not silently move source61 to a later checkpoint. No GPU qualification or candidate launch has occurred."
     },
     "native_projection_validation": {
-      "status": "All Linux/frozen collection gates accepted; ordinary124 native-only qualification125/126 running",
+      "status": "Full125/126 qualification accepted; ordinary continuous126 resumed, full127 acceptance pending",
       "registered_at": "2026-11-04T11:44:29.665009+08:00",
       "intent": "Same-wall learning and stability via equivalent CPU search execution; not a new policy or statistical update rule.",
       "implementation_commit": "8dd403613b859a189fb546d017000b2cc9bb8c1f",
@@ -1100,7 +1100,7 @@
         "runs/local/upper-unified/candidates/projection-local-provenance.json",
         "runs/local/upper-unified/candidates/projection-linux-baseline-provenance.json"
       ],
-      "next_action": "Observe existing qualification identities to all4exit0, audit full125/126 and time headroom; only then ordinary continuous126 resume and verify127. No repeat launches or tests.",
+      "next_action": "Observe existing ordinary resume identities until complete127, then projection_check_resume.py continuous with fresh evidence; next fixed130. No repeat qualification/probes/launch.",
       "execution_evidence": {
         "boundary": "runs/local/upper-unified/candidates/projection-boundary124-accepted.json",
         "linux_fixed": "runs/local/upper-unified/candidates/projection-linux-fixed-accepted.json",
@@ -1109,7 +1109,9 @@
         "original_collection": "runs/local/upper-unified/candidates/projection-collect-original-accepted.json",
         "frozen_collection": "runs/local/upper-unified/candidates/projection-full-collection-accepted.json",
         "resources": "runs/local/upper-unified/candidates/projection-full-collection-resources.json",
-        "qualification_launch": "runs/local/upper-unified/candidates/projection-qualification-launch.json"
+        "qualification_launch": "runs/local/upper-unified/candidates/projection-qualification-launch.json",
+        "qualification": "runs/local/upper-unified/candidates/projection-qualification126-accepted.json",
+        "continuous_launch": "runs/local/upper-unified/candidates/projection-continuous-launch.json"
       }
     }
   },
@@ -1122,7 +1124,7 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "COMBAT37 full124 preserved. Native projection passed Linux/frozen1920-game original/candidate/repeat gates (7.39-7.82% collector reduction); ordinary124 native-only qualification125/126 running. Full-state audit and continuous resume still pending; no learning hyperparameter change.",
-    "updated_at": "2026-11-04T12:29:21.833475+08:00"
+    "note": "COMBAT37 native projection qualification125/126 fully accepted (354.903/331.500s); ordinary126 continuous resumed, no total round cap. Full127 recovery acceptance pending; next fixed130. Learning/search settings preserved.",
+    "updated_at": "2026-11-04T12:44:08.578035+08:00"
   }
 }
