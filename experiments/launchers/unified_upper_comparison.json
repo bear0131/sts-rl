@@ -1605,7 +1605,7 @@
         "production_migrated": false
       },
       "training_qualification": {
-        "status": "prepared",
+        "status": "running",
         "root": "/root/rollout-independent-training-20261104",
         "run_id": "combat37-upper-independent-r1",
         "wandb_id": "combat37independent1",
@@ -1632,15 +1632,15 @@
     }
   },
   "monitor": {
-    "root": "/root/upper-throughput-20261104",
-    "run_id": "combat37-upper-fresh-lambda097-r1",
-    "label": "COMBAT37 · 新初值 λ=.97 / 1920局",
+    "root": "/root/rollout-independent-training-20261104",
+    "run_id": "combat37-upper-independent-r1",
+    "label": "COMBAT37 · 独立推进 / 169续训资格",
     "branch_step": 0,
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
-    "status": "diagnostic",
-    "note": "按用户新指令，取消固定恢复时间，优先压缩rollout。169轮完整状态已保护；当前进行同源性能对照，测试各自有超时。",
-    "updated_at": "2026-11-04T19:06:00+08:00"
+    "status": "qualification",
+    "note": "从保护169完整状态续接；原学习参数，独立16线程与等价CPU优化，两轮真实训练/保存资格进行中。新25核机器另作冻结比较。",
+    "updated_at": "2026-11-04T23:27:41+08:00"
   }
 }
