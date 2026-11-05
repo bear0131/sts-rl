@@ -12,10 +12,12 @@ import torch
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.algorithms.upper_probe import state_digest
 from rl.policies.small_playout import PreparedPlayoutSamples
+from tools.analysis.return_objectives import prepare_evidence, objective_loss
 
 
 def read_banks(paths, label_paths, teacher):
     records, targets, game, hp, boss, reference, provenance = [], [], [], [], [], [], []
+    costs = []
     for path, labels in zip(paths, label_paths, strict=True):
         meta = json.loads((path / "collection.json").read_text())
         verified = json.loads((labels / "verified.json").read_text())
@@ -47,6 +49,18 @@ def read_banks(paths, label_paths, teacher):
                 [data["old_target"], data["return_target"], data["coverage"]]
             )
             reference.append(data["ref_q"])
+            q = data["mean_q"].astype(np.float64)
+            covered = data["coverage"].astype(bool)
+            lengths = data["sizes"]
+            starts = lengths.cumsum() - lengths
+            best = np.maximum.reduceat(np.where(covered, q, -np.inf), starts)
+            units = np.where(data["boss"], 100.0, data["hp"])
+            costs.append(
+                ((np.repeat(best, lengths) - q) * np.repeat(units, lengths)).astype(
+                    np.float32
+                )
+            )
+
         with (labels / "labels.npz").open("rb") as f:
             provenance.append([digest, hashlib.file_digest(f, "sha256").hexdigest()])
         records.extend(subset)
@@ -64,6 +78,7 @@ def read_banks(paths, label_paths, teacher):
             or not np.allclose(np.add.reduceat(y, bank.starts), 1.0, atol=2e-6, rtol=0)
         ):
             raise ValueError("invalid action distribution")
+    bank.action_cost = np.concatenate(costs)
     bank.coverage = np.concatenate([p[2] for p in targets]).astype(bool)
     return (
         bank,
@@ -218,6 +233,17 @@ def run(args):
                 "anchored_target_kl",
             ],
         )
+    if args.pair_evidence:
+        prior = []
+        with torch.no_grad():
+            for start in range(0, len(train.lengths), 512):
+                ix = np.arange(start, min(start + 512, len(train.lengths)))
+                inputs, _, _ = train.batch(ix, device)
+                lp = init.forward_packed(*inputs).log_softmax(-1)
+                prior.append(lp[inputs[-1]].cpu().numpy())
+        train.prior_logp = np.concatenate(prior)
+        prepare_evidence(train, args.pair_evidence, args.labels[:-1])
+        labels = dict(regret=labels["returns"], preferences=labels["returns"])
     predictions["initial"] = assess(init, test, both, ref, holdout, device)
     for seed in args.seeds:
         for name, y in labels.items():
@@ -252,7 +278,14 @@ def run(args):
                             ~observed, -torch.inf
                         )
                         logp = logits.log_softmax(-1).masked_fill(~observed, 0.0)
-                        (-(target * logp).sum() / len(batch)).backward()
+                        summed = (
+                            objective_loss(
+                                name, train, part, source, logits, inputs[-1], observed
+                            )
+                            if args.pair_evidence
+                            else -(target * logp).sum()
+                        )
+                        (summed / len(batch)).backward()
                     opt.step()
                 net.eval()
                 val = assess(net, test, both, ref, validation, device).mean(0)
@@ -304,7 +337,12 @@ if __name__ == "__main__":
     p.add_argument("--batch", type=int, default=2048)
     p.add_argument("--micro", type=int, default=512)
     p.add_argument("--anchored-comparison", action="store_true")
+    p.add_argument("--pair-evidence", type=Path, nargs="+")
     args = p.parse_args()
+    if args.pair_evidence and (
+        args.anchored_comparison or len(args.pair_evidence) != len(args.banks) - 1
+    ):
+        p.error("need aligned preference data only for the independent training banks")
     if (
         len(args.banks) < 2
         or len(args.labels) != len(args.banks)
