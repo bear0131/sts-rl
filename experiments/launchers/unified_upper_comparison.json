@@ -1735,9 +1735,9 @@
         "through_step": 132648816
       }
     ],
-    "status": "running",
-    "note": "从原186/global150593647完整状态恢复同一COMBAT37四机连续训练。第187轮1920个自然完整局、0删失，上下层均已更新和保存。沿用原UCT及原监督；新搜索、标签和自动预算在独立实验中比较。",
-    "updated_at": "2026-11-05T11:20:09.906071+08:00"
+    "status": "training",
+    "note": "原COMBAT37四机已从189完整恢复点继续训练。等价动作评分缓存的1920局验收143.40秒，第190轮正式训练139.25秒，0删失，上下层均已更新。保留原UCT、原监督和原曲线。",
+    "updated_at": "2026-11-05T11:54:51Z"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
