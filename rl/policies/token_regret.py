@@ -89,6 +89,7 @@ def improved_log_target(row):
         or not np.isfinite(values[observed]).all()
         or not np.isfinite(raw).all()
         or (visits < 0).any()
+        or not np.isfinite(row["return_units"])
         or row["return_units"] <= 0
     ):
         raise ValueError("invalid measured combat action returns")
@@ -131,6 +132,15 @@ class OnlineTokenRegretPolicy(ActionTokenPolicy):
     def export_guide(self):
         from rl.policies.small_playout import SmallPlayoutPolicy
         return SmallPlayoutPolicy.export(self)
+
+    def collection_pair(self, *, collect_samples):
+        from env.search.small_playout import PAIRED_CONTRACT
+        from rl.algorithms.upper_probe import state_digest
+        from rl.policies.small_playout import export_online_search_pair
+
+        pair = export_online_search_pair(self, collect_samples=collect_samples, guide_only=True)
+        pair.update(search_contract=PAIRED_CONTRACT, sha256=state_digest(self.state_dict()))
+        return pair
 
     def prepare_samples(self, samples, target_mix):
         return OnlineRegretSamples(samples)

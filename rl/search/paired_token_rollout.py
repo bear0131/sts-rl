@@ -11,9 +11,8 @@ from rl.policies.token_regret import encode_public_roots, pack_rows
 class PairedTokenBatch(SmallPlayoutBatch):
     def __init__(self, envs, pool, pair, policy):
         super().__init__(envs, pool, pair)
-        if not hasattr(sts.SmallPlayoutConfig(), "paired_worldlines"):
+        if not self.paired_worldlines or not hasattr(sts.SmallPlayoutConfig(), "paired_worldlines"):
             raise ValueError("native shared-chain search is required")
-        self.paired_worldlines = True
         self.policy = policy
         self.device = next(policy.parameters()).device
 
@@ -80,6 +79,8 @@ class PairedTokenBatch(SmallPlayoutBatch):
                 units = (
                     100.0 if job[2].boss else float(round(float(row["state"][1]) * 200))
                 )
+                if not self.pair["online"]:
+                    continue
                 by_slot[job[0]] = dict(
                     tokens=row["tokens"],
                     values=q.astype(np.float32),

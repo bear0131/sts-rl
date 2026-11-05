@@ -1721,23 +1721,16 @@
     }
   },
   "monitor": {
-    "root": "/root/rollout-independent-training-20261104",
-    "run_id": "combat37-upper-independent-r1",
-    "label": "COMBAT37 · 新初值 λ=.97 / 1920局",
+    "root": "/root/combat-transformer-fresh-20261105",
+    "run_id": "combat38-transformer64-regret-paired-r1",
+    "label": "COMBAT38 · 共享链 / 2×64 Transformer / 1920局",
     "branch_step": 0,
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
-    "continuation_of": [
-      {
-        "root": "/root/upper-throughput-20261104",
-        "run_id": "combat37-upper-fresh-lambda097-r1",
-        "through_step": 132648816
-      }
-    ],
     "status": "training",
-    "note": "原COMBAT37四机已从189完整恢复点继续训练。等价动作评分缓存的1920局验收143.40秒，第190轮正式训练139.25秒，0删失，上下层均已更新。保留原UCT、原监督和原曲线。",
-    "updated_at": "2026-11-05T11:54:51Z"
+    "note": "四机从零训练。根部使用2层64宽Transformer，链内使用同步学习的轻量头，代价敏感监督。COMBAT37第208轮已经独立封存。",
+    "updated_at": "2026-11-05T13:03:06Z"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",

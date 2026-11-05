@@ -96,7 +96,13 @@ class OnlinePlayoutEvaluationStrategy:
         from rl.policies.small_playout import export_online_search_pair
         if threads < 1:
             raise ValueError('native search threads must be positive')
-        self.pair = export_online_search_pair(policy, collect_samples=False, paired_worldlines=paired_worldlines)
+        from rl.policies.token_regret import OnlineTokenRegretPolicy
+        self.root_policy = policy if isinstance(policy, OnlineTokenRegretPolicy) else None
+        if self.root_policy is None:
+            self.pair = export_online_search_pair(policy, collect_samples=False, paired_worldlines=paired_worldlines)
+        else:
+            self.pair = self.root_policy.collection_pair(collect_samples=False)
+            paired_worldlines = True
         if paired_worldlines:
             self.name = 'paired-worldlines'
         self.threads = threads
@@ -116,7 +122,11 @@ class OnlinePlayoutEvaluationStrategy:
         self._statistics = {}
         pool = sts.NeuralSearchBatch(self.threads)
         try:
-            batch = SmallPlayoutBatch(envs, pool, self.pair)
+            if self.root_policy is None:
+                batch = SmallPlayoutBatch(envs, pool, self.pair)
+            else:
+                from rl.search.paired_token_rollout import PairedTokenBatch
+                batch = PairedTokenBatch(envs, pool, self.pair, self.root_policy)
         except BaseException:
             pool.clear()
             raise
@@ -152,7 +162,8 @@ class OnlinePlayoutEvaluationStrategy:
         return [Decision(results[i]['action'], self.name, results[i]['diagnostics']) for i in indices]
 
     def manifest(self):
-        return dict(contract=self.pair['contract'], search_contract=self.pair['search_contract'],
+        from rl.policies.token_regret import TOKEN_REGRET_CONTRACT
+        return dict(contract=TOKEN_REGRET_CONTRACT if self.root_policy is not None else self.pair['contract'], search_contract=self.pair['search_contract'],
                     lower_sha256=self.pair['sha256'], native_threads=self.threads,
                     config={k: self.pair[k] for k in ('common_simulations', 'elite_simulations',
                             'boss_simulations', 'playout_depth', 'tree_depth')},
@@ -631,10 +642,12 @@ def turn_planner_strategy(model, args, lock=None):
 # Embedders can pass any DecisionStrategy directly without registering a CLI.
 def small_playout_strategy(model, args, lock=None, *, paired_worldlines=False):
     from env.search.small_playout import SEARCH_CONTRACT
+    from rl.policies.token_regret import OnlineTokenRegretPolicy, TOKEN_REGRET_CONTRACT
+    expected = TOKEN_REGRET_CONTRACT if isinstance(getattr(model.policy, 'small_playout', None), OnlineTokenRegretPolicy) else SEARCH_CONTRACT
     if (getattr(args, 'task', 'wholerun') != 'wholerun'
             or C.policy_contract(model.observation_space) != 'autoregressive-v2'
             or not hasattr(model.policy, 'small_playout')
-            or getattr(model, 'small_playout_search_contract', None) != SEARCH_CONTRACT):
+            or getattr(model, 'small_playout_search_contract', None) != expected):
         raise ValueError('small-playout evaluation requires an online autoregressive-v2 whole-run checkpoint with the current search contract')
     if getattr(args, 'trace', None) or getattr(args, 'compare_combats', 0):
         raise ValueError('small-playout does not support the separate combat-audit wrapper; use trajectory-output')

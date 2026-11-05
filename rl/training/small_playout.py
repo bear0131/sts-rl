@@ -59,8 +59,6 @@ def install_policy_pair(model, path):
 def configure_collection(model, env):
     if getattr(model.policy, 'small_playout_config', None) and model.policy.small_playout_config.get('context_mode') == 'token-root-64x2':
         from rl.policies.token_regret import OnlineTokenRegretPolicy, TOKEN_REGRET_CONTRACT
-        from rl.policies.small_playout import export_online_search_pair
-        from rl.algorithms.upper_probe import state_digest
         from rl.search.paired_token_rollout import PairedTokenBatch
         net = model.policy.small_playout
         previous = getattr(model, 'small_playout_search_contract', None)
@@ -68,8 +66,7 @@ def configure_collection(model, env):
                 or not getattr(model, 'independent_rollout_config', None)
                 or model.nosl_is_az_replay_enabled or getattr(model, '_frozen_upper', False)):
             raise ValueError('online token policy requires its own fresh independent paired-search contract')
-        pair = export_online_search_pair(net, collect_samples=True, guide_only=True)
-        pair['sha256'] = state_digest(net.state_dict())
+        pair = net.collection_pair(collect_samples=True)
         model.small_playout_collection_sha256 = pair['sha256']
         env.configure_small_playout(pair, batch_factory=lambda envs, pool, snapshot:
                                    PairedTokenBatch(envs, pool, snapshot, net))
