@@ -186,7 +186,9 @@ const document = {
  createElement:element,createElementNS:element
 };
 document.getElementById('axis').value='absolute';
-const context = vm.createContext({document,assert,ResizeObserver:class{observe(){}},
+const stored = new Map();
+const localStorage={getItem:k=>stored.get(k)??null,setItem:(k,v)=>stored.set(k,v)};
+const context = vm.createContext({document,assert,localStorage,ResizeObserver:class{observe(){}},
  fetch:()=>new Promise(()=>{}),setInterval(){}});
 vm.runInContext(SCRIPT,context);
 vm.runInContext(`
@@ -210,6 +212,25 @@ render();
 assert.equal($('win').textContent,'75.00%');
 assert.equal($('floor').textContent,'40');
 assert.equal($('winavg').textContent,'最近2个完整轮次 · 1,200局 · 65.00%');
+assert.equal($('run-count').textContent,'1 / 2 已选');
+assert.equal($('chart0').previousElementSibling.children.length,1);
+const options=$('run-options').children;
+assert.ok(options[0].children[1].includes('当前'));
+const [liveBox,oldBox]=options.map(option=>option.children[0]);
+assert.equal(liveBox.checked,true);
+assert.equal(oldBox.checked,false);
+function toggle(box){box.checked=!box.checked;box.onchange()}
+toggle(liveBox);
+assert.ok($('charts').hidden && !$('no-curves').hidden);
+assert.equal($('chart0').onpointermove,null);
+assert.equal($('win').textContent,'75.00%');
+toggle(oldBox);
+assert.deepEqual(datasets().map(s=>s.label),['legacy']);
+selection=loadSelection();render();
+assert.equal($('run-options').children[1].children[0],oldBox);
+assert.ok(oldBox.checked && !liveBox.checked);
+assert.deepEqual(datasets().map(s=>s.label),['legacy']);
+$('show-all').onclick();
 assert.equal($('chart0').previousElementSibling.children.length,2);
 assert.equal($('chart0').previousElementSibling.children[0].textContent.includes('legacy'),true);
 assert.equal(displayRow(last)['display/upper_policy_loss'],.000012);
@@ -240,6 +261,10 @@ assert.ok(!specs.flatMap(s=>s[1]).some(k=>['game/win_rate','game/floor_mean','up
 const reference={...first,global_timesteps:8,rollout_round:1};
 state.comparisons.push({run_id:'lambda-reference',label:'lambda-reference',rollout_mode:'complete_games',branch_step:0,branch_round:0,rows:[reference]});
 render();
+assert.equal($('chart0').previousElementSibling.children.length,2); // New history is opt-in.
+const stableColor=datasets()[0].color;
+$('show-all').onclick();
+assert.equal(datasets()[0].color,stableColor);
 assert.equal($('chart0').previousElementSibling.children.length,3);
 assert.ok($('chart0').previousElementSibling.children.some(n=>n.textContent.includes('lambda-reference')));
 assert.equal(datasets().find(s=>s.label==='lambda-reference').x(reference),1); // Explicit rounds, different action counts.
@@ -251,6 +276,7 @@ state.comparisons.push({root:'/old',run_id:'predecessor',rollout_mode:'complete_
 const raw=JSON.stringify(state);
 render();
 assert.equal($('run').textContent,'COMBAT37');
+assert.equal($('run-options').children.length,2); // One choice for both parts of a continuation.
 assert.equal(datasets().length,2);
 assert.equal(datasets().at(-1).rows.length,2);
 assert.equal(datasets().at(-1).x(first),1);
@@ -258,6 +284,14 @@ assert.equal(datasets().at(-1).x(last),2);
 assert.equal($('winavg').textContent,'最近2个完整轮次 · 1,200局 · 65.00%');
 assert.equal(JSON.stringify(state),raw);
 assert.equal(displayRow({'upper/policy_loss_epoch_1':.2})['display/upper_policy_loss'],undefined);
+const predecessorKey=datasets().at(-1).label;
+toggle($('run-options').children[0].children[0]);
+assert.ok(!datasets().some(s=>s.label===predecessorKey));
+state.label='改过名称的同一训练';render();
+assert.equal($('run-options').children[0].children[0].checked,false);
+$('only-current').onclick();
+assert.deepEqual(datasets().map(s=>s.label),[state.label]);
+assert.equal(loadSelection().size,0);
 state.continuation_of=[];
 state.rows=[old];state.comparisons=[];render();
 assert.equal($('win').textContent,'—');assert.equal($('floor').textContent,'—');
