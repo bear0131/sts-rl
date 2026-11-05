@@ -109,8 +109,45 @@ def test_unified_mc_cohort_update_payload_and_resume(tmp_path, monkeypatch, shor
 @pytest.mark.parametrize('device,natural_start', [('cpu', False), ('cpu', True),
                                                ('cuda', False), ('cuda', True)])
 def test_independent_cohort_updates_payload_and_plain_resume(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start):
+    from copy import deepcopy
+    from types import SimpleNamespace
+    from rl.algorithms import independent_rollout
+    from rl.algorithms.upper_ppo import COMBAT_PHASE
+
+    capture = independent_rollout.capture_step
+    measured = dict(full_bytes=0, retained_bytes=0, combat=0, upper=0)
+
+    def compare_full_observation_records(model, old, *args, indices=None):
+        full = {key: value[indices] for key, value in model._last_obs.items()}
+        reference = SimpleNamespace(
+            _upper_pending=deepcopy(model._upper_pending),
+            _upper_episode_ids=deepcopy(model._upper_episode_ids),
+            _upper_completed=[], _upper_censored=model._upper_censored,
+            nosl_is_az_combat_strategy=model.nosl_is_az_combat_strategy,
+            small_playout_games_local=getattr(model, 'small_playout_games_local', 0))
+        before = len(model._upper_completed)
+        capture(reference, full, *args, indices=indices)
+        capture(model, old, *args, indices=indices)
+        np.testing.assert_equal(model._upper_pending, reference._upper_pending)
+        np.testing.assert_equal(model._upper_completed[before:], reference._upper_completed)
+        assert model._upper_episode_ids == reference._upper_episode_ids
+        assert model._upper_censored == reference._upper_censored
+        assert getattr(model, 'small_playout_games_local', 0) == reference.small_playout_games_local
+        for key, value in old.items():
+            np.testing.assert_array_equal(value, full[key])
+            assert not np.shares_memory(value, model._last_obs[key])
+        measured['full_bytes'] += sum(value.nbytes for value in full.values())
+        measured['retained_bytes'] += sum(value.nbytes for value in old.values())
+        measured['combat'] += int(np.all(full['phase'] == COMBAT_PHASE))
+        measured['upper'] += int(np.any(full['phase'] != COMBAT_PHASE))
+
+    monkeypatch.setattr(independent_rollout, 'capture_step', compare_full_observation_records)
     _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device,
                       natural_start, None, unified=True, independent=True)
+    assert measured['retained_bytes'] < measured['full_bytes']
+    assert measured['combat'] > 0
+    if natural_start:
+        assert measured['upper'] > 0
 
 
 def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override, censor_case=None, resume_target_kl=None, keep_round_multiple=0, fork_resume=False, unified=False, critic_batch=None, independent=False, cohort_error=False):

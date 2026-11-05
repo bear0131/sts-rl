@@ -12,7 +12,7 @@ import torch
 
 from env.core import native_actions as C, vocab as V
 from env.search.small_playout import SmallPlayoutStream
-from rl.algorithms.upper_ppo import capture_step
+from rl.algorithms.upper_ppo import UPPER_KEYS, capture_step
 from rl.search.rollout_inference import UpperPolicyInference
 from rl.training import episode_rollout, reward_monitor, campfire_monitor
 from rl.training.small_playout import configure_collection
@@ -197,8 +197,13 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             started = time.perf_counter()
             indices = sorted(actions)
             ordered = {i: actions[i] for i in indices}
-            # Integer-array indexing already owns an independent snapshot.
-            old = {k: v[indices] for k, v in model._last_obs.items()}
+            # Strategic records never consume the combat policy's encoded
+            # inputs. Within a fight only phase/act/floor accrue its reward;
+            # upper decisions retain every field used by the existing record.
+            old_phase = model._last_obs['phase'][indices]
+            old_keys = UPPER_KEYS if np.any(old_phase != combat) else {'phase', 'act', 'floor'}
+            old = {k: old_phase if k == 'phase' else v[indices]
+                   for k, v in model._last_obs.items() if k in old_keys}
             action_rows = np.array([actions.pop(i) for i in indices], dtype=np.int64)
             mask_rows = np.stack([masks.pop(i) for i in indices])
             value_rows, logp_rows = np.array([estimates.pop(i) for i in indices]).T
