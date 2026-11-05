@@ -201,6 +201,10 @@ def short_natural_game_env_type():
     from functools import partial
     from env.core.game_env import SimGameEnv
     class Backend(SimGameEnv):
+        def __init__(self, *, start_on_turn_50, **kwargs):
+            super().__init__(**kwargs)
+            self.start_on_turn_50 = start_on_turn_50
+
         def reset(self, *, seed=None):
             super().reset(seed=seed)
             for _ in range(16):
@@ -213,11 +217,14 @@ def short_natural_game_env_type():
         def _settle(self):
             super()._settle()
             if self.bc is not None:
-                self.bc.apply_custom_state({'player': {'hp': 1, 'powers': [('STRENGTH', -999)]}})
+                state = {'player': {'hp': 80 if self.start_on_turn_50 else 1, 'powers': [('STRENGTH', -999)]}}
+                if self.start_on_turn_50 and self.bc.turn == 0:
+                    state['turn'] = 49
+                self.bc.apply_custom_state(state)
 
     class Env(SlayTheSpireEnv):
-        def __init__(self, **kwargs):
-            super().__init__(backend_factory=partial(Backend,
+        def __init__(self, *, start_on_turn_50=False, **kwargs):
+            super().__init__(backend_factory=partial(Backend, start_on_turn_50=start_on_turn_50,
                 global_map_view=kwargs.get('global_map_view', False),
                 upper_public_context=kwargs.get('upper_public_context', False)), **kwargs)
     return Env

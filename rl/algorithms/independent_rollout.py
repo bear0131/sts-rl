@@ -26,8 +26,11 @@ class IndependentRolloutConfig:
     upper_batch: int = 64
     upper_wait_seconds: float = .002
     seed: int = 20261104
+    max_combat_turns: int | None = None
 
     def __post_init__(self):
+        if self.max_combat_turns is not None and (type(self.max_combat_turns) is not int or self.max_combat_turns < 1):
+            raise ValueError('max_combat_turns must be a positive integer')
         if (self.mode not in ('barrier', 'independent')
                 or any(type(x) is not int or x < 1 for x in (self.threads, self.upper_batch))
                 or type(self.seed) is not int or self.seed < 0
@@ -75,6 +78,8 @@ def configure(model, config, *, fork=False):
     """Opt in at a natural cohort boundary; plain resume uses its saved contract."""
     old = getattr(model, 'independent_rollout_config', None)
     selected = old if config is None else asdict(IndependentRolloutConfig(**config))
+    if config is not None and selected['max_combat_turns'] is None:
+        del selected['max_combat_turns']  # Keep uncapped checkpoint configurations compatible.
     if selected is None:
         return None
     if selected['mode'] != 'independent':
@@ -84,7 +89,9 @@ def configure(model, config, *, fork=False):
         raise ValueError('independent training requires complete natural cohorts with error budgets')
     if selected != old and model.num_timesteps:
         stats = getattr(model, 'episode_rollout_stats', {})
-        if (not fork or stats.get('rollout') != getattr(model, 'episode_rollouts_completed', None)
+        enabling_turn_limit = (old is not None and 'max_combat_turns' in selected
+                               and old == {k: v for k, v in selected.items() if k != 'max_combat_turns'})
+        if ((not fork and not enabling_turn_limit) or stats.get('rollout') != getattr(model, 'episode_rollouts_completed', None)
                 or stats.get('completed_games') != cohort['games_per_rank']
                 or stats.get('censored_games') != 0 or stats.get('unfinished_games') != 0):
             raise ValueError('scheduler migration requires an explicit fork at a complete natural boundary')
@@ -106,7 +113,8 @@ def _callback_uses_observations(callback):
 
 @contextmanager
 def _strategic_observations(model, vec, callback):
-    if vec.native_root_observations is None or _callback_uses_observations(callback):
+    if (vec.native_root_observations is None or vec.episode_rollout_censor_policy != 'error'
+            or _callback_uses_observations(callback)):
         yield vec.step_subset
         return
     keys = UPPER_KEYS.intersection(model._last_obs)
@@ -168,7 +176,15 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
           UpperPolicyInference(model.policy.core, model.device) as upper_inference,
           SmallPlayoutStream(vec.small_playout_batch, threads=cfg.threads) as stream):
         while vec.episode_rollout_active.any():
-            maximum = int(vec.episode_rollout_action_counts.max(initial=0))
+            if cfg.max_combat_turns is not None:
+                # Only inspect owned, ready slots before issuing another search or RNG draw.
+                for i in sorted(ready):
+                    if (model._last_obs['phase'][i, 0] == combat
+                            and vec.exclude_overlong_combat(i, max_turns=cfg.max_combat_turns)):
+                        ready.remove(i)
+                if not vec.episode_rollout_active.any():
+                    break
+            maximum = int(vec.episode_rollout_action_counts[vec.episode_rollout_active].max(initial=0))
             if (maximum >= session['config'].max_steps
                     or time.monotonic()-session['started'] >= session['config'].max_seconds):
                 raise TimeoutError('independent diagnostic budget exhausted; no incomplete-game result')
@@ -285,7 +301,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     model._independent_rollout_rng = randoms.state_dict()
     stats['collection_seconds'] = time.monotonic()-session['started']
     model._independent_rollout_diagnostic = dict(random_stream=randoms.version, **stats,
-        mode=cfg.mode, note='Unused legacy combat-value diagnostic rows omitted; complete natural cohorts only.')
+        mode=cfg.mode, note='Only naturally completed games supply training targets.')
     model._nosl_is_az_rollout_timings = dict(stats)
     model._nosl_is_az_rollout_upper_counts = dict(forced_end_turn_roots=stats['forced_end_turn_roots'])
     for k, value in stats.items():

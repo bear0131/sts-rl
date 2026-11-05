@@ -98,6 +98,9 @@ small-playout 的候选列表使用动态 native handle，不受旧策略96个PI
 `mode=independent`、完整自然局error预算且reasoning关闭。旧checkpoint默认不切换；
 已训练源必须用 `--fork-state` 在完整自然局边界显式迁移。配置随model/manifest保存，
 普通resume省略JSON文件即可保留，不能在普通resume中静默改变随机流/调度。
+独立训练可在同一调度的完整自然局边界显式增加正整数 `max_combat_turns`，随后普通恢复沿用。
+例如设为 50 时，真实战斗进入第 51 回合即冻结该槽，并从上下层更新中剔除该游戏的全部样本。
+本轮不补局，不计胜负；按种子、槽位和 `combat-turn-limit:51>50` 记录异常。此限制独立于搜索模拟和整局动作预算。
 每轮按下一批唯一game seed生成各局随机流，checkpoint只支持完整cohort边界；
 最终随机流保存用于审计，不声称支持线程池/半轮恢复。
 `speed/rollout_env_steps_per_second` 为全rank实际环境操作总数除以最慢rank的collection秒数，

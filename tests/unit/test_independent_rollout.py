@@ -37,7 +37,8 @@ def test_categorical_sampling_respects_probabilities_and_zero_support():
 
 
 @pytest.mark.parametrize('values', [dict(threads=0), dict(upper_batch=0),
-    dict(upper_wait_seconds=float('nan')), dict(mode='production')])
+    dict(upper_wait_seconds=float('nan')), dict(mode='production'),
+    dict(max_combat_turns=0), dict(max_combat_turns=True)])
 def test_diagnostic_rejects_unsupported_configuration(values):
     with pytest.raises(ValueError):
         IndependentRolloutConfig(**values)
@@ -85,3 +86,24 @@ def test_observation_reading_callbacks_keep_full_transport_including_subclasses(
     assert _callback_uses_observations(ReadingCallback())
     assert _callback_uses_observations(CallbackList([*ordinary, CallbackList([ReadingCallback()])]))
     assert _callback_uses_observations(CustomList(ordinary))
+
+
+def test_enable_combat_turn_limit_at_completed_boundary_and_keep_it_on_resume():
+    from types import SimpleNamespace
+    from rl.algorithms.independent_rollout import configure
+
+    model = SimpleNamespace(num_timesteps=0, episode_rollouts_completed=3,
+        episode_rollout_config=dict(games_per_rank=2, censored_games='error'),
+        episode_rollout_stats=dict(rollout=3, completed_games=2, censored_games=0, unfinished_games=0))
+    old = configure(model, {})
+    model.num_timesteps = 100
+    guarded = dict(old, max_combat_turns=50)
+    with pytest.raises(ValueError):
+        configure(model, dict(guarded, seed=123))
+    model.episode_rollout_stats['unfinished_games'] = 1
+    with pytest.raises(ValueError):
+        configure(model, guarded)
+    model.episode_rollout_stats['unfinished_games'] = 0
+    assert configure(model, guarded) == configure(model, None) == guarded
+    with pytest.raises(ValueError):
+        configure(model, old)

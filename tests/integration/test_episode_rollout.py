@@ -150,7 +150,14 @@ def test_independent_cohort_updates_payload_and_plain_resume(tmp_path, monkeypat
         assert measured['upper'] > 0
 
 
+@pytest.mark.parametrize('censor_case', ['turn', 'turn-all'])
+def test_independent_turn_limit_excludes_whole_game_and_resumes(tmp_path, monkeypatch, short_natural_game_env_type, censor_case):
+    _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, 'cpu', False, None,
+                      unified=True, independent=True, censor_case=censor_case)
+
+
 def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override, censor_case=None, resume_target_kl=None, keep_round_multiple=0, fork_resume=False, unified=False, critic_batch=None, independent=False, cohort_error=False):
+    turn_guard = censor_case in ('turn', 'turn-all')
     if device == 'cuda':
         assert torch.cuda.is_available(), 'explicit CUDA qualification requires CUDA'
     def make_env(*args):
@@ -158,6 +165,7 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
             from env.core.run_env import SlayTheSpireEnv
             kind = SlayTheSpireEnv if natural_start else short_natural_game_env_type
             wrapped=ShapedRewardWrapper(kind(
+                **({'start_on_turn_50': censor_case == 'turn-all' or index == 1} if turn_guard else {}),
                 global_map_view=True, upper_public_context=True, event_option_observation=True,
                 neow_observation=unified,
                 card_language=True, combat_action_contract='autoregressive-v2'))
@@ -206,6 +214,8 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
         scheduler_path = tmp_path/'scheduler.json'
         scheduler_config = dict(mode='independent', threads=2, upper_batch=2,
                                 upper_wait_seconds=.010, seed=42)
+        if turn_guard:
+            scheduler_config['max_combat_turns'] = 50
         scheduler_path.write_text(json.dumps(scheduler_config))
         argv += ['--independent-rollout-config', str(scheduler_path), '--rollout-resource-interval', '.1']
     if unified and not censor_case and not independent and not cohort_error:
@@ -224,7 +234,7 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
             retained_before_save.append(kept)
             return original_save(model, root, **kwargs)
         monkeypatch.setattr(distributed_sb3,'save_bundle',save)
-    if censor_case:
+    if censor_case in ('mixed', 'all'):
         argv += ['--episode-rollout-censored','exclude']
         if censor_case=='all':
             argv += ['--episode-rollout-max-steps','1']
@@ -241,7 +251,7 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
         assert not any(model._upper_pending)
         excluded_checks.append((len(excluded),len(before_upper),len(before_lower)))
     monkeypatch.setattr(episode_rollout,'exclude_samples',exclude)
-    natural_count=0 if censor_case=='all' else 1 if censor_case=='mixed' else 2
+    natural_count = {'all': 0, 'turn-all': 0, 'mixed': 1, 'turn': 1}.get(censor_case, 2)
     original_learn = AccumulatingMaskablePPO.learn
     def learn(self, *args, **kwargs):
         assert self.small_playout_search_contract == 'terminal-hp-boss-win-turn128-v1'
@@ -320,8 +330,9 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
             assert len(current._independent_rollout_rng['upper']) == 2
             assert payloads[i]['speed/rollout_env_steps_per_second'] > 0
             assert payloads[i]['dist/rollout_sec_max'] == payloads[i]['dist/rollout_sec']
-            assert payloads[i]['small_playout_train/updates'] > 0
-            assert current.policy.upper_optimizer.state and current.policy.small_playout_optimizer.state
+            if natural_count:
+                assert payloads[i]['small_playout_train/updates'] > 0
+                assert current.policy.upper_optimizer.state and current.policy.small_playout_optimizer.state
             captures = payloads[i]['nosl_is_az/upper_graph_captures']
             if device == 'cuda' and natural_start:
                 assert captures > 0
@@ -356,6 +367,7 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
             assert manifest['config']['upper_config']['critic_effective_batch_size'] == (critic_batch or 0)
             samples = payloads[i]['upper/samples']
             if samples:
+                assert payloads[i]['upper/requested_critic_effective_batch_size'] == (critic_batch or 8)
                 assert payloads[i]['upper/policy_measurement_samples'] == samples
                 assert payloads[i]['upper/policy_measurement_version'] == 1
                 assert payloads[i]['upper/policy_measurement_pre_seconds_rank'] > 0
@@ -365,17 +377,23 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
             assert payloads[i]['upper/updates'] == 2 * math.ceil(samples / 8)
             assert payloads[i]['upper/critic_updates'] == 3 * math.ceil(samples / (critic_batch or 8))
             assert payloads[i]['upper/critic_samples_used'] == 3 * samples
-            assert payloads[i]['upper/requested_critic_effective_batch_size'] == (critic_batch or 8)
         stats = current.episode_rollout_stats
         assert stats['first_seed'] == 42 + i * 2 and stats['last_seed'] == 43 + i * 2
         assert stats['completed_games'] == natural_count and stats['unfinished_games'] == 0
         assert stats['censored_games']==2-natural_count
+        if turn_guard:
+            slots = current.episode_rollout_censored_slots
+            assert [slot['slot'] for slot in slots] == ([1] if natural_count else [0, 1])
+            for slot in slots:
+                assert slot['seed'] == stats['first_seed'] + slot['slot']
+                assert slot['reason'] == 'combat-turn-limit:51>50'
+            assert stats['excluded_upper_samples'] > 0 and stats['excluded_lower_samples'] > 0
         assert stats['transitions'] > 0
         assert stats['vector_steps']==1 if censor_case=='all' else stats['vector_steps']>2
         assert manifest['config']['episode_rollout_config']['games_per_rank'] == 2
         assert payloads[i]['upper/pending'] == payloads[i]['upper/censored'] == payloads[i]['upper/bootstrap_samples'] == 0
         assert payloads[i]['upper/samples_used'] == 2 * payloads[i]['upper/samples'] or payloads[i]['upper/kl_stopped']
-        if censor_case=='all':
+        if not natural_count:
             assert payloads[i]['upper/updates']==payloads[i]['small_playout_train/updates']==0
             assert not current.policy.upper_optimizer.state and not current.policy.small_playout_optimizer.state
             torch.testing.assert_close(current.policy.state_dict(),initial_policy,rtol=0,atol=0,check_device=False)

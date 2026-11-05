@@ -356,14 +356,25 @@ class NativeSearchVecEnv(DummyVecEnv):
         if self.episode_rollout_censor_policy != 'exclude':
             raise RuntimeError('censored-game exclusion was not configured')
         for index in indices:
-            if not self.episode_rollout_active[index]:
-                raise ValueError('only active games can be censored')
-            recorder = getattr(self, 'failure_scene_recorder', None)
-            if recorder is not None:
-                recorder(dict(slot=int(index), reason=reason, censored_game_excluded=True))
-            self.episode_rollout_active[index] = False
-            self.episode_rollout_censored[index] = True
-            self.episode_rollout_censor_reasons[int(index)] = reason
+            self._exclude_episode_rollout_slot(index, reason)
+
+    def exclude_overlong_combat(self, index, *, max_turns):
+        # The engine counts turns from zero; the public game screen starts at one.
+        turn = self.envs[index].unwrapped.thick.bc.turn + 1
+        if turn <= max_turns:
+            return False
+        self._exclude_episode_rollout_slot(index, f'combat-turn-limit:{turn}>{max_turns}')
+        return True
+
+    def _exclude_episode_rollout_slot(self, index, reason):
+        if not self.episode_rollout_active[index]:
+            raise ValueError('only active games can be censored')
+        recorder = getattr(self, 'failure_scene_recorder', None)
+        if recorder is not None:
+            recorder(dict(slot=int(index), reason=reason, censored_game_excluded=True))
+        self.episode_rollout_active[index] = False
+        self.episode_rollout_censored[index] = True
+        self.episode_rollout_censor_reasons[int(index)] = reason
 
     def env_method(self, method_name, *method_args, indices=None, **method_kwargs):
         active = getattr(self, 'episode_rollout_active', None)

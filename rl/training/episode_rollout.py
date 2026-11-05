@@ -134,7 +134,7 @@ def exclude_samples(model, env):
         for i in excluded:
             model._upper_pending[i] = None
             fights = getattr(model, '_nosl_is_az_pending_fights', None)
-            if fights is not None:
+            if fights:  # Independent collection has no pending-fight buffer.
                 fights[i] = []
     model._cohort_excluded_samples = dict(
         excluded_upper_samples=upper_before-len(model._upper_completed)+pending+model._upper_censored,
