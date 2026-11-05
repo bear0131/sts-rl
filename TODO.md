@@ -582,3 +582,5 @@
 | COMBAT-TRANSFORMER-FRESH | 已完成四机启动、双轮同步/保存与耗时验收，连续训练中 | `rl/policies/token_regret.py`、`rl/search/paired_token_rollout.py`；随机初值上下层，真实共享链采样、优化器同步及完整局保存，记录耗时。见 worklog/2026-11-05.md#combat-transformer-fresh。 |
 
 | COMBAT38-TOKEN-SPEED | 已完成480局序列统计、前推/双向传输与端到端采样评测 | `rl/policies/entity_action_playout.py`、`rl/search/paired_token_rollout.py`；区分逻辑、有效和批内补齐长度，按最重卡实际链内工作量换算240s门槛。见 worklog/2026-11-05.md#combat38-token-speed。 |
+
+| COMBAT38-STATE-COMPRESSION | 已评估，未改训练 | `env/search/token_context.py`、`rl/policies/entity_action_playout.py`；真实根验证压缩上传复原、空槽遮挡影响和模型位置预算；四rank核对包含搜索的推进数。见 worklog/2026-11-05.md#combat38-state-compression。 |
