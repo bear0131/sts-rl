@@ -665,3 +665,8 @@ source_rows 只引用动态实体行，target_slots 对应原生怪物槽位，-
 `--fork-public-weights <selected.pt>` 可装载与旧下层摘要匹配的离线权重和 Adam，
 不传则仅下层 Adam 重新开始。普通恢复继承模型、优化器、模式和训练范围。
 `python -m tools.analysis.probe_lower_public --help` 给出成熟固定数据选轮的参数。
+
+`--fork-public-lower turn` 在每条模拟的首个打分点、回合变化及选择界面刷新上下文；
+`state` 为每个打分点刷新。两者使用同一组实体与参数，刷新频率是策略的一部分。
+固定数据实验可以先 `python -m tools.analysis.probe_lower_public --collect --source <bundle> --output <bank>`，
+再用 `--bank <bank> --source <bundle> --output <fit>` 选轮。严格区分离线动作标签与搜索后实战效果。

@@ -2,7 +2,6 @@
 #include "sim/search/CombatChoices.h"
 #include "game/GameContext.h"
 #include <algorithm>
-#include <numeric>
 #include <tuple>
 
 namespace sts::search {
@@ -12,6 +11,16 @@ using Z = PlayoutZone;
 PlayoutEntity row(K kind, int id, Z zone, int monster=-1) {
     if (id < 0 || id >= PLAYOUT_ENTITY_STRIDE) throw std::out_of_range("public playout entity ID");
     return {int(kind)*PLAYOUT_ENTITY_STRIDE + id, int(zone), monster, {}};
+}
+template<class F> void eachBit(std::uint64_t bits,int offset,F fn) {
+    while(bits){
+#if defined(__GNUC__) || defined(__clang__)
+        const int i=__builtin_ctzll(bits);
+#else
+        int i=0;while(!((bits>>i)&1u))++i;
+#endif
+        fn(offset+i);bits&=bits-1;
+    }
 }
 template<class T> float f(T x) { return static_cast<float>(x); }
 }
@@ -66,16 +75,24 @@ void playoutEntities(const BattleContext &bc, int masterDeckSize,
     for (int i=0;i<int(sizeof(counters)/sizeof(counters[0]));++i) if (counters[i]) {
         auto v=row(K::Counter,i,Z::Player);v.numbers[0]=f(counters[i])/10;add(v);
     }
-    for(int i=1;i<=int(PS::THE_BOMB);++i) if(p.hasStatusRuntime(PS(i))) {
+    std::uint64_t flags[]={p.statusBits0,p.statusBits1};
+    for(PS power:{PS::ARTIFACT,PS::DEXTERITY,PS::FOCUS,PS::STRENGTH}){
+        const int i=int(power);
+        if(p.hasStatusRuntime(power)) flags[i/64]|=1ull<<(i%64);
+        else flags[i/64]&=~(1ull<<(i%64));
+    }
+    auto addPower=[&](int i){
+        if(i==0 || i>int(PS::THE_BOMB))return;
         auto v=row(K::Power,i,Z::Player);v.numbers[0]=f(p.getStatusRuntime(PS(i)))/10;
         v.numbers[1]=i<32 && ((p.justAppliedBits>>i)&1u);add(v);
-    }
+    };
+    eachBit(flags[0],0,addPower);eachBit(flags[1],64,addPower);
     for (int i=0;i<int(p.bombs.size());++i) {
         auto v=row(K::Counter,32,Z::Player);v.numbers[0]=f(p.bombs[i].turns)/10;
         v.numbers[1]=f(p.bombs[i].damage)/100;v.numbers[2]=f(i+1)/10;add(v);
     }
-    for(int i=0;i<128;++i) if(((i<64?p.relicBits0:p.relicBits1)>>(i%64))&1ull)
-        add(row(K::Relic,i,Z::ActiveRelic));
+    auto addRelic=[&](int i){add(row(K::Relic,i,Z::ActiveRelic));};
+    eachBit(p.relicBits0,0,addRelic);eachBit(p.relicBits1,64,addRelic);
     auto order=[&](const auto &items,int group){for(int i=0;i<int(items.size());++i){
         auto v=row(K::Order,int(items[i]),Z::Player);v.numbers[0]=f(group);
         v.numbers[1]=f(i+1)/32;add(v);
@@ -97,12 +114,14 @@ void playoutEntities(const BattleContext &bc, int masterDeckSize,
             if(!dome){v.numbers[12]=f(m.escapeNext);v.numbers[13]=f(m.inactiveIntentDamage)/100;}
         }
         add(v);if(m.id==MonsterId::INVALID)continue;
-        for(int j=0;j<int(MS::INVALID);++j) if(m.hasStatusInternal(MS(j)) || (MS(j)==MS::STRENGTH && m.strength)){
+        eachBit(m.statusBits|(m.strength ? 1ull<<int(MS::STRENGTH):0),0,[&](int j){
+            if(j>=int(MS::INVALID))return;
             auto q=row(K::MonsterPower,j,Z::Monster,i);q.numbers[0]=f(m.getStatusInternal(MS(j)))/10;
             if(MS(j)==MS::VULNERABLE)q.numbers[1]=m.wasJustApplied<MS::VULNERABLE>();
             if(MS(j)==MS::WEAK)q.numbers[1]=m.wasJustApplied<MS::WEAK>();
-            if(MS(j)==MS::RITUAL)q.numbers[1]=m.wasJustApplied<MS::RITUAL>();add(q);
-        }
+            if(MS(j)==MS::RITUAL)q.numbers[1]=m.wasJustApplied<MS::RITUAL>();
+            add(q);
+        });
         for(int h=dome?1:0;h<3;++h){auto q=row(K::Move,int(m.moveHistory[h]),Z::Monster,i);
             q.numbers[0]=f(h);if(!h){const auto d=m.getMoveBaseDamage(bc);
                 q.numbers[1]=f(d.damage)/100;q.numbers[2]=f(m.getIntentDamage(bc,d.damage))/100;
@@ -130,21 +149,24 @@ void playoutEntities(const BattleContext &bc, int masterDeckSize,
         return v;
     };
     std::array<std::vector<int>,6> mapping;
-    for(int i=0;i<c.cardsInHand;++i)mapping[1].push_back(add(card(c.hand[i],Z::Hand,i+1)));
+    const bool bind=!actions.empty();
+    auto mapped=[&](int zone,PlayoutEntity v){int index=add(v);if(bind)mapping[zone].push_back(index);};
+    for(int i=0;i<c.cardsInHand;++i)mapped(1,card(c.hand[i],Z::Hand,i+1));
     const int draw=int(c.drawPile.size());
     const int known=p.hasRelic<R::FROZEN_EYE>()?draw:std::clamp(c.knownDrawTop,0,draw);
-    std::vector<std::pair<PlayoutEntity,int>> hidden;hidden.reserve(draw-known);
-    mapping[2].resize(draw);
+    thread_local std::vector<std::pair<PlayoutEntity,int>> hidden;hidden.clear();hidden.reserve(draw-known);
+    if(bind)mapping[2].resize(draw);
+    auto drawn=[&](int i,const PlayoutEntity &v){int index=add(v);if(bind)mapping[2][i]=index;};
     for(int i=0;i<draw-known;++i)hidden.emplace_back(card(c.drawPile[i],Z::HiddenDraw,0),i);
     std::sort(hidden.begin(),hidden.end(),[](const auto &a,const auto &b){
         return std::tie(a.first.id,a.first.numbers)<std::tie(b.first.id,b.first.numbers);
     });
-    for(const auto &pair:hidden)mapping[2][pair.second]=add(pair.first);
-    for(int i=draw-1;i>=draw-known;--i)mapping[2][i]=add(card(c.drawPile[i],Z::KnownDraw,draw-i));
+    for(const auto &pair:hidden)drawn(pair.second,pair.first);
+    for(int i=draw-1;i>=draw-known;--i)drawn(i,card(c.drawPile[i],Z::KnownDraw,draw-i));
     for(int i=0;i<int(c.discardPile.size());++i){int picked=0;
         if(selection)for(int j=0;j<s.selectedCount;++j)if(c.discardPile[i].uniqueId==s.selectedUids[j])picked=j+1;
-        mapping[3].push_back(add(card(c.discardPile[i],Z::Discard,i+1,picked)));}
-    for(int i=0;i<int(c.exhaustPile.size());++i)mapping[4].push_back(add(card(c.exhaustPile[i],Z::Exhaust,i+1)));
+        mapped(3,card(c.discardPile[i],Z::Discard,i+1,picked));}
+    for(int i=0;i<int(c.exhaustPile.size());++i)mapped(4,card(c.exhaustPile[i],Z::Exhaust,i+1));
     for(int i=0;i<2;++i)if(c.stasisCards[i].id!=CardId::INVALID)add(card(c.stasisCards[i],Z::Stasis,i+1));
     int zone=0;
     if(selection){
@@ -155,7 +177,7 @@ void playoutEntities(const BattleContext &bc, int masterDeckSize,
         if(task==CardSelectTask::DISCOVERY)v.numbers[6]=s.discoveryFreeForTurn;
         add(v);
         if(task==CardSelectTask::DISCOVERY || task==CardSelectTask::CODEX)
-            for(int i=0;i<3;++i)mapping[5].push_back(add(card(bc.makeCardCopy(s.cards[i]),Z::Generated,i+1)));
+            for(int i=0;i<3;++i)mapped(5,card(bc.makeCardCopy(s.cards[i]),Z::Generated,i+1));
         if(s.origin==SelectOrigin::Card && int(bc.curCardQueueItem.card.id)==s.originId)
             add(card(bc.curCardQueueItem.card,Z::Pending,0));
         else if(s.origin==SelectOrigin::Potion)add(row(K::Potion,s.originId,Z::Pending));

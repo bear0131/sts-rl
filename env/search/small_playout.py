@@ -10,7 +10,7 @@ class SmallPlayoutBatch:
     def __init__(self, envs, pool, pair):
         public = pair['contract'] == 'sts1-small-playout-public-v1'
         mode = pair.get('context_mode', 'none')
-        if ((public and mode not in ('root','state')) or (not public and mode != 'none')
+        if ((public and mode not in ('root','turn','state')) or (not public and mode != 'none')
                 or (not public and pair['contract'] != 'sts1-small-playout-v1')):
             raise ValueError('unknown small playout feature contract')
         if (pair.get('search_contract') != SEARCH_CONTRACT
@@ -79,7 +79,10 @@ class SmallPlayoutBatch:
             relics = tuple(r['id'] for r in env.thick.gc.relic_state())
             cfg = sts.SmallPlayoutConfig()
             if self.adapter is not None:
-                cfg.condition(self.adapter,env.thick.gc,env.thick.bc,self.pair['context_mode']=='state')
+                if self.pair['context_mode']=='turn':
+                    cfg.condition_turns(self.adapter,env.thick.gc,env.thick.bc)
+                else:
+                    cfg.condition(self.adapter,env.thick.gc,env.thick.bc,self.pair['context_mode']=='state')
             if 'Runic Dome' in relics:
                 # No search may consume the simulator's concealed current move.
                 # The compact feature encoder suppresses every intent feature.

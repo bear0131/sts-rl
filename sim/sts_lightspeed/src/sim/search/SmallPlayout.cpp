@@ -314,7 +314,8 @@ Action resolve(const Edge &e,const BattleContext &s) {
 }
 double playout(BattleContext &s,const SmallPlayoutNet &net,const SmallSearchConfig &cfg,
                std::mt19937_64 &rng,SmallSearchStats &stats,SmallPlayoutTrace *trace=nullptr) {
-    int steps=0;
+    int steps=0, observedTurn=-1;
+    PublicShift turnShift;
     SmallFeatures f;
     std::vector<float> logits;
     std::vector<double> weights;
@@ -332,9 +333,20 @@ double playout(BattleContext &s,const SmallPlayoutNet &net,const SmallSearchConf
             continue;
         }
         featuresForActions(s,actions,f);
-        if(cfg.publicRoot && cfg.publicRoot->refreshEachState) {
-            const auto shift=cfg.publicRoot->adapter->transform(cfg.publicRoot->observe(s));
+        if(cfg.publicRoot && cfg.publicRoot->refresh==ContextRefresh::State) {
+            ++stats.publicStateRefreshes;
+            const auto shift=cfg.publicRoot->liveShift(s);
             net.logits(f,logits,shift.data());
+        } else if(cfg.publicRoot && cfg.publicRoot->refresh==ContextRefresh::Turn) {
+            // Refresh on entering each simulated turn or pending selection.
+            // The first action of every playout gets its actual leaf context.
+            if(s.turn!=observedTurn || s.inputState==InputState::CARD_SELECT) {
+                ++stats.publicStateRefreshes;
+                turnShift=cfg.publicRoot->liveShift(s);
+                // Do not carry pending-choice context into the subsequent ordinary decision.
+                observedTurn=s.inputState==InputState::CARD_SELECT ? -1 : s.turn;
+            }
+            net.logits(f,logits,turnShift.data());
         } else net.logits(f,logits,cfg.publicRoot ? cfg.publicRoot->shift.data() : nullptr);
         if(logits.empty()) throw std::runtime_error("nonterminal playout without actions");
         ++stats.policyCalls; stats.actionScores+=logits.size();

@@ -8,19 +8,23 @@ using PublicShift = std::array<float,SMALL_HIDDEN>;
 
 class PublicPlayoutAdapter {
     std::vector<float> columns_;
+    std::uint64_t snapshot_;
 public:
     explicit PublicPlayoutAdapter(const std::vector<float> &weights);
+    void addEntity(PublicShift &sum,const PlayoutEntity &row) const;
     PublicShift transform(const PublicSketch &s) const;
 };
+enum class ContextRefresh { Root, Turn, State };
 struct PublicPlayoutRoot {
     std::shared_ptr<const PublicPlayoutAdapter> adapter;
     std::vector<PlayoutEntity> inventory;
     int deckSize;
-    bool refreshEachState;
+    ContextRefresh refresh;
     PublicSketch sketch;
-    PublicShift shift;
+    PublicShift shift,inventorySum{};
+    PublicShift liveShift(const BattleContext &bc) const;
     PublicSketch observe(const BattleContext &bc) const;
     static std::shared_ptr<const PublicPlayoutRoot> prepare(std::shared_ptr<const PublicPlayoutAdapter>,
-        const GameContext &,const BattleContext &,bool);
+        const GameContext &,const BattleContext &,ContextRefresh);
 };
 }

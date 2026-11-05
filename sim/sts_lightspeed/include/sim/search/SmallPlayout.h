@@ -51,7 +51,7 @@ struct SmallSearchStats {
     std::uint64_t terminalWins = 0, terminalLosses = 0, terminalEscapes = 0;
     std::uint64_t depthCuts = 0, treeCuts = 0, chanceReplays = 0, nodes = 0;
     std::uint64_t policyCalls = 0, actionScores = 0;
-    std::uint64_t forcedPolicySkips = 0;
+    std::uint64_t forcedPolicySkips = 0, publicStateRefreshes = 0;
     std::uint64_t priorCalls = 0, drawEdges = 0, guardTransitions = 0;
     std::uint64_t turnCardLimitDecisions = 0, turnCardLimitSimulated = 0;
     std::array<std::uint64_t, 201> playoutLengths{};

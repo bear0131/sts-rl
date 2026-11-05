@@ -126,10 +126,98 @@ def fit(bank, source, output, rounds, device, seed):
     (output/'result.json').write_text(json.dumps(report,indent=2,allow_nan=False))
 
 
+def collect_bank(source, output, device, threads):
+    """Capture public entities at actual searched roots, before the owner steps."""
+    from collections import Counter, defaultdict
+    from functools import partial
+    from unittest.mock import patch
+
+    import slaythespire as sts
+    from env.search.small_playout import SmallPlayoutBatch
+    from stable_baselines3.common.callbacks import CallbackList
+    from stable_baselines3.common.logger import configure
+    from rl.algorithms.independent_rollout import collect
+    from rl.tasks.wholerun import WholeRunTask
+    from rl.training.checkpoints import restore_learner
+    from rl.training.distributed_sb3 import build_parser, RolloutProgressCallback
+    from rl.training.environments import make_env
+    from tools.analysis.probe_upper_learning import measure_frozen_rollout
+
+    output.mkdir(parents=True, exist_ok=False)
+    manifest=json.loads((source/'manifest.json').read_text())
+    for name,sha in manifest['sha256'].items():
+        with (source/name).open('rb') as stream:
+            if hashlib.file_digest(stream,'sha256').hexdigest()!=sha:
+                raise ValueError('source checkpoint integrity mismatch')
+    torch.set_num_threads(1)
+    torch.set_float32_matmul_precision('highest')
+    torch.backends.cuda.matmul.allow_tf32=False
+    torch.backends.cudnn.allow_tf32=False
+    rank,world=manifest['rank'],manifest['world_size']
+    args=build_parser().parse_args(['--rank',str(rank),'--world-size',str(world),'--checkpoint',str(source/'model.zip')])
+    vars(args).update(manifest['config'])
+    args.device=device
+    model=AccumulatingMaskablePPO.load(source/'model.zip',device=device,amp_mode='off')
+    model.set_logger(configure(str(output/'learner'),[]))
+    env=make_env(model,args)
+    model.set_env(env)
+    cb=CallbackList([WholeRunTask().metrics_callback(args),RolloutProgressCallback(rank,args.n_steps)])
+    groups=defaultdict(list)
+    original=SmallPlayoutBatch.accept
+    def capture(batch,job,result,*,apply_action=True):
+        if not apply_action:
+            raise ValueError('public bank requires the independent non-prefetched stream')
+        if batch.pair['online'] and len(result['action_bits'])>1:
+            thick=batch.envs[job[0]].thick
+            data=sts.small_playout_public_features(thick.gc,thick.bc)
+            for key in ('state','actions','keys','action_bits'):
+                if not np.array_equal(data[key],result[key]):
+                    raise ValueError(f'public/search mismatch for {key}, slot {job[0]}')
+            table={k:np.concatenate([data['entities'][k],data['inventory'][k]]) for k in data['entities']}
+            groups[job[0]].append((table,data['source_rows'],data['target_slots']))
+        return original(batch,job,result,apply_action=True)
+    try:
+        _,cb=model._setup_learn(total_timesteps=args.n_steps*env.num_envs,callback=cb,reset_num_timesteps=False,progress_bar=False)
+        restore_learner(model,source,rank=rank,world_size=world)
+        if not model._recovery_environment_restored:
+            raise ValueError('public bank requires restored real environments')
+        cb.on_training_start(dict(locals()),globals())
+        cfg=dict(model.independent_rollout_config,threads=threads)
+        with patch.object(SmallPlayoutBatch,'accept',capture):
+            ok,report=measure_frozen_rollout(model,partial(collect,config=cfg),env,cb,model.rollout_buffer,n_rollout_steps=args.n_steps)
+        if not ok:raise RuntimeError('collection failed')
+        samples=model._small_playout_samples
+        if Counter(s['env'] for s in samples)!={i:len(rows) for i,rows in groups.items()}:
+            raise ValueError('public and teacher row counts differ')
+        dest=output/'public'
+        dest.mkdir()
+        for i in sorted(groups):
+            rows=groups.pop(i)
+            np.savez_compressed(dest/f'{i:03d}.npz',lengths=np.array([len(t['ids']) for t,_,_ in rows],np.int32),
+                alens=np.array([len(y) for _,_,y in rows],np.int32),sources=np.concatenate([a for _,a,_ in rows]),
+                targets=np.concatenate([y for _,_,y in rows]),**{k:np.concatenate([t[k] for t,_,_ in rows]) for k in rows[0][0]})
+        torch.save(dict(samples=samples,source_model_sha256=manifest['sha256']['model.zip'],cohort=report['cohort']),output/'samples.pt')
+        with (output/'samples.pt').open('rb') as stream:
+            report['samples_sha256']=hashlib.file_digest(stream,'sha256').hexdigest()
+        (output/'collection.json').write_text(json.dumps(report,indent=2,allow_nan=False))
+    finally:
+        env.close()
+
+
 if __name__ == '__main__':
     p=argparse.ArgumentParser(description=__doc__)
-    for k in ('bank','source','output'):p.add_argument('--'+k,type=Path,required=True)
+    p.add_argument('--source',type=Path,required=True)
+    p.add_argument('--output',type=Path,required=True)
+    kind=p.add_mutually_exclusive_group(required=True)
+    kind.add_argument('--bank',type=Path,help='Fit from this completed frozen cohort')
+    kind.add_argument('--collect',action='store_true',help='Create a frozen bank from the source recovery bundle')
+    p.add_argument('--threads',type=int,default=25)
     p.add_argument('--rounds',type=int,default=6,choices=range(1,25))
     p.add_argument('--seed',type=int,default=20261105)
     p.add_argument('--device',default='cuda:0')
-    fit(**vars(p.parse_args()))
+    args=p.parse_args()
+    if args.collect:
+        if args.threads<1:p.error('--threads must be positive')
+        collect_bank(args.source,args.output,args.device,args.threads)
+    else:
+        fit(args.bank,args.source,args.output,args.rounds,args.device,args.seed)

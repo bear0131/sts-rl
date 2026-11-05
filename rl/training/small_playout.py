@@ -23,8 +23,8 @@ def fork_public_lower(model, mode, initializer=None):
         net=PublicPlayoutPolicy.from_mature(old)
     net.context_mode=mode
     cfg=dict(model.policy.small_playout_config,context_mode=mode)
-    if mode not in ('root','state') or cfg['optimizer']!='adamw':
-        raise ValueError('public fork requires root/state mode and an AdamW lower optimizer')
+    if mode not in ('root','turn','state') or cfg['optimizer']!='adamw':
+        raise ValueError('public fork requires root/turn/state mode and an AdamW lower optimizer')
     opt=torch.optim.AdamW(net.parameters(),lr=cfg['learning_rate'],weight_decay=cfg['weight_decay'])
     if initializer is not None:
         payload=torch.load(initializer,map_location=model.device,weights_only=True)

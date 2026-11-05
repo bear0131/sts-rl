@@ -57,7 +57,7 @@ class PublicPlayoutPolicy(SmallPlayoutPolicy):
     """Mature policy plus a context shift before its first hidden activation."""
     def __init__(self, key_count, context_mode='root'):
         super().__init__(key_count)
-        if context_mode not in ('root','state'):
+        if context_mode not in ('root','turn','state'):
             raise ValueError('unknown public context refresh mode')
         self.context_mode=context_mode
         self.context = nn.Linear(SKETCH_SIZE,64,bias=False)

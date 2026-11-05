@@ -546,7 +546,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
     parser.add_argument("--training-state-dir", type=Path, help="Per-rank policy/Adam/replay/RNG recovery generations")
     parser.add_argument("--resume-state", type=Path, help="Explicit complete per-rank recovery generation")
-    parser.add_argument('--fork-public-lower',choices=('root','state'),default=None,
+    parser.add_argument('--fork-public-lower',choices=('root','turn','state'),default=None,
                         help='On a lower-only fork, add a public adapter refreshed per real root or simulated state')
     parser.add_argument('--fork-public-weights',type=Path,default=None,
                         help='Optional parent-matched lower weights/Adam from the public-context probe')

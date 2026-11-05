@@ -53,6 +53,7 @@ py::dict result(const SmallSearchResult &r) {
     st["depth_cuts"]=s.depthCuts;st["tree_cuts"]=s.treeCuts;st["chance_replays"]=s.chanceReplays;
     st["nodes"]=s.nodes;st["policy_calls"]=s.policyCalls;st["action_scores"]=s.actionScores;
     st["forced_policy_skips"]=s.forcedPolicySkips;
+    if(s.publicStateRefreshes)st["public_state_refreshes"]=s.publicStateRefreshes;
     st["prior_calls"]=s.priorCalls;st["draw_edges"]=s.drawEdges;
     st["guard_transitions"]=s.guardTransitions;
     st["turn_card_limit_decisions"]=s.turnCardLimitDecisions;
@@ -103,7 +104,12 @@ void bindSmallPlayout(py::module_ &m) {
         .def("condition",[](SmallSearchConfig &cfg,const std::shared_ptr<PublicPlayoutAdapter> &adapter,
                            const sts::GameContext &gc,const sts::BattleContext &bc,bool refresh){
             if(!adapter)throw std::invalid_argument("missing public adapter");
-            cfg.publicRoot=PublicPlayoutRoot::prepare(adapter,gc,bc,refresh);
+            cfg.publicRoot=PublicPlayoutRoot::prepare(adapter,gc,bc,refresh ? ContextRefresh::State : ContextRefresh::Root);
+        })
+        .def("condition_turns",[](SmallSearchConfig &cfg,const std::shared_ptr<PublicPlayoutAdapter> &adapter,
+                           const sts::GameContext &gc,const sts::BattleContext &bc){
+            if(!adapter)throw std::invalid_argument("missing public adapter");
+            cfg.publicRoot=PublicPlayoutRoot::prepare(adapter,gc,bc,ContextRefresh::Turn);
         })
         .def_property_readonly("public_context",[](const SmallSearchConfig &cfg){
             if(!cfg.publicRoot)throw std::logic_error("unconditioned root");
@@ -127,8 +133,8 @@ void bindSmallPlayout(py::module_ &m) {
         .def("conditioned_logits",[](const SmallPlayoutNet &net,const sts::BattleContext &bc,const SmallSearchConfig &cfg){
             if(!cfg.publicRoot)throw std::logic_error("unconditioned root");
             std::vector<float> out;
-            if(cfg.publicRoot->refreshEachState){
-                const auto shift=cfg.publicRoot->adapter->transform(cfg.publicRoot->observe(bc));
+            if(cfg.publicRoot->refresh!=ContextRefresh::Root){
+                const auto shift=cfg.publicRoot->liveShift(bc);
                 net.logits(smallFeatures(bc),out,shift.data());
             }else net.logits(smallFeatures(bc),out,cfg.publicRoot->shift.data());
             return out;
