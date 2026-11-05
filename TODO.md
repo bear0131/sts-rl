@@ -587,6 +587,6 @@
 
 | COMBAT38-NINE-TOKEN-SPEED | 已完成25核独立速度评测 | `rl/policies/entity_action_playout.py` 对照两份上下文投影、真实根部回放和大批CPU/GPU前推；见worklog/2026-11-05.md#combat38-nine-token-speed。 |
 
-| COMBAT38-NINE-ONLINE480 | 成熟183单机480自然局1283.96秒、整轮82.61万有效状态/s；固定根长样本已过100万，200万进行中 | `rl/search/paired_token_rollout.py`、原生SmallPlayout共享链；区分根与链容量，使用训练过的2×64实测更大并行批次。 |
+| COMBAT38-NINE-ONLINE480 | 成熟183单机480自然局1203.82秒、整轮88.11万有效状态/s；拆批六个世界线种子长样本149.55万，200万进行中 | `rl/search/paired_token_rollout.py`、原生SmallPlayout共享链；区分根与链容量，使用训练过的2×64实测更大并行批次。 |
 
 | COMBAT38-TURN50 | 已部署；第36/37轮剔除、双层更新与四机保存已验收 | `rl/algorithms/independent_rollout.py`、`rl/training/native_vec_env.py`：可显式在原独立训练的完整自然轮边界启用单场回合上限。显示回合51起标记异常并剔除整局上下层样本，不占胜负分母；同场第50回合可执行。以原35恢复后再次采集第36轮、异常槽含种子/原因、完成更新和保存为生产验收。见 [实施记录](worklog/2026-11-05.md#combat38-turn50)。 |
