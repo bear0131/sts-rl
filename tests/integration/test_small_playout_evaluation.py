@@ -70,6 +70,8 @@ def test_batched_tiers_match_collection_actions_and_budget(combat_factory, monke
         expected = worker.decisions({i: ((), {'state_nonce': 42*1000000007}) for i in indices})
         assert [d.action for d in decisions] == [expected[i]['action'] for i in indices]
         assert all(d.native_action is None for d in decisions)
+        assert [d.diagnostics['search_simulations'] for d in decisions] == [1000, 250, 250]
+        assert all(d.diagnostics['search_decisions']==1 for d in decisions)
         assert seen == [[(1000, True, False, 200, 1024), (250, False, False, 200, 1024),
                          (250, False, False, 200, 1024)]]*2
         for i, decision in zip(indices, decisions):

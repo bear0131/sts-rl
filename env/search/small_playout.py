@@ -133,7 +133,11 @@ class SmallPlayoutBatch:
             else:
                 self.stats[name] = self.stats.get(name, 0)+value
         if apply_action:
-            return self.envs[index]._apply_rulebase_turn_decision(result['action'], {})
+            diagnostics = {}
+            if not self.pair.get('online'):
+                diagnostics = dict(search_decisions=1, search_simulations=int(result['stats']['simulations']),
+                                   search_seconds=float(result['stats']['search_seconds']))
+            return self.envs[index]._apply_rulebase_turn_decision(result['action'], diagnostics)
 
     def scalar_stats(self):
         out = {k: float(v) for k, v in self.stats.items() if not k.endswith('playout_lengths')}
