@@ -352,17 +352,30 @@ double playout(BattleContext &s,const SmallPlayoutNet &net,const SmallSearchConf
                std::mt19937_64 &rng,SmallSearchStats &stats,SmallPlayoutTrace *trace=nullptr) {
     int steps=0, observedTurn=-1;
     PublicShift turnShift;
-    SmallFeatures f;
-    std::vector<float> logits;
-    std::vector<double> weights;
+    // Search states own no live observer. Scratch stays local to the worker
+    // until its pool exits; each call rewrites all features, scores and weights.
+    thread_local SmallFeatures f;
+    thread_local std::vector<Action> actions;
+    thread_local std::vector<float> logits;
+    thread_local std::vector<double> weights;
     while(s.outcome==Outcome::UNDECIDED && steps<cfg.playoutDepth) {
         stats.turnCardLimitSimulated += smallTurnCardLimitReached(s);
-        const auto actions=budgetActions(s);
+        if (s.inputState == InputState::PLAYER_NORMAL) {
+            actions.clear();
+            if (smallTurnCardLimitReached(s)) actions.emplace_back(ActionType::END_TURN);
+            else Action::appendNormalActions(s, actions, false);
+        } else {
+            actions = budgetActions(s);
+        }
         if(actions.size()==1 && !trace) {
             // A one-action categorical distribution is exactly {1}, regardless
             // of its logit. Preserve the library's one-element RNG behavior.
+#ifdef __GLIBCXX__
+            const auto bits=actions.front().bits;
+#else
             std::discrete_distribution<int> pick({1.});
             const auto bits=actions[pick(rng)].bits;
+#endif
             ++stats.forcedPolicySkips;
             Action(bits).execute(s);
             ++steps; ++stats.playoutTransitions;

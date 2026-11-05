@@ -294,6 +294,48 @@ bool search::Action::isValidAction(const BattleContext &bc) const {
     }
 }
 
+void search::Action::appendNormalActions(const BattleContext &bc, std::vector<search::Action> &actions,
+                                      bool allowDiscard) {
+    if (bc.isCardPlayAllowed()) {
+        for (int handIdx = 0; handIdx < bc.cards.cardsInHand; ++handIdx) {
+            const auto &card = bc.cards.hand[handIdx];
+            if (!card.canUseOnAnyTarget(bc)) {
+                continue;
+            }
+            if (card.requiresTarget()) {
+                for (int targetIdx = 0; targetIdx < bc.monsters.monsterCount; ++targetIdx) {
+                    if (bc.monsters.arr[targetIdx].isTargetable()) {
+                        actions.emplace_back(ActionType::CARD, handIdx, targetIdx);
+                    }
+                }
+            } else {
+                actions.emplace_back(ActionType::CARD, handIdx);
+            }
+        }
+    }
+
+    const bool hasValidTarget = bc.monsters.getTargetableCount() > 0;
+    for (int potionIdx = 0; potionIdx < bc.potionCapacity; ++potionIdx) {
+        const auto potion = bc.potions[potionIdx];
+        if (potion == Potion::INVALID || potion == Potion::EMPTY_POTION_SLOT) {
+            continue;
+        }
+        if (!bc.canDrinkPotion(potionIdx) ||
+            (potionRequiresTarget(potion) && !hasValidTarget)) {
+            if (allowDiscard) actions.emplace_back(ActionType::POTION, potionIdx, -1);
+        } else if (!potionRequiresTarget(potion)) {
+            actions.emplace_back(ActionType::POTION, potionIdx);
+        } else {
+            for (int targetIdx = 0; targetIdx < bc.monsters.monsterCount; ++targetIdx) {
+                if (bc.monsters.arr[targetIdx].isTargetable()) {
+                    actions.emplace_back(ActionType::POTION, potionIdx, targetIdx);
+                }
+            }
+        }
+    }
+    actions.emplace_back(ActionType::END_TURN);
+}
+
 std::vector<search::Action> search::Action::enumerateCombatActions(const BattleContext &bc) {
     std::vector<search::Action> actions;
     if (bc.outcome != Outcome::UNDECIDED) {
@@ -302,44 +344,7 @@ std::vector<search::Action> search::Action::enumerateCombatActions(const BattleC
 
     switch (bc.inputState) {
         case InputState::PLAYER_NORMAL: {
-            if (bc.isCardPlayAllowed()) {
-                for (int handIdx = 0; handIdx < bc.cards.cardsInHand; ++handIdx) {
-                    const auto &card = bc.cards.hand[handIdx];
-                    if (!card.canUseOnAnyTarget(bc)) {
-                        continue;
-                    }
-                    if (card.requiresTarget()) {
-                        for (int targetIdx = 0; targetIdx < bc.monsters.monsterCount; ++targetIdx) {
-                            if (bc.monsters.arr[targetIdx].isTargetable()) {
-                                actions.emplace_back(ActionType::CARD, handIdx, targetIdx);
-                            }
-                        }
-                    } else {
-                        actions.emplace_back(ActionType::CARD, handIdx);
-                    }
-                }
-            }
-
-            const bool hasValidTarget = bc.monsters.getTargetableCount() > 0;
-            for (int potionIdx = 0; potionIdx < bc.potionCapacity; ++potionIdx) {
-                const auto potion = bc.potions[potionIdx];
-                if (potion == Potion::INVALID || potion == Potion::EMPTY_POTION_SLOT) {
-                    continue;
-                }
-                if (!bc.canDrinkPotion(potionIdx) ||
-                    (potionRequiresTarget(potion) && !hasValidTarget)) {
-                    actions.emplace_back(ActionType::POTION, potionIdx, -1);
-                } else if (!potionRequiresTarget(potion)) {
-                    actions.emplace_back(ActionType::POTION, potionIdx);
-                } else {
-                    for (int targetIdx = 0; targetIdx < bc.monsters.monsterCount; ++targetIdx) {
-                        if (bc.monsters.arr[targetIdx].isTargetable()) {
-                            actions.emplace_back(ActionType::POTION, potionIdx, targetIdx);
-                        }
-                    }
-                }
-            }
-            actions.emplace_back(ActionType::END_TURN);
+            appendNormalActions(bc, actions, true);
             break;
         }
 

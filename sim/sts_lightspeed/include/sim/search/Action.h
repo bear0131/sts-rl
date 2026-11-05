@@ -61,6 +61,8 @@ namespace sts::search {
         // decision state. This is shared by native search and bindings so the
         // C++ trainer does not need to reconstruct the action layout itself.
         static std::vector<Action> enumerateCombatActions(const BattleContext &bc);
+        // Append a live PLAYER_NORMAL turn in native order. Search omits potion discards.
+        static void appendNormalActions(const BattleContext &bc, std::vector<Action> &actions, bool allowDiscard);
         static std::vector<Action> enumerateCardSelectActions(const BattleContext &bc);
         static std::uint32_t remapDrawSelection(const BattleContext &sampled,
                                                const BattleContext &source,
