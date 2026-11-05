@@ -1735,9 +1735,9 @@
         "through_step": 132648816
       }
     ],
-    "status": "training",
-    "note": "原版183完整状态普通恢复，184/global148465350已完成1920自然局并保存，四rank模型/优化器与配置核验通过，后续轮次持续训练；critic32768及原参数保持。使用原运行代码，未携带后续提速优化；大critic对照211轮保存停止并备份25核，原COMBAT37曲线连续。",
-    "updated_at": "2026-11-05T11:06:07.712512+08:00"
+    "status": "paused",
+    "note": "按用户要求在186/global150593647完整保存后四机停止，已逐文件备份25核；转入完整战斗信息下层模型设计，固定183附近上层及其他权重，只训练下层，搜索不变，采用最新执行优化，完整1920局rollout限240秒。训练不会自动恢复。",
+    "updated_at": "2026-11-05T11:20:09.906071+08:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
@@ -1858,7 +1858,7 @@
     "worklog": "worklog/2026-11-05.md#combat37-search-budget三档96局配对结果"
   },
   "original_combat37_resume": {
-    "status": "continuous training; first restored round 184 fully saved and verified",
+    "status": "stopped cleanly at user request after complete round 186",
     "source_round": 183,
     "source_global_step": 147390654,
     "root": "/root/rollout-independent-training-20261104",
@@ -1884,6 +1884,27 @@
     "cross_rank_model_optimizer_members_equal": true,
     "performance_optimizations_applied": false,
     "performance_note": "Original runtime/native a736 restored. Previously qualified d0/f9 optimizations have not been applied to this resumed run; newest full upper-decision graph remains an isolated screen.",
-    "verification": "runs/local/combat37-restore/verified-summary.json"
+    "verification": "runs/local/combat37-restore/verified-summary.json",
+    "final_saved_round": 186,
+    "final_saved_global_step": 150593647,
+    "final_backup": "/root/combat37-preredesign-backup-20261105"
+  },
+  "lower_model_redesign": {
+    "status": "training stopped and inference workload audited; full-observation CPU design pending experiment",
+    "source_round": 183,
+    "frozen": "upper actor, upper critic and all non-lower weights",
+    "search_budgets": [
+      250,
+      250,
+      1000
+    ],
+    "complete_games": 1920,
+    "rollout_limit_seconds": 240,
+    "runtime_optimization_baseline": "latest implemented and qualified runtime; latest full upper decision graph is only an isolated screen",
+    "gpu_inference": false,
+    "workload_round": 186,
+    "state_forwards": 3478678513,
+    "search_action_scores": 20055945058,
+    "reference": "worklog/2026-11-05.md#lower-redesign停止训练先核对完整rollout下层前推次数"
   }
 }
