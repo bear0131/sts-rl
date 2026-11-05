@@ -580,3 +580,5 @@
 | SEARCH-ACTION-BUDGET | 已完成真实组合数、校准预算、525个独立多选根与960同种子整局；整局配置差异区间含零 | 线性与大分支折缓预算、真实多选按手牌槽二分，与同权重固定搜索比较胜率、实际模拟总量及时间。见worklog/2026-11-05.md#search-action-budget随真实选择数调整预算及逐卡多选。 |
 
 | COMBAT-TRANSFORMER-FRESH | 已完成四机启动、双轮同步/保存与耗时验收，连续训练中 | `rl/policies/token_regret.py`、`rl/search/paired_token_rollout.py`；随机初值上下层，真实共享链采样、优化器同步及完整局保存，记录耗时。见 worklog/2026-11-05.md#combat-transformer-fresh。 |
+
+| COMBAT38-TOKEN-SPEED | 已完成480局序列统计、前推/双向传输与端到端采样评测 | `rl/policies/entity_action_playout.py`、`rl/search/paired_token_rollout.py`；区分逻辑、有效和批内补齐长度，按最重卡实际链内工作量换算240s门槛。见 worklog/2026-11-05.md#combat38-token-speed。 |
