@@ -244,7 +244,7 @@ class ActionTokenBank:
             else:
                 f = self.features.new_zeros((len(indices), width, TOKEN_FEATURES))
                 sym = torch.zeros(
-                    (len(indices), width), dtype=torch.long, device=device
+                    (len(indices), width), dtype=torch.long, device=self.symbols.device
                 )
                 f[:, :TOKEN_COUNT] = self.features[indices]
                 sym[:, :TOKEN_COUNT] = self.symbols[indices].long()

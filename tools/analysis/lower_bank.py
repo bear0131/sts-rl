@@ -21,7 +21,7 @@ class SketchBank:
 
     def batch(self, ids, device):
         args, y, teacher = self.base.batch(ids, device)
-        return (*args[:-1], self.context[ids], args[-1]), y, teacher
+        return (*args[:-1], self.context[ids].to(device), args[-1]), y, teacher
 
 
 def prepare_bank(bank, source, device, teacher_digest=None, *, sketch=False):

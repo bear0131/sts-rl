@@ -334,6 +334,17 @@ if __name__ == "__main__":
     p.add_argument("--batch", type=int, default=8192)
     p.add_argument("--micro", type=int, default=256)
     p.add_argument("--device", default="cuda:0")
+    p.add_argument(
+        "--continue-arm",
+        choices=("32", "64", "128", "sketch"),
+        help="Continue a 105-step scorer to a validation plateau",
+    )
+    p.add_argument("--resume-lower", type=Path)
+    p.add_argument("--validation-bank", type=Path)
+    p.add_argument("--check-every", type=int, default=60)
+    p.add_argument("--patience", type=int, default=3)
+    p.add_argument("--min-gain", type=float, default=0.0003)
+    p.add_argument("--max-extra", type=int, default=3600)
     args = p.parse_args()
     if not 0 < args.steps <= 64 or not 0 < args.micro <= args.batch:
         p.error("invalid update budget")
@@ -343,4 +354,36 @@ if __name__ == "__main__":
         p.error(
             "compact controls accept streaming token references; token arms accept fixed-bank pilots"
         )
-    experiment(**vars(args))
+    if args.continue_arm:
+        if (
+            not args.resume_lower
+            or not args.validation_bank
+            or args.compact_controls
+            or args.pilot_models
+            or args.token_reference
+        ):
+            p.error(
+                "continuation requires its checkpoint and a separate validation cohort"
+            )
+        if (
+            min(args.check_every, args.patience, args.max_extra) <= 0
+            or not np.isfinite(args.min_gain)
+            or args.min_gain <= 0
+        ):
+            p.error("invalid plateau or update budget")
+        from tools.analysis.lower_convergence import continue_fit
+
+        continue_fit(args)
+    else:
+        base_args = vars(args).copy()
+        for key in (
+            "continue_arm",
+            "resume_lower",
+            "validation_bank",
+            "check_every",
+            "patience",
+            "min_gain",
+            "max_extra",
+        ):
+            base_args.pop(key)
+        experiment(**base_args)
