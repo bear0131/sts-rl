@@ -345,7 +345,26 @@ if __name__ == "__main__":
     p.add_argument("--patience", type=int, default=3)
     p.add_argument("--min-gain", type=float, default=0.0003)
     p.add_argument("--max-extra", type=int, default=3600)
+    p.add_argument(
+        "--matched-teacher",
+        choices=("uct", "paired"),
+        help="Fit aligned counterfactual targets using a game-wise split of one evaluation bank",
+    )
+    p.add_argument("--labels-root", type=Path)
     args = p.parse_args()
+    if args.matched_teacher and (
+        not args.continue_arm
+        or args.validation_bank != args.holdout
+        or not args.labels_root
+        or args.max_extra < 360
+        or args.check_every != 60
+        or args.patience < 2
+    ):
+        p.error(
+            "matched teacher requires a continuation arm, common evaluation bank, aligned labels and a 360-update comparison"
+        )
+    if args.labels_root and not args.matched_teacher:
+        p.error("--labels-root needs --matched-teacher")
     if not 0 < args.steps <= 64 or not 0 < args.micro <= args.batch:
         p.error("invalid update budget")
     if (args.compact_controls and args.pilot_models) or (
@@ -378,6 +397,8 @@ if __name__ == "__main__":
         base_args = vars(args).copy()
         for key in (
             "continue_arm",
+            "matched_teacher",
+            "labels_root",
             "resume_lower",
             "validation_bank",
             "check_every",

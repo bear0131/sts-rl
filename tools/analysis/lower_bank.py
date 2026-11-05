@@ -71,3 +71,42 @@ def prepare_bank(bank, source, device, teacher_digest=None, *, sketch=False):
     )
     data.cache_features(device)
     return payload, base, data, games, digest.hexdigest(), seen_symbols, collection
+
+
+def install_paired_labels(bank, games, directory, source_sha):
+    """Replace only the supervised distribution using checked, aligned native decisions."""
+    with (directory / "meta.json").open(encoding="utf8") as file:
+        meta = json.load(file)
+    with (directory / "labels.npz").open("rb") as file:
+        if (
+            meta["bank_sha"] != source_sha
+            or hashlib.file_digest(file, "sha256").hexdigest() != meta["labels_sha"]
+        ):
+            raise ValueError("paired labels do not belong to this source bank")
+    base = bank.base
+    with np.load(directory / "labels.npz") as overlay:
+        if not np.array_equal(overlay["games"], games) or not np.array_equal(
+            overlay["lengths"], base.lengths
+        ):
+            raise ValueError("paired game or legal action alignment differs")
+        teacher = overlay["teacher"].astype(np.int64)
+        visits = overlay["visits"].astype(np.float32)
+    if (
+        teacher.shape != base.lengths.shape
+        or visits.shape != base.targets.shape
+        or not np.isfinite(visits).all()
+        or np.any(teacher < 0)
+        or np.any(teacher >= base.lengths)
+        or np.any(visits < 0)
+    ):
+        raise ValueError("invalid paired recommendation or visits")
+    total = np.add.reduceat(visits, base.starts)
+    if np.any(total <= 0):
+        raise ValueError("empty paired search target")
+    base.targets = 0.2 * (visits / np.repeat(total, base.lengths))
+    base.targets[base.starts + teacher] += 0.8
+    base.teacher = teacher
+    base.target_entropy = float(
+        -(base.targets * np.log(np.maximum(base.targets, 1e-30))).sum(dtype=np.float64)
+    )
+    return meta["labels_sha"]

@@ -13,7 +13,7 @@ from rl.algorithms.upper_probe import state_digest
 from rl.policies.entity_action_playout import ActionTokenPolicy
 from rl.policies.public_playout import PublicPlayoutPolicy
 from rl.training.resource_monitor import ResourceMonitor
-from tools.analysis.lower_bank import prepare_bank
+from tools.analysis.lower_bank import install_paired_labels, prepare_bank
 
 
 @dataclass
@@ -109,8 +109,9 @@ def continue_fit(args):
     base_lr = opt.param_groups[0]["lr"]
     initial_updates = int(saved["updates"])
     paths = [args.first, *args.others, args.validation_bank, args.holdout]
+    matched = args.matched_teacher is not None
     used_seeds = set()
-    for path in paths:
+    for path in paths[:-1] if matched else paths:
         c = json.loads((path / "collection.json").read_text())["cohort"]
         ids = set(range(c["first_seed"], c["last_seed"] + 1))
         if (
@@ -122,11 +123,17 @@ def continue_fit(args):
             raise ValueError("require disjoint, complete 480-game banks")
         used_seeds |= ids
 
+    override_digests = {}
+
     def load(path):
         payload, _, bank, games, digest, _, _meta = prepare_bank(
             path, args.parent, "cpu", teacher_digest=teacher, sketch=sketch
         )
         del payload
+        if args.matched_teacher == "paired":
+            override_digests[path.name] = install_paired_labels(
+                bank, games, args.labels_root / path.name, _meta["samples_sha256"]
+            )
         tensors = (
             [bank.context]
             if sketch
@@ -163,7 +170,8 @@ def continue_fit(args):
         return np.concatenate(rows)
 
     valid, vg, vsig = load(args.validation_bank)
-    vi = np.random.default_rng(args.seed + 43).permutation(len(vg))[
+    validation_ids = np.flatnonzero(vg % 5 == 0) if matched else np.arange(len(vg))
+    vi = np.random.default_rng(args.seed + 43).permutation(validation_ids)[
         : min(65536, len(vg))
     ]
     banks = []
@@ -171,7 +179,9 @@ def continue_fit(args):
     digests = []
     for i, path in enumerate(paths[:-2]):
         bank, g, digest = load(path)
-        ids = np.flatnonzero(g % 5 != 0) if i == 0 else np.arange(len(g))
+        ids = (
+            np.flatnonzero(g % 5 != 0) if i == 0 and not matched else np.arange(len(g))
+        )
         banks.append(bank)
         sets.append(ids)
         digests.append(digest)
@@ -224,6 +234,8 @@ def continue_fit(args):
         batch=args.batch,
         micro=args.micro,
         validation_digest=vsig,
+        label_source=args.matched_teacher or "original",
+        label_digests=override_digests,
         validation_decisions=len(vi),
         banks=[str(x) for x in paths[:-2]],
         bank_digests=digests,
@@ -250,6 +262,8 @@ def continue_fit(args):
             if extra % args.check_every != 0 and extra != args.max_extra:
                 continue
             now = initial_updates + extra
+            if matched and extra == 360:
+                save(output / "equal-budget.pt", lineage)
             current = measured(net)
             value = current["validation_kl"]
             lr = opt.param_groups[0]["lr"]
@@ -299,15 +313,37 @@ def continue_fit(args):
     selected = torch.load(output / "best.pt", weights_only=True, map_location=device)
     net.load_state_dict(selected["policy"])
     progress["full_validation_kl"] = float(
-        predict(net, valid, np.arange(len(vg)))[:, 0].mean(dtype=np.float64)
+        predict(net, valid, validation_ids)[:, 0].mean(dtype=np.float64)
     )
     valid = None
     test, tg, tsig = load(args.holdout)
-    ids = np.arange(len(tg))
+    ids = np.flatnonzero(tg % 5 != 0) if matched else np.arange(len(tg))
+    if matched and set(tg[ids]).intersection(vg[vi]):
+        raise ValueError("validation games overlap final test games")
     final = predict(net, test, ids)
+    if matched:
+        survey = np.random.default_rng(20261105731).choice(ids, 384, replace=False)
+        with torch.no_grad():
+            packed = []
+            for j in range(0, len(survey), args.micro):
+                subset = survey[j : j + args.micro]
+                inputs, _, _ = test.batch(subset, device)
+                logp = net.forward_packed(*inputs).log_softmax(-1)
+                packed.append(logp[inputs[-1]].cpu().numpy())
+        np.savez_compressed(
+            output / "survey-logp.npz",
+            ids=survey,
+            lengths=test.base.lengths[survey],
+            logp=np.concatenate(packed),
+        )
+        compare = torch.load(
+            output / "equal-budget.pt", weights_only=True, map_location=device
+        )
+        net.load_state_dict(compare["policy"])
+        fixed_scores = predict(net, test, ids)
     net.load_state_dict(saved["policy"])
     initial = predict(net, test, ids)
-    groups, inverse = np.unique(tg, return_inverse=True)
+    groups, inverse = np.unique(tg[ids], return_inverse=True)
     count = np.bincount(inverse)
     stats = {"counts": count.tolist(), "games": groups.tolist()}
     mature_scores = predict(parent, test.base, ids)
@@ -321,6 +357,22 @@ def continue_fit(args):
             top1=float(rows[:, 1].mean(dtype=np.float64)),
             kl_sum=np.bincount(inverse, weights=rows[:, 0]).tolist(),
             top1_count=np.bincount(inverse, weights=rows[:, 1]).astype(int).tolist(),
+        )
+    if matched:
+        y = test.base.targets
+        ent = np.add.reduceat(-(y * np.log(np.maximum(y, 1e-30))), test.base.starts)[
+            ids
+        ]
+        stats["target_entropy"] = float(ent.mean(dtype=np.float64))
+        stats["selected_ce"] = stats["selected"]["kl"] + stats["target_entropy"]
+        stats["equal_budget"] = dict(
+            extra_updates=360,
+            kl=float(fixed_scores[:, 0].mean(dtype=np.float64)),
+            top1=float(fixed_scores[:, 1].mean(dtype=np.float64)),
+            kl_sum=np.bincount(inverse, weights=fixed_scores[:, 0]).tolist(),
+            top1_count=np.bincount(inverse, weights=fixed_scores[:, 1])
+            .astype(int)
+            .tolist(),
         )
     diff = final[:, 0].astype(np.float64) - initial[:, 0]
     sums = np.bincount(inverse, weights=diff)
