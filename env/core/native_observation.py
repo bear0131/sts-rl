@@ -108,6 +108,26 @@ class NativeRootObservationBatch:
                  intents=len(encode.V.INTENT_CATEGORY), contexts=encode.V.SELECT_CONTEXT_VOCAB_CAPACITY),
             first._policy_offset, first._neural_width, True)
 
+    def encode_progress(self, envs):
+        """Only the live fields strategic credit consumes inside a fight.
+
+        This is an internal collector projection, not a policy observation.
+        Preserve selection bookkeeping performed by the complete root codec.
+        """
+        if not envs:
+            raise ValueError('native root observation batch must not be empty')
+        result = {key: np.empty((len(envs), *self.prototypes[key].shape),
+                                dtype=self.prototypes[key].dtype)
+                  for key in ('phase', 'act', 'floor')}
+        result['phase'].fill(encode.V.PHASE_VOCAB_INDEX['combat'])
+        for row, env in enumerate(envs):
+            if env.thick.bc is None or env._pending is not None:
+                raise ValueError('native root observation requires a settled combat state')
+            env._multi_desc()
+            result['act'][row, 0] = env.thick.gc.act / encode.ACT_SCALE
+            result['floor'][row, 0] = env.thick.gc.floor_num / encode.FLOOR_SCALE
+        return result
+
     def encode(self, envs):
         if not envs:
             raise ValueError('native root observation batch must not be empty')

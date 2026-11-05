@@ -613,6 +613,15 @@ actor 的冻结 GAE、奖励、终局定义、搜索、样本遍数和上下层 
 记录1秒资源采样及精确Torch峰值；固定有效batch/样本顺序时可比较microbatch执行分块。
 CPU资源缺GPU项填null；单次诊断吞吐不是完整训练资格，也不能证明同墙钟学习收益。
 
+独立完整游戏采集的原生 small-playout 路径可省去未被消费的战斗观测：
+战斗中内部传输只保证 `phase/act/floor` 当前有效，非战斗传输完整上层字段；
+下层搜索仍读取完整模拟器状态，终局 `info` 保留完整观测。该路径仅在具体回调类
+直接声明 `_uses_rollout_observations = False` 时启用；未知回调及未重新声明的子类
+默认使用完整观测。声明表示 `_on_step` 不读取观测或保存模型，不能只因父类支持而继承。
+开始/结束回调、正常返回、提前取消及异常退出后恢复完整 `model._last_obs` 和向量缓存，
+公开环境接口和 checkpoint schema 不变；未知环境包装器也保留完整路径。
+`nosl_is_az/combat_observation_rows_omitted` 记录每 rank 省略行数的全局平均。
+
 
 统一上层每轮还记录 `upper/policy_loss_pre_update`：在任何actor/critic更新前，
 固定actor对本轮全部上层决策重新前向，使用采集时old_logp和本轮全局标准化优势，

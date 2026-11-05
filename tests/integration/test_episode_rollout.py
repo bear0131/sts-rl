@@ -331,6 +331,8 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
             # The runtime belongs only to collect(), not either saved object.
             assert 'upper_inference' not in vars(current)
             assert 'upper_inference' not in vars(current.policy.core)
+            omitted = payloads[i]['nosl_is_az/combat_observation_rows_omitted']
+            assert omitted > 0 if natural_start else omitted == 0
         assert current.small_playout_search_contract == 'terminal-hp-boss-win-turn128-v1'
         assert manifest['config']['small_playout_search_contract'] == 'terminal-hp-boss-win-turn128-v1'
         assert current.policy.core.upper_config.gae_lambda == (lambda_override or .97)

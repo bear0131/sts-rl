@@ -55,12 +55,16 @@ from rl.policies import semantic_reasoning_policy as _semantic_reasoning_policy 
 
 
 class NoopCallback(BaseCallback):
+    _uses_rollout_observations = False
+
     def _on_step(self) -> bool:
         return True
 
 
 class RolloutProgressCallback(NoopCallback):
     """Low-frequency progress for unattended resource-monitored collections."""
+    _uses_rollout_observations = False
+
     def __init__(self, rank, steps):
         super().__init__()
         self.rank, self.steps = rank, steps
@@ -1842,6 +1846,7 @@ def distributed_nosl_is_az_update(
     # from the distributed record or W&B.
     for name in (
         "root_policy_seconds",
+        "combat_observation_rows_omitted",
         "cpp_begin_rpc_seconds",
         "cpp_leaf_decode_seconds",
         "cpp_leaf_model_seconds",
@@ -2029,6 +2034,7 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/overworld_rule_decisions",
     "nosl_is_az/overworld_fallback_decisions",
     "nosl_is_az/forced_end_turn_roots",
+    "nosl_is_az/combat_observation_rows_omitted",
     "nosl_is_az/rulebase_lower_roots",
     "nosl_is_az/rulebase_lower_decisions",
     "nosl_is_az/rulebase_lower_expanded_nodes",

@@ -122,6 +122,10 @@ def test_overworld_globals_read_live_inventory_and_legacy_fallback(
 def assert_roots(encoder, envs):
     expected = [env._obs() for env in envs]
     actual = encoder.encode(envs)
+    progress = encoder.encode_progress(envs)
+    for key, value in progress.items():
+        assert value.dtype == actual[key].dtype and value.tobytes() == actual[key].tobytes()
+        assert not np.shares_memory(value, actual[key])
     assert set(actual) == set(expected[0])
     for row, reference in enumerate(expected):
         for key, value in reference.items():
@@ -518,6 +522,136 @@ def test_unknown_observation_wrapper_keeps_serial_path():
         vec.seed(42); vec.reset()
         for _ in range(32):
             vec.step([int(np.flatnonzero(vec.env_method('action_masks')[0])[0])])
+    finally:
+        vec.close()
+
+
+@pytest.mark.parametrize('seed', [42, 42101])
+def test_strategic_projection_matches_complete_natural_cohort(native_wrapper_factories, monkeypatch, seed):
+    import gymnasium as gym
+    from rl.algorithms.small_playout import SmallPlayoutLearner
+    from rl.algorithms.upper_ppo import UPPER_KEYS, COMBAT_PHASE
+    from rl.policies.small_playout import export_online_search_pair
+    from rl.training.native_vec_env import NativeSearchVecEnv
+
+    pair = export_online_search_pair(SmallPlayoutLearner(seed=19).policy, collect_samples=True)
+    pair.update(common_simulations=8, elite_simulations=8, boss_simulations=8, playout_depth=8)
+    factories = native_wrapper_factories(2, outer_return_context=False)
+    reference, candidate = [NativeSearchVecEnv(factories, threads=2) for _ in range(2)]
+    rng = np.random.default_rng(seed)
+    projected, upper, terminals, mixed = 0, 0, 0, 0
+    try:
+        for vec in (reference, candidate):
+            for env in vec.envs:
+                while not isinstance(env, gym.wrappers.TimeLimit):
+                    env = env.env
+                env._max_episode_steps = 6000
+            vec.configure_small_playout(pair)
+        assert_nested_equal(reference.begin_episode_rollout(seed), candidate.begin_episode_rollout(seed))
+        def forbidden(*args):
+            pytest.fail('strategic combat collection must not construct full neural roots')
+        monkeypatch.setattr(candidate.native_root_observations, 'encode', forbidden)
+        with (reference.omit_unused_combat_value_observations(),
+              candidate.omit_unused_combat_value_observations(),
+              candidate.strategic_observations(UPPER_KEYS.intersection(candidate.keys)) as step):
+            for tick in range(1200):
+                active = list(reversed(np.flatnonzero(reference.episode_rollout_active).tolist()))
+                if not active:
+                    break
+                if tick % 3 == 0:
+                    active = active[:1]
+                masks = {i: reference.envs[i].get_wrapper_attr('action_masks')() for i in active}
+                actions = {i: int(rng.choice(np.flatnonzero(masks[i]))) for i in active}
+                calls = {i: ((), dict(state_nonce=seed+tick*2+i)) for i in active
+                         if reference.buf_obs['phase'][i, 0] == COMBAT_PHASE}
+                expected_decisions = reference.env_method_batch('small_playout_decision', calls)
+                actual_decisions = candidate.env_method_batch('small_playout_decision', calls)
+                assert_nested_equal(expected_decisions, actual_decisions)
+                for i, decision in expected_decisions.items():
+                    actions[i] = decision['action']
+                full, rewards, dones, infos = reference.step_subset(actions)
+                obs, actual_rewards, actual_dones, actual_infos = step(actions)
+                assert_nested_equal((rewards, dones, infos), (actual_rewards, actual_dones, actual_infos))
+                phases = full['phase'][:, 0]
+                mixed += int(np.any(phases == COMBAT_PHASE) and np.any(phases != COMBAT_PHASE))
+                for row, i in enumerate(active):
+                    keys = {'phase', 'act', 'floor'} if phases[row] == COMBAT_PHASE else UPPER_KEYS.intersection(full)
+                    for key in keys:
+                        assert_nested_equal(full[key][row], obs[key][row])
+                        assert not np.shares_memory(obs[key], candidate.buf_obs[key])
+                    projected += int(phases[row] == COMBAT_PHASE)
+                    upper += int(phases[row] != COMBAT_PHASE)
+                    terminals += int(dones[row])
+            assert not reference.episode_rollout_active.any(), 'fixed natural cohort budget exhausted'
+            assert candidate.strategic_observation_rows_omitted > 0
+        assert projected and upper and mixed and terminals == 2
+        assert_nested_equal(reference._obs_from_buf(), candidate._obs_from_buf())
+        assert_nested_equal(reference.env_method('export_training_state'), candidate.env_method('export_training_state'))
+        assert_nested_equal(reference.take_small_playout_samples(), candidate.take_small_playout_samples())
+        for key, value in reference.small_playout_stats().items():
+            if 'seconds' not in key:
+                np.testing.assert_equal(value, candidate.small_playout_stats()[key])
+        assert candidate._strategic_observation_keys is None and not candidate._deferred_observation_rows
+    finally:
+        reference.close(); candidate.close()
+
+
+@pytest.mark.parametrize('exit_mode', ['normal', 'cancel', 'exception', 'reading_callback'])
+def test_strategic_scope_restores_live_complete_observations(native_wrapper_factories, exit_mode):
+    import gymnasium as gym
+    from types import SimpleNamespace
+    from rl.algorithms.independent_rollout import _strategic_observations
+    from rl.algorithms.upper_ppo import COMBAT_PHASE
+    from rl.training.distributed_sb3 import NoopCallback
+    from rl.training.native_vec_env import NativeSearchVecEnv
+
+    class ReadingCallback(NoopCallback):
+        def _on_step(self):
+            assert self.model._last_obs.keys() == self.model.env.buf_obs.keys()
+            return True
+
+    vec = NativeSearchVecEnv(native_wrapper_factories(1, outer_return_context=False), threads=1)
+    try:
+        wrapper = vec.envs[0]
+        while not isinstance(wrapper, gym.wrappers.TimeLimit):
+            wrapper = wrapper.env
+        wrapper._max_episode_steps = 6000
+        model = SimpleNamespace(_last_obs=vec.begin_episode_rollout(42), env=vec, num_timesteps=0)
+        for _ in range(32):
+            if model._last_obs['phase'][0, 0] == COMBAT_PHASE:
+                break
+            action = int(np.flatnonzero(vec.env_method('action_masks')[0])[0])
+            model._last_obs = vec.step_subset({0: action})[0]
+        assert model._last_obs['phase'][0, 0] == COMBAT_PHASE
+        callback = ReadingCallback() if exit_mode == 'reading_callback' else NoopCallback()
+        callback.model = model
+        def run():
+            with vec.omit_unused_combat_value_observations(), _strategic_observations(model, vec, callback) as step:
+                # End turn is an actual transition, not an autoregressive prefix.
+                obs, _, _, _ = step({0: vec.envs[0].unwrapped._policy_offset})
+                for key, value in obs.items():
+                    model._last_obs[key][:] = value
+                if exit_mode == 'reading_callback':
+                    assert callback.on_step()
+                else:
+                    assert vec.strategic_observation_rows_omitted == 1
+                if exit_mode == 'cancel':
+                    return False
+                if exit_mode == 'exception':
+                    raise RuntimeError('callback failure')
+                return True
+        if exit_mode == 'exception':
+            with pytest.raises(RuntimeError, match='callback failure'):
+                run()
+        else:
+            assert run() == (exit_mode != 'cancel')
+        expected = vec.envs[0].unwrapped._obs()
+        assert model._last_obs.keys() == vec.buf_obs.keys()
+        for key in vec.buf_obs:
+            assert_nested_equal(model._last_obs[key][0], expected[key])
+            assert_nested_equal(vec.buf_obs[key][0], expected[key])
+        assert vec._strategic_observation_keys is None and not vec._deferred_observation_rows
+        assert vec.envs[0].unwrapped._emit_nosl_value_observations
     finally:
         vec.close()
 

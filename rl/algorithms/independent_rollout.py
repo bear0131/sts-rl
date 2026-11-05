@@ -5,6 +5,7 @@ The barrier control uses the same new random streams and sample construction.
 Neither mode updates weights or changes search/terminal/return definitions.
 """
 from dataclasses import asdict, dataclass
+from contextlib import contextmanager
 import time
 
 import numpy as np
@@ -94,6 +95,30 @@ def configure(model, config, *, fork=False):
     return selected
 
 
+def _callback_uses_observations(callback):
+    from stable_baselines3.common.callbacks import CallbackList
+    if type(callback) is CallbackList:
+        return any(_callback_uses_observations(child) for child in callback.callbacks)
+    # A subclass may add an observation consumer. Require its own declaration,
+    # never inherit the optimization permission from a known parent callback.
+    return type(callback).__dict__.get('_uses_rollout_observations', True) is not False
+
+
+@contextmanager
+def _strategic_observations(model, vec, callback):
+    if vec.native_root_observations is None or _callback_uses_observations(callback):
+        yield vec.step_subset
+        return
+    keys = UPPER_KEYS.intersection(model._last_obs)
+    try:
+        with vec.strategic_observations(keys) as step:
+            model._last_obs = {key: value for key, value in model._last_obs.items() if key in keys}
+            yield step
+    finally:
+        # Full observation hashes and checkpoint input contracts are unchanged.
+        model._last_obs = vec._obs_from_buf()
+
+
 def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=True, *, config):
     """Collect real policy/search samples with weights frozen for the whole cohort.
 
@@ -115,6 +140,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             or getattr(model, 'nosl_is_az_upper_strategy', 'model') != 'model'):
         raise ValueError('independent diagnostic requires FP32 native complete-game joint small-playout')
     vec = env.venv
+    vec.strategic_observation_rows_omitted = 0
     model.policy.set_training_mode(False)
     rollout_buffer.reset()
     model._upper_completed, model._upper_censored = [], 0
@@ -138,6 +164,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     model._independent_rollout_progress = stats
 
     with (vec.omit_unused_combat_value_observations(),
+          _strategic_observations(model, vec, callback) as step_subset,
           UpperPolicyInference(model.policy.core, model.device) as upper_inference,
           SmallPlayoutStream(vec.small_playout_batch, threads=cfg.threads) as stream):
         while vec.episode_rollout_active.any():
@@ -207,7 +234,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             action_rows = np.array([actions.pop(i) for i in indices], dtype=np.int64)
             mask_rows = np.stack([masks.pop(i) for i in indices])
             value_rows, logp_rows = np.array([estimates.pop(i) for i in indices]).T
-            observations, rewards, dones, infos = vec.step_subset(ordered)
+            observations, rewards, dones, infos = step_subset(ordered)
             # VecMonitor has a full-vector API; preserve its per-slot accounting.
             env.episode_returns[indices] += rewards
             env.episode_lengths[indices] += 1
@@ -238,7 +265,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             stats['transition_batches'] += 1
             model.num_timesteps += len(indices)
             model._update_info_buffer(infos, dones)
-            for k in model._last_obs:
+            for k in observations:
                 model._last_obs[k][indices] = observations[k]
             model._last_episode_starts[indices] = dones
             ready.update(i for i in indices if vec.episode_rollout_active[i])
@@ -249,6 +276,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
         if stream.pending or upper_waiting or actions:
             raise RuntimeError('completed cohort retained pending work')
         stats.update(upper_inference.statistics())
+        stats['combat_observation_rows_omitted'] = vec.strategic_observation_rows_omitted
     model._small_playout_stats = vec.small_playout_stats()
     model._small_playout_samples = sorted(vec.take_small_playout_samples(), key=lambda r: r['env'])
     model._upper_completed.sort(key=lambda r: (r['env'], r['episode']))

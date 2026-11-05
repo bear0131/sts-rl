@@ -45,6 +45,8 @@ class StSMetricsCallback(BaseCallback):
                                             not a per-episode delta)
     """
 
+    _uses_rollout_observations = False
+
     def __init__(self, window: int = 100, verbose: int = 0):
         super().__init__(verbose)
         self._rew = deque(maxlen=window)

@@ -64,3 +64,24 @@ def test_scheduler_migration_requires_complete_fork_and_resume_keeps_contract():
     assert model.independent_rollout_migration['source_round'] == 3
     with pytest.raises(ValueError, match='diagnostic'):
         configure(model, dict(config, mode='barrier'), fork=True)
+
+
+def test_observation_reading_callbacks_keep_full_transport_including_subclasses():
+    from stable_baselines3.common.callbacks import CallbackList
+    from rl.algorithms.independent_rollout import _callback_uses_observations
+    from rl.training.distributed_sb3 import NoopCallback, RolloutProgressCallback
+    from rl.tasks.wholerun import StSMetricsCallback
+
+    class ReadingCallback(NoopCallback):
+        def _on_step(self):
+            assert 'hand_ids' in self.model._last_obs
+            return True
+
+    class CustomList(CallbackList):
+        pass
+
+    ordinary = [NoopCallback(), RolloutProgressCallback(0, 10), StSMetricsCallback()]
+    assert not _callback_uses_observations(CallbackList(ordinary))
+    assert _callback_uses_observations(ReadingCallback())
+    assert _callback_uses_observations(CallbackList([*ordinary, CallbackList([ReadingCallback()])]))
+    assert _callback_uses_observations(CustomList(ordinary))

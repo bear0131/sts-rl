@@ -52,6 +52,9 @@ class NativeSearchVecEnv(DummyVecEnv):
         self._prefetched_steps = {}
         self._small_overlap_stats = dict(prefetched_steps=0, step_call_seconds_sum=0.)
         self._step_observation_buffers = None
+        self._strategic_observation_keys = None
+        self._deferred_observation_rows = set()
+        self.strategic_observation_rows_omitted = 0
         try:
             self.native_search_batch = NativeSearchBatch(self.envs, threads, direct_observations=True)
             self.native_root_observations = None
@@ -92,6 +95,8 @@ class NativeSearchVecEnv(DummyVecEnv):
                 and not current._combat_language)
 
     def step_wait(self):
+        if self._strategic_observation_keys is not None:
+            raise RuntimeError('complete vector steps cannot interrupt strategic observation collection')
         cohort = getattr(self, 'episode_rollout_active', None)
         if self.native_root_observations is None and cohort is None:
             return super().step_wait()
@@ -103,6 +108,11 @@ class NativeSearchVecEnv(DummyVecEnv):
         Used by the independent-game diagnostic; caller owns search/step
         exclusion per slot. Returned rows follow the mapping's insertion order.
         """
+        if self._strategic_observation_keys is not None:
+            raise RuntimeError('complete subset steps cannot interrupt strategic observation collection')
+        return self._step_subset(actions)
+
+    def _step_subset(self, actions, *, observation_keys=None):
         indices = list(actions)
         if (not indices or any(type(i) is not int or not 0 <= i < self.num_envs for i in indices)
                 or any(not self.action_space.contains(a) for a in actions.values())):
@@ -115,7 +125,41 @@ class NativeSearchVecEnv(DummyVecEnv):
         self.actions = np.zeros(self.num_envs, dtype=np.int64)
         for i, action in actions.items():
             self.actions[i] = action
-        return self._step_indices(indices, subset=True)
+        return self._step_indices(indices, subset=True, observation_keys=observation_keys)
+
+    @contextmanager
+    def strategic_observations(self, keys):
+        """Private projection for a complete-game collector with no obs callback.
+
+        Inside combat only phase/act/floor are valid; other strategic fields
+        become current at the next upper decision. Terminal info stays complete.
+        Restore every deferred full row on exit, including callback cancellation.
+        """
+        if (self.native_root_observations is None or self._strategic_observation_keys is not None
+                or getattr(self, 'episode_rollout_censor_policy', None) != 'error'
+                or not {'phase', 'act', 'floor'} <= set(keys) <= set(self.keys)
+                or any(base._emit_nosl_value_observations or base.outer_return_context
+                       for base in (env.unwrapped for env in self.envs))):
+            raise ValueError('strategic observation projection requires native complete small-policy collection')
+        self._strategic_observation_keys = tuple(key for key in self.keys if key in keys)
+        self.strategic_observation_rows_omitted = 0
+        try:
+            yield self._step_strategic_subset
+        finally:
+            try:
+                for index in sorted(self._deferred_observation_rows):
+                    # The qualified wrapper stack only selects visible keys;
+                    # it never changes their values. Copy into the owned row.
+                    observation = self.envs[index].unwrapped._obs()
+                    self._save_obs(index, {key: observation[key] for key in self.keys})
+                self._deferred_observation_rows.clear()
+            finally:
+                self._strategic_observation_keys = None
+
+    def _step_strategic_subset(self, actions):
+        if self._strategic_observation_keys is None:
+            raise RuntimeError('strategic observation scope is not active')
+        return self._step_subset(actions, observation_keys=self._strategic_observation_keys)
 
     @contextmanager
     def omit_unused_combat_value_observations(self):
@@ -137,7 +181,7 @@ class NativeSearchVecEnv(DummyVecEnv):
             for base, enabled in zip(bases, previous, strict=True):
                 base._emit_nosl_value_observations = enabled
 
-    def _step_indices(self, indices, *, subset=False):
+    def _step_indices(self, indices, *, subset=False, observation_keys=None):
         cohort = getattr(self, 'episode_rollout_active', None)
         prefetched, self._prefetched_steps = self._prefetched_steps, {}
         self._small_step_plan = None
@@ -150,6 +194,8 @@ class NativeSearchVecEnv(DummyVecEnv):
                 self.buf_infos[index] = dict(episode_cohort_hold=True, simulator_transition=False)
                 continue
             base = env.unwrapped
+            if observation_keys is not None:
+                self._deferred_observation_rows.add(index)
             ready = prefetched.pop(index, None)
             if ready is None:
                 transition = self._step_one(index, self.actions[index])
@@ -196,19 +242,26 @@ class NativeSearchVecEnv(DummyVecEnv):
                 continue
             if not buffered:
                 self._save_obs(index, obs)
+            self._deferred_observation_rows.discard(index)
         if prefetched:
             raise RuntimeError('prefetched transition belongs to an inactive environment')
         if pending:
-            observations = self.native_root_observations.encode([self.envs[i].unwrapped for i in pending])
+            encoder = (self.native_root_observations.encode if observation_keys is None
+                       else self.native_root_observations.encode_progress)
+            observations = encoder([self.envs[i].unwrapped for i in pending])
+            if observation_keys is not None:
+                self.strategic_observation_rows_omitted += len(pending)
             pending_indices = np.asarray(pending, dtype=np.intp)
             # Respect the checkpoint's visible keys and leave reset/overworld
             # rows intact. The codec already returned one array per field.
-            for key in self.keys:
+            for key in (self.keys if observation_keys is None else observations):
                 self.buf_obs[key][pending_indices] = observations[key]
         if subset:
             rows = np.asarray(indices, dtype=np.intp)
+            keys = (self.keys if observation_keys is None else
+                    ('phase', 'act', 'floor') if len(pending) == len(indices) else observation_keys)
             # Advanced indexing copies each selected row; no second copy is needed.
-            return ({key: value[rows] for key, value in self.buf_obs.items()},
+            return ({key: self.buf_obs[key][rows] for key in keys},
                     self.buf_rews[rows].copy(), self.buf_dones[rows].copy(),
                     _copy_step_infos([self.buf_infos[i] for i in indices]))
         return (self._obs_from_buf(), np.copy(self.buf_rews), np.copy(self.buf_dones), _copy_step_infos(self.buf_infos))
@@ -276,11 +329,15 @@ class NativeSearchVecEnv(DummyVecEnv):
             self._prefetch_step(index, actions[index])
 
     def reset(self):
+        if getattr(self, '_strategic_observation_keys', None) is not None:
+            raise RuntimeError('cannot reset during strategic observation collection')
         if getattr(self, '_small_step_plan', None) is not None or getattr(self, '_prefetched_steps', None):
             raise RuntimeError('cannot reset before consuming a prefetched step')
         return super().reset()
 
     def begin_episode_rollout(self, first_seed, *, censored_games='error'):
+        if self._strategic_observation_keys is not None:
+            raise RuntimeError('cannot reset during strategic observation collection')
         if censored_games not in ('error', 'exclude'):
             raise ValueError('invalid censored-game policy')
         active = getattr(self, 'episode_rollout_active', None)
