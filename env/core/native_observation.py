@@ -1,7 +1,7 @@
-"""Native projections of combat roots and settled upper reward inputs.
+"""Native projections of combat roots and run-global/settled reward inputs.
 
-Other overworld/terminal observations still use the canonical encoder. This adapter
-owns no game state or persistent observation cache: every call reads the live
+Screen-specific overworld observations still use the canonical encoder. This
+adapter owns no game state or persistent observation cache: every call reads the live
 roots, including mutable master-deck metadata, and returns fresh arrays.
 """
 import numpy as np
@@ -12,6 +12,12 @@ from .outer_return import CONTEXT_KEYS, permanent_misc
 from .run_env import _nosl_compact_lut, _nosl_card_stats
 from schemas.combat_state import normalize_sim_global
 import slaythespire as sts
+
+
+_GLOBAL_KEYS = frozenset({'phase', 'arg_step', 'post_enemy_turn_boundary', 'combat_is_boss',
+    'character', 'ascension', 'act', 'floor', 'next_boss', 'gold', 'run_hp', 'run_keys',
+    'relics', 'relic_counters', 'potions', 'deck_ids', 'deck_upgrades', 'deck_size',
+    'outer_deck_misc', 'combat_mc_exit'})
 
 
 def upper_value_runtime(teacher, max_bytes, *, pad):
@@ -64,6 +70,16 @@ def upper_reward_encoder(deck_size_observation):
     return sts.UpperRewardObservationEncoder(prototypes, *_global_projection_schema(phase))
 
 
+@lru_cache(maxsize=4)
+def overworld_global_encoder(card_language, deck_size_observation):
+    """Cache immutable schema only; each encode reads the complete live inventory."""
+    prototypes = {key: value for key, value in encode._empty(
+        card_language=card_language, deck_size_observation=deck_size_observation).items()
+        if key in _GLOBAL_KEYS or key.startswith('deck_card_')}
+    return sts.OverworldGlobalObservationEncoder(prototypes,
+        *_global_projection_schema(encode.V.PHASE_VOCAB_INDEX['none']))
+
+
 class NativeRootObservationBatch:
     def __init__(self, first):
         if not hasattr(sts, 'pack_neural_roots'):
@@ -76,10 +92,7 @@ class NativeRootObservationBatch:
                          if first._card_language else None)
         # These are exactly the fields written by _encode_global. Other
         # (phase-gated) groups remain PAD, as in encode.encode on a combat root.
-        names = {'phase', 'arg_step', 'post_enemy_turn_boundary', 'combat_is_boss',
-                 'character', 'ascension', 'act', 'floor', 'next_boss', 'gold',
-                 'run_hp', 'run_keys', 'relics', 'relic_counters', 'potions',
-                 'deck_ids', 'deck_upgrades', 'deck_size', 'outer_deck_misc', 'combat_mc_exit'}
+        names = set(_GLOBAL_KEYS)
         names.update(key for key in self.prototypes if key.startswith('deck_card_'))
         self.global_keys = frozenset(names.intersection(self.prototypes))
         self.global_encoder = (sts.CombatGlobalObservationEncoder(

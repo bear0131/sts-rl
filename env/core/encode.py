@@ -1279,7 +1279,7 @@ def encode(
     canon, *, global_map_view=False, card_language=False,
     combat_language=False, deck_size_observation=False, neow_observation=False,
     event_option_observation=False, interactive_reasoning=False, upper_public_context=False,
-    _map_observation=None, _out=None,
+    _map_observation=None, _global_observation=None, _out=None,
 ):
     """obs canonical dict -> obs dict (numpy arrays matching obs_space()).
 
@@ -1287,6 +1287,8 @@ def encode(
     overworld block, or the full assembled dict — absent groups encode to PAD.
     _map_observation is an internal validated projection from a read-only
     simulator RunMap; external canonical observations always use the codec.
+    _global_observation is a fresh native run-global row from the same live
+    noncombat state. It retains full field bytes, without an inventory cache.
     _out is a complete, matching internal vector row whose owner controls its
     lifetime. Public callers receive independently allocated arrays."""
     if canon.get("strict_complete"):
@@ -1310,7 +1312,12 @@ def encode(
         o["pending_card_slot"][0] = int(canon.get("pending_card_slot", 0))
     o["pending_potion_slot"][0] = int(canon.get("pending_potion_slot", 0))
     _encode_combat(o, canon)
-    _encode_global(o, canon)
+    if _global_observation is None:
+        _encode_global(o, canon)
+    else:
+        for key, value in _global_observation.items():
+            o[key][...] = value
+        o['arg_step'][0] = _idx(V.ARG_STEP_VOCAB_INDEX, canon.get('arg_step', 'root'))
     _encode_options(o, canon, _map_observation=_map_observation)
     if upper_public_context and canon.get('phase') not in ('combat', 'map', 'none', 'terminal'):
         if 'public_map' not in canon:

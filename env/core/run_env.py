@@ -2767,8 +2767,16 @@ class SlayTheSpireEnv(gym.Env):
         map_projection = getattr(self.thick, 'encoding_map_observation', None)
         projection = (map_projection(dict(phase=self._phase()))
                       if map_projection is not None else None)
-        canon = (canonical() if projection is None
-                 else canonical(_map_observation=projection))
+        global_projection = getattr(self.thick, 'encoding_global_observation', None)
+        global_observation = (global_projection(card_language=self._card_language,
+                              deck_size_observation=self._deck_size_observation)
+                              if global_projection is not None else None)
+        projected = {}
+        if projection is not None:
+            projected['_map_observation'] = projection
+        if global_observation is not None:
+            projected['_global_observation'] = global_observation
+        canon = canonical(**projected)
         # Search's upper-value transport consumes neither a combat action mask
         # nor permanent combat card growth. Outside combat the argument step
         # depends only on pending/phase, so it needs no legal-action enumeration.
@@ -2794,6 +2802,7 @@ class SlayTheSpireEnv(gym.Env):
             canon,
             _out=_out,
             _map_observation=projection,
+            _global_observation=global_observation,
             global_map_view=self._global_map_view,
             upper_public_context=self._upper_public_context,
             card_language=self._card_language,

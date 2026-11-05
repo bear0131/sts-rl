@@ -298,13 +298,22 @@ class SimGameEnv:
         This is what encode.encode() consumes."""
         return self._observation_canonical(for_encoding=False)
 
-    def encoding_canonical(self, *, _map_observation=None):
+    def encoding_canonical(self, *, _map_observation=None, _global_observation=None):
         """Same tensor inputs, without unused differential-snapshot inventory.
 
-        A caller holding the validated numeric map may omit its intermediate
-        canonical graph. Without that explicit input this remains complete.
+        A caller holding the numeric map or fresh native global row may omit
+        the corresponding intermediate data. Default calls remain complete.
         """
-        return self._observation_canonical(for_encoding=True, _map_observation=_map_observation)
+        return self._observation_canonical(for_encoding=True, _map_observation=_map_observation,
+                                           _global_observation=_global_observation)
+
+    def encoding_global_observation(self, *, card_language, deck_size_observation):
+        """Internal numeric projection; public canonical snapshots remain complete."""
+        if self.bc is not None or not hasattr(sts, 'OverworldGlobalObservationEncoder'):
+            return None
+        from .native_observation import overworld_global_encoder
+        return overworld_global_encoder(card_language, deck_size_observation).encode(
+            self.gc, encode.V.PHASE_VOCAB_INDEX[self.phase()])
 
     def encoding_map_observation(self, canon):
         """Reuse only the current read-only map's validated numeric projection."""
@@ -315,8 +324,17 @@ class SimGameEnv:
         return self.rmap.encoded_view(self.gc.cur_map_node_x, self.gc.cur_map_node_y,
             next_columns=self.gc.legal_map_options(), global_map_view=self._global_map_view)
 
-    def _observation_canonical(self, *, for_encoding, _map_observation=None):
+    def _observation_canonical(self, *, for_encoding, _map_observation=None,
+                               _global_observation=None):
         d = self._canonical(for_encoding=for_encoding, _map_observation=_map_observation)
+        if _global_observation is not None:
+            if not for_encoding or self.bc is not None:
+                raise ValueError('numeric run-global projection requires noncombat encoding')
+            # The option codec also consumes boss-relic offers, which are not
+            # inventory and remain exported by the existing screen contract.
+            d['global'] = {'boss_relics': list(self.gc.boss_relic_ids())
+                           if d['phase'] == 'boss_relic' else []}
+            return d
         d["global"] = normalize_sim_global(self.gc, combat=self.bc is not None,
                                            for_encoding=for_encoding)
         if self.bc is not None:

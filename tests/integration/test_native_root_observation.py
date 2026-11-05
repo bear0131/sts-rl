@@ -10,6 +10,115 @@ from env.core.run_env import SlayTheSpireEnv
 pytestmark = [pytest.mark.native, pytest.mark.timeout(120)]
 
 
+def assert_overworld_projection(env, monkeypatch):
+    from env.core import game_env
+    assert env.thick.bc is None
+    canonical = env.thick.obs_canonical()
+    with monkeypatch.context() as patch:
+        patch.setattr(env.thick, 'encoding_global_observation', lambda **kwargs: None)
+        expected = env._obs()
+    def forbidden(*args, **kwargs):
+        raise AssertionError('numeric globals must not rebuild the Python inventory')
+    with monkeypatch.context() as patch:
+        patch.setattr(game_env, 'normalize_sim_global', forbidden)
+        actual = env._obs()
+        target = {key: np.full_like(value, 99) for key, value in expected.items()}
+        assert env._obs(_out=target) is target
+    for observed in (actual, target):
+        assert observed.keys() == expected.keys()
+        for key in expected:
+            assert observed[key].dtype == expected[key].dtype, key
+            assert observed[key].shape == expected[key].shape, key
+            assert observed[key].tobytes() == expected[key].tobytes(), key
+            assert not np.shares_memory(observed[key], expected[key]), key
+    assert env.thick.obs_canonical() == canonical
+    assert env.thick.encoding_canonical()['global']['deck'] == canonical['global']['deck']
+    return actual
+
+
+@pytest.mark.parametrize('seed', [21, 42101])
+@pytest.mark.parametrize('full,public,language,deck_size', [
+    (False, False, False, False), (True, False, False, True),
+    (True, False, True, False), (True, True, True, True)])
+def test_overworld_globals_full_runs_preserve_every_public_field(
+        monkeypatch, seed, full, public, language, deck_size):
+    assert hasattr(sts, 'OverworldGlobalObservationEncoder'), 'rebuild the explicitly selected extension'
+    env = SlayTheSpireEnv(global_map_view=full, upper_public_context=public,
+        card_language=language, deck_size_observation=deck_size, neow_observation=True,
+        event_option_observation=True, combat_action_contract='autoregressive-v2')
+    seen = set()
+    try:
+        env.reset(seed=seed)
+        env.thick.gc.skip_battles = True
+        for _ in range(650):
+            seen.add((env.thick.gc.act, env._phase()))
+            if env.thick.bc is not None:
+                assert env.thick.encoding_global_observation(
+                    card_language=language, deck_size_observation=deck_size) is None
+            elif (not full and env._phase() == 'map'
+                  and len(env.thick.gc.legal_map_options()) > 3):
+                # The retained three-slot schema deliberately rejects a map
+                # it cannot represent; optimization must preserve that error.
+                with monkeypatch.context() as patch:
+                    patch.setattr(env.thick, 'encoding_global_observation', lambda **kwargs: None)
+                    with pytest.raises(ValueError, match='options.nodes.*exceeding capacity 3'):
+                        env._obs()
+                with pytest.raises(ValueError, match='options.nodes.*exceeding capacity 3'):
+                    env._obs()
+            else:
+                assert_overworld_projection(env, monkeypatch)
+            if env.thick.is_over:
+                break
+            # Use the same real semantic route as the reward projection
+            # corpus; first codec ID can instead skip offers or pick fights.
+            env.thick.step(env.thick.legal_semantic_actions()[0])
+            env._invalidate_backend_cache()
+        assert env.thick.is_over
+        assert {1, 2, 3}.issubset({act for act, phase in seen})
+        assert {'event', 'map', 'combat_reward', 'card_select', 'boss_relic', 'rest', 'shop'}.issubset(
+            {phase for act, phase in seen})
+        # Explicit Act-4 boundary fixture: keep the final live inventory and
+        # previous map, as the task's existing terminal projection requires.
+        env.thick.bc = None
+        env.thick.gc.act = 4
+        env._invalidate_backend_cache()
+        assert env._phase() == 'none'
+        assert_overworld_projection(env, monkeypatch)
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize('phase', ['rest', 'shop', 'event', 'combat_reward'])
+def test_overworld_globals_read_live_inventory_and_legacy_fallback(
+        upper_search_env_factory, monkeypatch, phase):
+    from env.core import action_space as A
+    assert hasattr(sts, 'OverworldGlobalObservationEncoder'), 'rebuild the explicitly selected extension'
+    env = upper_search_env_factory(phase)
+    before = assert_overworld_projection(env, monkeypatch)
+    gc = env.thick.gc
+    gc.set_deck([('SEARING_BLOW', 130), ('BASH', 1), ('BASH', 0), ('STRIKE_RED', 1)])
+    gc.set_relic_state([dict(id='Ancient Tea Set', counter=1), dict(id='Pen Nib', counter=7)])
+    gc.set_potion_state(['Fire Potion', 'EMPTY_POTION_SLOT', 'Block Potion'])
+    gc.cur_hp, gc.max_hp, gc.gold = 257, 301, 1234
+    env._invalidate_backend_cache()
+    actual = assert_overworld_projection(env, monkeypatch)
+    assert actual['deck_ids'].tobytes() != before['deck_ids'].tobytes()
+    assert actual['run_hp'].tobytes() != before['run_hp'].tobytes()
+    with monkeypatch.context() as patch:
+        patch.delattr(sts, 'OverworldGlobalObservationEncoder')
+        fallback = env._obs()
+    for key in actual:
+        assert actual[key].tobytes() == fallback[key].tobytes(), key
+        fallback[key].fill(99)
+    later = env._obs()
+    for key in actual:
+        assert actual[key].tobytes() == later[key].tobytes(), key
+    if phase == 'shop':
+        env.step(A.seg_base('SHOP_REMOVE'))
+        assert env._phase() == 'card_select'
+        assert_overworld_projection(env, monkeypatch)
+
+
 def assert_roots(encoder, envs):
     expected = [env._obs() for env in envs]
     actual = encoder.encode(envs)
@@ -297,7 +406,7 @@ def test_vector_observation_write_failure_releases_private_destination(
         def fail(*args, **kwargs):
             raise RuntimeError('injected observation write failure')
         with monkeypatch.context() as patch:
-            patch.setattr(encode, '_encode_global', fail)
+            patch.setattr(encode, '_encode_options', fail)
             with pytest.raises(RuntimeError, match='injected observation write failure'):
                 vec.step(np.array([action]))
         base = vec.envs[0].unwrapped

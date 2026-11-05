@@ -144,6 +144,17 @@ public:
     }
 };
 
+class OverworldGlobalObservationEncoder : public RunGlobalObservationEncoder {
+public:
+    using RunGlobalObservationEncoder::RunGlobalObservationEncoder;
+    py::dict encode(const sts::GameContext &gc,std::int64_t phase) const {
+        auto row=std::make_shared<upper_observation::Row>(layout_);
+        writeGlobal(*row,gc,gc.curHp,gc.maxHp,gc.gold,argStep_,false);
+        ObservationWriter(*row).cat("phase",0,phase);
+        return row->asDict();
+    }
+};
+
 class UpperRewardObservationEncoder : public RunGlobalObservationEncoder {
 public:
     using RunGlobalObservationEncoder::RunGlobalObservationEncoder;
@@ -687,6 +698,9 @@ void bindNeuralObservation(py::module_ &module) {
     py::class_<CombatGlobalObservationEncoder>(module,"CombatGlobalObservationEncoder")
         .def(py::init<py::dict,py::dict,py::dict>())
         .def("encode",&CombatGlobalObservationEncoder::encode);
+    py::class_<OverworldGlobalObservationEncoder>(module,"OverworldGlobalObservationEncoder")
+        .def(py::init<py::dict,py::dict,py::dict>())
+        .def("encode",&OverworldGlobalObservationEncoder::encode);
     py::class_<NeuralObservationDecoder>(module,"NeuralObservationDecoder")
         .def(py::init<py::dict,py::dict,py::dict,py::dict,py::dict,int,int,bool>())
         .def("set_card_stats", &NeuralObservationDecoder::setCardStats)
