@@ -38,6 +38,26 @@ ActionPrefixEntry &prefixEntry(const SmallActionFeatures &action) {
     }
     return entries[noslMix(hash) & (entries.size()-1)];
 }
+struct FullActionProjection {
+    std::uint64_t snapshot = 0;
+    int key = -1;
+    std::array<float,SMALL_ACTION> input{};
+    std::array<float,SMALL_EMBED> projected{};
+    float bias = 0;
+};
+
+FullActionProjection &projectionEntry(const SmallActionFeatures &action) {
+    thread_local std::array<FullActionProjection,2048> entries{};
+    std::uint64_t hint = static_cast<std::uint32_t>(action.keys.front());
+    // These fields select a bucket. Compare every action feature before reusing it.
+    for (int j : {5,16,17,18,22}) {
+        std::uint32_t word;
+        std::memcpy(&word, &action.x[j], sizeof(word));
+        hint = (hint << 5) ^ (hint >> 2) ^ word;
+    }
+    return entries[noslMix(hint) & (entries.size()-1)];
+}
+
 int cardKey(const CardInstance &c) {
     if (c.id == CardId::INVALID) throw std::logic_error("invalid compact card");
     return 3 + 2 * (static_cast<int>(c.id) - 1) + int(c.getUpgradeCount() > 0);
@@ -191,6 +211,16 @@ void SmallPlayoutNet::logits(const SmallFeatures &f, std::vector<float> &scores,
     const float *lin=bias+smallKeyCount()+SMALL_ACTION*SMALL_EMBED;
     scores.clear(); scores.reserve(f.actions.size());
     for (const auto &a:f.actions) {
+        auto *entry = a.keyCount == 1 ? &projectionEntry(a) : nullptr;
+        if (entry && entry->snapshot == snapshotId_ && entry->key == a.keys.front() &&
+                std::memcmp(entry->input.data(), a.x.data(), SMALL_ACTION*sizeof(float)) == 0) {
+            // The action projection is independent of state. Apply this state's z in the original order.
+            float v = entry->bias;
+            for (int i=0; i<SMALL_EMBED; ++i) v += z[i]*entry->projected[i];
+            if (!std::isfinite(v)) throw std::runtime_error("nonfinite compact policy score");
+            scores.push_back(v);
+            continue;
+        }
         // Native action features are sparse. Retain the original column order:
         // factoring z through the projection would change float cancellation.
         int columns[SMALL_ACTION], count=0;
@@ -233,6 +263,13 @@ void SmallPlayoutNet::logits(const SmallFeatures &f, std::vector<float> &scores,
             v+=lin[j]*a.x[j];
             const float x=a.x[j], *column=projectionColumns_.data()+j*SMALL_EMBED;
             for (int i=0;i<SMALL_EMBED;++i) e[i]+=column[i]*x;
+        }
+        if (entry) {
+            entry->snapshot = snapshotId_;
+            entry->key = a.keys.front();
+            entry->input = a.x;
+            std::copy_n(e, SMALL_EMBED, entry->projected.begin());
+            entry->bias = v;
         }
         for (int i=0;i<SMALL_EMBED;++i) v+=z[i]*e[i];
         if (!std::isfinite(v)) throw std::runtime_error("nonfinite compact policy score");

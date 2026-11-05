@@ -819,3 +819,20 @@ def test_turn_card_budget_finishes_pending_selection_then_ends_turn(combat_facto
     bc.execute(sts.Action(result['action']))
     assert bc.to_dict()['turn']>before and not sts.small_playout_turn_card_limit_reached(bc)
     assert any(sts.Action(b).action_type==sts.ActionType.CARD for b in sts.small_playout_features(bc)['action_bits'])
+
+
+def test_warm_action_projection_uses_current_state_and_target(combat_factory):
+    bc = combat_factory(['STRIKE_RED', 'DEFEND_RED', 'BASH'] * 3).thick.bc
+    bc.apply_custom_state({'hand': ['STRIKE_RED', 'DEFEND_RED', 'BASH']})
+    learner = SmallPlayoutLearner(seed=917)
+    roots = []
+    for block, hp in [(0, 35), (7, 35), (7, 29), (0, 35)]:
+        state = bc.clone()
+        state.set_player_block(block)
+        state.apply_custom_state({'monsters': [{'hp': hp}]})
+        roots.append(state)
+    weights = learner.policy.export()
+    reference = [sts.SmallPlayoutNet(weights).logits(state) for state in roots]
+    for state, scores in zip(roots, reference, strict=True):
+        assert learner.search.net.logits(state) == scores
+        assert learner.search.net.logits(state) == scores
