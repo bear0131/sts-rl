@@ -111,6 +111,55 @@ def assess(net, bank, labels, reference, ids, device):
     return np.concatenate(totals)
 
 
+def rescale_target(bank, target, power=1.0, log_prior=None):
+    covered = target > 0
+    logits = np.full(len(target), -np.inf)
+    logits[covered] = power * np.log(target[covered].astype(np.float64))
+    if log_prior is not None:
+        logits += log_prior
+    maxlog = np.maximum.reduceat(logits, bank.starts)
+    values = np.exp(logits - np.repeat(maxlog, bank.lengths))
+    return (
+        values / np.repeat(np.add.reduceat(values, bank.starts), bank.lengths)
+    ).astype(np.float32)
+
+
+@torch.no_grad()
+def anchored_comparison(net, bank, y, device, sharpness=None):
+    logprior = []
+    ids = np.arange(len(bank.lengths))
+    for start in range(0, len(ids), 512):
+        inputs, _, _ = bank.batch(ids[start : start + 512], device)
+        lp = net.forward_packed(*inputs).log_softmax(-1)
+        logprior.append(lp[inputs[-1]].cpu().numpy().astype(np.float64))
+    anchored = rescale_target(bank, y, log_prior=np.concatenate(logprior))
+
+    def mean_entropy(t):
+        pos = t[t > 0].astype(np.float64)
+        return float(-(pos * np.log(pos)).sum() / len(bank.lengths))
+
+    if sharpness is None:
+        desired = mean_entropy(anchored)
+        lo, hi = 1.0, 64.0
+        for _ in range(24):
+            mid = (lo + hi) / 2
+            if mean_entropy(rescale_target(bank, y, mid)) > desired:
+                lo = mid
+            else:
+                hi = mid
+        sharpness = (lo + hi) / 2
+    sharp = rescale_target(bank, y, sharpness)
+    return (
+        {"sharpened": sharp, "anchored": anchored},
+        sharpness,
+        dict(
+            returns=mean_entropy(y),
+            sharpened=mean_entropy(sharp),
+            anchored=mean_entropy(anchored),
+        ),
+    )
+
+
 def run(args):
     args.output.mkdir(parents=True, exist_ok=False)
     torch.set_num_threads(1)
@@ -151,6 +200,24 @@ def run(args):
     )
     predictions = {}
     init = copy.deepcopy(model).to(device)
+    if args.anchored_comparison:
+        labels, power, train_entropy = anchored_comparison(
+            init, train, labels["returns"], device
+        )
+        both, _, test_entropy = anchored_comparison(
+            init, test, both["returns"], device, power
+        )
+        result.update(
+            sharpness=power,
+            train_entropy=train_entropy,
+            test_entropy=test_entropy,
+            metrics=[
+                "expected_q",
+                "greedy_q",
+                "sharpened_target_kl",
+                "anchored_target_kl",
+            ],
+        )
     predictions["initial"] = assess(init, test, both, ref, holdout, device)
     for seed in args.seeds:
         for name, y in labels.items():
@@ -236,6 +303,7 @@ if __name__ == "__main__":
     p.add_argument("--seeds", type=int, nargs="+", default=[20261105, 20261117])
     p.add_argument("--batch", type=int, default=2048)
     p.add_argument("--micro", type=int, default=512)
+    p.add_argument("--anchored-comparison", action="store_true")
     args = p.parse_args()
     if (
         len(args.banks) < 2
