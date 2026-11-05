@@ -58,7 +58,8 @@ def test_native_writer_matches_materialized_model_inputs(combat_factory, contrac
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='captured transport requires a GPU runner')
 @pytest.mark.parametrize('profile_interval', [0, 2])
-def test_captured_transfers_own_buffers_and_return_independent_outputs(profile_interval):
+@pytest.mark.parametrize('device_outputs', [False, True])
+def test_captured_transfers_own_buffers_and_return_independent_outputs(profile_interval, device_outputs):
     import gc
 
     class Core(torch.nn.Module):
@@ -67,15 +68,20 @@ def test_captured_transfers_own_buffers_and_return_independent_outputs(profile_i
             return torch.cat((value, -value), dim=1), value
 
     cache = CombatLeafGraphs(Core().eval(), 'cuda', capacity=2, batch_multiple=32,
-                             profile_interval=profile_interval)
+                             profile_interval=profile_interval, device_outputs=device_outputs)
+    def array(value):
+        if device_outputs:
+            assert value.device.type == 'cuda'
+            return value.cpu().numpy()
+        return value
     saved = []
     for iteration, count in enumerate((17, 31, 4, 65, 33, 17)):
         observations = {str(dtype): (np.arange(count)[:, None] + iteration).astype(dtype)
                         for dtype in (np.int64, np.int32, np.float32, np.bool_)}
         expected = sum(v.astype(np.float32) for v in observations.values())
         logits, values = cache(observations, 1)
-        np.testing.assert_array_equal(logits, np.concatenate((expected, -expected), axis=1))
-        np.testing.assert_array_equal(values, expected[:, 0])
+        np.testing.assert_array_equal(array(logits), np.concatenate((expected, -expected), axis=1))
+        np.testing.assert_array_equal(array(values), expected[:, 0])
         saved.append((logits, values, expected))
         del observations
         gc.collect()
@@ -83,13 +89,55 @@ def test_captured_transfers_own_buffers_and_return_independent_outputs(profile_i
         torch.cuda.empty_cache()
     cache.clear()
     for logits, values, expected in saved:
-        np.testing.assert_array_equal(logits, np.concatenate((expected, -expected), axis=1))
-        np.testing.assert_array_equal(values, expected[:, 0])
+        np.testing.assert_array_equal(array(logits), np.concatenate((expected, -expected), axis=1))
+        np.testing.assert_array_equal(array(values), expected[:, 0])
     stats = cache.statistics()
     assert stats['evictions'] > 0 and stats['hits'] >= 2
     assert stats['profile_samples'] == (3 if profile_interval else 0)
     if profile_interval:
-        assert all(stats[key] > 0 for key in ('h2d_ms', 'replay_ms', 'd2h_ms'))
+        assert all(stats[key] > 0 for key in ('h2d_ms', 'replay_ms'))
+        assert stats['d2h_ms'] == 0 if device_outputs else stats['d2h_ms'] > 0
+
+
+def test_device_outputs_survive_pending_clear_and_stream_release():
+    import gc
+    assert torch.cuda.is_available(), 'explicit device-output qualification requires CUDA'
+
+    class Core(torch.nn.Module):
+        def combat_actor_critic(self, obs, **kwargs):
+            value = obs['x'].square()
+            return torch.cat((value, -value), dim=1), value
+
+    cache = CombatLeafGraphs(Core().eval(), 'cuda', capacity=2, batch_multiple=8,
+                             device_outputs=True)
+    stream = torch.cuda.Stream()
+    saved = []
+    with torch.cuda.stream(stream):
+        for iteration, count in enumerate((7, 7, 17, 31, 2, 9)):
+            data = np.arange(count, dtype=np.float32)[:, None] + iteration
+            expected = data.copy() ** 2
+            finish = cache({'x': data}, None, deferred=True)
+            data.fill(-1000)
+            with pytest.raises(RuntimeError, match='finish pending'):
+                cache({'x': data}, None)
+            # clear must settle pending work before releasing all graph pools.
+            if iteration % 2:
+                cache.clear()
+            actual = finish()
+            assert finish() is actual
+            saved.append((*actual, expected))
+            del finish
+            if iteration % 2:
+                gc.collect()
+                torch._C._cuda_clearCublasWorkspaces()
+                torch.cuda.empty_cache()
+                temporary = torch.empty(8*1024*1024, device='cuda').fill_(1234)
+                del temporary
+        cache.clear()
+    torch.cuda.current_stream().wait_stream(stream)
+    for logits, values, expected in saved:
+        np.testing.assert_array_equal(logits.cpu().numpy(), np.concatenate((expected, -expected), axis=1))
+        np.testing.assert_array_equal(values.cpu().numpy(), expected[:, 0])
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='BF16 reduction validation requires a GPU runner')

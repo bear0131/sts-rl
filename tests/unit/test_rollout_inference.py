@@ -6,6 +6,14 @@ import pytest
 from rl.search.rollout_inference import ExactInputCache
 
 
+@pytest.mark.parametrize('amp,flags', [('bf16', {}), ('off', {'joint_actions': True}),
+                                     ('off', {'autoregressive_actions': True})])
+def test_device_graph_outputs_reject_unsupported_cores_before_cuda_initialization(amp, flags):
+    from rl.search.inference import CombatLeafGraphs
+    with pytest.raises(ValueError, match='device outputs require'):
+        CombatLeafGraphs(SimpleNamespace(**flags), 'cuda', amp=amp, device_outputs=True)
+
+
 def test_exact_cache_reuses_across_batches_and_owns_outputs():
     cache = ExactInputCache(4096)
     calls = []

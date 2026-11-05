@@ -53,7 +53,7 @@ class UpperPolicyInference:
                 and getattr(getattr(core, 'upper_config', None), 'architecture', None)
                     == 'upper-latent-actions-v1'):
             self.graphs = CombatLeafGraphs(_UnifiedUpperCore(core), device, amp='off',
-                capacity=8, batch_multiple=8, compile_forward=False)
+                capacity=8, batch_multiple=8, compile_forward=False, device_outputs=True)
 
     def __enter__(self):
         if self.closed:
@@ -78,8 +78,7 @@ class UpperPolicyInference:
         logits, values = self.graphs(observations, None)
         # Keep the existing device-side masking/log-probability computation and
         # per-game CPU categorical RNG. These small tensors own their storage.
-        return (torch.as_tensor(logits, device=self.device),
-                torch.as_tensor(values[:, None], device=self.device))
+        return logits, values[:, None]
 
     def statistics(self):
         values = self.graphs.statistics() if self.graphs is not None else dict.fromkeys(GRAPH_METRICS, 0)

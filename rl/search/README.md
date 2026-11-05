@@ -33,6 +33,15 @@ shape may select different GEMM kernels: padded-vs-original floating-point outpu
 are not guaranteed bitwise, and search trajectories can consequently diverge.
 CPU CI cannot validate CUDA.
 
+Unified-upper FP32 inference uses this cache with `device_outputs=True` to keep
+logits and values on the GPU for its existing action distribution. Returned
+tensors own their storage across replay, eviction and collection cleanup. The
+completion event still protects pinned input reuse; device clones record their
+stream before graph pools can be released. This mode supports non-joint FP32
+cores with independent pools only. Default combat leaf outputs remain owned
+NumPy arrays, and autoregressive shared-scratch graphs cannot use device outputs.
+No action masking, probability calculation or per-game sampling moves devices.
+
 `--leaf-amp-mode fp16` selects FP16 only for autoregressive entity/outer-return
 leaf graphs. The default follows `--amp-mode`; learner, root inference and the
 frozen upper teacher retain their existing precision. Other cores reject this

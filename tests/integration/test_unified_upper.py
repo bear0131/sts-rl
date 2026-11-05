@@ -101,6 +101,7 @@ def test_upper_policy_inference_legacy_fallback(unified_env):
 def test_upper_cuda_graph_shapes_eviction_release_and_live_weights(unified_env):
     import gc
     from rl.search.rollout_inference import UpperPolicyInference
+    from rl.search.inference import CombatLeafGraphs
     assert torch.cuda.is_available(), 'explicit graph qualification requires CUDA'
     previous = torch.get_float32_matmul_precision()
     torch.set_float32_matmul_precision('highest')
@@ -118,15 +119,23 @@ def test_upper_cuda_graph_shapes_eviction_release_and_live_weights(unified_env):
         return data
     def reference(data):
         return core.actor_critic({k: torch.as_tensor(v, device='cuda') for k, v in data.items()})
+    host = None
     try:
         with UpperPolicyInference(core, 'cuda') as inference, torch.inference_mode():
             inference.graphs.capacity = 2
+            host = CombatLeafGraphs(inference.graphs.core, 'cuda', capacity=2,
+                                    batch_multiple=8, compile_forward=False)
             anchor = batch(1)
             anchor_result = inference(anchor)
             saved = tuple(x.clone() for x in anchor_result)
             for count in (9, 17, 25, 33, 49, 64):
                 data = batch(count)
-                torch.testing.assert_close(inference(data), reference(data), atol=2e-5, rtol=2e-5)
+                actual = inference(data)
+                old_logits, old_values = host(data, None)
+                old = (torch.as_tensor(old_logits, device='cuda'),
+                       torch.as_tensor(old_values[:, None], device='cuda'))
+                torch.testing.assert_close(actual, old, atol=0, rtol=0)
+                torch.testing.assert_close(actual, reference(data), atol=2e-5, rtol=2e-5)
                 temporary = torch.empty(8*1024*1024, device='cuda').fill_(.125)
                 del temporary
                 gc.collect()
@@ -153,6 +162,8 @@ def test_upper_cuda_graph_shapes_eviction_release_and_live_weights(unified_env):
                 raise RuntimeError('abort collection')
         assert aborted.closed and not aborted.graphs.entries
     finally:
+        if host is not None:
+            host.clear()
         core.to('cpu')
         torch.cuda.empty_cache()
         torch.set_float32_matmul_precision(previous)

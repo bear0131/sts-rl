@@ -19,7 +19,7 @@ from rl.policies.precision import bf16_autocast, fp16_autocast
 class CombatLeafGraphs:
     def __init__(self, core, device, *, amp='off', capacity=32, failure_path=None,
                  profile_interval=0, batch_multiple=0, compile_forward=True,
-                 blocking_wait=False):
+                 blocking_wait=False, device_outputs=False):
         if torch.device(device).type != 'cuda':
             raise ValueError('combat CUDA graphs require a CUDA device')
         if capacity < 1 or amp not in ('off', 'bf16', 'fp16'):
@@ -27,7 +27,11 @@ class CombatLeafGraphs:
         if amp == 'fp16' and not (getattr(core, 'autoregressive_actions', False)
                                   and getattr(core, 'graph_actor_critic', None) is not None):
             raise ValueError('FP16 leaf graphs require an autoregressive entity core')
+        if device_outputs and (amp != 'off' or getattr(core, 'joint_actions', False)
+                               or getattr(core, 'autoregressive_actions', False)):
+            raise ValueError('device outputs require a non-joint FP32 core with independent graph pools')
         self.core, self.device, self.amp, self.capacity = core, device, amp, capacity
+        self.device_outputs = bool(device_outputs)
         # The callable belongs to this runtime, never the saved policy. Dynamic
         # batch/relic dimensions avoid compiling one program per graph shape.
         # Fusion changes floating point rounding, not model/search geometry.
@@ -209,13 +213,22 @@ class CombatLeafGraphs:
                 # Keep the graph, pinned buffers and event alive until every
                 # transfer completes. CPU-only settlement may run in between.
                 entry['done'].synchronize()
-                output = entry['host_output_array'][:batch].copy()
+                if self.device_outputs:
+                    # Own the returned storage so replay/eviction cannot alter
+                    # it. Track the clone's stream before releasing a graph's
+                    # private pool; the clone may still be queued at clear().
+                    with torch.inference_mode():
+                        output = entry['output'][:batch].clone()
+                    entry['output'].record_stream(torch.cuda.current_stream(self.device))
+                else:
+                    output = entry['host_output_array'][:batch].copy()
                 result = output[:, :-1], output[:, -1]
                 if self.profile_interval and (self.hits+self.captures) % self.profile_interval == 0:
                     events = entry['events']
                     self.h2d_ms += events[0].elapsed_time(events[1])
                     self.replay_ms += events[1].elapsed_time(events[2])
-                    self.d2h_ms += events[2].elapsed_time(events[3])
+                    if not self.device_outputs:
+                        self.d2h_ms += events[2].elapsed_time(events[3])
                     self.profile_samples += 1
                 return result
             finally:
@@ -297,7 +310,8 @@ class CombatLeafGraphs:
         # cannot leave another graph pointing at an eager allocation.
         torch._C._cuda_clearCublasWorkspaces()
         graph = torch.cuda.CUDAGraph()
-        host_output = torch.empty(warm_output.shape, dtype=warm_output.dtype, pin_memory=True)
+        host_output = (None if self.device_outputs else
+                       torch.empty(warm_output.shape, dtype=warm_output.dtype, pin_memory=True))
         events = ([torch.cuda.Event(enable_timing=True, external=True,
                                    blocking=self.blocking_wait and index == 3) for index in range(4)]
                   if self.profile_interval else None)
@@ -311,12 +325,14 @@ class CombatLeafGraphs:
             if events: events[1].record()
             output = forward()
             if events: events[2].record()
-            host_output.copy_(output, non_blocking=True)
+            if host_output is not None:
+                host_output.copy_(output, non_blocking=True)
             done.record()
         current.wait_stream(stream)
         torch._C._cuda_clearCublasWorkspaces()
         entry.update(graph=graph, host_output=host_output,
-                     host_output_array=host_output.numpy(), events=events, done=done)
+                     host_output_array=None if host_output is None else host_output.numpy(),
+                     events=events, done=done)
         if self._scratch_pool is None:
             entry['output'] = output
         # Shared-pool graphs must retain no device result: later captures may
