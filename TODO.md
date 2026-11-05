@@ -586,3 +586,5 @@
 | COMBAT38-STATE-COMPRESSION | 已评估，未改训练 | `env/search/token_context.py`、`rl/policies/entity_action_playout.py`；真实根验证压缩上传复原、空槽遮挡影响和模型位置预算；四rank核对包含搜索的推进数。见 worklog/2026-11-05.md#combat38-state-compression。 |
 
 | COMBAT38-NINE-TOKEN-SPEED | 已完成25核独立速度评测 | `rl/policies/entity_action_playout.py` 对照两份上下文投影、真实根部回放和大批CPU/GPU前推；见worklog/2026-11-05.md#combat38-nine-token-speed。 |
+
+| COMBAT38-NINE-ONLINE480 | 已验根部480整局与链内1024满批，扩容测量中 | `rl/search/paired_token_rollout.py`、原生SmallPlayout共享链；区分根与链容量，使用训练过的2×64实测更大并行批次。 |
