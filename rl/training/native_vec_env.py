@@ -396,12 +396,13 @@ class NativeSearchVecEnv(DummyVecEnv):
         return {index: self.env_method(method_name, *args, indices=index, **kwargs)[0]
                 for index, (args, kwargs) in calls.items()}
 
-    def configure_small_playout(self, pair):
+    def configure_small_playout(self, pair, *, batch_factory=None):
         from env.search.small_playout import SmallPlayoutBatch
         if hasattr(self, 'small_playout_batch') and self.small_playout_batch.samples:
             raise RuntimeError('previous compact training samples were not consumed')
         if not hasattr(self, 'small_playout_batch') or self.small_playout_batch.pair['sha256'] != pair['sha256']:
-            self.small_playout_batch = SmallPlayoutBatch(self.native_search_batch.envs,
+            factory = batch_factory or SmallPlayoutBatch
+            self.small_playout_batch = factory(self.native_search_batch.envs,
                                                        self.native_search_batch.pool, pair)
         self.small_playout_batch.stats = {}
         self._small_overlap_stats = dict(prefetched_steps=0, step_call_seconds_sum=0.)

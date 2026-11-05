@@ -15,13 +15,13 @@ from torch import nn
 CONTRACT = 'sts1-small-playout-v1'
 
 
-def export_online_search_pair(policy, *, collect_samples, paired_worldlines=False):
+def export_online_search_pair(policy, *, collect_samples, paired_worldlines=False, guide_only=False):
     """Snapshot the online lower policy with its shared collection search budget."""
     import slaythespire as sts
     from env.search.small_playout import SEARCH_CONTRACT, PAIRED_CONTRACT
     if policy.key_count != sts.small_playout_key_count():
         raise ValueError('native/Python action vocabulary mismatch')
-    weights = policy.export()
+    weights = policy.export_guide() if guide_only else policy.export()
     context = getattr(policy, 'context_mode', 'none')
     contract = CONTRACT if context == 'none' else 'sts1-small-playout-public-v1'
     digest = hashlib.sha256(weights.tobytes())
@@ -55,7 +55,7 @@ class OnlinePlayoutConfig:
 
     def __post_init__(self):
         if (not all(math.isfinite(v) for k, v in asdict(self).items() if k not in ('optimizer','context_mode'))
-                or self.context_mode not in ('none','root','turn','state')
+                or self.context_mode not in ('none','root','turn','state','token-root-64x2')
                 or self.optimizer not in ('adam', 'adamw')
                 or not 0 <= self.target_mix <= 1 or self.weight_decay < 0
                 or self.key_count < 3 or self.learning_rate <= 0 or self.max_grad_norm < 0

@@ -164,7 +164,7 @@ class ActionTokenPolicy(SmallPlayoutPolicy):
             x = block(x, present)
         return self.final(x)
 
-    def forward_packed(
+    def scores_and_guide(
         self, state, actions, keys, slots, features, symbols, sources, targets, mask
     ):
         old = super().forward_packed(state, actions, keys, slots, mask)
@@ -184,9 +184,14 @@ class ActionTokenPolicy(SmallPlayoutPolicy):
         )
         if self.coupled:
             bonus = bonus + (self.left(source) * self.right(target)).sum(-1) * 0.25
-        return old + old.new_zeros(mask.numel()).index_copy(0, slots, bonus).view_as(
+        score = old + old.new_zeros(mask.numel()).index_copy(0, slots, bonus).view_as(
             mask
         )
+
+        return score, old
+
+    def forward_packed(self, *inputs):
+        return self.scores_and_guide(*inputs)[0]
 
     def forward(self, *args):
         raise ValueError(

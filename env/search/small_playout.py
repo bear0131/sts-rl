@@ -67,6 +67,12 @@ class SmallPlayoutBatch:
                     out[index] = decision
         return {index: out[index] for index in calls}
 
+    def dome_policy(self, env, cfg):
+        features = sts.small_playout_features(env.thick.bc)
+        logits = (self.net.conditioned_logits(env.thick.bc, cfg) if self.adapter is not None
+                  else self.net.logits(env.thick.bc))
+        return features['action_bits'], logits
+
     def prepare(self, calls):
         """Prepare independent roots; only the owning control thread mutates envs."""
         out, jobs = {}, []
@@ -91,13 +97,11 @@ class SmallPlayoutBatch:
             if 'Runic Dome' in relics:
                 # No search may consume the simulator's concealed current move.
                 # The compact feature encoder suppresses every intent feature.
-                f = sts.small_playout_features(env.thick.bc)
-                raw = (self.net.conditioned_logits(env.thick.bc,cfg) if self.adapter is not None
-                       else self.net.logits(env.thick.bc))
+                bits_by_index, raw = self.dome_policy(env, cfg)
                 logits = np.asarray(raw, np.float64)
                 p = np.exp(logits-logits.max()); p /= p.sum()
                 chosen = np.random.default_rng(nonce).choice(len(p), p=p)
-                bits = f['action_bits'][chosen]
+                bits = bits_by_index[chosen]
                 out[index] = env._apply_rulebase_turn_decision(bits, {'small_dome_policy_decisions': 1})
                 self.stats['dome_policy_decisions'] = self.stats.get('dome_policy_decisions', 0)+1
                 self.stats['dome_turn_card_limit_decisions'] = self.stats.get('dome_turn_card_limit_decisions', 0)+int(sts.small_playout_turn_card_limit_reached(env.thick.bc))
@@ -198,9 +202,14 @@ class SmallPlayoutStream:
             ready = wait(self._pending, timeout=timeout, return_when=FIRST_COMPLETED).done
         out, self._inline = self._inline, {}
         try:
-            for future in ready:
-                job = self._pending.pop(future)
-                out[job[0]] = self.batch.accept(job, future.result())
+            if hasattr(self.batch, 'accept_ready'):
+                items = [(self._pending.pop(future), future.result()) for future in ready]
+                if items:
+                    out.update(self.batch.accept_ready(items))
+            else:
+                for future in ready:
+                    job = self._pending.pop(future)
+                    out[job[0]] = self.batch.accept(job, future.result())
         except BaseException:
             self.close()
             raise

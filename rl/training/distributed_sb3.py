@@ -2768,10 +2768,14 @@ def main() -> None:
             from rl.training.small_playout import configure_collection
             configure_collection(model, model.get_env())
             args.small_playout_search_contract = model.small_playout_search_contract
-            args.nosl_is_az_combat_strategy_version = ('sts1-small-playout-online-terminal-v2'
-                if hasattr(model.policy, 'small_playout') else 'sts1-small-playout-pair-v1')
-            print(f'[rank {args.rank}] compact CPU search common/elite/boss=250/250/1000, '
-                  'playout cap=200, tree cap=1024; legacy NOSL leaf settings are inactive', flush=True)
+            if getattr(model.policy, 'small_playout_config', None) and model.policy.small_playout_config.get('context_mode') == 'token-root-64x2':
+                args.nosl_is_az_combat_strategy_version = args.small_playout_search_contract
+                print(f'[rank {args.rank}] paired chains 250/250/1000, Transformer roots, learned CPU guide', flush=True)
+            else:
+                args.nosl_is_az_combat_strategy_version = ('sts1-small-playout-online-terminal-v2'
+                    if hasattr(model.policy, 'small_playout') else 'sts1-small-playout-pair-v1')
+                print(f'[rank {args.rank}] compact CPU search common/elite/boss=250/250/1000, '
+                      'playout cap=200, tree cap=1024; legacy NOSL leaf settings are inactive', flush=True)
     else:
         print(f"[rank {args.rank}] combat strategy: model", flush=True)
     if args.nosl_is_az_updates is not None:

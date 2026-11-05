@@ -578,3 +578,5 @@
 | LOWER-RETURN-LABEL | 完成：原UCT下960局新旧标签与锐化对照，共享链与各新标签组合另960局；代价敏感69.01%，旧标签64.06% | 183成熟策略、同批实际根对比80%推荐监督与按HP/Boss胜率差距形成的软标签；独立回报和完整自然局胜率验收。见worklog/2026-11-05.md#lower-return-label用动作回报差距设计下层监督。 |
 
 | SEARCH-ACTION-BUDGET | 已完成真实组合数、校准预算、525个独立多选根与960同种子整局；整局配置差异区间含零 | 线性与大分支折缓预算、真实多选按手牌槽二分，与同权重固定搜索比较胜率、实际模拟总量及时间。见worklog/2026-11-05.md#search-action-budget随真实选择数调整预算及逐卡多选。 |
+
+| COMBAT-TRANSFORMER-FRESH | 新训练已实启，复核四机轮时与checkpoint | `rl/policies/token_regret.py`、`rl/search/paired_token_rollout.py`；随机初值上下层，真实共享链采样、优化器同步及完整局保存，记录耗时。见 worklog/2026-11-05.md#combat-transformer-fresh。 |

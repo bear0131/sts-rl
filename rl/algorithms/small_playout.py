@@ -42,7 +42,10 @@ def update_online(model, *, rank=0, world_size=1, average=lambda values: values,
     if not out['samples']:
         return out
     net, optimizer = model.policy.small_playout, model.policy.small_playout_optimizer
-    before = net.export()
+    regret = cfg.context_mode == 'token-root-64x2'
+    def weights():
+        return torch.nn.utils.parameters_to_vector(list(net.parameters())).detach().cpu().numpy() if regret else net.export()
+    before = weights()
     model._sync_device()
     started = time.perf_counter()
     totals = dict(loss=0., entropy=0., target_entropy=0., teacher_top1=0., uniform_ce=0.)
@@ -51,6 +54,8 @@ def update_online(model, *, rank=0, world_size=1, average=lambda values: values,
         totals.update(target_entropy=prepared.target_entropy * cfg.epochs,
                       uniform_ce=prepared.uniform_ce * cfg.epochs)
     device_totals = {key: [] for key in ('loss', 'entropy', 'teacher_top1')}
+    if regret:
+        device_totals.update(target_kl=[], guide_kl=[])
     norms = []
     model.policy.set_training_mode(True)
     with train_phase(model, small_playout=True):
@@ -64,9 +69,14 @@ def update_online(model, *, rank=0, world_size=1, average=lambda values: values,
                     tensors, target, teacher = prepared.batch(
                         indices[offset:offset+cfg.micro_batch_size], model.device)
                     # Compact learner is FP32 even when upper PPO uses BF16.
-                    logp = torch.log_softmax(net.forward_packed(*tensors), -1).masked_fill(~tensors[-1], 0.)
-                    loss = -(target * logp).sum()
-                    entropy = -(logp.exp() * logp * tensors[-1]).sum()
+                    if regret:
+                        loss, entropy, logp, target_kl, guide_kl = net.update_terms(tensors, target)
+                        device_totals['target_kl'].append(target_kl.detach())
+                        device_totals['guide_kl'].append(guide_kl.detach())
+                    else:
+                        logp = torch.log_softmax(net.forward_packed(*tensors), -1).masked_fill(~tensors[-1], 0.)
+                        loss = -(target * logp).sum()
+                        entropy = -(logp.exp() * logp * tensors[-1]).sum()
                     if not torch.isfinite(loss):
                         raise FloatingPointError('nonfinite online compact loss')
                     (loss / mean_count).backward()
@@ -85,9 +95,10 @@ def update_online(model, *, rank=0, world_size=1, average=lambda values: values,
     totals = average(totals)
     mean_samples = out['samples'] / world_size * cfg.epochs
     out.update({key: value / mean_samples for key, value in totals.items()})
-    out['target_kl'] = out['loss'] - out['target_entropy']
+    if not regret:
+        out['target_kl'] = out['loss'] - out['target_entropy']
     out['grad_norm'] = float(torch.stack(norms).mean())
-    out['parameter_l2_change'] = float(np.linalg.norm(net.export()-before))
+    out['parameter_l2_change'] = float(np.linalg.norm(weights()-before))
     model.small_playout_optimizer_steps = getattr(model, 'small_playout_optimizer_steps', 0) + out['updates']
     out['optimizer_steps_total'] = model.small_playout_optimizer_steps
     model._small_playout_samples = []
