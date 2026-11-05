@@ -1721,19 +1721,26 @@
     }
   },
   "monitor": {
-    "root": "/root/critic131072-training-20261105",
-    "run_id": "combat37-critic131072-fresh-r1",
-    "label": "COMBAT37 对照 · critic131072",
+    "root": "/root/rollout-independent-training-20261104",
+    "run_id": "combat37-upper-independent-r1",
+    "label": "COMBAT37 · 新初值 λ=.97 / 1920局",
     "branch_step": 0,
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
+    "continuation_of": [
+      {
+        "root": "/root/upper-throughput-20261104",
+        "run_id": "combat37-upper-fresh-lambda097-r1",
+        "through_step": 132648816
+      }
+    ],
     "status": "training",
-    "note": "原四机同一大critic对照持续训练；135普通恢复后136/137完整保存与原配置核验通过。成熟167/1920局速度对照161.79→159.14秒（6730原子操作/s），仍未达150秒；提速实验继续在25核机隔离进行。",
-    "updated_at": "2026-11-05T07:19:02.858897+08:00"
+    "note": "按用户要求从原版183轮/global147390654普通恢复持续训练，critic32768及原参数保持；大critic对照在211轮完整保存停止，完整状态已备份25核。原COMBAT37历史连续展示。",
+    "updated_at": "2026-11-05T10:48:01.455403+08:00"
   },
   "large_critic_fresh_comparison": {
-    "status": "continuous fresh training directly started on the original four hosts at user request; no staged qualification",
+    "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
     "intent": "User requests a fresh large-critic comparison on the original four hosts; the 25-core host stores backups and continues rollout optimization.",
     "root": "/root/critic131072-training-20261105",
     "run_id": "combat37-critic131072-fresh-r1",
@@ -1795,8 +1802,11 @@
       "global_step": 147390654,
       "receipt": "verified.json"
     },
-    "continuous": true,
-    "user_override": "不做验证，直接启动完整训练，有问题再说"
+    "continuous": false,
+    "user_override": "combat37 的对照效果明显比原本的 combat37 要差，恢复原本的 combat37 继续训练吧",
+    "final_round": 211,
+    "final_global_step": 159663413,
+    "final_backup": "/root/critic131072-original-restore-backup-20261105"
   },
   "search_budget_probe": {
     "status": "complete",
@@ -1846,5 +1856,23 @@
     "result_path": "/root/search-budget-20261105/results.json",
     "local_summary": "runs/local/search-budget/summary.json",
     "worklog": "worklog/2026-11-05.md#combat37-search-budget三档96局配对结果"
+  },
+  "original_combat37_resume": {
+    "status": "continuous trainers started; restoring full state",
+    "source_round": 183,
+    "source_global_step": 147390654,
+    "root": "/root/rollout-independent-training-20261104",
+    "run_id": "combat37-upper-independent-r1",
+    "critic_batch": 32768,
+    "operation": "operations/restore-original-20261105",
+    "native_sha256": "a736f74ca56de9c3a24974e51d444126264eabb364b631c4a7f4700651b7e98e",
+    "runtime": "untouched original production source; only checkpoint and resume-state arguments changed",
+    "automatic_restart": false,
+    "trainer_pids": [
+      706676,
+      592664,
+      582705,
+      638987
+    ]
   }
 }
