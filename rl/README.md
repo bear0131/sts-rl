@@ -463,6 +463,19 @@ Python `NativeTurnPlanner.choose` 保留为串行参考。符文圆顶与未完�
 
 `distributed_sb3 --continuous` supports fixed-learning-rate, frozen-upper inner-only NOSL and joint-upper small-playout training. The latter retains the upper and compact policy's own fixed learning rates and update budgets. Full recovery saves and a coordinated `--stop-file` are required. It has no update or wall-time target; do not combine it with `--total-steps` or a finite `--updates` target. Omit `--completed-game-budget` when there should also be no completed-game cap. Resident deployment uses `continuous: true` with null round/time limits. Finite experiments retain their explicit budgets.
 
+`distributed_sb3 --training-scope lower --fork-state <bundle>` permits bounded
+lower-only experiments from a mature joint checkpoint. It keeps the upper
+actor/critic and other learners' parameters and optimizer states unchanged,
+while retaining the existing collection, search, lower update, reporting and
+recovery paths. Supported configuration: native vector backend, online
+small-playout, inner-only NOSL, no replay, reasoning or upper auxiliary search.
+Set a finite `--updates` and iteration budget for experiments. Omitted scope
+inherits the saved checkpoint (`all` for historical checkpoints); changing it
+on ordinary `--resume-state` is rejected. Frozen upper rows report actual
+decision counts and `upper/frozen=1`, `upper/updates=0`, without fabricated loss
+measurements. Completed upper samples are released; unfinished macro actions
+remain available for collection and recovery.
+
 `configs/train/small_playout_upper_aux_768.args` forks the upper-auxiliary experiment from the preserved round-215 bundle, retaining 384 environments per rank and 10 upper updates while collecting 768 vector steps. Use this standalone config instead of layering it over the finite 512-step config. Preserve the source environments, optimizers and learner RNG on fork. Log rounds from the explicit step anchor: `215 + (global_steps - 169082880) / (4 * 384 * 768)`; dashboard comparisons use `branch_round: 215`, `branch_step: 169082880` and each run's own `iteration_steps`. Equal round counts across the two lengths represent different sample budgets.
 
 `combat-outer-return-raw-trajectory-mix-v1` 保持876冻结、下层从零训练，

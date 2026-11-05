@@ -153,6 +153,22 @@ def _training_batches(records, micro_batch_size):
         )
 
 
+def finish_frozen_collection(model, *, world_size=1, average=lambda values: values):
+    """Report real decisions and release finished records, retaining unfinished macros.
+
+    A frozen learner has no loss/gradient measurement. Do not fabricate zeros for
+    those metrics or call the upper optimizer, even with a zero learning rate.
+    """
+    stats = average(dict(count=float(len(model._upper_completed)),
+        censored=float(getattr(model, '_upper_censored', 0)),
+        pending=float(sum(x is not None for x in model._upper_pending)),
+        **reward_monitor.counts(model), **campfire_monitor.counts(model)))
+    model._upper_completed = []
+    return dict(frozen=1., updates=0., samples=stats['count'] * world_size,
+        censored=stats['censored'] * world_size, pending=stats['pending'] * world_size,
+        **reward_monitor.metrics(stats, world_size), **campfire_monitor.metrics(stats, world_size))
+
+
 def update_upper(model, *, rank=0, world_size=1, average=lambda values: values, synchronize=None):
     """Configured full-batch PPO epochs, weighted by actual global row count.
 

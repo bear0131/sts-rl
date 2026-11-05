@@ -1,8 +1,35 @@
 """The lower replacement must retain the actual TRAIN47 upper runtime contract."""
 import json
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from rl.training.distributed_sb3 import build_parser
+
+
+@pytest.mark.parametrize('invalid', ['resume-change', 'replay', 'reasoning', 'auxiliary', 'backend'])
+def test_lower_only_scope_rejects_incompatible_training(invalid):
+    from rl.training.distributed_sb3 import configure_training_scope
+    args = build_parser().parse_args(['--rank', '0', '--world-size', '1',
+        '--training-scope', 'lower', '--vec', 'native', '--no-nosl-is-az-replay',
+        '--reasoning-updates', '0', '--reasoning-coef', '0', '--no-interactive-reasoning'])
+    model = SimpleNamespace(policy=SimpleNamespace(core=SimpleNamespace(joint_upper=True),
+        small_playout=object(), upper_auxiliary_config=None), nosl_is_az=True,
+        nosl_is_az_inner_only=True, nosl_is_az_combat_strategy='small-playout')
+    if invalid == 'resume-change':
+        args.resume_state = Path('existing-run')
+    elif invalid == 'replay':
+        args.nosl_is_az_replay_enabled = True
+    elif invalid == 'reasoning':
+        args.reasoning_updates = 1
+    elif invalid == 'auxiliary':
+        model.policy.upper_auxiliary_config = {'loss_coef': .02}
+    else:
+        args.vec = 'dummy'
+    with pytest.raises(ValueError, match='training scope'):
+        configure_training_scope(model, args)
+    assert not hasattr(model, 'training_scope')
 
 
 def test_lower_replacement_preserves_upper_except_authorized_memory_chunk():

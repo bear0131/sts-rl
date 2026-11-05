@@ -7,6 +7,21 @@ from env.core import encode, vocab as V
 from rl.algorithms.upper_ppo import capture_step, macro_advantages, strategic_reward
 
 
+def test_frozen_upper_releases_completed_records_but_keeps_pending_and_observed_metrics():
+    from rl.algorithms.upper_ppo import finish_frozen_collection
+    pending = dict(reward=.2, action=17)
+    model = SimpleNamespace(_upper_completed=[object(), object()],
+        _upper_pending=[pending, None], _upper_censored=1,
+        _upper_reward_counts={'reward_gold_resolved': 2, 'reward_gold_taken': 1})
+    result = finish_frozen_collection(model, world_size=2)
+    assert model._upper_completed == []
+    assert model._upper_pending[0] is pending
+    assert result['samples'] == 4 and result['pending'] == 2
+    assert result['frozen'] == 1 and result['updates'] == 0
+    assert result['reward_gold_pickup_rate'] == .5
+    assert not any('loss' in key or 'grad' in key for key in result)
+
+
 def test_macro_discount_is_per_upper_action_and_episode_isolated():
     records = [dict(env=0, episode=0, terminal=False, reward=.2, value=.4),
                dict(env=1, episode=0, terminal=True, reward=1., value=.5),

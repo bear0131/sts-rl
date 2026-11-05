@@ -546,6 +546,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
     parser.add_argument("--training-state-dir", type=Path, help="Per-rank policy/Adam/replay/RNG recovery generations")
     parser.add_argument("--resume-state", type=Path, help="Explicit complete per-rank recovery generation")
+    parser.add_argument('--training-scope', choices=('all', 'lower'), default=None,
+                        help='Train all configured learners, or only the online compact lower policy. '
+                             'Omitted inherits the checkpoint; changing a resumed scope requires a fork.')
     parser.add_argument(
         "--fork-state",
         type=Path,
@@ -2184,6 +2187,29 @@ def apply_unified_upper_update_overrides(model, args):
     args.upper_config = asdict(updated)
 
 
+def configure_training_scope(model, args):
+    """Persist the learner boundary without changing the collection/search policy."""
+    saved = getattr(model, 'training_scope', 'all')
+    requested = args.training_scope or saved
+    if saved not in ('all', 'lower') or requested not in ('all', 'lower'):
+        raise ValueError('unknown checkpoint training scope')
+    if args.resume_state is not None and requested != saved:
+        raise ValueError('changing training scope requires --fork-state')
+    if requested == 'lower' and not (
+        joint_upper(model) and hasattr(model.policy, 'small_playout')
+        and model.nosl_is_az and model.nosl_is_az_inner_only
+        and model.nosl_is_az_combat_strategy == 'small-playout'
+        and not args.nosl_is_az_replay_enabled and args.vec == 'native'
+        and args.reasoning_updates == 0 and args.reasoning_coef == 0
+        and not args.interactive_reasoning
+        and getattr(model.policy, 'upper_auxiliary_config', None) is None
+        and not getattr(model, '_frozen_upper', False)
+    ):
+        raise ValueError('lower training scope requires native online small-playout, joint upper, '
+                         'inner-only NOSL, and no replay, reasoning or upper auxiliary training')
+    model.training_scope = args.training_scope = requested
+
+
 def main() -> None:
     args = build_parser().parse_args()
     if not np.isfinite(args.iteration_timeout_seconds) or args.iteration_timeout_seconds < 0:
@@ -2783,6 +2809,7 @@ def main() -> None:
                           if args.independent_rollout_config is not None else None)
     args.independent_rollout_config = configure_independent(
         model, independent_config, fork=args.fork_state is not None)
+    configure_training_scope(model, args)
     if args.independent_rollout_config is not None:
         if args.reasoning_updates or args.reasoning_coef or args.interactive_reasoning:
             raise ValueError('independent cohorts do not support reasoning training')
@@ -3288,7 +3315,8 @@ def main() -> None:
                 graph_release_sec = time.perf_counter() - release_started
 
             model.policy.set_training_mode(True)
-            model._update_learning_rate(model.policy.optimizer)
+            if args.training_scope != 'lower':
+                model._update_learning_rate(model.policy.optimizer)
             clip_range = model.clip_range(model._current_progress_remaining)
             clip_range_vf = (
                 model.clip_range_vf(model._current_progress_remaining)
@@ -3436,7 +3464,11 @@ def main() -> None:
                     average=lambda values: average_scalar_dict(values, ring_transport), synchronize=sync_small)
             upper_update = {}
             upper_started = time.perf_counter()
-            if joint_upper(model):
+            if joint_upper(model) and args.training_scope == 'lower':
+                from rl.algorithms.upper_ppo import finish_frozen_collection
+                upper_update = finish_frozen_collection(model, world_size=args.world_size,
+                    average=lambda values: average_scalar_dict(values, ring_transport))
+            elif joint_upper(model):
                 def sync_upper(epoch):
                     return synchronize_gradient_step(model, rank=args.rank, world_size=args.world_size,
                         peers=peers, key=key, control_dir=control_dir, local_root=local_root,
@@ -3780,6 +3812,7 @@ def main() -> None:
                 hp_order_fraction(aggregate_scalars) or 0.0
             )
             record.update(aggregate_scalars)
+            record['training_scope'] = args.training_scope
             record.update({'upper/' + key: value for key, value in upper_update.items()})
             record.update({'small_playout_train/' + key: value for key, value in small_update.items()})
             if combat_strategy == 'small-playout':
@@ -4024,6 +4057,7 @@ def main() -> None:
                                           for key, value in record['small_playout_stats_rank'].items()})
                     wandb_payload['small_playout/turn_card_limit_decisions_global']=record['small_playout/turn_card_limit_decisions_global']
                 wandb_payload.update({'upper/' + key: value for key, value in upper_update.items()})
+                wandb_payload['training_scope'] = args.training_scope
                 wandb_payload.update({'small_playout_train/' + key: value for key, value in small_update.items()})
                 if joint_upper(model):
                     for key in ('upper/effective_batch_size_global', 'upper/micro_batch_size'):

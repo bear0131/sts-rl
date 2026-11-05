@@ -740,6 +740,55 @@ def test_joint_wholerun_small_playout_lifecycle(
         joint=True, fixed_lower='small-playout', online_small=online)
 
 
+def test_lower_only_fork_and_resume_preserve_other_weights_and_adam(
+        tmp_path, monkeypatch, short_natural_game_env_type):
+    from tests.integration.test_episode_rollout import _cohort_lifecycle
+    from tests.integration.test_training_smoke import assert_nested_equal
+    restore_learner = distributed_sb3.restore_learner
+    setup = _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type,
+                              'cpu', False, None, unified=True, independent=True)
+    monkeypatch.setattr(distributed_sb3, 'restore_learner', restore_learner)
+    source = setup['last_bundle']
+    original = AccumulatingMaskablePPO.load(source / 'model.zip', device='cpu')
+    assert original.policy.upper_optimizer.state  # Test real existing Adam moments.
+    argv = list(setup['argv'])
+    index = argv.index('--independent-rollout-config')
+    del argv[index:index + 2]  # Inherit the saved scheduler; its input file was removed.
+    fork_root = tmp_path / 'lower-state'
+    for flag, value in (('--run-id', 'ci-lower-only'), ('--wandb-id', 'ci-lower-only'),
+                        ('--training-state-dir', str(fork_root))):
+        argv[argv.index(flag) + 1] = value
+    monkeypatch.setattr(sys, 'argv', [*argv, '--fork-state', str(source),
+                                    '--training-scope', 'lower'])
+    distributed_sb3.main()
+    fork = sorted((fork_root / 'rank0').glob('step-*'))[-1]
+    # An ordinary resume inherits the frozen scope without repeating the flag.
+    monkeypatch.setattr(sys, 'argv', [*argv, '--resume-state', str(fork)])
+    distributed_sb3.main()
+    final = sorted((fork_root / 'rank0').glob('step-*'))[-1]
+    restored = AccumulatingMaskablePPO.load(final / 'model.zip', device='cpu')
+    assert restored.training_scope == 'lower'
+
+    before, after = original.policy.state_dict(), restored.policy.state_dict()
+    assert before.keys() == after.keys()
+    for name in before:
+        if not name.startswith('small_playout.'):
+            assert_nested_equal(before[name], after[name])
+    assert any(not torch.equal(before[name], after[name])
+               for name in before if name.startswith('small_playout.'))
+    for name in ('optimizer', 'upper_optimizer'):
+        assert_nested_equal(getattr(original.policy, name).state_dict(),
+                            getattr(restored.policy, name).state_dict())
+    records = setup['payloads'][-4:]
+    assert [row['legacy_step'] for row in records] == [5, 6, 7, 8]
+    assert all(row['training_scope'] == 'lower' and row['upper/frozen'] == 1
+               and row['upper/updates'] == 0 and row['small_playout_train/updates'] > 0
+               for row in records)
+    assert all('upper/policy_loss' not in row and 'upper/value_loss' not in row for row in records)
+    for bundle in (fork, final):
+        assert json.loads((bundle / 'manifest.json').read_text())['config']['training_scope'] == 'lower'
+
+
 def test_upper_microbatch_override_survives_plain_resume(
         tmp_path, monkeypatch, capsys, short_combat_env_type):
     test_training_reaches_wandb_and_checkpoint(
