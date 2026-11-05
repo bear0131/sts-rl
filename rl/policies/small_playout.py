@@ -22,8 +22,13 @@ def export_online_search_pair(policy, *, collect_samples):
     if policy.key_count != sts.small_playout_key_count():
         raise ValueError('native/Python action vocabulary mismatch')
     weights = policy.export()
-    return dict(sha256=hashlib.sha256(weights.tobytes()).hexdigest(),
-                contract=CONTRACT, search_contract=SEARCH_CONTRACT,
+    context = getattr(policy, 'context_mode', 'none')
+    contract = CONTRACT if context == 'none' else 'sts1-small-playout-public-v1'
+    digest = hashlib.sha256(weights.tobytes())
+    if context != 'none':
+        digest.update(context.encode())
+    return dict(sha256=digest.hexdigest(), context_mode=context,
+                contract=contract, search_contract=SEARCH_CONTRACT,
                 online=bool(collect_samples), policy=weights, prior=None,
                 common_simulations=250, elite_simulations=250, boss_simulations=1000,
                 playout_depth=200, tree_depth=1024)
@@ -40,9 +45,11 @@ class OnlinePlayoutConfig:
     target_mix: float = 1.
     weight_decay: float = 0.
     optimizer: str = 'adam'
+    context_mode: str = 'none'
 
     def __post_init__(self):
-        if (not all(math.isfinite(v) for k, v in asdict(self).items() if k != 'optimizer')
+        if (not all(math.isfinite(v) for k, v in asdict(self).items() if k not in ('optimizer','context_mode'))
+                or self.context_mode not in ('none','root','state')
                 or self.optimizer not in ('adam', 'adamw')
                 or not 0 <= self.target_mix <= 1 or self.weight_decay < 0
                 or self.key_count < 3 or self.learning_rate <= 0 or self.max_grad_norm < 0
@@ -109,6 +116,9 @@ class SmallPlayoutPolicy(nn.Module):
         layout and remove the much larger candidate-by-key embedding padding.
         """
         z = self.fc2(torch.relu(self.fc1(state)))
+        return self._score_packed(z, actions, keys, slots, mask)
+
+    def _score_packed(self, z, actions, keys, slots, mask):
         embedding, bias = self._key_features(keys)
         dense_embedding = embedding.new_zeros((mask.numel(), embedding.shape[-1]))
         dense_embedding = dense_embedding.index_copy(0, slots, embedding).view(*mask.shape, -1)
@@ -118,6 +128,9 @@ class SmallPlayoutPolicy(nn.Module):
         logits = ((dense_embedding + self.projection(dense_actions)) * z.unsqueeze(1)).sum(-1)
         logits = logits + dense_bias + self.linear(dense_actions).squeeze(-1)
         return logits.masked_fill(~mask, -torch.inf)
+
+    def prepare_samples(self,samples,target_mix):
+        return PreparedPlayoutSamples(samples,target_mix)
 
     def export(self):
         # Keep order explicit: module registration order is not an export ABI.

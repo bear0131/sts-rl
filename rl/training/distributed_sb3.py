@@ -546,6 +546,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
     parser.add_argument("--training-state-dir", type=Path, help="Per-rank policy/Adam/replay/RNG recovery generations")
     parser.add_argument("--resume-state", type=Path, help="Explicit complete per-rank recovery generation")
+    parser.add_argument('--fork-public-lower',choices=('root','state'),default=None,
+                        help='On a lower-only fork, add a public adapter refreshed per real root or simulated state')
+    parser.add_argument('--fork-public-weights',type=Path,default=None,
+                        help='Optional parent-matched lower weights/Adam from the public-context probe')
     parser.add_argument('--training-scope', choices=('all', 'lower'), default=None,
                         help='Train all configured learners, or only the online compact lower policy. '
                              'Omitted inherits the checkpoint; changing a resumed scope requires a fork.')
@@ -2232,6 +2236,10 @@ def main() -> None:
     for name in ('small_playout_batch_size', 'small_playout_micro_batch_size'):
         if getattr(args, name) is not None and getattr(args, name) < 1:
             raise ValueError('--' + name.replace('_', '-') + ' must be positive')
+    if args.fork_public_lower and (args.fork_state is None or args.training_scope!='lower'):
+        raise ValueError('--fork-public-lower requires --fork-state and --training-scope lower')
+    if args.fork_public_weights and not args.fork_public_lower:
+        raise ValueError('--fork-public-weights requires --fork-public-lower')
     if args.resume_state is not None and args.fork_state is not None:
         raise ValueError("--resume-state and --fork-state are mutually exclusive")
     if args.fork_reset_environments and args.fork_state is None:
@@ -3220,6 +3228,10 @@ def main() -> None:
             )
     else:
         recovery_manifest = None
+    if args.fork_public_lower:
+        from rl.training.small_playout import fork_public_lower
+        fork_public_lower(model,args.fork_public_lower,args.fork_public_weights)
+        args.small_playout_config=dict(model.policy.small_playout_config)
     environment_restored = bool(
         recovery_manifest is not None
         and getattr(model, "_recovery_environment_restored", False)

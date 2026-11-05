@@ -8,13 +8,25 @@ SEARCH_CONTRACT = 'terminal-hp-boss-win-turn128-v1'
 
 class SmallPlayoutBatch:
     def __init__(self, envs, pool, pair):
-        if pair['contract'] != 'sts1-small-playout-v1':
+        public = pair['contract'] == 'sts1-small-playout-public-v1'
+        mode = pair.get('context_mode', 'none')
+        if ((public and mode not in ('root','state')) or (not public and mode != 'none')
+                or (not public and pair['contract'] != 'sts1-small-playout-v1')):
             raise ValueError('unknown small playout feature contract')
         if (pair.get('search_contract') != SEARCH_CONTRACT
                 or getattr(sts, 'small_playout_search_contract', None) != SEARCH_CONTRACT):
             raise ValueError('incompatible small playout search objective/native build')
         self.envs, self.pool, self.pair = envs, pool, pair
-        self.net = sts.SmallPlayoutNet(pair['policy'])
+        self.adapter = None
+        if public:
+            if (getattr(sts,'small_playout_public_contract',None) != 'sts1-playout-public-entities-v1'
+                    or pair.get('prior') is not None):
+                raise ValueError('public compact policy requires the public native contract and no separate prior')
+            split = 4984 + 33*sts.small_playout_key_count()
+            self.net = sts.SmallPlayoutNet(pair['policy'][:split])
+            self.adapter = sts.PublicPlayoutAdapter(pair['policy'][split:])
+        else:
+            self.net = sts.SmallPlayoutNet(pair['policy'])
         self.prior = sts.SmallPlayoutNet(pair['prior']) if pair.get('prior') is not None else None
         self.stats = {}
         self.samples = []
@@ -65,11 +77,16 @@ class SmallPlayoutBatch:
             tier = self.tier(env)
             nonce = int(kw['state_nonce']) & ((1 << 64)-1)
             relics = tuple(r['id'] for r in env.thick.gc.relic_state())
+            cfg = sts.SmallPlayoutConfig()
+            if self.adapter is not None:
+                cfg.condition(self.adapter,env.thick.gc,env.thick.bc,self.pair['context_mode']=='state')
             if 'Runic Dome' in relics:
                 # No search may consume the simulator's concealed current move.
                 # The compact feature encoder suppresses every intent feature.
                 f = sts.small_playout_features(env.thick.bc)
-                logits = np.asarray(self.net.logits(env.thick.bc), np.float64)
+                raw = (self.net.conditioned_logits(env.thick.bc,cfg) if self.adapter is not None
+                       else self.net.logits(env.thick.bc))
+                logits = np.asarray(raw, np.float64)
                 p = np.exp(logits-logits.max()); p /= p.sum()
                 chosen = np.random.default_rng(nonce).choice(len(p), p=p)
                 bits = f['action_bits'][chosen]
@@ -77,7 +94,6 @@ class SmallPlayoutBatch:
                 self.stats['dome_policy_decisions'] = self.stats.get('dome_policy_decisions', 0)+1
                 self.stats['dome_turn_card_limit_decisions'] = self.stats.get('dome_turn_card_limit_decisions', 0)+int(sts.small_playout_turn_card_limit_reached(env.thick.bc))
                 continue
-            cfg = sts.SmallPlayoutConfig()
             cfg.simulations = self.pair[tier+'_simulations']
             cfg.playout_depth = self.pair['playout_depth']
             cfg.tree_depth = self.pair['tree_depth']
@@ -96,6 +112,8 @@ class SmallPlayoutBatch:
                  ('action_bits', np.uint32), ('visits', np.float32))})
             self.samples[-1]['recommended_action'] = int(result['action'])
             self.samples[-1]['env'] = index
+            if self.adapter is not None:
+                self.samples[-1]['public_context'] = job[2].public_context
         self.stats[tier+'/decisions'] = self.stats.get(tier+'/decisions', 0)+1
         for key, value in result['stats'].items():
             name = tier+'/'+key

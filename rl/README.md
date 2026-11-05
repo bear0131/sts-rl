@@ -656,3 +656,12 @@ entities 是本战斗的牌堆、角色、怪物、状态、可见招式、药�
 source_rows 只引用动态实体行，target_slots 对应原生怪物槽位，-1 表示没有对应项。
 它们仅用于索引，执行句柄、物理UID、RNG不作为数值特征。候选数无96上限。
 此接口与旧的 `sts1-small-playout-v1` 独立，不能将新权重按旧格式导出。
+
+下层新架构的隔离试验从原生在线 AdamW 的 v1 checkpoint 使用
+`--fork-state <bundle> --training-scope lower --fork-public-lower root`。
+`root` 每个真实决策提取公开信息，在本次 MCTS 内复用上下文，模拟每一步仍读实时的
+32 个状态和 24 个动作属性；`state` 在每个需要打分的模拟状态重算全部公开实体。
+两者搜索预算、目标和合法动作相同，策略并不等价。初始化时 1024×64 适配矩阵为零；
+`--fork-public-weights <selected.pt>` 可装载与旧下层摘要匹配的离线权重和 Adam，
+不传则仅下层 Adam 重新开始。普通恢复继承模型、优化器、模式和训练范围。
+`python -m tools.analysis.probe_lower_public --help` 给出成熟固定数据选轮的参数。

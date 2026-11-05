@@ -8,6 +8,38 @@ from rl.algorithms.small_playout import load_policy_pair
 from env.search.small_playout import SEARCH_CONTRACT
 
 
+def fork_public_lower(model, mode, initializer=None):
+    """Replace only the online lower module/Adam; model.save can reload the new family."""
+    import torch
+    from rl.algorithms.upper_probe import state_digest
+    from rl.policies.public_playout import PublicPlayoutPolicy
+    if (getattr(model,'training_scope',None)!='lower'
+            or model.policy.small_playout_config.get('context_mode','none')!='none'):
+        raise ValueError('public migration needs a lower-only fork of a compact v1 checkpoint')
+    old=model.policy.small_playout
+    # The zero adapter is deterministic; constructing temporary modules must not
+    # advance collection RNG streams in a fork.
+    with torch.random.fork_rng(devices=[model.device] if model.device.type=='cuda' else []):
+        net=PublicPlayoutPolicy.from_mature(old)
+    net.context_mode=mode
+    cfg=dict(model.policy.small_playout_config,context_mode=mode)
+    if mode not in ('root','state') or cfg['optimizer']!='adamw':
+        raise ValueError('public fork requires root/state mode and an AdamW lower optimizer')
+    opt=torch.optim.AdamW(net.parameters(),lr=cfg['learning_rate'],weight_decay=cfg['weight_decay'])
+    if initializer is not None:
+        payload=torch.load(initializer,map_location=model.device,weights_only=True)
+        if payload['parent_lower_digest']!=state_digest(old.state_dict()):
+            raise ValueError('public initializer belongs to a different lower parent')
+        net.load_state_dict(payload['policy'],strict=True)
+        opt.load_state_dict(payload['optimizer'])
+        cfg['learning_rate']=opt.param_groups[0]['lr']
+        cfg['weight_decay']=opt.param_groups[0]['weight_decay']
+    model.policy.small_playout=net
+    model.policy.small_playout_optimizer=opt
+    model.policy.small_playout_config=cfg
+    model.policy_kwargs=dict(model.policy_kwargs,small_playout_config=dict(cfg))
+
+
 def install_policy_pair(model, path):
     if hasattr(model.policy, 'small_playout'):
         raise ValueError('online random initialization and pretrained pair are mutually exclusive')

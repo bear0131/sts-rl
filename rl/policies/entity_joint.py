@@ -184,7 +184,12 @@ class EntityJointPolicy(EntityCombatPolicy):
             ], weight_decay=cfg.weight_decay, eps=cfg.adam_eps)
         if self.small_playout_config is not None:
             from rl.policies.small_playout import SmallPlayoutPolicy
-            self.small_playout = SmallPlayoutPolicy(self.small_playout_config['key_count'])
+            context = self.small_playout_config['context_mode']
+            if context == 'none':
+                self.small_playout = SmallPlayoutPolicy(self.small_playout_config['key_count'])
+            else:
+                from rl.policies.public_playout import PublicPlayoutPolicy
+                self.small_playout = PublicPlayoutPolicy(self.small_playout_config['key_count'],context)
             optimizer = (torch.optim.AdamW if self.small_playout_config['optimizer'] == 'adamw'
                          else torch.optim.Adam)
             self.small_playout_optimizer = optimizer(self.small_playout.parameters(),

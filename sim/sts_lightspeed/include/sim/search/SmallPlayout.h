@@ -36,9 +36,11 @@ class SmallPlayoutNet {
 public:
     explicit SmallPlayoutNet(std::vector<float> weights);
     std::vector<float> logits(const SmallFeatures &features) const;
-    void logits(const SmallFeatures &features, std::vector<float> &scores) const;
+    void logits(const SmallFeatures &features, std::vector<float> &scores, const float *shift=nullptr) const;
 };
+struct PublicPlayoutRoot;
 struct SmallSearchConfig {
+    std::shared_ptr<const PublicPlayoutRoot> publicRoot;
     int simulations = 250, playoutDepth = 200, treeDepth = 1024;
     double exploration = -1.0, temperature = 1.0;
     bool usePrior = false, boss = false;

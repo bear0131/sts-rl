@@ -740,8 +740,9 @@ def test_joint_wholerun_small_playout_lifecycle(
         joint=True, fixed_lower='small-playout', online_small=online)
 
 
+@pytest.mark.parametrize('public',[False,True])
 def test_lower_only_fork_and_resume_preserve_other_weights_and_adam(
-        tmp_path, monkeypatch, short_natural_game_env_type):
+        tmp_path, monkeypatch, short_natural_game_env_type,public):
     from tests.integration.test_episode_rollout import _cohort_lifecycle
     from tests.integration.test_training_smoke import assert_nested_equal
     restore_learner = distributed_sb3.restore_learner
@@ -758,7 +759,7 @@ def test_lower_only_fork_and_resume_preserve_other_weights_and_adam(
     for flag, value in (('--run-id', 'ci-lower-only'), ('--wandb-id', 'ci-lower-only'),
                         ('--training-state-dir', str(fork_root))):
         argv[argv.index(flag) + 1] = value
-    monkeypatch.setattr(sys, 'argv', [*argv, '--fork-state', str(source),
+    monkeypatch.setattr(sys, 'argv', [*argv, *(['--fork-public-lower','root'] if public else []), '--fork-state', str(source),
                                     '--training-scope', 'lower'])
     distributed_sb3.main()
     fork = sorted((fork_root / 'rank0').glob('step-*'))[-1]
@@ -770,7 +771,10 @@ def test_lower_only_fork_and_resume_preserve_other_weights_and_adam(
     assert restored.training_scope == 'lower'
 
     before, after = original.policy.state_dict(), restored.policy.state_dict()
-    assert before.keys() == after.keys()
+    assert set(after)-set(before)==({'small_playout.context.weight'} if public else set())
+    assert set(before)<=set(after)
+    if public:
+        assert restored.policy.small_playout_config['context_mode']=='root'
     for name in before:
         if not name.startswith('small_playout.'):
             assert_nested_equal(before[name], after[name])

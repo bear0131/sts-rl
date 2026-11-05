@@ -3,6 +3,7 @@
 #include <pybind11/stl.h>
 #include "sim/search/SmallPlayout.h"
 #include "sim/search/PlayoutEntities.h"
+#include "sim/search/PublicPlayoutAdapter.h"
 #include "game/GameContext.h"
 #include "sim/search/NeuralSearchBatch.h"
 #include <cstring>
@@ -93,7 +94,22 @@ void bindSmallPlayout(py::module_ &m) {
     m.def("small_playout_redeterminize",&smallRedeterminize);
     m.def("small_playout_known_top",[](const sts::BattleContext &bc){return bc.cards.knownDrawTop;});
     m.def("small_playout_root_pick",&smallRootPick);
+    py::class_<PublicPlayoutAdapter,std::shared_ptr<PublicPlayoutAdapter>>(m,"PublicPlayoutAdapter")
+        .def(py::init([](py::array_t<float,py::array::c_style|py::array::forcecast> w){
+            if(w.ndim()!=1)throw std::invalid_argument("public context weights must be flat");
+            return std::make_shared<PublicPlayoutAdapter>(std::vector<float>(w.data(),w.data()+w.size()));
+        }));
     py::class_<SmallSearchConfig>(m,"SmallPlayoutConfig")
+        .def("condition",[](SmallSearchConfig &cfg,const std::shared_ptr<PublicPlayoutAdapter> &adapter,
+                           const sts::GameContext &gc,const sts::BattleContext &bc,bool refresh){
+            if(!adapter)throw std::invalid_argument("missing public adapter");
+            cfg.publicRoot=PublicPlayoutRoot::prepare(adapter,gc,bc,refresh);
+        })
+        .def_property_readonly("public_context",[](const SmallSearchConfig &cfg){
+            if(!cfg.publicRoot)throw std::logic_error("unconditioned root");
+            py::array_t<float> out(PUBLIC_SKETCH_SIZE);
+            std::copy_n(cfg.publicRoot->sketch.begin(),PUBLIC_SKETCH_SIZE,out.mutable_data());return out;
+        })
         .def(py::init<>()).def_readwrite("simulations",&SmallSearchConfig::simulations)
         .def_readwrite("playout_depth",&SmallSearchConfig::playoutDepth)
         .def_readwrite("tree_depth",&SmallSearchConfig::treeDepth)
@@ -108,6 +124,15 @@ void bindSmallPlayout(py::module_ &m) {
             if(w.ndim()!=1) throw std::invalid_argument("weights must be flat");
             return std::make_shared<SmallPlayoutNet>(std::vector<float>(w.data(),w.data()+w.size()));
         }))
+        .def("conditioned_logits",[](const SmallPlayoutNet &net,const sts::BattleContext &bc,const SmallSearchConfig &cfg){
+            if(!cfg.publicRoot)throw std::logic_error("unconditioned root");
+            std::vector<float> out;
+            if(cfg.publicRoot->refreshEachState){
+                const auto shift=cfg.publicRoot->adapter->transform(cfg.publicRoot->observe(bc));
+                net.logits(smallFeatures(bc),out,shift.data());
+            }else net.logits(smallFeatures(bc),out,cfg.publicRoot->shift.data());
+            return out;
+        })
         .def("logits",[](const SmallPlayoutNet &net,const sts::BattleContext &bc){return net.logits(smallFeatures(bc));})
         .def("search",[](const SmallPlayoutNet &net,const sts::BattleContext &bc,const SmallSearchConfig &cfg,std::uint64_t nonce,const std::shared_ptr<SmallPlayoutNet> &prior){
             sts::BattleContext root(bc); SmallSearchResult r;

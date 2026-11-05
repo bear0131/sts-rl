@@ -1,4 +1,5 @@
 #include "sim/search/SmallPlayout.h"
+#include "sim/search/PublicPlayoutAdapter.h"
 #include "sim/search/CombatChoices.h"
 #include "sim/search/Nosl.h"
 #include "sim/search/NoslCombatTrainer.h"
@@ -170,7 +171,7 @@ std::vector<float> SmallPlayoutNet::logits(const SmallFeatures &f) const {
     logits(f,scores);
     return scores;
 }
-void SmallPlayoutNet::logits(const SmallFeatures &f, std::vector<float> &scores) const {
+void SmallPlayoutNet::logits(const SmallFeatures &f, std::vector<float> &scores, const float *shift) const {
     float h[64], z[32];
     std::copy_n(weights_.data()+2048,64,h);
     for (int j=0;j<32;++j) {
@@ -178,6 +179,7 @@ void SmallPlayoutNet::logits(const SmallFeatures &f, std::vector<float> &scores)
         if (x==0.f) continue;
         for (int i=0;i<64;++i) h[i]+=column[i]*x;
     }
+    if(shift) for(int i=0;i<64;++i) h[i]+=shift[i];
     for (int i=0;i<64;++i) h[i]=std::max(0.f,h[i]);
     std::copy_n(weights_.data()+4160,32,z);
     for (int j=0;j<64;++j) {
@@ -329,7 +331,11 @@ double playout(BattleContext &s,const SmallPlayoutNet &net,const SmallSearchConf
             ++steps; ++stats.playoutTransitions;
             continue;
         }
-        featuresForActions(s,actions,f); net.logits(f,logits);
+        featuresForActions(s,actions,f);
+        if(cfg.publicRoot && cfg.publicRoot->refreshEachState) {
+            const auto shift=cfg.publicRoot->adapter->transform(cfg.publicRoot->observe(s));
+            net.logits(f,logits,shift.data());
+        } else net.logits(f,logits,cfg.publicRoot ? cfg.publicRoot->shift.data() : nullptr);
         if(logits.empty()) throw std::runtime_error("nonterminal playout without actions");
         ++stats.policyCalls; stats.actionScores+=logits.size();
         probabilities(logits,cfg.temperature,weights);

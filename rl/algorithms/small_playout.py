@@ -31,7 +31,7 @@ def update_online(model, *, rank=0, world_size=1, average=lambda values: values,
     if not hasattr(model.policy, 'small_playout'):
         return {}
     from rl.algorithms.upper_ppo import train_phase
-    from rl.policies.small_playout import OnlinePlayoutConfig, PreparedPlayoutSamples
+    from rl.policies.small_playout import OnlinePlayoutConfig
     cfg = OnlinePlayoutConfig(**model.policy.small_playout_config)
     samples = getattr(model, '_small_playout_samples', [])
     counts = average({f'rank_{i}': float(len(samples) if i == rank else 0) for i in range(world_size)})
@@ -46,7 +46,7 @@ def update_online(model, *, rank=0, world_size=1, average=lambda values: values,
     model._sync_device()
     started = time.perf_counter()
     totals = dict(loss=0., entropy=0., target_entropy=0., teacher_top1=0., uniform_ce=0.)
-    prepared = PreparedPlayoutSamples(samples, cfg.target_mix) if samples else None
+    prepared = net.prepare_samples(samples, cfg.target_mix) if samples else None
     if prepared is not None:
         totals.update(target_entropy=prepared.target_entropy * cfg.epochs,
                       uniform_ce=prepared.uniform_ce * cfg.epochs)
