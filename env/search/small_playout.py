@@ -120,23 +120,21 @@ class SmallPlayoutBatch:
 
 
 class SmallPlayoutStream:
-    """Independent-root scheduling on GIL-free native searches.
+    """Diagnostic independent-root scheduling on GIL-free native searches.
 
     One controller submits, receives and steps environments. Each logical slot
     has at most one outstanding root; weights remain immutable until close.
     Completion order is explicit and must not be treated as learner sample order.
-    The independent whole-game collector owns its batching deadline.
+    This is not enabled by the production collector.
     """
     def __init__(self, batch, *, threads):
         from concurrent.futures import ThreadPoolExecutor
-        from queue import SimpleQueue
         if type(threads) is not int or threads < 1:
             raise ValueError('positive search thread count required')
         self.batch = batch
         self._executor = ThreadPoolExecutor(max_workers=threads, thread_name_prefix='sts-search')
         self._pending = {}
         self._inline = {}
-        self._completed = SimpleQueue()
         self._closed = False
 
     @property
@@ -146,8 +144,6 @@ class SmallPlayoutStream:
     def submit(self, calls):
         if self._closed:
             raise RuntimeError('search stream is closed')
-        if not calls:
-            return
         occupied = set(self._inline) | {job[0] for job in self._pending.values()}
         if occupied.intersection(calls):
             raise RuntimeError('environment already has an outstanding search')
@@ -160,35 +156,17 @@ class SmallPlayoutStream:
             future = self._executor.submit(self.batch.net.search,
                 self.batch.envs[index].thick.bc, config, nonce, self.batch.prior)
             self._pending[future] = job
-            future.add_done_callback(self._completed.put)
 
-    def receive(self, timeout=0., *, minimum=1):
-        """Drain completions, waiting at most timeout for the requested batch.
-
-        Only this controller accepts results or mutates environments. Worker
-        callbacks merely enqueue futures, including failures and cancellations.
-        A short tail with no outstanding roots never waits for nonexistent work.
-        """
-        from queue import Empty
-        import time
+    def receive(self, timeout=0.):
+        from concurrent.futures import FIRST_COMPLETED, wait
         if self._closed:
             raise RuntimeError('search stream is closed')
-        if type(minimum) is not int or minimum < 1 or not np.isfinite(timeout) or timeout < 0:
-            raise ValueError('positive completion count and finite nonnegative timeout required')
-        deadline = time.monotonic() + timeout
+        ready = [future for future in self._pending if future.done()]
+        if not ready and not self._inline and self._pending:
+            ready = wait(self._pending, timeout=timeout, return_when=FIRST_COMPLETED).done
         out, self._inline = self._inline, {}
         try:
-            while self._pending:
-                try:
-                    future = self._completed.get_nowait()
-                except Empty:
-                    remaining = deadline-time.monotonic()
-                    if len(out) >= minimum or remaining <= 0:
-                        break
-                    try:
-                        future = self._completed.get(timeout=remaining)
-                    except Empty:
-                        break
+            for future in ready:
                 job = self._pending.pop(future)
                 out[job[0]] = self.batch.accept(job, future.result())
         except BaseException:
@@ -202,12 +180,6 @@ class SmallPlayoutStream:
             self._executor.shutdown(wait=True, cancel_futures=True)
             self._pending.clear()
             self._inline.clear()
-            from queue import Empty
-            while True:
-                try:
-                    self._completed.get_nowait()
-                except Empty:
-                    break
 
     def __enter__(self):
         return self

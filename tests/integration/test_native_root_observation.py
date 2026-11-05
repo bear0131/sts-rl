@@ -415,9 +415,8 @@ def test_unknown_observation_wrapper_keeps_serial_path():
 
 @pytest.mark.parametrize('threads', [1, 4])
 @pytest.mark.parametrize('omit_value_observations', [False, True])
-@pytest.mark.parametrize('completion_minimum', [1, 2])
 def test_independent_games_match_recorded_transitions_and_samples(
-        native_wrapper_factories, threads, omit_value_observations, completion_minimum):
+        native_wrapper_factories, threads, omit_value_observations):
     from contextlib import nullcontext
     from env.search.small_playout import SmallPlayoutStream
     from rl.training.native_vec_env import NativeSearchVecEnv
@@ -471,7 +470,7 @@ def test_independent_games_match_recorded_transitions_and_samples(
                 if calls:
                     with pytest.raises(RuntimeError, match='outstanding'):
                         stream.submit(calls)
-                decisions = stream.receive(timeout=.1 if not actions else 0., minimum=completion_minimum)
+                decisions = stream.receive(timeout=.1 if not actions else 0.)
                 actions.update({i: d['action'] for i, d in decisions.items()})
                 if not actions:
                     continue

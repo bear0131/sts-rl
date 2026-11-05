@@ -189,17 +189,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             waiting = not actions or (cfg.mode == 'barrier'
                                       and len(actions) < int(vec.episode_rollout_active.sum()))
             started = time.perf_counter()
-            timeout, minimum = (.001 if waiting else 0.), 1
-            if cfg.mode == 'independent':
-                # Amortize observation copies and sample bookkeeping across
-                # completions without stalling a drained search queue or an
-                # upper decision whose existing wait budget has expired.
-                minimum = max(1, cfg.threads-len(actions))
-                timeout = min(.002, cfg.upper_wait_seconds) if len(actions) < cfg.threads else 0.
-                if upper_waiting:
-                    timeout = min(timeout, max(0., cfg.upper_wait_seconds
-                        - (time.monotonic()-min(upper_waiting.values()))))
-            decisions = stream.receive(timeout=timeout, minimum=minimum)
+            decisions = stream.receive(timeout=.001 if waiting else 0.)
             stats['search_wait_seconds'] += time.perf_counter() - started
             actions.update({i: d['action'] for i, d in decisions.items()})
             if not actions or (cfg.mode == 'barrier' and len(actions) < int(vec.episode_rollout_active.sum())):
