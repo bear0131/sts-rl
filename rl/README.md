@@ -670,3 +670,17 @@ source_rows 只引用动态实体行，target_slots 对应原生怪物槽位，-
 `state` 为每个打分点刷新。两者使用同一组实体与参数，刷新频率是策略的一部分。
 固定数据实验可以先 `python -m tools.analysis.probe_lower_public --collect --source <bundle> --output <bank>`，
 再用 `--bank <bank> --source <bundle> --output <fit>` 选轮。严格区分离线动作标签与搜索后实战效果。
+
+逐实体动作打分目前用于**离线诊断**。同一状态的序列含手牌、真实敌人槽、药水槽及
+牌堆/遗物等公开摘要；当前可选的非手牌实例另有 token。每个动作在成熟下层的 logit 上
+叠加来源分、目标分及可学习的来源–目标配对分。一次前向给全部合法动作打分。
+这套权重不能导出到原生 v1 接口，也没有继承线性公开模型的 rollout 用时。
+
+- `python -m tools.analysis.probe_action_tokens --help`：单批完整对局划分训练/验证/测试，
+  对照仅相加与可配对打分，以及三个模型容量。只用验证局选择遍数。
+- `python -m tools.analysis.probe_lower_public --collect --collections 2 --cohort-offset N ...`：
+  固定同一教师、使用该 rank 的真实环境生成连续新局；offset 以整个 world 的一批局为单位。
+- `python -m tools.analysis.probe_fresh_action_tokens --parent <bundle> --first <首批> --others <新批...> --holdout <独立测试批> --output <新目录>`：
+  对照首批重放与每批取不重复决策，首组更新后复制模型及 Adam，更新与样本呈现数一致；
+  每批须有 480 个自然结束的游戏，局 seed 不可重叠。加 `--compact-controls` 用相同协议训练原模型与线性公开输入对照。
+  结果给出按决策加权、按整局重采样的成对区间。

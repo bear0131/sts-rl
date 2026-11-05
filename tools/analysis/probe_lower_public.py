@@ -126,7 +126,7 @@ def fit(bank, source, output, rounds, device, seed):
     (output/'result.json').write_text(json.dumps(report,indent=2,allow_nan=False))
 
 
-def collect_bank(source, output, device, threads):
+def collect_bank(source, output, device, threads, collections=1, cohort_offset=0):
     """Capture public entities at actual searched roots, before the owner steps."""
     from collections import Counter, defaultdict
     from functools import partial
@@ -183,23 +183,31 @@ def collect_bank(source, output, device, threads):
             raise ValueError('public bank requires restored real environments')
         cb.on_training_start(dict(locals()),globals())
         cfg=dict(model.independent_rollout_config,threads=threads)
-        with patch.object(SmallPlayoutBatch,'accept',capture):
-            ok,report=measure_frozen_rollout(model,partial(collect,config=cfg),env,cb,model.rollout_buffer,n_rollout_steps=args.n_steps)
-        if not ok:raise RuntimeError('collection failed')
-        samples=model._small_playout_samples
-        if Counter(s['env'] for s in samples)!={i:len(rows) for i,rows in groups.items()}:
-            raise ValueError('public and teacher row counts differ')
-        dest=output/'public'
-        dest.mkdir()
-        for i in sorted(groups):
-            rows=groups.pop(i)
-            np.savez_compressed(dest/f'{i:03d}.npz',lengths=np.array([len(t['ids']) for t,_,_ in rows],np.int32),
-                alens=np.array([len(y) for _,_,y in rows],np.int32),sources=np.concatenate([a for _,a,_ in rows]),
-                targets=np.concatenate([y for _,_,y in rows]),**{k:np.concatenate([t[k] for t,_,_ in rows]) for k in rows[0][0]})
-        torch.save(dict(samples=samples,source_model_sha256=manifest['sha256']['model.zip'],cohort=report['cohort']),output/'samples.pt')
-        with (output/'samples.pt').open('rb') as stream:
-            report['samples_sha256']=hashlib.file_digest(stream,'sha256').hexdigest()
-        (output/'collection.json').write_text(json.dumps(report,indent=2,allow_nan=False))
+        if collections<1 or cohort_offset<0:raise ValueError('invalid fresh cohort budget')
+        model.episode_rollout_seed_offset=getattr(model,'episode_rollout_seed_offset',0)+cohort_offset*world*env.num_envs
+        from rl.algorithms.upper_ppo import finish_frozen_collection
+        for group in range(collections):
+            folder=output if collections==1 else output/f'group-{group}'
+            if folder!=output:folder.mkdir()
+            with patch.object(SmallPlayoutBatch,'accept',capture):
+                ok,report=measure_frozen_rollout(model,partial(collect,config=cfg),env,cb,model.rollout_buffer,n_rollout_steps=args.n_steps)
+            if not ok:raise RuntimeError('collection failed')
+            samples=model._small_playout_samples
+            if Counter(s['env'] for s in samples)!={i:len(rows) for i,rows in groups.items()}:
+                raise ValueError('public and teacher row counts differ')
+            dest=folder/'public'
+            dest.mkdir()
+            for i in sorted(groups):
+                rows=groups.pop(i)
+                np.savez_compressed(dest/f'{i:03d}.npz',lengths=np.array([len(t['ids']) for t,_,_ in rows],np.int32),
+                    alens=np.array([len(y) for _,_,y in rows],np.int32),sources=np.concatenate([a for _,a,_ in rows]),
+                    targets=np.concatenate([y for _,_,y in rows]),**{k:np.concatenate([t[k] for t,_,_ in rows]) for k in rows[0][0]})
+            torch.save(dict(samples=samples,source_model_sha256=manifest['sha256']['model.zip'],cohort=report['cohort']),folder/'samples.pt')
+            with (folder/'samples.pt').open('rb') as stream:
+                report['samples_sha256']=hashlib.file_digest(stream,'sha256').hexdigest()
+            (folder/'collection.json').write_text(json.dumps(report,indent=2,allow_nan=False))
+            finish_frozen_collection(model)
+            model._small_playout_samples=[]
     finally:
         env.close()
 
@@ -212,12 +220,14 @@ if __name__ == '__main__':
     kind.add_argument('--bank',type=Path,help='Fit from this completed frozen cohort')
     kind.add_argument('--collect',action='store_true',help='Create a frozen bank from the source recovery bundle')
     p.add_argument('--threads',type=int,default=25)
+    p.add_argument('--collections',type=int,choices=range(1,9),default=1)
+    p.add_argument('--cohort-offset',type=int,default=0,help='Whole world-sized cohorts to skip before the first bank')
     p.add_argument('--rounds',type=int,default=6,choices=range(1,25))
     p.add_argument('--seed',type=int,default=20261105)
     p.add_argument('--device',default='cuda:0')
     args=p.parse_args()
     if args.collect:
         if args.threads<1:p.error('--threads must be positive')
-        collect_bank(args.source,args.output,args.device,args.threads)
+        collect_bank(args.source,args.output,args.device,args.threads,args.collections,args.cohort_offset)
     else:
         fit(args.bank,args.source,args.output,args.rounds,args.device,args.seed)
