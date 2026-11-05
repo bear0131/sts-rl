@@ -254,6 +254,26 @@ void probabilities(const std::vector<float> &logits, double temperature, std::ve
     for(auto l:logits){p.push_back(std::exp((l-top)/temperature));sum+=p.back();}
     for(auto &v:p) v=mix*v/sum+(1.-mix)/p.size();
 }
+int drawPlayout(const std::vector<float> &logits, double temperature,
+                std::vector<double> &weights, std::mt19937_64 &rng) {
+    probabilities(logits,temperature,weights);
+#ifdef __GLIBCXX__
+    // Match libstdc++'s second normalization and lower_bound, but stop
+    // forming cumulative probabilities once the draw is resolved.
+    if (weights.size()==1) return 0;
+    double total=0.;
+    for (double weight:weights) total+=weight;
+    const double draw=std::generate_canonical<double,std::numeric_limits<double>::digits>(rng);
+    double cumulative=0.;
+    for (std::size_t i=0;i+1<weights.size();++i) {
+        cumulative+=weights[i]/total;
+        if (draw<=cumulative) return static_cast<int>(i);
+    }
+    return static_cast<int>(weights.size()-1);
+#else
+    return std::discrete_distribution<int>(weights.begin(),weights.end())(rng);
+#endif
+}
 std::uint64_t beliefKey(const BattleContext &s) {
     auto k=NoslCombatTrainer::streamingStateKey(s);
     const int known=s.player.hasRelic<R::FROZEN_EYE>() ? int(s.cards.drawPile.size()) :
@@ -272,7 +292,22 @@ struct Edge {
     double prior=0;
     int terminalVisits=0;
 };
-struct Node { int visits=0; std::vector<Edge> edges; };
+struct Node { int visits=0, unvisited=0; std::vector<Edge> edges; };
+
+// Internal nodes spend most of their lifetime at small visit counts. Only
+// cache those rows; uncommon large pairs use exactly the same formula.
+const double *explorationRow(int visits) {
+    constexpr int limit=128;
+    if (visits>limit) return nullptr;
+    static const auto rows=[] {
+        std::array<std::array<double,limit+1>,limit+1> table{};
+        for (int n=1;n<=limit;++n)
+            for (int k=1;k<=n;++k)
+                table[n][k]=std::sqrt(std::log(double(n)+1)/k);
+        return table;
+    }();
+    return rows[visits].data();
+}
 struct OutcomeNode {
     BattleContext state;
     std::uint64_t key;
@@ -294,6 +329,7 @@ void expand(Node &node,const BattleContext &s,SmallSearchStats &stats,
             const SmallSearchConfig &cfg,const SmallPlayoutNet *prior) {
     for (auto a:budgetActions(s))
         node.edges.push_back({a,NoslCombatTrainer::strongActionKey(s,a),0,0,{}});
+    node.unvisited=static_cast<int>(node.edges.size());
     if(node.edges.empty()) throw std::runtime_error("nonterminal has no legal compact action");
     if(cfg.usePrior) {
         std::vector<double> p;
@@ -350,9 +386,7 @@ double playout(BattleContext &s,const SmallPlayoutNet &net,const SmallSearchConf
         } else net.logits(f,logits,cfg.publicRoot ? cfg.publicRoot->shift.data() : nullptr);
         if(logits.empty()) throw std::runtime_error("nonterminal playout without actions");
         ++stats.policyCalls; stats.actionScores+=logits.size();
-        probabilities(logits,cfg.temperature,weights);
-        std::discrete_distribution<int> pick(weights.begin(),weights.end());
-        const int choice=pick(rng);
+        const int choice=drawPlayout(logits,cfg.temperature,weights,rng);
         const auto bits=f.actions[choice].bits;
         if(trace){trace->features.push_back(std::move(f));trace->choices.push_back(choice);}
         Action(bits).execute(s);
@@ -439,27 +473,31 @@ SmallSearchResult smallSearch(const BattleContext &root,const SmallPlayoutNet &n
         double value=0; bool newLeaf=false; int depth=0;
         while(state.outcome==Outcome::UNDECIDED && depth<cfg.treeDepth) {
             result.stats.turnCardLimitSimulated += smallTurnCardLimitReached(state);
-            std::vector<int> unvisited;
-            for(int i=0;i<int(node->edges.size());++i) if(!node->edges[i].visits) unvisited.push_back(i);
             int chosen=0;
-            if(!cfg.usePrior && !unvisited.empty()) chosen=unvisited[std::uniform_int_distribution<int>(0,int(unvisited.size())-1)(rng)];
-            else {
+            if(!cfg.usePrior && node->unvisited) {
+                int ordinal=std::uniform_int_distribution<int>(0,node->unvisited-1)(rng);
+                while (node->edges[chosen].visits || ordinal-- > 0) ++chosen;
+            } else {
+                const double *row=cfg.usePrior ? nullptr : explorationRow(node->visits);
+                const double parentLog=!row && !cfg.usePrior ? std::log(double(node->visits)+1) : 0.;
+                const double parentRoot=cfg.usePrior ? std::sqrt(double(node->visits)+1) : 0.;
                 double best=-1e100; int ties=0;
                 for(int i=0;i<int(node->edges.size());++i) {
                     const auto &e=node->edges[i];
                     const double q=e.visits?e.sum/e.visits:0.;
                     const double score=q+exploration*(cfg.usePrior ?
-                        e.prior*std::sqrt(double(node->visits)+1)/(1+e.visits) :
-                        std::sqrt(std::log(double(node->visits)+1)/e.visits));
+                        e.prior*parentRoot/(1+e.visits) :
+                        (row ? row[e.visits] : std::sqrt(parentLog/e.visits)));
                     if(score>best){best=score;chosen=i;ties=1;}
                     else if(score==best && std::uniform_int_distribution<int>(1,++ties)(rng)==1) chosen=i;
                 }
             }
             auto &edge=node->edges[chosen]; edges.push_back(&edge);
+            if(!edge.visits) --node->unvisited;
             // The same progressive-widening rule for every action type.
-            const int cap=int(std::ceil(std::sqrt(edge.visits+1.)));
+            const auto outcomes=static_cast<std::int64_t>(edge.outcomes.size());
             OutcomeNode *outcome=nullptr;
-            if(int(edge.outcomes.size())<cap) {
+            if(outcomes*outcomes<=edge.visits) {
                 resolve(edge,state).execute(state); ++result.stats.treeTransitions;
                 // The first outcome needs no equality comparison. Hash its
                 // immutable snapshot only if another outcome is generated.
