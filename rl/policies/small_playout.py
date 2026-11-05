@@ -15,10 +15,10 @@ from torch import nn
 CONTRACT = 'sts1-small-playout-v1'
 
 
-def export_online_search_pair(policy, *, collect_samples):
+def export_online_search_pair(policy, *, collect_samples, paired_worldlines=False):
     """Snapshot the online lower policy with its shared collection search budget."""
     import slaythespire as sts
-    from env.search.small_playout import SEARCH_CONTRACT
+    from env.search.small_playout import SEARCH_CONTRACT, PAIRED_CONTRACT
     if policy.key_count != sts.small_playout_key_count():
         raise ValueError('native/Python action vocabulary mismatch')
     weights = policy.export()
@@ -27,8 +27,14 @@ def export_online_search_pair(policy, *, collect_samples):
     digest = hashlib.sha256(weights.tobytes())
     if context != 'none':
         digest.update(context.encode())
+    search_contract = SEARCH_CONTRACT
+    if paired_worldlines:
+        if collect_samples or context != 'none':
+            raise ValueError('paired worldlines evaluation uses a frozen compact v1 policy')
+        search_contract = PAIRED_CONTRACT
+        digest.update(search_contract.encode())
     return dict(sha256=digest.hexdigest(), context_mode=context,
-                contract=contract, search_contract=SEARCH_CONTRACT,
+                contract=contract, search_contract=search_contract,
                 online=bool(collect_samples), policy=weights, prior=None,
                 common_simulations=250, elite_simulations=250, boss_simulations=1000,
                 playout_depth=200, tree_depth=1024)

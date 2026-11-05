@@ -41,9 +41,10 @@ def test_frozen_export_matches_actual_training_configuration():
         assert torch.equal(value, before[key])
 
 
-def test_batched_tiers_match_collection_actions_and_budget(combat_factory, monkeypatch):
+@pytest.mark.parametrize('paired', [False, True])
+def test_batched_tiers_match_collection_actions_and_budget(combat_factory, monkeypatch, paired):
     policy = SmallPlayoutPolicy(sts.small_playout_key_count())
-    strategy = OnlinePlayoutEvaluationStrategy(policy, threads=2)
+    strategy = OnlinePlayoutEvaluationStrategy(policy, threads=2, paired_worldlines=paired)
     pairs = []
     for room in (sts.Room.MONSTER, sts.Room.ELITE, sts.Room.BOSS):
         pair = [combat_factory(['STRIKE_RED', 'DEFEND_RED']*5,
@@ -53,10 +54,11 @@ def test_batched_tiers_match_collection_actions_and_budget(combat_factory, monke
         pairs.append(pair)
     actual_envs, expected_envs = [list(group) for group in zip(*pairs)]
     pool = sts.NeuralSearchBatch(2)
-    worker = SmallPlayoutBatch(expected_envs, pool, export_online_search_pair(policy, collect_samples=False))
+    worker = SmallPlayoutBatch(expected_envs, pool, export_online_search_pair(policy, collect_samples=False, paired_worldlines=paired))
     seen = []
     native_search = sts.small_playout_search_batch
     def record(pool, net, roots, configs, nonces, prior):
+        assert all(c.paired_worldlines == paired for c in configs)
         seen.append([(c.simulations, c.boss, c.use_prior, c.playout_depth, c.tree_depth) for c in configs])
         return native_search(pool, net, roots, configs, nonces, prior)
     monkeypatch.setattr(sts, 'small_playout_search_batch', record)
@@ -129,3 +131,35 @@ def test_pending_multi_executes_prefix_then_stop_without_new_search(combat_facto
         assert env._rulebase_pending_multi is None and env.thick.bc.to_dict() != original
     finally:
         strategy.unbind_environments()
+
+
+def test_paired_worlds_compare_the_same_draws_and_keep_the_legal_instances(combat_factory):
+    env = combat_factory(['STRIKE_RED', 'DEFEND_RED', 'POMMEL_STRIKE', 'SHRUG_IT_OFF', 'BASH']*2)
+    bc = env.thick.bc
+    state = bc.to_dict()
+    policy = SmallPlayoutPolicy(sts.small_playout_key_count())
+    net = sts.SmallPlayoutNet(policy.export())
+    bits = sts.small_playout_features(bc)['action_bits']
+    cfg = sts.SmallPlayoutConfig()
+    count = len(bits)
+    first = sts.small_paired_worldlines(bc, net, cfg, bits, count*7, 551)
+    reversed_order = sts.small_paired_worldlines(bc, net, cfg, bits[::-1], count*7, 551)
+    np.testing.assert_array_equal(first['values'], np.asarray(reversed_order['values'])[:, ::-1])
+    assert first['root_transitions'] == count*7 and bc.to_dict() == state
+    cfg.paired_worldlines = True
+    logits = np.asarray(net.logits(bc))
+    for budget in (1, count+1, 250):
+        cfg.simulations = budget
+        out = net.search(bc, cfg, 551)
+        visits = np.asarray(out['visits'])
+        values = np.asarray(out['values'])
+        eligible = (visits > 0) & (values >= values[visits > 0].max() - .005)
+        selected = bits.index(out['action'])
+        assert eligible[selected] and logits[selected] == logits[eligible].max()
+        assert visits.sum() == budget and visits.max()-visits.min() <= 1
+        assert sum(out['terminal_visits']) + out['stats']['depth_cuts'] == budget
+        assert out['stats']['tree_transitions'] == 0 and bc.to_dict() == state
+    with pytest.raises(ValueError, match='duplicate'):
+        sts.small_paired_worldlines(bc, net, cfg, [bits[0], bits[0]], 2, 551)
+    with pytest.raises(ValueError, match='frozen'):
+        export_online_search_pair(policy, collect_samples=True, paired_worldlines=True)

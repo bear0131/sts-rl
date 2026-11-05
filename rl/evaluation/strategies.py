@@ -5,6 +5,7 @@ hold their own models/search state and return diagnostics with each decision.
 PhaseStrategy composes them without adding solver branches to the runner/UI.
 """
 from contextlib import nullcontext
+from functools import partial
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Protocol
 import time
@@ -91,11 +92,13 @@ class OnlinePlayoutEvaluationStrategy:
     name = 'small-playout'
     combat_action_contract = 'autoregressive-v2'
 
-    def __init__(self, policy, *, threads=1):
+    def __init__(self, policy, *, threads=1, paired_worldlines=False):
         from rl.policies.small_playout import export_online_search_pair
         if threads < 1:
             raise ValueError('native search threads must be positive')
-        self.pair = export_online_search_pair(policy, collect_samples=False)
+        self.pair = export_online_search_pair(policy, collect_samples=False, paired_worldlines=paired_worldlines)
+        if paired_worldlines:
+            self.name = 'paired-worldlines'
         self.threads = threads
         self._batch = self._pool = None
         self._indices = {}
@@ -626,7 +629,7 @@ def turn_planner_strategy(model, args, lock=None):
 
 # Registration is deliberately a plain mapping, not discovery/import magic.
 # Embedders can pass any DecisionStrategy directly without registering a CLI.
-def small_playout_strategy(model, args, lock=None):
+def small_playout_strategy(model, args, lock=None, *, paired_worldlines=False):
     from env.search.small_playout import SEARCH_CONTRACT
     if (getattr(args, 'task', 'wholerun') != 'wholerun'
             or C.policy_contract(model.observation_space) != 'autoregressive-v2'
@@ -643,12 +646,13 @@ def small_playout_strategy(model, args, lock=None):
             raise ValueError('small-playout uses the collection search budget; cannot override '+name)
     return PhaseStrategy(policy_strategy(model, args, lock), {'combat':
         OnlinePlayoutEvaluationStrategy(model.policy.small_playout,
-            threads=max(1, threads))})
+            threads=max(1, threads), paired_worldlines=paired_worldlines)})
 
 
 STRATEGIES = {'policy': policy_strategy, 'native': native_strategy, 'value': value_strategy,
               'leftmost': lambda model, args, lock=None: LeftmostStrategy(), 'rules': rule_strategy,
-              'turn-planner': turn_planner_strategy, 'small-playout': small_playout_strategy}
+              'turn-planner': turn_planner_strategy, 'small-playout': small_playout_strategy,
+              'paired-worldlines': partial(small_playout_strategy, paired_worldlines=True)}
 
 
 def compose_strategy(upper_model, args, combat_model=None, *, trace=None):

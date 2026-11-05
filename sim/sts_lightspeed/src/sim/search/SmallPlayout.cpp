@@ -447,6 +447,11 @@ int smallRootPick(const std::vector<int> &visits,const std::vector<double> &valu
 
 SmallSearchResult smallSearch(const BattleContext &root,const SmallPlayoutNet &net,
                              const SmallSearchConfig &cfg,std::uint64_t nonce,const SmallPlayoutNet *prior) {
+    if(cfg.pairedWorldlines) {
+        if(prior) throw std::invalid_argument("paired worldlines cannot use a separate tree prior");
+        return smallPairedRootSearch(root,net,cfg,nonce);
+    }
+
     if(root.player.hasRelic<R::RUNIC_DOME>())
         throw std::invalid_argument("small search requires a public-intent belief; use the public-only Dome policy");
     if(cfg.simulations<1 || cfg.playoutDepth<1 || cfg.playoutDepth>200 || cfg.treeDepth<1 ||
@@ -554,4 +559,98 @@ SmallSearchResult smallSearch(const BattleContext &root,const SmallPlayoutNet &n
     result.stats.seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count();
     return result;
 }
+PairedWorldlineResult smallPairedWorldlines(const BattleContext &root, const SmallPlayoutNet &net,
+        const SmallSearchConfig &cfg, const std::vector<std::uint32_t> &bits, int budget, std::uint64_t nonce, bool keepWorlds) {
+    if (bits.empty() || budget<1 || root.outcome!=Outcome::UNDECIDED || cfg.publicRoot ||
+        cfg.playoutDepth<1 || cfg.playoutDepth>200 || !std::isfinite(cfg.temperature) || cfg.temperature<=0 ||
+        root.player.hasRelic<R::RUNIC_DOME>())
+        throw std::invalid_argument("paired worldlines require an active compact-policy combat root and finite budget");
+    const auto legal=budgetActions(root);
+    std::vector<Edge> choices;
+    for (auto id:bits) {
+        const auto it=std::find_if(legal.begin(),legal.end(),[id](Action a){return a.bits==id;});
+        if (it==legal.end() || std::any_of(choices.begin(),choices.end(),[id](const Edge &e){return e.action.bits==id;}))
+            throw std::invalid_argument("invalid or duplicate paired root action");
+        choices.push_back({*it,NoslCombatTrainer::strongActionKey(root,*it),0,0,{}});
+    }
+    PairedWorldlineResult out;
+    out.sums.resize(bits.size());out.visits.resize(bits.size());out.terminalVisits.resize(bits.size());
+    std::uint64_t worldIndex=0;
+    const double scale=cfg.boss ? 1. : std::max(1,root.player.maxHp);
+    for (int remaining=budget;remaining>0;) {
+        const auto world=noslMix(nonce+worldIndex++);
+        BattleContext shared(root);
+#ifdef STS_ENABLE_RULE_TRACE
+        shared.atomicStepObserver={};
+#endif
+        smallRedeterminize(shared,world);
+        std::vector<double> *values=keepWorlds ? &out.values.emplace_back() : nullptr;
+        const auto count=std::min(choices.size(),static_cast<std::size_t>(remaining));
+        if(values) values->reserve(count);
+        for (std::size_t i=0;i<count;++i) {
+            BattleContext state(shared);
+            resolve(choices[i],state).execute(state);
+            std::mt19937_64 rng(noslMix(world^0x504149524544ULL));
+            ++out.stats.simulations;
+            ++out.stats.playoutTransitions; // the committed candidate action in this simulation
+            if(state.outcome!=Outcome::UNDECIDED) ++out.stats.playoutLengths[0];
+            const auto value=state.outcome==Outcome::UNDECIDED ?
+                playout(state,net,cfg,rng,out.stats) : smallTerminalValue(state,cfg.boss);
+            out.completed+=std::isfinite(value);
+            const double normalized=std::isfinite(value) ? value/scale : 0.;
+            if(values) values->push_back(normalized);
+            out.sums[i]+=normalized; ++out.visits[i]; out.terminalVisits[i]+=std::isfinite(value);
+            if(state.outcome==Outcome::PLAYER_VICTORY) ++out.stats.terminalWins;
+            else if(state.outcome==Outcome::PLAYER_LOSS) ++out.stats.terminalLosses;
+            else if(state.outcome==Outcome::PLAYER_ESCAPE) ++out.stats.terminalEscapes;
+            else ++out.stats.depthCuts;
+        }
+        remaining-=static_cast<int>(count);
+    }
+    return out;
+}
+
+SmallSearchResult smallPairedRootSearch(const BattleContext &root,const SmallPlayoutNet &net,
+                                       const SmallSearchConfig &cfg,std::uint64_t nonce) {
+    if(cfg.usePrior) throw std::invalid_argument("paired root search requires a single compact policy");
+    const auto started=std::chrono::steady_clock::now();
+    SmallSearchResult result;
+    result.features=smallFeatures(root);
+    const auto n=result.features.actions.size();
+    std::vector<std::size_t> order(n);
+    for(std::size_t i=0;i<n;++i) order[i]=i;
+    std::mt19937_64 rng(noslMix(nonce^0x5045524dULL));
+    std::shuffle(order.begin(),order.end(),rng); // randomize which actions get the remaining units
+    std::vector<std::uint32_t> actions;actions.reserve(n);
+    for(auto i:order)actions.push_back(result.features.actions[i].bits);
+    const auto panel=smallPairedWorldlines(root,net,cfg,actions,cfg.simulations,noslMix(nonce),false);
+    result.stats=panel.stats;
+    result.stats.turnCardLimitDecisions=smallTurnCardLimitReached(root);
+    result.visits.resize(n);result.terminalVisits.resize(n);result.values.resize(n);
+    double best=-std::numeric_limits<double>::infinity();
+    for(std::size_t i=0;i<n;++i){
+        const auto j=order[i];
+        result.visits[j]=panel.visits[i];result.terminalVisits[j]=panel.terminalVisits[i];
+        if(result.visits[j]){
+            result.values[j]=panel.sums[i]/result.visits[j];
+            best=std::max(best,result.values[j]);
+        }
+    }
+    // The reference gate used half a percentage point of normalized terminal
+    // HP, or of win probability at bosses. Break remaining policy ties fairly.
+    const auto scores=net.logits(result.features);
+    ++result.stats.policyCalls;result.stats.actionScores+=n;
+    float top=-std::numeric_limits<float>::infinity();std::vector<std::size_t> tied;
+    for(std::size_t i=0;i<n;++i){
+        if(!result.visits[i] || result.values[i]<best-.005)continue;
+        if(scores[i]>top){top=scores[i];tied.clear();}
+        if(scores[i]==top)tied.push_back(i);
+    }
+    if(tied.empty())throw std::logic_error("paired search needs a scored legal action");
+    const auto chosen=tied[std::uniform_int_distribution<std::size_t>(0,tied.size()-1)(rng)];
+    result.action=result.features.actions[chosen].bits;
+    result.stats.seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count();
+    return result;
+}
+
 }

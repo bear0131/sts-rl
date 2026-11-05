@@ -4,6 +4,7 @@ import slaythespire as sts
 from env.core.boss_value import enum_name, is_boss_room
 
 SEARCH_CONTRACT = 'terminal-hp-boss-win-turn128-v1'
+PAIRED_CONTRACT = 'paired-worldlines-eps005-terminal-hp-boss-win-turn128-v1'
 
 
 class SmallPlayoutBatch:
@@ -13,7 +14,11 @@ class SmallPlayoutBatch:
         if ((public and mode not in ('root','turn','state')) or (not public and mode != 'none')
                 or (not public and pair['contract'] != 'sts1-small-playout-v1')):
             raise ValueError('unknown small playout feature contract')
-        if (pair.get('search_contract') != SEARCH_CONTRACT
+        self.paired_worldlines = pair.get('search_contract') == PAIRED_CONTRACT
+        if self.paired_worldlines and (public or pair.get('prior') is not None or
+                                       getattr(sts,'small_paired_search_contract',None) != PAIRED_CONTRACT):
+            raise ValueError('paired worldlines require the versioned native path and one compact v1 scorer')
+        if (pair.get('search_contract') not in (SEARCH_CONTRACT, PAIRED_CONTRACT)
                 or getattr(sts, 'small_playout_search_contract', None) != SEARCH_CONTRACT):
             raise ValueError('incompatible small playout search objective/native build')
         self.envs, self.pool, self.pair = envs, pool, pair
@@ -97,6 +102,8 @@ class SmallPlayoutBatch:
                 self.stats['dome_policy_decisions'] = self.stats.get('dome_policy_decisions', 0)+1
                 self.stats['dome_turn_card_limit_decisions'] = self.stats.get('dome_turn_card_limit_decisions', 0)+int(sts.small_playout_turn_card_limit_reached(env.thick.bc))
                 continue
+            if self.paired_worldlines:
+                cfg.paired_worldlines = True
             cfg.simulations = self.pair[tier+'_simulations']
             cfg.playout_depth = self.pair['playout_depth']
             cfg.tree_depth = self.pair['tree_depth']

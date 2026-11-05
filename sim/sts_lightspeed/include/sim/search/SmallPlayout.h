@@ -43,7 +43,7 @@ struct SmallSearchConfig {
     std::shared_ptr<const PublicPlayoutRoot> publicRoot;
     int simulations = 250, playoutDepth = 200, treeDepth = 1024;
     double exploration = -1.0, temperature = 1.0;
-    bool usePrior = false, boss = false;
+    bool usePrior = false, boss = false, pairedWorldlines = false;
     double priorMix = .5, priorTemperature = 1.;
 };
 struct SmallSearchStats {
@@ -82,4 +82,19 @@ SmallPlayoutTrace smallCollectPlayout(const BattleContext &root, const SmallPlay
 SmallSearchResult smallSearch(const BattleContext &root, const SmallPlayoutNet &net,
                              const SmallSearchConfig &cfg, std::uint64_t nonce,
                              const SmallPlayoutNet *prior = nullptr);
+// Diagnostic paired rollouts: within a world every action sees the same
+// hidden deck, game RNG state and playout-policy random stream.
+struct PairedWorldlineResult {
+    std::vector<std::vector<double>> values;
+    SmallSearchStats stats;
+    int completed=0;
+    std::vector<double> sums;
+    std::vector<int> visits, terminalVisits;
+};
+PairedWorldlineResult smallPairedWorldlines(const BattleContext &root, const SmallPlayoutNet &net,
+    const SmallSearchConfig &cfg, const std::vector<std::uint32_t> &actions, int budget, std::uint64_t nonce, bool keepWorlds=true);
+
+SmallSearchResult smallPairedRootSearch(const BattleContext &root, const SmallPlayoutNet &net,
+                                     const SmallSearchConfig &cfg, std::uint64_t nonce);
+
 }

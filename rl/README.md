@@ -687,3 +687,5 @@ source_rows 只引用动态实体行，target_slots 对应原生怪物槽位，-
 
 同一多批实验可用 `--continue-arm 32|64|128|sketch --resume-lower <105步权重和Adam> --validation-bank <独立验证批>` 续训。每遍会遍历允许的对局决策，保留末尾不足整批的样本。
 `--check-every`、`--patience`、`--min-gain` 定义验证KL平台，触发后从验证最优的权重和Adam降低学习率，第二次降率后再次达到平台时停止。另记录预算用尽状态。最终在独立测试批对比成熟模型、第105步和验证选中权重的KL及与搜索推荐动作相同的比例。
+
+冻结的原版 COMBAT37 可通过 `python -m rl.evaluation.eval <model.zip> --task wholerun --solver paired-worldlines` 测共享世界线。每条世界线先确定可见信息所允许的抽牌堆和游戏随机状态，给各个合法动作复制相同起点和策略随机流，再用原紧凑策略模拟到终局或截断。普通/精英总250次、首领1000次，每动作分到的次数至多差1，余数随机分配。按各动作的归一化终局均值评分，距最高分0.005以内用原下层logit排序，剩余平分仍均匀抽选。普通战以根最大生命归一化，首领以胜负计，截断保留原保守计分。此评测契约 `paired-worldlines-eps005-terminal-hp-boss-win-turn128-v1` 适用于单个v1策略，符文圆顶沿用公开策略。传统 `small-playout` 保留UCT。

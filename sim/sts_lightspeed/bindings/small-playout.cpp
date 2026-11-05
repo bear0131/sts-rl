@@ -63,6 +63,7 @@ py::dict result(const SmallSearchResult &r) {
 }
 void bindSmallPlayout(py::module_ &m) {
     m.attr("small_playout_search_contract")="terminal-hp-boss-win-turn128-v1";
+    m.attr("small_paired_search_contract")="paired-worldlines-eps005-terminal-hp-boss-win-turn128-v1";
     m.attr("small_playout_max_cards_per_turn")=SMALL_MAX_CARDS_PER_TURN;
     m.def("small_playout_turn_card_limit_reached",&smallTurnCardLimitReached);
     m.def("small_playout_key_count",&smallKeyCount);
@@ -94,6 +95,14 @@ void bindSmallPlayout(py::module_ &m) {
     m.def("small_playout_value",&smallTerminalValue,py::arg("battle"),py::arg("boss")=false);
     m.def("small_playout_redeterminize",&smallRedeterminize);
     m.def("small_playout_known_top",[](const sts::BattleContext &bc){return bc.cards.knownDrawTop;});
+    m.def("small_paired_worldlines",[](const sts::BattleContext &root, const SmallPlayoutNet &net,
+            const SmallSearchConfig &cfg, const std::vector<std::uint32_t> &actions, int budget, std::uint64_t nonce){
+        PairedWorldlineResult out;
+        { py::gil_scoped_release release; out=smallPairedWorldlines(root,net,cfg,actions,budget,nonce); }
+        py::dict d; d["values"]=out.values; d["completed"]=out.completed;
+        d["root_transitions"]=budget; d["playout_transitions"]=out.stats.playoutTransitions-budget; d["policy_calls"]=out.stats.policyCalls;
+        return d;
+    });
     m.def("small_playout_root_pick",&smallRootPick);
     py::class_<PublicPlayoutAdapter,std::shared_ptr<PublicPlayoutAdapter>>(m,"PublicPlayoutAdapter")
         .def(py::init([](py::array_t<float,py::array::c_style|py::array::forcecast> w){
@@ -116,7 +125,7 @@ void bindSmallPlayout(py::module_ &m) {
             py::array_t<float> out(PUBLIC_SKETCH_SIZE);
             std::copy_n(cfg.publicRoot->sketch.begin(),PUBLIC_SKETCH_SIZE,out.mutable_data());return out;
         })
-        .def(py::init<>()).def_readwrite("simulations",&SmallSearchConfig::simulations)
+        .def(py::init<>()).def_readwrite("paired_worldlines",&SmallSearchConfig::pairedWorldlines).def_readwrite("simulations",&SmallSearchConfig::simulations)
         .def_readwrite("playout_depth",&SmallSearchConfig::playoutDepth)
         .def_readwrite("tree_depth",&SmallSearchConfig::treeDepth)
         .def_readwrite("exploration",&SmallSearchConfig::exploration)
