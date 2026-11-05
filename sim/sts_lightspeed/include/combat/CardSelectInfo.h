@@ -12,6 +12,8 @@
 
 namespace sts {
 
+    enum class SelectOrigin : std::uint8_t { Unknown, Card, Potion, Relic };
+
     enum class CardSelectTask {
         INVALID=0,
         ARMAMENTS,
@@ -61,6 +63,10 @@ namespace sts {
     };
 
     struct CardSelectInfo {
+        // Observation metadata, not a change to selection or its continuation.
+        SelectOrigin origin = SelectOrigin::Unknown;
+        int originId = 0;
+        void setOrigin(SelectOrigin kind, int id) { origin = kind; originId = id; }
         std::array<CardId, 3> cards{};
         bool canPickZero = false;
         bool canPickAnyNumber = false;

@@ -130,13 +130,13 @@ namespace sts {
         static Action UpgradeRandomCardAction(); // Warped Tongs Relic
 
         static Action CodexAction(); // Nilrys Codex onPlayerEndTurn
-        static Action ExhaustMany(int limit);
-        static Action GambleAction();
+        static Action ExhaustMany(int limit, Potion source=Potion::INVALID);
+        static Action GambleAction(SelectOrigin origin, int originId);
         static Action ToolboxAction();
         static Action FiendFireAction(int targetIdx, int calculatedDamage); // Fiend Fire Card
         static Action SwordBoomerangAction(const CardInstance &card); // AttackDamageRandomEnemyAction
 
-        static Action DiscoveryAction(CardType type, int amount); // attack potion, skill potion
+        static Action DiscoveryAction(CardType type, int amount, Potion source=Potion::INVALID);
         static Action TransmutationAction(bool upgraded, int energy, bool useEnergy);
         static Action ViolenceAction(int count);
 

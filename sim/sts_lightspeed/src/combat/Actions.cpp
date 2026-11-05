@@ -632,10 +632,11 @@ Action Actions::OnAfterCardUsed() {
     }, false};
 }
 
-Action Actions::DiscoveryAction(CardType type, int amount) {
+Action Actions::DiscoveryAction(CardType type, int amount, Potion source) {
     return {[=] (BattleContext &bc) {
         bc.haveUsedDiscoveryAction = true;
         bc.openDiscoveryScreen(sts::generateDiscoveryCards(bc.cardRandomRng, bc.player.cc, type), amount);
+        if (source != Potion::INVALID) bc.cardSelectInfo.setOrigin(SelectOrigin::Potion,int(source));
     }};
 }
 
@@ -734,6 +735,8 @@ Action Actions::BetterDiscardPileToHandAction(int amount, CardSelectTask task) {
                 bc.chooseDiscardToHandCard(0, task == CardSelectTask::LIQUID_MEMORIES_POTION);
         } else {
             bc.openSimpleCardSelectScreen(task, amount);
+            if (task == CardSelectTask::LIQUID_MEMORIES_POTION)
+                bc.cardSelectInfo.setOrigin(SelectOrigin::Potion,int(Potion::LIQUID_MEMORIES));
         }
     }};
 }
@@ -1029,23 +1032,26 @@ Action Actions::CodexAction() {
     return {[] (BattleContext &bc) {
         if (bc.monsters.areMonstersBasicallyDead()) return;
         bc.openSimpleCardSelectScreen(CardSelectTask::CODEX, 1);
+        bc.cardSelectInfo.setOrigin(SelectOrigin::Relic,int(R::NILRYS_CODEX));
         bc.cardSelectInfo.codexCards() =
                 generateDiscoveryCards(bc.cardRandomRng, CharacterClass::IRONCLAD, CardType::INVALID);
     }};
 }
 
-Action Actions::ExhaustMany(int limit) {
+Action Actions::ExhaustMany(int limit, Potion source) {
     return {[=] (BattleContext &bc) {
         if (bc.cards.cardsInHand == 0) return;
         bc.openSimpleCardSelectScreen(CardSelectTask::EXHAUST_MANY, limit);
+        if (source != Potion::INVALID) bc.cardSelectInfo.setOrigin(SelectOrigin::Potion,int(source));
         bc.cardSelectInfo.canPickZero = true;
         bc.cardSelectInfo.canPickAnyNumber = true;
     }};
 }
 
-Action Actions::GambleAction() {
-    return {[] (BattleContext &bc) {
+Action Actions::GambleAction(SelectOrigin origin, int originId) {
+    return {[=] (BattleContext &bc) {
         bc.openSimpleCardSelectScreen(CardSelectTask::GAMBLE, bc.cards.cardsInHand);
+        bc.cardSelectInfo.setOrigin(origin,originId);
         bc.cardSelectInfo.canPickZero = true;
         bc.cardSelectInfo.canPickAnyNumber = true;
     }};
@@ -1054,6 +1060,7 @@ Action Actions::GambleAction() {
 Action Actions::ToolboxAction() {
     return {[] (BattleContext &bc) {
         bc.openSimpleCardSelectScreen(CardSelectTask::DISCOVERY, 1);
+        bc.cardSelectInfo.setOrigin(SelectOrigin::Relic,int(R::TOOLBOX));
         bc.cardSelectInfo.discovery_CopyCount() = 1;
         bc.cardSelectInfo.discoveryFreeForTurn = false;
         bc.cardSelectInfo.discovery_Cards() =

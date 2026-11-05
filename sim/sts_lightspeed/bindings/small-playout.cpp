@@ -2,6 +2,8 @@
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 #include "sim/search/SmallPlayout.h"
+#include "sim/search/PlayoutEntities.h"
+#include "game/GameContext.h"
 #include "sim/search/NeuralSearchBatch.h"
 #include <cstring>
 #include <cmath>
@@ -13,6 +15,17 @@
 namespace py = pybind11;
 using namespace sts::search;
 namespace {
+py::dict entityRows(const std::vector<PlayoutEntity> &rows) {
+    const auto n=py::ssize_t(rows.size());
+    py::array_t<int> ids(n), zones(n), monsters(n);
+    py::array_t<float> numbers({n,py::ssize_t(PLAYOUT_ENTITY_FLOATS)});
+    for(py::ssize_t i=0;i<n;++i){
+        ids.mutable_data()[i]=rows[i].id;zones.mutable_data()[i]=rows[i].zone;
+        monsters.mutable_data()[i]=rows[i].monster;
+        std::copy(rows[i].numbers.begin(),rows[i].numbers.end(),numbers.mutable_data()+i*PLAYOUT_ENTITY_FLOATS);
+    }
+    py::dict d;d["ids"]=ids;d["zones"]=zones;d["monsters"]=monsters;d["numbers"]=numbers;return d;
+}
 py::dict features(const SmallFeatures &f) {
     py::array_t<float> state(SMALL_STATE);
     std::memcpy(state.mutable_data(),f.state.data(),SMALL_STATE*sizeof(float));
@@ -52,6 +65,30 @@ void bindSmallPlayout(py::module_ &m) {
     m.def("small_playout_turn_card_limit_reached",&smallTurnCardLimitReached);
     m.def("small_playout_key_count",&smallKeyCount);
     m.def("small_playout_features",[](const sts::BattleContext &bc){return features(smallFeatures(bc));});
+    m.attr("small_playout_public_contract")="sts1-playout-public-entities-v1";
+    m.def("small_playout_public_layout",[]{
+        py::dict d;d["stride"]=PLAYOUT_ENTITY_STRIDE;d["numbers"]=PLAYOUT_ENTITY_FLOATS;
+        d["kinds"]=py::make_tuple("battle","player","power","relic","card","monster","monster_power",
+            "move","potion","selection","counter","order");
+        d["zones"]=py::make_tuple("battle","player","hand","hidden_draw","known_draw","discard","exhaust",
+            "stasis","generated","pending","master_deck","owned_relic","active_relic","potion","monster");
+        return d;
+    });
+    m.def("small_playout_public_features",[](const sts::GameContext &gc,const sts::BattleContext &bc){
+        const auto state=smallFeatures(bc);
+        PlayoutEntityObservation observation;
+        playoutEntities(bc,gc.deck.size(),state.actions,observation);
+        auto d=features(state);
+        d["inventory"]=entityRows(playoutInventory(gc));
+        d["entities"]=entityRows(observation.entities);
+        const auto n=py::ssize_t(observation.sources.size());
+        py::array_t<int> sources({n,py::ssize_t(SMALL_KEYS)}),targets(n);
+        for(py::ssize_t i=0;i<n;++i){
+            std::copy_n(observation.sources[i].begin(),SMALL_KEYS,sources.mutable_data()+i*SMALL_KEYS);
+            targets.mutable_data()[i]=observation.targets[i];
+        }
+        d["source_rows"]=sources;d["target_slots"]=targets;return d;
+    },py::arg("game"),py::arg("battle"));
     m.def("small_playout_value",&smallTerminalValue,py::arg("battle"),py::arg("boss")=false);
     m.def("small_playout_redeterminize",&smallRedeterminize);
     m.def("small_playout_known_top",[](const sts::BattleContext &bc){return bc.cards.knownDrawTop;});

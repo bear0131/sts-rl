@@ -530,7 +530,7 @@ void BattleContext::initRelics(const GameContext &gc) {
     for (auto r : atTurnStartPostDraw) {
         switch (r) {
             case R::GAMBLING_CHIP:
-                addToBot( Actions::GambleAction() );
+                addToBot( Actions::GambleAction(SelectOrigin::Relic,int(R::GAMBLING_CHIP)) );
                 break;
 
             case R::WARPED_TONGS:
@@ -2525,7 +2525,7 @@ void BattleContext::drinkPotion(int idx, int target) {
             break;
 
         case Potion::ATTACK_POTION:
-            addToBot(Actions::DiscoveryAction(CardType::ATTACK, hasBark ? 2 : 1));
+            addToBot(Actions::DiscoveryAction(CardType::ATTACK, hasBark ? 2 : 1, p));
             break;
 
         case Potion::BLESSING_OF_THE_FORGE:
@@ -2551,7 +2551,7 @@ void BattleContext::drinkPotion(int idx, int target) {
             break;
 
         case Potion::COLORLESS_POTION:
-            addToBot( Actions::DiscoveryAction(CardType::STATUS, hasBark ? 2 : 1) ); // status card type is being used to indicate colorless
+            addToBot( Actions::DiscoveryAction(CardType::STATUS, hasBark ? 2 : 1, p) ); // status card type is being used to indicate colorless
             break;
 
         case Potion::CULTIST_POTION:
@@ -2579,7 +2579,7 @@ void BattleContext::drinkPotion(int idx, int target) {
             break;
 
         case Potion::ELIXIR_POTION:
-            addToBot( Actions::ExhaustMany(10) );
+            addToBot( Actions::ExhaustMany(10, p) );
             break;
 
         case Potion::ENERGY_POTION:
@@ -2632,7 +2632,7 @@ void BattleContext::drinkPotion(int idx, int target) {
             break;
 
         case Potion::GAMBLERS_BREW:
-            if (cards.cardsInHand > 0) addToBot(Actions::GambleAction());
+            if (cards.cardsInHand > 0) addToBot(Actions::GambleAction(SelectOrigin::Potion,int(p)));
             break;
 
         case Potion::GHOST_IN_A_JAR:
@@ -2661,7 +2661,7 @@ void BattleContext::drinkPotion(int idx, int target) {
 
         case Potion::POWER_POTION:
             haveUsedDiscoveryAction = true;
-            addToBot( Actions::DiscoveryAction(CardType::POWER, hasBark ? 2 : 1) );
+            addToBot( Actions::DiscoveryAction(CardType::POWER, hasBark ? 2 : 1, p) );
             break;
 
         case Potion::REGEN_POTION:
@@ -2669,7 +2669,7 @@ void BattleContext::drinkPotion(int idx, int target) {
             break;
 
         case Potion::SKILL_POTION:
-            addToBot(Actions::DiscoveryAction(CardType::SKILL, hasBark ? 2 : 1));
+            addToBot(Actions::DiscoveryAction(CardType::SKILL, hasBark ? 2 : 1, p));
             break;
 
         case Potion::SMOKE_BOMB:
@@ -3271,6 +3271,8 @@ void BattleContext::openSimpleCardSelectScreen(CardSelectTask task, int count) {
     cardSelectInfo = CardSelectInfo{};
     inputState = InputState::CARD_SELECT;
     cardSelectInfo.cardSelectTask = task;
+    if (curCardQueueItem.card.id != CardId::INVALID)
+        cardSelectInfo.setOrigin(SelectOrigin::Card,int(curCardQueueItem.card.id));
     cardSelectInfo.pickCount = count;
     cardSelectInfo.canPickAnyNumber = false;
     cardSelectInfo.canPickZero = false;

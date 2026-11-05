@@ -647,3 +647,12 @@ CPU资源缺GPU项填null；单次诊断吞吐不是完整训练资格，也不�
 SSH归约协议汇总，`policy_measurement_pre_seconds_rank` 包含GPU同步和归约，
 计入整轮时间。保留模式、Python/NumPy/Torch RNG与梯度/Adam，不改变更新配置；
 空rank也参加归约。此项仅统一上层模型支持，旧模型/旧日志不补零。
+
+战斗搜索的公开实体输入 `sts1-playout-public-entities-v1` 由
+`small_playout_public_features(game, battle)` 导出，布局见
+`small_playout_public_layout()`。inventory 是当前公开的永久牌组、遗物及其属性；
+entities 是本战斗的牌堆、角色、怪物、状态、可见招式、药水及待选来源。
+普通抽牌堆未知部分只提供多重集，已知顶部与冰冻之眼例外；符文圆顶隐藏当前意图。
+source_rows 只引用动态实体行，target_slots 对应原生怪物槽位，-1 表示没有对应项。
+它们仅用于索引，执行句柄、物理UID、RNG不作为数值特征。候选数无96上限。
+此接口与旧的 `sts1-small-playout-v1` 独立，不能将新权重按旧格式导出。
