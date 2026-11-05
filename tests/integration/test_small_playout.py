@@ -203,14 +203,14 @@ def test_action_projection_handles_input_eviction_and_dynamic_targets(combat_fac
         np.testing.assert_allclose(learner.search.net.logits(bc), expected, atol=2e-5, rtol=2e-5)
 
 
-def test_state_embedding_handles_changing_inputs_and_eviction():
+def test_state_embedding_handles_changing_inputs_and_revisits():
     root = BattleFixture().create(42)
     learner = SmallPlayoutLearner(seed=19)
     original = learner.search.net.logits(root)
     initial = root.to_dict()['player']
     scores = []
-    # Exceed the bounded state cache with distinct real feature vectors. Scores
-    # must also remain correct when a previously evicted input is revisited.
+    # Distinct real feature vectors and later revisits must agree with the
+    # Torch policy, regardless of previous calls or any internal reuse.
     for block in range(769):
         root.apply_custom_state({'player': {'block': block, 'hp': 1 + block % 71}})
         features = sts.small_playout_features(root)
