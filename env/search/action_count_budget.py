@@ -6,6 +6,58 @@ import math
 from env.search.conditional_subset import multi_select_slots
 
 
+def effective_action_width(action_bits):
+    """Count selectable cards for a subset question, otherwise legal actions."""
+    if len(action_bits) == 1:
+        return 1
+    slots = multi_select_slots(action_bits)
+    return max(2, len(slots)) if slots else len(action_bits)
+
+
+def allocate_batch_budgets(widths, nominal_budget, mode, *, keys=None):
+    """Redistribute one room tier's budget without changing its exact total.
+
+    Each searched root receives between ceil(nominal/4) and 4*nominal
+    simulations. Linear weights are effective action widths; tapered weights
+    grow as sqrt(width) beyond eight choices. Stable root keys break rounding
+    ties independently of worker completion order. Forced roots already
+    bypassed by the caller do not enter this accounting.
+    """
+    widths = list(widths)
+    if (type(nominal_budget) is not int or nominal_budget < 1
+            or mode not in ("fixed", "linear", "tapered")
+            or any(type(w) is not int or w < 1 for w in widths)):
+        raise ValueError("invalid batch budget or action widths")
+    keys = list(range(len(widths))) if keys is None else list(keys)
+    if (len(keys) != len(widths) or any(type(k) is not int for k in keys)
+            or len(set(keys)) != len(keys)):
+        raise ValueError("need one unique integer key per root")
+    if not widths or mode == "fixed":
+        return [nominal_budget] * len(widths)
+    weights = [float(w) if mode == "linear" else
+               w / math.sqrt(max(1.0, w / 8)) for w in widths]
+    lower, upper = (nominal_budget + 3) // 4, nominal_budget * 4
+    total = nominal_budget * len(widths)
+    lo, hi = 0.0, upper / min(weights)
+    for _ in range(80):
+        scale = (lo + hi) / 2
+        if sum(max(lower, min(upper, scale * w)) for w in weights) < total:
+            lo = scale
+        else:
+            hi = scale
+    quotas = [max(lower, min(upper, lo * w)) for w in weights]
+    result = [math.floor(q) for q in quotas]
+    remaining = total - sum(result)
+    order = sorted((i for i, b in enumerate(result) if b < upper),
+                   key=lambda i: (-(quotas[i] - result[i]), keys[i]))
+    if not 0 <= remaining <= len(order):
+        raise ArithmeticError("could not conserve the simulation budget")
+    for i in order[:remaining]:
+        result[i] += 1
+    assert sum(result) == total and all(lower <= b <= upper for b in result)
+    return result
+
+
 @dataclass(frozen=True)
 class ActionCountBudget:
     mode: str
@@ -22,9 +74,7 @@ class ActionCountBudget:
         """Count native multi-select hand slots, rather than the combinations of them."""
         if len(action_bits) == 1:
             return 0
-        slots = multi_select_slots(action_bits)
-        width = max(2, len(slots)) if slots else len(action_bits)
-        return self.simulations(width, boss)
+        return self.simulations(effective_action_width(action_bits), boss)
 
     def simulations(self, actions, boss=False):
         if type(actions) is not int or actions < 1:
