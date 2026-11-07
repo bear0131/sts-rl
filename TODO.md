@@ -594,4 +594,4 @@
 
 | SEARCH-CHAIN-MODEL141 | 同141配对480完成：全Transformer348胜、链内guide342胜；+1.25pp、95%[-2.5,+5.0]，未证实胜率提升 | 根部均冻结141完整2×64，250/250/1000及同480实际开局/上层/权重；0删失/剔除。全Transformer平均47.68125层、guide46.91667层；guide389.610秒，复用历史全Transformer1479.841秒，非ABBA。不将小guide458.52万有效/s混为完整模型达标；实际链内计数剔除未采用根评分。源码/原始结果三处SHA/manifest归档。见worklog/2026-11-07.md#chain-model141-paired480-complete；实验仅供参考，不自动改训练。 |
 
-| COMBAT38-HYBRID-ROLLOUT | 用户改优先级；原141混合路径389.610秒/480，已确认根级并行限制，待世界级任务对照 | 保持根部完整2×64 Transformer、链内同checkpoint guide、上下层权重/观测/动作/250/250/1000预算与共享世界语义；先拆分CPU世界任务，固定顺序汇总，逐根语义/完整自然16与资源合格后再选择一次480。正常完整墙钟和实际非强制决策计数比较原389.610秒，不将短测试或增加样本量视为等价提速。四机训练不动；全Transformer200万目标保留。见worklog/2026-11-07.md#hybrid-rollout-priority。 |
+| COMBAT38-HYBRID-ROLLOUT | 世界级CPU并行：7420根精确一致；正常16为129.265→37.012秒；选一次480运行中 | 按用户新优先级优化根部141完整2×64 Transformer＋链内同checkpoint guide，250/250/1000和depth200不变。hybridworld141用原25线程池分发独立世界，按原顺序归约；非法配置/边界和16自然局全量逐根精确核验通过。16总CPU时间增加，wall收益不能直接外推480。原完整480为389.610196秒，hybridworld480-01同开局2400秒上限，待0删失/计数/终态与资源验收。原型及结果三处SHA归档，未改训练；见worklog/2026-11-07.md#hybrid-world-parallel-qualified16。 |
