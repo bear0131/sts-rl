@@ -588,7 +588,7 @@
 
 | COMBAT38-NINE-TOKEN-SPEED | 已完成25核独立速度评测 | `rl/policies/entity_action_playout.py` 对照两份上下文投影、真实根部回放和大批CPU/GPU前推；见worklog/2026-11-05.md#combat38-nine-token-speed。 |
 
-| COMBAT38-NINE-ONLINE480 | 完整480仍149.143万/s；特殊评分融合IEEE已过审计16局，正常ABBA进行中 | 25核/RTX5090、冻结141完整2层64宽Transformer指导共享链，持续200万实际非强制决策/s及独立世界/完整480验收；四机正式训练不动。完整最佳devicegraph141：1232.483701秒、480自然360胜、0删失/剔除、权重冻结及图关闭，尚未达标。devicecombo141有限ABBA277.70/278.57万每秒、正常16为103.158→96.757秒，尚无组合480；短测不代替持续验收。CPU根部编译16局慢19.74%不晋级。新devicefallbackframe141单持久输入/完整模型/采样图的TF32×3版被真实误差门槛拒绝，IEEE版固定失败输入/packet/生命周期/memcheck与审计自然16通过；386560特殊评分无选牌变化，概率max1.458525e-5，尚待普通16同机ABBA成本结果，见worklog/2026-11-08.md#fallback-frame-numeric-replay。外部中途censor缓存边界仍未独立验收，目标保留未完成。 |
+| COMBAT38-NINE-ONLINE480 | 完整480仍149.143万/s；IEEE特殊评分融合正常16 ABBA快4.72%；单次组合480资格进行中 | 25核/RTX5090、冻结141完整2层64宽Transformer指导共享链，持续200万实际非强制决策/s及独立世界/完整480验收；四机正式训练不动。完整最佳devicegraph141：1232.483701秒、480自然360胜、0删失/剔除、权重冻结及图关闭，尚未达标。devicecombo141有限ABBA277.70/278.57万每秒、正常16为103.158→96.757秒，尚无组合480；短测不代替持续验收。CPU根部编译16局慢19.74%不晋级。新devicefallbackframe141单持久输入/完整模型/采样图的TF32×3版被真实误差门槛拒绝，IEEE版固定失败输入/packet/生命周期/memcheck与审计自然16通过；386560特殊评分无选牌变化，概率max1.458525e-5，普通16同机ABBA95.965→91.433秒、逐局结果相同；已启动一次组合完整480，结果/生产长度生命周期尚待，见worklog/2026-11-08.md#fallback-frame-abba16-and-full480。外部中途censor缓存边界仍未独立验收，目标保留未完成。 |
 
 | COMBAT38-TURN50 | 已部署；第36/37轮剔除、双层更新与四机保存已验收 | `rl/algorithms/independent_rollout.py`、`rl/training/native_vec_env.py`：可显式在原独立训练的完整自然轮边界启用单场回合上限。显示回合51起标记异常并剔除整局上下层样本，不占胜负分母；同场第50回合可执行。以原35恢复后再次采集第36轮、异常槽含种子/原因、完成更新和保存为生产验收。见 [实施记录](worklog/2026-11-05.md#combat38-turn50)。 |
 
