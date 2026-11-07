@@ -1721,16 +1721,16 @@
     }
   },
   "monitor": {
-    "root": "/root/autodl-tmp/combat38-resume141-20261108",
-    "run_id": "combat38-transformer64-regret-paired-r1",
-    "label": "COMBAT38 · 共享链 / 2×64 Transformer / 1920局",
+    "root": "/root/autodl-tmp/combat39-learned-budget-20261108",
+    "run_id": "combat39-learned-search-budget-r1",
+    "label": "COMBAT39 · 学习搜索预算 / 2×64 Transformer / 1920局",
     "branch_step": 0,
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "从143完整保存继续训练：世界线异步并行，25核机24采样线程、16核机16线程，x86-64-v3构建；保持原run、模型和搜索预算。",
-    "updated_at": "2026-11-07T18:03:52.828994+00:00"
+    "note": "全新上下层与预算头；预算0/32/128/512/2048，独立世界审计学习收益和成本；24/24/24/16线程。",
+    "updated_at": "2026-11-07T19:05:28.925886+00:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
@@ -1899,5 +1899,62 @@
     "state_forwards": 3478678513,
     "search_action_scores": 20055945058,
     "reference": "worklog/2026-11-05.md#lower-redesign停止训练先核对完整rollout下层前推次数"
+  },
+  "learned_budget_training": {
+    "status": "training; first complete distributed round pending",
+    "run_id": "combat39-learned-search-budget-r1",
+    "root": "/root/autodl-tmp/combat39-learned-budget-20261108",
+    "source_commit": "7b0a3c17",
+    "seed": 20261108,
+    "world_size": 4,
+    "environments_per_rank": 480,
+    "sampling_threads": [
+      24,
+      24,
+      24,
+      16
+    ],
+    "native_sha256": "811f490bd9526a02427c606108a0b616de2f19103ecf8b9564c467113bc41224",
+    "initial_sha256": "5af6b818e0f6ba387e126fc78ed4723b4775826ec3fcd51cbf1b056bfb80c0b0",
+    "fresh_all_parameters": true,
+    "contract": "sts1-token64x2-independent-budget-gain-v1",
+    "budgets": [
+      0,
+      32,
+      128,
+      512,
+      2048
+    ],
+    "audit_probability": 0.015625,
+    "audit_worlds": 16,
+    "warmup_rounds": 3,
+    "exploration": 0.2,
+    "cost_price_per_1000_transitions": 0.02,
+    "checkpoint_keep_round_multiple": 25,
+    "previous_run": {
+      "run_id": "combat38-transformer64-regret-paired-r1",
+      "round": 150,
+      "global_step": 157582047,
+      "full_dual_backup": "previous-run-backup/rankN-round150.tgz",
+      "backup_ports": [
+        53841,
+        11727
+      ]
+    },
+    "evaluation": {
+      "checkpoint_rounds": [
+        10,
+        25,
+        50,
+        100
+      ],
+      "calibration_first_seed": 20271108,
+      "calibration_games": 32,
+      "holdout_first_seed": 20272108,
+      "holdout_games": 128,
+      "reference": "same frozen model, guide, hardware and seeds; fixed-budget-token; calibrate actual transition cost, report wall time and paired outcomes",
+      "training_audit_cost_included": true
+    },
+    "optimization": "Resume after launch; diagnose actual full-cohort critical path before changing it."
   }
 }
