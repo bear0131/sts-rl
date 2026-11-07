@@ -1729,8 +1729,8 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "四机已启用 ce3d1621 世界线异步并行，从完整142轮恢复；保持原run、模型、优化器、预算和学习目标。完整生产轮与保存恢复正在验收。",
-    "updated_at": "2026-11-07T17:43:45.591270+00:00"
+    "note": "从143完整保存继续训练：世界线异步并行，25核机24采样线程、16核机16线程，x86-64-v3构建；保持原run、模型和搜索预算。",
+    "updated_at": "2026-11-07T18:03:52.828994+00:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
