@@ -1901,7 +1901,7 @@
     "reference": "worklog/2026-11-05.md#lower-redesign停止训练先核对完整rollout下层前推次数"
   },
   "learned_budget_training": {
-    "status": "training; first complete distributed round pending",
+    "status": "training; two distributed rounds verified; live four-rank search allocation visualization deployed; matched-cost evaluation pending",
     "run_id": "combat39-learned-search-budget-r1",
     "root": "/root/autodl-tmp/combat39-learned-budget-20261108",
     "source_commit": "7b0a3c17",
@@ -1955,6 +1955,20 @@
       "reference": "same frozen model, guide, hardware and seeds; fixed-budget-token; calibrate actual transition cost, report wall time and paired outcomes",
       "training_audit_cost_included": true
     },
-    "optimization": "Resume after launch; diagnose actual full-cohort critical path before changing it."
+    "optimization": "Frozen round3,32-game CPU-controller profile completed; root scoring averaged6.2 states/batch. Prioritize batching/overlap; no speed improvement claimed or deployed; do not extrapolate early32-game timing to mature480.",
+    "verification": {
+      "rounds": [
+        1,
+        2
+      ],
+      "global_steps": [
+        207638,
+        561061
+      ],
+      "cross_rank_policy_and_adam_equal": true,
+      "archive": "qualified-budget-start-and-profile-v2.tgz",
+      "archive_sha256": "aa8ee82775697ea8a116362fa926e7bffb43ab17e581def1b275d6af82e3fa68",
+      "reference": "worklog/2026-11-08.md#learned-budget-production-and-profile"
+    }
   }
 }
