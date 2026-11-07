@@ -1729,8 +1729,8 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "按用户要求从完整150轮继续原38；原250/250/1000、Transformer根/学习CPU链guide、24/24/24/16线程。39已在42轮正常暂停并双份完整保存。",
-    "updated_at": "2026-11-07T22:01:34.494765+00:00"
+    "note": "原38从150完整恢复，151/152四机真实更新/保存核验通过，连续曲线；原250/250/1000、Transformer根/学习CPU链guide。39正常暂停于42轮并双份保存。",
+    "updated_at": "2026-11-07T22:28:58.484999+00:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
@@ -2071,7 +2071,34 @@
           372920,
           236648
         ],
-        "two_round_verification": "pending"
+        "two_round_verification": {
+          "completed": true,
+          "rounds": [
+            151,
+            152
+          ],
+          "global_steps": [
+            158962765,
+            160346117
+          ],
+          "cross_rank_policy_and_adam_equal": true,
+          "completed_games": [
+            1919,
+            1918
+          ],
+          "censored_games": [
+            1,
+            2
+          ],
+          "censor_reason": "unchanged combat-turn-limit:51>50",
+          "rollout_max_seconds": [
+            223.8441619873047,
+            226.57102966308594
+          ],
+          "full_state_dual_backup": "resume150-two-round-backup/rankN-round152.tgz",
+          "evidence_sha256": "5f26ee48933d516426f04848809a9e8343450c89fbafef09639666dfde23cad8",
+          "reference": "worklog/2026-11-08.md#combat38-resume150-verified"
+        }
       }
     },
     "result": {

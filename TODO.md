@@ -602,4 +602,4 @@
 
 | COMBAT38-MATURE-BUDGET | 完成：128局101/92/97胜；默认搜索减半但变差，校准多9.7%搜索未证实改善 | 原上下层/guide全部冻结，只训练预算头；独立训练/验证/校准/128局保留评测，比较原250/250/1000及自适应预算的配对胜率、实际搜索transition、耗时和分布，四机生产继续。协议和进度见worklog/2026-11-08.md#combat38-mature-budget-probe。 |
 
-| COMBAT38-RESUME150 | 进行中：39停42轮并双份核验，38四机从150启动，待151/152验收 | 实验完成后在完整轮次边界暂停COMBAT39并双份保存四rank完整状态，从原COMBAT38 round150/global157582047恢复四机原run训练，原监控曲线连续；验证续训至少两轮学习/聚合/保存/权重与Adam一致，再继续500万/s优化。见worklog/2026-11-08.md#combat38-mature-budget-probe。 |
+| COMBAT38-RESUME150 | 完成：38已通过151/152两轮真实更新/四rank一致/双份恢复包/监控接续；39停42 | 实验完成后在完整轮次边界暂停COMBAT39并双份保存四rank完整状态，从原COMBAT38 round150/global157582047恢复四机原run训练，原监控曲线连续；151/152权重与Adam一致且两轮递增、1920局计数和原有截断明细核对完成；继续500万/s隔离优化。验收见worklog/2026-11-08.md#combat38-resume150-verified。 |
