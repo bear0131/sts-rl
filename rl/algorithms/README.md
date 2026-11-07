@@ -15,3 +15,6 @@ NOSL CUDA learner 对至少32768条的有效 batch 用最多4个线程提取独�
 不改变 microbatch、梯度归一化或 Adam 更新顺序。
 浮点逐位对照需固定设备、依赖、确定性算法及 CUDA BLAS 配置；默认 CUDA 的末位
 差异不能当作跨设备 bitwise 保证。吞吐还须覆盖完整 collection/update/save 周期。
+
+
+`budget_calibration.py` 提供成熟策略的独立预算头附加、审计特征保存及有界拟合；复用 `updates.optimizer_step`，不执行 PPO 或下层动作监督。特征由 `AdaptiveTokenRegretPolicy.budget_features` 统一生成并 detach。预算头以单独文件绑定原模型 SHA 和 tensor digest，不能替代完整训练恢复文件。采集和冻结评测复用现有 episode runner/策略与 eval CLI，支持范围见 `rl/evaluation/README.md`。

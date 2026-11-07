@@ -141,3 +141,14 @@ native search 对终局本来就直接返回精确 HP，所以网络的 terminal
 # 评测轨迹显示约定
 
 轨迹 Markdown 使用中文时间线排版：地图、问号事件、战斗摘要、战斗奖励、商店、宝箱和首领遗物按发生顺序混排；战斗不展开逐动作，只记录战斗前后生命与资源变化。生命和金币使用颜色标记，牌名、遗物和药水使用不同颜色。显示名称在报告层维护，特别保证 `Combust` 显示为“自燃”，`Inflame` 显示为“燃烧”。
+
+
+## 成熟策略的独立预算头
+
+原 token-root checkpoint 可加 `--budget-head HEAD.pt`，在冻结上下层及链内 guide 的情况下评估预算分配。文件必须由 `rl.algorithms.budget_calibration` 创建，绑定原 ZIP SHA256、原策略 tensor digest 和预算契约；它只保存预算头，不是可直接续训的整模型 checkpoint。
+
+沿同一 `rl.evaluation.eval` 入口、`--solver paired-worldlines` 运行。加 `--budget-dataset OUT.npz` 可收集独立世界审计的100维特征和8维收益/成本目标；此时按训练探索规则分配预算，但不更新任何权重。初始预算头 round0 使用预热分布，拟合后的冻结评测不做探索。NPZ记录实际episode seeds；训练和验证必须来自不同整局集合，不能按同一局的相邻状态随机切分。
+
+`--search-cost-price FLOAT` 只覆盖冻结自适应评测的计算成本价格，不改变原训练契约；不能和审计采集或固定预算同时使用。未加覆盖时维持0.02/千模拟transition。实际搜索费用包含模拟中的推进，审计的额外费用另列。原固定预算与自适应预算均复用同一个世界批后端。
+
+拟合调用 `fit_budget_head(model, train_npz, validation_npz, BudgetFitConfig(...))`，仅更新预算头并以验证误差选轮次；全模型原参数必须保持一致。正式评测使用第三组未参与拟合/价格选择的种子，并同时报告胜率、实际模拟费用、截断及墙钟。先查看eval JSON的complete状态和完整episode数量，再使用采集NPZ；异常退出时可能留下部分采集文件。

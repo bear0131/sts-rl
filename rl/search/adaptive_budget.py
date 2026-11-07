@@ -7,7 +7,7 @@ import slaythespire as sts
 from rl.search.paired_token_rollout import PairedTokenBatch
 from rl.policies.token_regret import encode_public_roots, pack_rows
 from rl.policies.search_budget import (
-    BUDGETS, AUDIT_PROBABILITY, AUDIT_WORLDS, budget_manifest, choose_budget,
+    BUDGETS, AUDIT_PROBABILITY, AUDIT_WORLDS, COST_PRICE, budget_manifest, choose_budget,
 )
 
 
@@ -33,7 +33,7 @@ def audit_targets(values, actions, choices, costs, units):
 
 
 class AdaptiveBudgetBatch(PairedTokenBatch):
-    def __init__(self, envs, pool, pair, policy, *, fixed_budget=None):
+    def __init__(self, envs, pool, pair, policy, *, fixed_budget=None, cost_price=None):
         super().__init__(envs, pool, pair, policy)
         if pair.get('budget_config') != budget_manifest():
             raise ValueError('incompatible learned budget contract')
@@ -41,6 +41,9 @@ class AdaptiveBudgetBatch(PairedTokenBatch):
             raise ValueError('learned budgets require the native world batch backend')
         if fixed_budget is not None and (pair['online'] or type(fixed_budget) is not int or not 0 <= fixed_budget <= 4096):
             raise ValueError('fixed-budget reference requires frozen evaluation and 0..4096 simulations')
+        if cost_price is not None and (pair['online'] or not np.isfinite(cost_price) or cost_price < 0):
+            raise ValueError('a finite nonnegative cost-price override requires frozen evaluation')
+        self.cost_price = COST_PRICE if cost_price is None else float(cost_price)
         self.fixed_budget = fixed_budget
         self.budgets = BUDGETS if fixed_budget is None else (0, fixed_budget) if fixed_budget else (0,)
         self._contexts = {}
@@ -71,7 +74,7 @@ class AdaptiveBudgetBatch(PairedTokenBatch):
             for k, (job, row) in enumerate(multi):
                 index, tier, cfg, nonce = job
                 choice = (choose_budget(predictions[k], nonce, training=self.pair['online'],
-                                        round_index=self.pair['budget_round']) if self.fixed_budget is None
+                                        round_index=self.pair['budget_round'], cost_price=self.cost_price) if self.fixed_budget is None
                           else int(self.fixed_budget > 0))
                 audit = self.pair['online'] and np.random.default_rng(nonce ^ 0x4155444954).random() < AUDIT_PROBABILITY
                 cfg.simulations = self.budgets[choice]

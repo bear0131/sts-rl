@@ -30,12 +30,14 @@ def budget_manifest():
                 warmup_probabilities=WARMUP_PROBABILITIES.tolist())
 
 
-def choose_budget(prediction, nonce, *, training, round_index):
+def choose_budget(prediction, nonce, *, training, round_index, cost_price=COST_PRICE):
     prediction = np.asarray(prediction, np.float64)
     if prediction.shape != (8,) or not np.isfinite(prediction).all():
         raise ValueError('budget predictor must return four finite gains and costs')
+    if not np.isfinite(cost_price) or cost_price < 0:
+        raise ValueError('search cost price must be finite and nonnegative')
     rng = np.random.default_rng(int(nonce) ^ 0x425544474554)
-    utility = np.r_[0., prediction[:4] * 10 - COST_PRICE *
+    utility = np.r_[0., prediction[:4] * 10 - cost_price *
                     np.expm1(np.clip(prediction[4:], 0., 15.))]
     if training and round_index < WARMUP_ROUNDS:
         return int(rng.choice(len(BUDGETS), p=WARMUP_PROBABILITIES))
@@ -86,7 +88,7 @@ class AdaptiveTokenRegretPolicy(OnlineTokenRegretPolicy):
         pair['budget_round'] = int(self.budget_round)
         return pair
 
-    def predict_budget(self, context, state, scores, mask, boss):
+    def budget_features(self, context, state, scores, mask, boss):
         lp = scores.log_softmax(-1).masked_fill(~mask, 0.)
         p = lp.exp().masked_fill(~mask, 0.)
         count = mask.sum(-1).float()
@@ -95,7 +97,10 @@ class AdaptiveTokenRegretPolicy(OnlineTokenRegretPolicy):
         gap = top[:, 0] - top[:, -1]
         gap = torch.where(count > 1, gap, torch.zeros_like(gap)).clamp(0, 20) / 20
         summaries = torch.stack((entropy, gap, count.log1p() / 10, boss.float()), -1)
-        return self.budget_head(torch.cat((context, state, summaries), -1).detach())
+        return torch.cat((context, state, summaries), -1).detach()
+
+    def predict_budget(self, context, state, scores, mask, boss):
+        return self.budget_head(self.budget_features(context, state, scores, mask, boss))
 
     def score_with_budget(self, inputs, boss):
         full, guide, context = self.scores_and_guide(*inputs, return_context=True)

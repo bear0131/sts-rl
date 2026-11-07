@@ -92,7 +92,8 @@ class OnlinePlayoutEvaluationStrategy:
     name = 'small-playout'
     combat_action_contract = 'autoregressive-v2'
 
-    def __init__(self, policy, *, threads=1, paired_worldlines=False, fixed_budget=None):
+    def __init__(self, policy, *, threads=1, paired_worldlines=False, fixed_budget=None,
+                 cost_price=None, sample_collector=None):
         from rl.policies.small_playout import export_online_search_pair
         if threads < 1:
             raise ValueError('native search threads must be positive')
@@ -101,7 +102,7 @@ class OnlinePlayoutEvaluationStrategy:
         if self.root_policy is None:
             self.pair = export_online_search_pair(policy, collect_samples=False, paired_worldlines=paired_worldlines)
         else:
-            self.pair = self.root_policy.collection_pair(collect_samples=False)
+            self.pair = self.root_policy.collection_pair(collect_samples=sample_collector is not None)
             paired_worldlines = True
         if paired_worldlines:
             self.name = 'paired-worldlines'
@@ -109,7 +110,15 @@ class OnlinePlayoutEvaluationStrategy:
             if 'budget_config' not in self.pair or type(fixed_budget) is not int or not 0 <= fixed_budget <= 4096:
                 raise ValueError('fixed-budget reference needs an adaptive checkpoint and 0..4096 simulations')
             self.name = 'fixed-budget-token'
+        if (cost_price is not None or sample_collector is not None) and 'budget_config' not in self.pair:
+            raise ValueError('budget cost/calibration requires an adaptive policy')
+        if fixed_budget is not None and cost_price is not None:
+            raise ValueError('a fixed budget cannot also have an adaptive cost price')
+        if sample_collector is not None and (fixed_budget is not None or cost_price is not None):
+            raise ValueError('audit collection uses the declared training budget distribution')
         self.fixed_budget = fixed_budget
+        self.cost_price = cost_price
+        self.sample_collector = sample_collector
         self.threads = threads
         self._batch = self._pool = None
         self._indices = {}
@@ -134,7 +143,8 @@ class OnlinePlayoutEvaluationStrategy:
                 from rl.search.adaptive_budget import AdaptiveBudgetBatch
                 factory = AdaptiveBudgetBatch if 'budget_config' in self.pair else PairedTokenBatch
                 batch = factory(envs, pool, self.pair, self.root_policy,
-                                **(dict(fixed_budget=self.fixed_budget) if 'budget_config' in self.pair else {}))
+                                **(dict(fixed_budget=self.fixed_budget, cost_price=self.cost_price)
+                                   if 'budget_config' in self.pair else {}))
         except BaseException:
             pool.clear()
             raise
@@ -142,13 +152,17 @@ class OnlinePlayoutEvaluationStrategy:
         self._indices = {id(env): index for index, env in enumerate(envs)}
 
     def unbind_environments(self):
-        if self._batch is not None:
-            self._statistics = self._batch.scalar_stats()
+        try:
+            if self._batch is not None:
+                self._statistics = self._batch.scalar_stats()
+                if self.sample_collector is not None:
+                    self.sample_collector.save(self.root_policy)
+        finally:
             self._batch = None
-        self._indices = {}
-        if self._pool is not None:
-            self._pool.clear()
-            self._pool = None
+            self._indices = {}
+            if self._pool is not None:
+                self._pool.clear()
+                self._pool = None
 
     def decide(self, requests, *, check=lambda: None):
         check()
@@ -166,6 +180,10 @@ class OnlinePlayoutEvaluationStrategy:
         calls = {i: ((), {'state_nonce': (int(r.seed)*1000000007 + int(r.step)) & ((1 << 64)-1)})
                  for i, r in zip(indices, requests, strict=True)}
         results = self._batch.decisions(calls)
+        if self.sample_collector is not None:
+            self.sample_collector.add(self.root_policy, self._batch.samples,
+                                      episode_seeds=(request.seed for request in requests))
+            self._batch.samples.clear()
         check()
         return [Decision(results[i]['action'], self.name, results[i]['diagnostics']) for i in indices]
 
@@ -175,11 +193,11 @@ class OnlinePlayoutEvaluationStrategy:
         contract = BUDGET_CONTRACT if 'budget_config' in self.pair else TOKEN_REGRET_CONTRACT if self.root_policy is not None else self.pair['contract']
         return dict(contract=contract, search_contract=self.pair['search_contract'],
                     budget_config=self.pair.get('budget_config'),
-                    fixed_budget_simulations=self.fixed_budget,
+                    fixed_budget_simulations=self.fixed_budget, cost_price_override=self.cost_price,
                     lower_sha256=self.pair['sha256'], native_threads=self.threads,
                     config={k: self.pair[k] for k in ('common_simulations', 'elite_simulations',
                             'boss_simulations', 'playout_depth', 'tree_depth')},
-                    prior=False, collect_training_samples=False,
+                    prior=False, collect_training_samples=self.sample_collector is not None,
                     dome='shared collection public-feature policy; no hidden-intent search',
                     nonce='uint64(episode_seed*1000000007+episode_step)',
                     search_statistics=self._batch.scalar_stats() if self._batch is not None else self._statistics)
@@ -676,9 +694,14 @@ def small_playout_strategy(model, args, lock=None, *, paired_worldlines=False, f
             continue
         if getattr(args, name, None) is not None:
             raise ValueError('small-playout uses the collection search budget; cannot override '+name)
+    collector = None
+    if getattr(args, 'budget_dataset', None):
+        from rl.algorithms.budget_calibration import BudgetSampleCollector
+        collector = BudgetSampleCollector(args.budget_dataset, lower)
     return PhaseStrategy(policy_strategy(model, args, lock), {'combat':
         OnlinePlayoutEvaluationStrategy(model.policy.small_playout,
-            threads=max(1, threads), paired_worldlines=paired_worldlines, fixed_budget=fixed_budget)})
+            threads=max(1, threads), paired_worldlines=paired_worldlines, fixed_budget=fixed_budget,
+            cost_price=getattr(args, 'search_cost_price', None), sample_collector=collector)})
 
 
 STRATEGIES = {'policy': policy_strategy, 'native': native_strategy, 'value': value_strategy,

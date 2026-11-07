@@ -122,10 +122,14 @@ def test_decision_action_contract_is_unambiguous(action,native):
         Decision(action,'custom',native_action=native)
 
 
-@pytest.mark.parametrize('reason', ['cancel', 'strategy', 'invalid-action'])
+@pytest.mark.parametrize('reason', ['cancel', 'strategy', 'invalid-action', 'unbind'])
 def test_failures_close_every_owned_environment(reason):
     envs = []
     class Failing(FutureStrategy):
+        def unbind_environments(self):
+            if reason == 'unbind':
+                raise RuntimeError('failed to save evaluation artifacts')
+
         def decide(self, requests, *, check):
             if reason == 'strategy':
                 raise RuntimeError('broken policy')

@@ -47,6 +47,12 @@ def build_parser():
     parser.add_argument('--route', choices=['model', 'min-elite-max-rest'], default='model')
     parser.add_argument('--progress-every', type=int, default=1)
     parser.add_argument('--heartbeat-seconds', type=float, default=30.0)
+    parser.add_argument('--budget-head', type=Path,
+                        help='Frozen budget-head sidecar tied to this exact original token-root checkpoint')
+    parser.add_argument('--budget-dataset', type=Path,
+                        help='Collect independent audit features/targets with exploration, without updating weights')
+    parser.add_argument('--search-cost-price', type=float,
+                        help='Frozen adaptive-budget evaluation cost per 1000 transitions')
     parser.add_argument('--output-csv', type=Path)
     parser.add_argument('--output', type=Path, help='Structured per-episode rows and summary JSON')
     parser.add_argument('--trajectory-output', type=Path,
@@ -186,6 +192,15 @@ def main():
     model = load_checkpoint(args.checkpoint, device=args.device,
                             card_vector_checkpoint=args.card_vector_checkpoint,
                             inference_only=True)
+    if any(v is not None for v in (args.budget_head, args.budget_dataset, args.search_cost_price)):
+        if args.combat_checkpoint or args.solver not in ('paired-worldlines', 'small-playout', 'fixed-budget-token'):
+            raise ValueError('budget options require a single online lower model search strategy')
+    if args.budget_head:
+        from rl.algorithms.budget_calibration import attach_budget_head
+        attach_budget_head(model, base_sha256=file_identity(args.checkpoint)['sha256'],
+                           sidecar=args.budget_head)
+    if args.budget_dataset and (args.search_cost_price is not None or args.solver == 'fixed-budget-token'):
+        raise ValueError('budget audit collection cannot also override its allocation')
     model.set_random_seed(args.seed)
     if args.resource_response:
         from rl.evaluation.resource_response import audit
@@ -291,7 +306,8 @@ def main():
             combat=file_identity(args.combat_checkpoint or args.checkpoint),
             card_encoder=file_identity(args.card_vector_checkpoint),
             native=file_identity(slaythespire.__file__),
-            boss_openings=file_identity(args.boss_opening_dataset)), rule_version=RULE_VERSION,
+            boss_openings=file_identity(args.boss_opening_dataset),
+            budget_head=file_identity(args.budget_head)), rule_version=RULE_VERSION,
             effective_strategy=strategy_manifest(configured_strategy),
             combat_candidates={name: strategy_manifest(solver) for name, solver in candidate_strategies.items()},
             combat_rows=combat_rows, combat_comparison=summarize_pairs(combat_rows))

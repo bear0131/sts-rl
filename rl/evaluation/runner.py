@@ -148,10 +148,12 @@ def evaluate(strategy: DecisionStrategy, scenario: Scenario, config: EvaluationC
                         active[index] = replacement
     finally:
         unbind = getattr(strategy, 'unbind_environments', None)
-        if unbind is not None:
-            unbind()
-        for env in environments:
-            env.close()
+        try:
+            if unbind is not None:
+                unbind()
+        finally:
+            for env in environments:
+                env.close()
 
 
 def summarize(rows):
