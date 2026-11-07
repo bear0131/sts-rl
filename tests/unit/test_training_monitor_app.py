@@ -177,9 +177,10 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const nodes = new Map();
 function element() {
- return {textContent:'',style:{},clientWidth:600,value:'0',children:[],
+ return {textContent:'',style:{},clientWidth:600,value:'0',children:[],options:[],
+  add(option){this.options.push(option)},querySelectorAll(){return []},
   setAttribute(){},append(...values){this.children.push(...values)},
-  replaceChildren(){this.children=[];this.textContent=''}};
+  replaceChildren(...values){this.children=[...values];this.options=[...values];this.textContent=''}};
 }
 const document = {
  getElementById(id){if(!nodes.has(id)){const e=element();e.previousElementSibling=element();nodes.set(id,e)}return nodes.get(id)},
@@ -188,7 +189,7 @@ const document = {
 document.getElementById('axis').value='absolute';
 const stored = new Map();
 const localStorage={getItem:k=>stored.get(k)??null,setItem:(k,v)=>stored.set(k,v)};
-const context = vm.createContext({document,assert,localStorage,ResizeObserver:class{observe(){}},
+const context = vm.createContext({document,assert,Option:class{constructor(text,value){this.text=text;this.value=value}},localStorage,ResizeObserver:class{observe(){}},
  fetch:()=>new Promise(()=>{}),setInterval(){}});
 vm.runInContext(SCRIPT,context);
 vm.runInContext(`
@@ -478,10 +479,13 @@ def test_active_run_switches_without_mixing_rows_and_survives_restart(tmp_path, 
     m = Monitor(config, output, 30)
     m.state['rows'] = [dict(global_timesteps=10, rollout_round=1, loss=1)]
     m.state['ranks'] = [dict(rank=0, cursor=dict(offset=999, inode=1))]
+    m.state['search_budget_records'] = [dict(rank=0, global_timesteps=10)]
+    m.state['search_budget_rows'] = [dict(global_timesteps=10)]
     next_run = dict(active_target, root='/candidate', run_id='candidate', label='Candidate',
                     branch_step=10, branch_round=1)
     m.follow_target(next_run, 'commit1')
     assert m.state['rows'] == [] and m.state['ranks'] == []
+    assert m.state['search_budget_records'] == [] and m.state['search_budget_rows'] == []
     assert m.state['comparisons'][-1]['rows'][0]['loss'] == 1
     with patch.object(m, 'read_rank', return_value=dict(rank=0, rows=[
             dict(global_timesteps=10, rollout_round=2, loss=2)], connection_error=None)):

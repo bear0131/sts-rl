@@ -542,3 +542,5 @@
 | DIAGNOSTIC-SHORT-PREFIX | 持续执行：复现先短前缀、发现异常即导出停止 | 用户明确禁止用大上限持续浪费；生产安全上限不等于诊断预算。先读已有进展定位最早异常，保存阶段现场/动作journal，短段+墙钟硬限、先CPU已有journal；确需延长需记录缺失证据与小增量预算，不默认全240槽到6000。 |
 
 | TRAIN-FAILURE-SCENE | 已部署：本机与四机真实资格通过 | 异常关闭前保存故障槽canonical/战斗JSON与可回放journal；无明确槽最多4个在途槽。连续native截断reset前最多4次/进程留档，不改训练/保护语义；记录失败不遮蔽原异常。真实native截断可回放、生产生命周期异常钩子与普通保存恢复须过。 |
+
+| COMBAT39-LEARNED-BUDGET | 预算分配可视化已部署 | 8773汇总当前训练四rank原始预算计数，按轮次/场景展示分配和审计成本；旧缓存回填、部分同步、重复读取/重启及run切换验证，既有曲线/worklog保持。实验训练进度以codex/rollout-200s同ID为准；显示不证明同成本胜率收益。见worklog/2026-11-08.md#learned-budget-visualization。 |

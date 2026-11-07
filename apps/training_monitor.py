@@ -20,6 +20,9 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
+from apps.training_budget import budget_rows, merge_budget_records
+
+
 REMOTE = r'''
 import json, os, pathlib, time
 root=pathlib.Path(ROOT); run=root/'runs'/RUN
@@ -46,6 +49,22 @@ if RANK==0:
         except (ValueError,UnicodeDecodeError): continue
         if 'global_timesteps' in row and 'rollout_sec' in row: rows.append(row)
     offset+=complete
+budget_offset=cursor.get('budget_offset',0) if cursor.get('inode')==st.st_ino else 0
+if budget_offset>st.st_size: budget_offset=0
+budget_records=[]
+with log.open('rb') as f:
+    f.seek(budget_offset); budget_data=f.read(16*1024*1024)
+budget_complete=budget_data.rfind(b'\n')+1
+for line in budget_data[:budget_complete].splitlines():
+    if not line.startswith(b'{'): continue
+    try: row=json.loads(line)
+    except (ValueError,UnicodeDecodeError): continue
+    if 'global_timesteps' not in row or 'rollout_sec' not in row: continue
+    stats={k:v for k,v in row.get('small_playout_stats_rank',{}).items() if '/budget_' in k}
+    if stats or 'small_playout_train/budget_round' in row:
+        budget_records.append(dict(rank=RANK,global_timesteps=row['global_timesteps'],
+            rollout_round=row.get('rollout_round'),stats=stats))
+budget_offset+=budget_complete
 with log.open('rb') as f:
     f.seek(max(0,st.st_size-262144)); tail=f.read().decode('utf-8','replace').splitlines()
 progress=None; launch=False; errors=[]
@@ -59,8 +78,8 @@ steps=[]
 for p in (run/'recovery'/f'rank{RANK}').glob('step-*'):
     if (p/'manifest.json').exists(): steps.append(int(p.name[5:]))
 print(json.dumps(dict(rank=RANK,pid=pid,alive=alive,step=max(steps,default=0),
-    progress=progress,log_mtime=st.st_mtime,errors=errors[-3:],rows=rows,
-    cursor=dict(inode=st.st_ino,offset=offset),checked_at=time.time())))
+    progress=progress,log_mtime=st.st_mtime,errors=errors[-3:],rows=rows,budget_records=budget_records,
+    cursor=dict(inode=st.st_ino,offset=offset,budget_offset=budget_offset),checked_at=time.time())))
 '''
 
 
@@ -356,6 +375,7 @@ class Monitor:
                         (old['root'], old['run_id']), (target['root'], target['run_id'])))]
                 self.state['comparisons'].append(old)
                 self.state.update(rows=restored.get('rows', []), ranks=[],
+                                  search_budget_records=[], search_budget_rows=[],
                                   updated_at=None, polling=False)
             self.config.update(target)
             self.state.update({k: target[k] for k in ('run_id', 'label',
@@ -399,6 +419,11 @@ class Monitor:
         with self.lock:
             rows = [row for rank in ranks for row in rank.pop('rows', [])]
             self.state['rows'] = merge_rows(self.state['rows'], rows)
+            records = [row for rank in ranks for row in rank.pop('budget_records', [])]
+            self.state['search_budget_records'] = merge_budget_records(
+                self.state.get('search_budget_records', []), records)
+            self.state['search_budget_rows'] = budget_rows(
+                self.state['search_budget_records'], len(self.config['ports']))
             self.state.update(ranks=ranks, updated_at=time.time(), polling=False, poll_error=None)
             self.save_locked()
 
