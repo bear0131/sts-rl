@@ -174,7 +174,8 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     with (vec.omit_unused_combat_value_observations(),
           _strategic_observations(model, vec, callback) as step_subset,
           UpperPolicyInference(model.policy.core, model.device) as upper_inference,
-          SmallPlayoutStream(vec.small_playout_batch, threads=cfg.threads) as stream):
+          getattr(vec.small_playout_batch, 'stream_type', SmallPlayoutStream)(
+              vec.small_playout_batch, threads=cfg.threads) as stream):
         while vec.episode_rollout_active.any():
             if cfg.max_combat_turns is not None:
                 # Only inspect owned, ready slots before issuing another search or RNG draw.

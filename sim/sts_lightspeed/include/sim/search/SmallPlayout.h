@@ -97,4 +97,9 @@ PairedWorldlineResult smallPairedWorldlines(const BattleContext &root, const Sma
 SmallSearchResult smallPairedRootSearch(const BattleContext &root, const SmallPlayoutNet &net,
                                      const SmallSearchConfig &cfg, std::uint64_t nonce);
 
+class NeuralSearchBatch;
+std::vector<SmallSearchResult> smallPairedWorldBatch(NeuralSearchBatch &pool,
+    const std::vector<BattleContext> &roots, const SmallPlayoutNet &net,
+    const std::vector<SmallSearchConfig> &configs, const std::vector<std::uint64_t> &nonces);
+
 }

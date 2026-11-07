@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import slaythespire as sts
 
-from env.search.small_playout import SmallPlayoutBatch
+from env.search.small_playout import SmallPlayoutBatch, PairedWorldPlayoutStream
 from rl.policies.token_regret import encode_public_roots, pack_rows
 
 
@@ -15,6 +15,8 @@ class PairedTokenBatch(SmallPlayoutBatch):
             raise ValueError("native shared-chain search is required")
         self.policy = policy
         self.device = next(policy.parameters()).device
+        if hasattr(sts, 'small_playout_world_batch'):
+            self.stream_type = PairedWorldPlayoutStream
 
     @torch.inference_mode()
     def score_roots(self, environments):

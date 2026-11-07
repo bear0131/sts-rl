@@ -59,6 +59,16 @@ small-playout 的候选列表使用动态 native handle，不受旧策略96个PI
 仍明确拒绝超过96种不同选项，不能将动态搜索支持误称为旧Gym动作ABI扩容。
 对应回归为`test_dynamic_playout_preserves_choices_beyond_fixed_policy_slots`。
 
+paired-token 独立采集在原生构建提供 `small_playout_world_batch` 时，使用
+`PairedWorldPlayoutStream`：一个后台提交线程和独立原生线程池推进共享世界线，
+每批至多64个根，世界内保留原动作顺序，按原世界顺序归约回报。主线程继续负责
+完整根模型评分、环境推进和样本接收；活动槽不可重复提交，结束或异常时先等待
+所有在途搜索，再释放线程池。每轮重新取得当前轻量头快照，不把工作线程或队列
+存入 checkpoint。预算、合法动作、根部标签和符文圆顶旁路保持原契约。
+当前原生接口支持至多480个根、每根1–1000次模拟、深度1–200且不带独立prior；
+其他模型和不含该接口的旧构建继续使用原逐根异步路径。冻结评估的普通
+`PairedTokenBatch.decisions` 接口保持兼容。回归见`test_paired_world_stream.py`。
+
 32维状态含玩家HP/maxHP、格挡、能量、回合、药水数、四牌堆计数、力量/敏捷、
 虚弱/易伤/脆弱/人工制品、五个固定敌槽的HP/格挡/当前伤害意图、选牌状态。
 24维动作含五类动作、费用/升级/卡类型/成长值/免费/消耗/保留/虚无、选择区域与任务、

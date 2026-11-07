@@ -219,6 +219,17 @@ void bindSmallPlayout(py::module_ &m) {
         py::list out;for(const auto &r:results)out.append(result(r));return out;
     },py::arg("pool"),py::arg("net"),py::arg("roots"),py::arg("configs"),py::arg("nonces"),py::arg("prior")=nullptr,
        py::arg("on_ready")=py::none(),py::arg("on_start")=py::none());
+    m.def("small_playout_world_batch",[](NeuralSearchBatch &pool,const SmallPlayoutNet &net,
+            const std::vector<sts::BattleContext*> &roots,const std::vector<SmallSearchConfig> &configs,
+            const std::vector<std::uint64_t> &nonces,const std::shared_ptr<SmallPlayoutNet> &prior){
+        if(roots.size()!=configs.size()||roots.size()!=nonces.size()||roots.size()>480||prior)
+            throw std::invalid_argument("unsupported world batch inputs");
+        std::vector<sts::BattleContext> copies;copies.reserve(roots.size());
+        for(auto root:roots){if(!root)throw std::invalid_argument("null world root");copies.push_back(*root);}
+        std::vector<SmallSearchResult> results;auto lock=pool.acquire();
+        {py::gil_scoped_release release;results=smallPairedWorldBatch(pool,copies,net,configs,nonces);}
+        py::list out;for(const auto &r:results)out.append(result(r));return out;
+    },py::arg("pool"),py::arg("net"),py::arg("roots"),py::arg("configs"),py::arg("nonces"),py::arg("prior")=nullptr);
     m.attr("small_playout_parallel_steps")=true;
     m.def("small_playout_collect_batch",[](NeuralSearchBatch &pool,const SmallPlayoutNet &net,
             const std::vector<sts::BattleContext*> &roots,const SmallSearchConfig &cfg,

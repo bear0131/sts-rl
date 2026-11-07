@@ -156,12 +156,12 @@ class SmallPlayoutBatch:
 
 
 class SmallPlayoutStream:
-    """Diagnostic independent-root scheduling on GIL-free native searches.
+    """Independent-root scheduling on GIL-free native searches.
 
     One controller submits, receives and steps environments. Each logical slot
     has at most one outstanding root; weights remain immutable until close.
     Completion order is explicit and must not be treated as learner sample order.
-    This is not enabled by the production collector.
+    This remains the compatible path for models without paired-world dispatch.
     """
     def __init__(self, batch, *, threads):
         from concurrent.futures import ThreadPoolExecutor
@@ -221,6 +221,106 @@ class SmallPlayoutStream:
             self._executor.shutdown(wait=True, cancel_futures=True)
             self._pending.clear()
             self._inline.clear()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+
+class PairedWorldPlayoutStream:
+    """Overlap world-parallel search groups with controller-owned policy/env work.
+
+    A single dispatcher owns the native pool; only the controller accepts results
+    or mutates environments. Roots, weights and pending slots remain owned until
+    all native work has joined, including failure and early close paths.
+    """
+
+    def __init__(self, batch, *, threads, batch_limit=64):
+        from concurrent.futures import ThreadPoolExecutor
+        if (type(threads) is not int or threads < 1 or
+                type(batch_limit) is not int or not 1 <= batch_limit <= 480):
+            raise ValueError('positive threads and world batch limit in 1..480 required')
+        if (not batch.paired_worldlines or batch.prior is not None or
+                not hasattr(sts, 'small_playout_world_batch')):
+            raise ValueError('world dispatch requires native paired search without a prior')
+        self.batch, self.batch_limit = batch, batch_limit
+        self._pool = sts.NeuralSearchBatch(threads)
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='sts-worlds')
+        self._queued = []
+        self._occupied = set()
+        self._active = None
+        self._inline = {}
+        self._closed = False
+
+    @property
+    def pending(self):
+        return bool(self._occupied or self._inline)
+
+    def _dispatch(self):
+        if self._active is not None or not self._queued:
+            return
+        jobs, self._queued = self._queued[:self.batch_limit], self._queued[self.batch_limit:]
+        future = self._executor.submit(
+            sts.small_playout_world_batch, self._pool, self.batch.net,
+            [self.batch.envs[j[0]].thick.bc for j in jobs],
+            [j[2] for j in jobs], [j[3] for j in jobs], self.batch.prior)
+        self._active = future, jobs
+        stats = self.batch.stats
+        stats['world_dispatch_groups'] = stats.get('world_dispatch_groups', 0) + 1
+        stats['world_dispatch_roots'] = stats.get('world_dispatch_roots', 0) + len(jobs)
+        stats['world_dispatch_max_roots'] = max(stats.get('world_dispatch_max_roots', 0), len(jobs))
+
+    def submit(self, calls):
+        if self._closed:
+            raise RuntimeError('search stream is closed')
+        if (self._occupied | set(self._inline)).intersection(calls):
+            raise RuntimeError('environment already has an outstanding search')
+        if any(type(i) is not int or not 0 <= i < len(self.batch.envs) for i in calls):
+            raise ValueError('search slot outside environment vector')
+        inline, jobs = self.batch.prepare(calls)
+        self._inline.update(inline)
+        self._queued.extend(jobs)
+        self._occupied.update(j[0] for j in jobs)
+        self._dispatch()
+
+    def receive(self, timeout=0.):
+        from concurrent.futures import wait
+        if self._closed:
+            raise RuntimeError('search stream is closed')
+        out, self._inline = self._inline, {}
+        if self._active is None:
+            return out
+        future, jobs = self._active
+        if not future.done() and not out:
+            wait([future], timeout=timeout)
+        if not future.done():
+            return out
+        try:
+            results = future.result()
+            completed = list(zip(jobs, results, strict=True))
+            self._active = None
+            self._occupied.difference_update(j[0] for j in jobs)
+            # Independent queued roots may search while the controller scores
+            # and advances completed roots. No environment belongs to both.
+            self._dispatch()
+            out.update(self.batch.accept_ready(completed))
+        except BaseException:
+            self.close()
+            raise
+        return out
+
+    def close(self):
+        if not self._closed:
+            self._closed = True
+            self._executor.shutdown(wait=True, cancel_futures=True)
+            self._active = None
+            self._queued.clear()
+            self._occupied.clear()
+            self._inline.clear()
+            self._pool.clear()
+            self._pool = None
 
     def __enter__(self):
         return self

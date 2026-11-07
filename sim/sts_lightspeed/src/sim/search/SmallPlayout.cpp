@@ -1,4 +1,5 @@
 #include "sim/search/SmallPlayout.h"
+#include "sim/search/NeuralSearchBatch.h"
 #include "sim/search/PublicPlayoutAdapter.h"
 #include "sim/search/CombatChoices.h"
 #include "sim/search/Nosl.h"
@@ -9,6 +10,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <numeric>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -703,4 +705,116 @@ SmallSearchResult smallPairedRootSearch(const BattleContext &root,const SmallPla
     return result;
 }
 
+}
+
+namespace sts::search {
+// Dispatch independent worlds while preserving each root's serial reduction order.
+std::vector<SmallSearchResult> smallPairedWorldBatch(NeuralSearchBatch &pool,
+        const std::vector<BattleContext> &roots,const SmallPlayoutNet &net,
+        const std::vector<SmallSearchConfig> &configs,const std::vector<std::uint64_t> &nonces) {
+    const auto size=roots.size();
+    if(size!=configs.size()||size!=nonces.size()||size>480)
+        throw std::invalid_argument("world batch supports equal lengths and at most480 roots");
+    if(!size)return {};
+    std::vector<SmallSearchResult> results(size);
+    std::vector<std::vector<std::size_t>> orders(size);
+    std::vector<std::vector<std::uint32_t>> actions(size);
+    std::vector<std::mt19937_64> streams(size);
+    std::vector<std::size_t> offsets(size+1);
+    std::vector<double> preparation(size);
+    std::vector<std::atomic<std::int64_t>> begun(size),ended(size);
+    auto stamp=[](){return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();};
+    for(std::size_t r=0;r<size;++r) {
+        const auto started=std::chrono::steady_clock::now();
+        const auto &root=roots[r];const auto &cfg=configs[r];
+        if(!cfg.pairedWorldlines||cfg.usePrior||cfg.publicRoot||cfg.simulations<1||cfg.simulations>1000||
+           root.outcome!=Outcome::UNDECIDED||root.player.hasRelic<R::RUNIC_DOME>()||
+           cfg.playoutDepth<1||cfg.playoutDepth>200||!std::isfinite(cfg.temperature)||cfg.temperature<=0)
+            throw std::invalid_argument("unsupported paired-world batch configuration");
+        results[r].features=smallFeatures(root);const auto n=results[r].features.actions.size();
+        if(!n)throw std::invalid_argument("empty paired-world root");
+        auto &order=orders[r];order.resize(n);std::iota(order.begin(),order.end(),0);
+        streams[r].seed(noslMix(nonces[r]^0x5045524dULL));std::shuffle(order.begin(),order.end(),streams[r]);
+        for(auto a:order)actions[r].push_back(results[r].features.actions[a].bits);
+        offsets[r+1]=offsets[r]+(cfg.simulations+n-1)/n;
+        begun[r].store(std::numeric_limits<std::int64_t>::max());ended[r].store(0);
+        preparation[r]=std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count();
+    }
+    struct Task {std::size_t root,world;int count;};
+    std::vector<Task> tasks;tasks.reserve(offsets.back());
+    for(std::size_t r=0;r<size;++r)for(std::size_t w=0;w<offsets[r+1]-offsets[r];++w)
+        tasks.push_back({r,w,std::min(int(actions[r].size()),configs[r].simulations-int(w*actions[r].size()))});
+    std::vector<PairedWorldlineResult> partial(tasks.size());
+    pool.runIndependent(tasks.size(),[&](std::size_t t){
+        const auto task=tasks[t];const auto r=task.root;const auto before=stamp();
+        auto b=begun[r].load(std::memory_order_relaxed);
+        while(before<b&&!begun[r].compare_exchange_weak(b,before,std::memory_order_relaxed)){}
+        // One original world per task; retain shared redeterminization and every root action.
+        partial[t]=smallPairedWorldlines(roots[r],net,configs[r],actions[r],task.count,
+                                        noslMix(nonces[r])+task.world,false);
+        const auto after=stamp();auto e=ended[r].load(std::memory_order_relaxed);
+        while(after>e&&!ended[r].compare_exchange_weak(e,after,std::memory_order_relaxed)){}
+    });
+    for(std::size_t r=0;r<size;++r) {
+        const auto finished=std::chrono::steady_clock::now();
+        const auto &root=roots[r];auto &result=results[r];const auto &order=orders[r];auto &rng=streams[r];
+        const auto n=order.size();PairedWorldlineResult panel;
+        panel.sums.resize(n);panel.visits.resize(n);panel.terminalVisits.resize(n);
+        // Original world order gives identical floating point accumulation, without atomics.
+        for(auto t=offsets[r];t<offsets[r+1];++t) {
+            const auto &part=partial[t];panel.completed+=part.completed;
+            for(std::size_t a=0;a<n;++a){panel.sums[a]+=part.sums[a];panel.visits[a]+=part.visits[a];panel.terminalVisits[a]+=part.terminalVisits[a];}
+            panel.stats.simulations+=part.stats.simulations;
+            panel.stats.treeTransitions+=part.stats.treeTransitions;
+            panel.stats.playoutTransitions+=part.stats.playoutTransitions;
+            panel.stats.terminalWins+=part.stats.terminalWins;
+            panel.stats.terminalLosses+=part.stats.terminalLosses;
+            panel.stats.terminalEscapes+=part.stats.terminalEscapes;
+            panel.stats.depthCuts+=part.stats.depthCuts;
+            panel.stats.treeCuts+=part.stats.treeCuts;
+            panel.stats.chanceReplays+=part.stats.chanceReplays;
+            panel.stats.nodes+=part.stats.nodes;
+            panel.stats.policyCalls+=part.stats.policyCalls;
+            panel.stats.actionScores+=part.stats.actionScores;
+            panel.stats.forcedPolicySkips+=part.stats.forcedPolicySkips;
+            panel.stats.publicStateRefreshes+=part.stats.publicStateRefreshes;
+            panel.stats.priorCalls+=part.stats.priorCalls;
+            panel.stats.drawEdges+=part.stats.drawEdges;
+            panel.stats.guardTransitions+=part.stats.guardTransitions;
+            panel.stats.turnCardLimitDecisions+=part.stats.turnCardLimitDecisions;
+            panel.stats.turnCardLimitSimulated+=part.stats.turnCardLimitSimulated;
+            for(std::size_t j=0;j<panel.stats.playoutLengths.size();++j)panel.stats.playoutLengths[j]+=part.stats.playoutLengths[j];
+        }
+    result.stats=panel.stats;
+    result.stats.turnCardLimitDecisions=smallTurnCardLimitReached(root);
+    result.visits.resize(n);result.terminalVisits.resize(n);result.values.resize(n);
+    double best=-std::numeric_limits<double>::infinity();
+    for(std::size_t i=0;i<n;++i){
+        const auto j=order[i];
+        result.visits[j]=panel.visits[i];result.terminalVisits[j]=panel.terminalVisits[i];
+        if(result.visits[j]){
+            result.values[j]=panel.sums[i]/result.visits[j];
+            best=std::max(best,result.values[j]);
+        }
+    }
+    // The reference gate used half a percentage point of normalized terminal
+    // HP, or of win probability at bosses. Break remaining policy ties fairly.
+    const auto scores=net.logits(result.features);
+    ++result.stats.policyCalls;result.stats.actionScores+=n;
+    float top=-std::numeric_limits<float>::infinity();std::vector<std::size_t> tied;
+    for(std::size_t i=0;i<n;++i){
+        if(!result.visits[i] || result.values[i]<best-.005)continue;
+        if(scores[i]>top){top=scores[i];tied.clear();}
+        if(scores[i]==top)tied.push_back(i);
+    }
+    if(tied.empty())throw std::logic_error("paired search needs a scored legal action");
+    const auto chosen=tied[std::uniform_int_distribution<std::size_t>(0,tied.size()-1)(rng)];
+    result.action=result.features.actions[chosen].bits;
+
+        result.stats.seconds=preparation[r]+(ended[r].load()-begun[r].load())*1e-9+
+            std::chrono::duration<double>(std::chrono::steady_clock::now()-finished).count();
+    }
+    return results;
+}
 }
