@@ -598,4 +598,4 @@
 
 | COMBAT38-RESTORE141 | 迁移、143→144普通恢复、8773及多余机关机验收完成；四机连续训练 | 原141完整模型/Adam/学习器/环境/RNG双份迁移，141/142/143另留双份完整备份。四bjb2同run续训，144跨rank模型/Adam与完整文件SHA通过，正在145；8773原曲线/worklog和用户发言保持，唯一优化机11727。学习参数和预算保持，按用户要求三25核采样线程调24，16核仍16。见worklog/2026-11-08.md#combat38-restore142-verified及#world-production144-verified；世界批性能问题另按COMBAT38-HYBRID-ROLLOUT继续诊断。 |
 
-| COMBAT39-LEARNED-BUDGET | 设计/实现中；原训练暂保持运行 | 新预算模式从头训练：完整根2×64 Transformer预测搜索收益与实际transition成本，随机独立审计预算反事实，单独世界评估动作、保留负收益；强制/Dome/选择契约保持。验收真实两轮学习/聚合/保存恢复、四机新训练及8773接入；冻结同模型/同种子和相同成本对照，未测胜率不得声称改进。旧训练清洁边界完整双份备份。详见worklog/2026-11-08.md#learned-budget-intention。 |
+| COMBAT39-LEARNED-BUDGET | 四机全新训练运行中；预算可视化已接入；同成本效果待评测 | 新预算模式从头训练：完整根2×64 Transformer预测搜索收益与实际transition成本，随机独立审计预算反事实，单独世界评估动作、保留负收益；强制/Dome/选择契约保持。验收真实两轮学习/聚合/保存恢复、四机新训练及8773接入；冻结同模型/同种子和相同成本对照，未测胜率不得声称改进。旧训练清洁边界完整双份备份。详见worklog/2026-11-08.md#learned-budget-intention。 |

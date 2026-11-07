@@ -144,16 +144,17 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const nodes = new Map();
 function element() {
- return {textContent:'',style:{},clientWidth:600,value:'0',children:[],
+ return {textContent:'',style:{},clientWidth:600,value:'0',children:[],options:[],
+  add(option){this.options.push(option)},querySelectorAll(){return []},
   setAttribute(){},append(...values){this.children.push(...values)},
-  replaceChildren(){this.children=[];this.textContent=''}};
+  replaceChildren(...values){this.children=[...values];this.options=[...values];this.textContent=''}};
 }
 const document = {
  getElementById(id){if(!nodes.has(id)){const e=element();e.previousElementSibling=element();nodes.set(id,e)}return nodes.get(id)},
  createElement:element,createElementNS:element
 };
 document.getElementById('axis').value='absolute';
-const context = vm.createContext({document,assert,ResizeObserver:class{observe(){}},
+const context = vm.createContext({document,assert,Option:class{constructor(text,value){this.text=text;this.value=value}},ResizeObserver:class{observe(){}},
  fetch:()=>new Promise(()=>{}),setInterval(){}});
 vm.runInContext(SCRIPT,context);
 vm.runInContext(`
