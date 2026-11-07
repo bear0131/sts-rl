@@ -1721,7 +1721,7 @@
     }
   },
   "monitor": {
-    "root": "/root/combat-transformer-fresh-20261105",
+    "root": "/root/autodl-tmp/combat38-resume141-20261108",
     "run_id": "combat38-transformer64-regret-paired-r1",
     "label": "COMBAT38 · 共享链 / 2×64 Transformer / 1920局",
     "branch_step": 0,
@@ -1729,8 +1729,8 @@
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "四机从零训练。根部使用2层64宽Transformer，链内使用同步学习的轻量头，代价敏感监督。COMBAT37第208轮已经独立封存。",
-    "updated_at": "2026-11-05T13:03:06Z"
+    "note": "四rank从第141轮完整状态迁移续训；根部2层64宽Transformer，链内同步轻量头，原预算与学习配置保持。",
+    "updated_at": "2026-11-07T16:55:25.132407+00:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
