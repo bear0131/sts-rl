@@ -2045,11 +2045,32 @@
       "do not call cost matched if holdout cost differs materially",
       "four production ranks unchanged"
     ],
-    "status": "planned and legacy baseline launching; no quality result yet",
+    "status": "complete; no demonstrated benefit; original COMBAT38 resume requested",
     "post_test": {
       "pause": "combat39-learned-search-budget-r1 at complete boundary with full four-rank dual backup",
       "resume": "combat38-transformer64-regret-paired-r1 from round150 full state with original configuration",
       "then_optimize": "chain-in/out full Transformer at 5000000 effective nonforced decisions/s end-to-end; large changes and refactoring first"
+    },
+    "result": {
+      "reference_wins": 101,
+      "default_wins": 92,
+      "calibrated_wins": 97,
+      "games_per_arm": 128,
+      "default_cost_ratio": 0.455619550996016,
+      "calibrated_cost_ratio": 1.0969816762786218,
+      "calibrated_price": 0.005,
+      "paired_difference_ci95_pp": {
+        "adaptive-default128": [
+          -12.5,
+          -1.5625
+        ],
+        "adaptive-calibrated128": [
+          -9.375,
+          2.34375
+        ]
+      },
+      "artifact_sha256": "4f2c2c1dedf85f99bd9b43b772820d3f310531eebc275c9a165ea3573f085a36",
+      "reference": "worklog/2026-11-08.md#combat38-mature-budget-probe"
     }
   }
 }
