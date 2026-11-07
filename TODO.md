@@ -592,4 +592,4 @@
 
 | COMBAT38-TURN50 | 已部署；第36/37轮剔除、双层更新与四机保存已验收 | `rl/algorithms/independent_rollout.py`、`rl/training/native_vec_env.py`：可显式在原独立训练的完整自然轮边界启用单场回合上限。显示回合51起标记异常并剔除整局上下层样本，不占胜负分母；同场第50回合可执行。以原35恢复后再次采集第36轮、异常槽含种子/原因、完成更新和保存为生产验收。见 [实施记录](worklog/2026-11-05.md#combat38-turn50)。 |
 
-| SEARCH-CHAIN-MODEL141 | 同141链内guide资格已通过，主机480配对臂运行中 | 根部均为冻结141完整2×64 Transformer，比较同步学习的native guide与全链Transformer，250/250/1000、同480实际开局/上层/根模型；复用严格FP32完整Transformer348/480基线，新增hybrid480，同ID配对胜率/楼层/实际预算和时间资源，0删失/剔除，导出guide与根评分路径及权重不变。计数剔除native额外未采用根评分；不把历史时间对照作ABBA。见worklog/2026-11-07.md#search-budget-fixture-and-chain-comparison。 |
+| SEARCH-CHAIN-MODEL141 | 同141配对480完成：全Transformer348胜、链内guide342胜；+1.25pp、95%[-2.5,+5.0]，未证实胜率提升 | 根部均冻结141完整2×64，250/250/1000及同480实际开局/上层/权重；0删失/剔除。全Transformer平均47.68125层、guide46.91667层；guide389.610秒，复用历史全Transformer1479.841秒，非ABBA。不将小guide458.52万有效/s混为完整模型达标；实际链内计数剔除未采用根评分。源码/原始结果三处SHA/manifest归档。见worklog/2026-11-07.md#chain-model141-paired480-complete；实验仅供参考，不自动改训练。 |
