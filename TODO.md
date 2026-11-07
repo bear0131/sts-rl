@@ -588,7 +588,7 @@
 
 | COMBAT38-NINE-TOKEN-SPEED | 已完成25核独立速度评测 | `rl/policies/entity_action_playout.py` 对照两份上下文投影、真实根部回放和大批CPU/GPU前推；见worklog/2026-11-05.md#combat38-nine-token-speed。 |
 
-| COMBAT38-NINE-ONLINE480 | 用户目标提高至500万/s，成熟预算实验结束后优先大改进；当前完整480最好180.576万/s | 25核RTX5090、链内外完整2层64宽Transformer，以实际rollout端到端持续500万非强制决策/s为新目标；先固定成熟模型/预算对照，再验证真实训练更新、权重刷新、保存恢复。优先大收益计算/数据流重构，保留四机训练。最快frame128完整480为1017.681660秒/1837685220非强制/360胜/0剔除，详见worklog/2026-11-08.md#fallback-frame-full480-followthrough。原运算边界FP32图修复两份数值失败输入，1024候选通过packet/生命周期/memcheck和自然16逐项审计（386560评分、零top1/抽样差异）；正常16 ABBA平均91.864→95.244秒，负收益且不追加480，三份SHA归档见worklog/2026-11-08.md#fallback-batch-reference-boundaries。目标未完成；下一步工作暂由用户要求的成熟COMBAT38预算实验优先，仍保留后续提速任务。外部中途censor缓存边界未独立验收。 |
+| COMBAT38-NINE-ONLINE480 | 500万/s继续：GPU分解47%模型/36%观测；动作临时存储原型合同通过，未测速度 | 25核RTX5090、链内外完整2层64宽Transformer，以实际rollout端到端持续500万非强制决策/s为新目标；先固定成熟模型/预算对照，再验证真实训练更新、权重刷新、保存恢复。优先大收益计算/数据流重构，保留四机训练。最快frame128完整480为1017.681660秒/1837685220非强制/360胜/0剔除，详见worklog/2026-11-08.md#fallback-frame-full480-followthrough。原运算边界FP32图修复两份数值失败输入，1024候选通过packet/生命周期/memcheck和自然16逐项审计（386560评分、零top1/抽样差异）；正常16 ABBA平均91.864→95.244秒，负收益且不追加480，三份SHA归档见worklog/2026-11-08.md#fallback-batch-reference-boundaries。目标未完成；下一步工作暂由用户要求的成熟COMBAT38预算实验优先，仍保留后续提速任务。外部中途censor缓存边界未独立验收。 |
 
 | COMBAT38-TURN50 | 已部署；第36/37轮剔除、双层更新与四机保存已验收 | `rl/algorithms/independent_rollout.py`、`rl/training/native_vec_env.py`：可显式在原独立训练的完整自然轮边界启用单场回合上限。显示回合51起标记异常并剔除整局上下层样本，不占胜负分母；同场第50回合可执行。以原35恢复后再次采集第36轮、异常槽含种子/原因、完成更新和保存为生产验收。见 [实施记录](worklog/2026-11-05.md#combat38-turn50)。 |
 
