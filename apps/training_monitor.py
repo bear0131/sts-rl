@@ -30,7 +30,7 @@ alive=False
 if pid and (proc/'cmdline').exists():
     cmd=(proc/'cmdline').read_bytes().split(b'\0')
     alive=(b'rl.training.distributed_sb3' in cmd and RUN.encode() in cmd
-           and (proc/'cwd').resolve()==root)
+           and (proc/'cwd').resolve().is_relative_to(root.resolve()))
 log=run/f'rank{RANK}.log'; st=log.stat()
 cursor=CURSOR
 offset=cursor.get('offset',0) if cursor.get('inode')==st.st_ino else 0
