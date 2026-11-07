@@ -588,7 +588,7 @@
 
 | COMBAT38-NINE-TOKEN-SPEED | 已完成25核独立速度评测 | `rl/policies/entity_action_playout.py` 对照两份上下文投影、真实根部回放和大批CPU/GPU前推；见worklog/2026-11-05.md#combat38-nine-token-speed。 |
 
-| COMBAT38-NINE-ONLINE480 | 完整480提升至180.576万/s未达标；两独立世界持续121秒均308.06万/s；1024链候选待修复数值误差 | 25核/RTX5090、冻结141完整2层64宽Transformer指导共享链，持续200万实际非强制决策/s及不同世界/完整480分别验收，四机正式训练不动。最新devicefallbackframe141（combo主图＋IEEE特殊评分图）完整480为1017.681660秒、1837685220非强制、360胜/22983层、0删失剔除，权重/图/进程关闭通过；相对历史graph4801232.484秒/149.143万/s有提升但非新ABBA，槽52动作903→892且胜负层数相同，不称bitwise。两个独立nonce区间各61440根的持续闭环120.865/120.855秒均308.06万/s，不含外层完整游戏和特殊CPU路径；完整目标仍差约98.84秒。特殊CPU波在途128→1024的隔离候选已过扩大packet/memcheck，但真实审计16概率差2.023e-5超2e-5门槛；固定输入重放原PackedScorer通过、融合IEEE可重现失败，下一步保留原IEEE计算体构图并重放两份失败输入，暂不追加480。见worklog/2026-11-08.md#fallback-frame-full480-followthrough；私有源码/原始证据三份归档SHA核验。外部中途censor缓存边界尚未独立验收。 |
+| COMBAT38-NINE-ONLINE480 | 完整480最好180.576万/s未达标；持续独立世界308万/s；1024例外批次已通过审计但慢3.68%，不替换 | 冻结141、25核RTX5090，实际完整2层64宽Transformer指导共享链，持续200万非强制决策/s及完整480分别验收，保留四机训练。最快frame128完整480为1017.681660秒/1837685220非强制/360胜/0剔除，详见worklog/2026-11-08.md#fallback-frame-full480-followthrough。原运算边界FP32图修复两份数值失败输入，1024候选通过packet/生命周期/memcheck和自然16逐项审计（386560评分、零top1/抽样差异）；正常16 ABBA平均91.864→95.244秒，负收益且不追加480，三份SHA归档见worklog/2026-11-08.md#fallback-batch-reference-boundaries。目标未完成；下一步工作暂由用户要求的成熟COMBAT38预算实验优先，仍保留后续提速任务。外部中途censor缓存边界未独立验收。 |
 
 | COMBAT38-TURN50 | 已部署；第36/37轮剔除、双层更新与四机保存已验收 | `rl/algorithms/independent_rollout.py`、`rl/training/native_vec_env.py`：可显式在原独立训练的完整自然轮边界启用单场回合上限。显示回合51起标记异常并剔除整局上下层样本，不占胜负分母；同场第50回合可执行。以原35恢复后再次采集第36轮、异常槽含种子/原因、完成更新和保存为生产验收。见 [实施记录](worklog/2026-11-05.md#combat38-turn50)。 |
 
