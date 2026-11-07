@@ -46,7 +46,7 @@ def drain(stream):
     return out
 
 
-@pytest.mark.parametrize('threads', [1, 3])
+@pytest.mark.parametrize('threads', [1, 3, 24])
 def test_world_partition_matches_serial_for_partial_and_forced_worlds(combat_factory, threads):
     torch.manual_seed(716)
     policy = OnlineTokenRegretPolicy(sts.small_playout_key_count()).eval()

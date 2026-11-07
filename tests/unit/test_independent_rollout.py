@@ -88,6 +88,42 @@ def test_observation_reading_callbacks_keep_full_transport_including_subclasses(
     assert _callback_uses_observations(CustomList(ordinary))
 
 
+def test_resume_can_resize_workers_only_at_complete_boundary():
+    from types import SimpleNamespace
+    from rl.algorithms.independent_rollout import configure
+
+    model = SimpleNamespace(num_timesteps=0, episode_rollouts_completed=3,
+        episode_rollout_config=dict(games_per_rank=2, censored_games='error'),
+        episode_rollout_stats=dict(rollout=3, completed_games=2, censored_games=0, unfinished_games=0))
+    old = configure(model, dict(threads=16, max_combat_turns=50))
+    model.num_timesteps = 100
+    selected = dict(old, threads=24)
+    for field, value in [('rollout', 2), ('completed_games', 1),
+                         ('censored_games', 1), ('unfinished_games', 1)]:
+        original = model.episode_rollout_stats[field]
+        model.episode_rollout_stats[field] = value
+        with pytest.raises(ValueError, match='complete natural boundary'):
+            configure(model, selected)
+        assert model.independent_rollout_config == old
+        model.episode_rollout_stats[field] = original
+    for change in [dict(seed=44), dict(upper_batch=128),
+                   dict(upper_wait_seconds=.1), dict(max_combat_turns=60)]:
+        with pytest.raises(ValueError, match='explicit fork'):
+            configure(model, dict(selected, **change))
+    assert configure(model, selected) == selected
+    assert configure(model, None) == selected
+    assert model.independent_rollout_migration['previous'] == old
+    assert configure(model, old) == old
+    model.episode_rollout_stats.update(completed_games=1, censored_games=1)
+    assert configure(model, selected) == selected
+    # Excluded games are only an existing capped-cohort contract, not permission
+    # to resume arbitrary interrupted/uncapped collections.
+    uncapped = {k: v for k, v in selected.items() if k != 'max_combat_turns'}
+    model.independent_rollout_config = uncapped
+    with pytest.raises(ValueError, match='complete natural boundary'):
+        configure(model, dict(uncapped, threads=16))
+
+
 def test_enable_combat_turn_limit_at_completed_boundary_and_keep_it_on_resume():
     from types import SimpleNamespace
     from rl.algorithms.independent_rollout import configure

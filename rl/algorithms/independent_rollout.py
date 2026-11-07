@@ -75,7 +75,7 @@ class GameRandomStreams:
 
 
 def configure(model, config, *, fork=False):
-    """Opt in at a natural cohort boundary; plain resume uses its saved contract."""
+    """Keep the saved contract; worker counts may change at a complete boundary."""
     old = getattr(model, 'independent_rollout_config', None)
     selected = old if config is None else asdict(IndependentRolloutConfig(**config))
     if config is not None and selected['max_combat_turns'] is None:
@@ -91,9 +91,16 @@ def configure(model, config, *, fork=False):
         stats = getattr(model, 'episode_rollout_stats', {})
         enabling_turn_limit = (old is not None and 'max_combat_turns' in selected
                                and old == {k: v for k, v in selected.items() if k != 'max_combat_turns'})
-        if ((not fork and not enabling_turn_limit) or stats.get('rollout') != getattr(model, 'episode_rollouts_completed', None)
-                or stats.get('completed_games') != cohort['games_per_rank']
-                or stats.get('censored_games') != 0 or stats.get('unfinished_games') != 0):
+        resizing_workers = (old is not None
+                            and {k: v for k, v in old.items() if k != 'threads'}
+                            == {k: v for k, v in selected.items() if k != 'threads'})
+        # The existing combat-turn cap can finish a cohort by excluding a game.
+        # Changing only workers preserves that cap and every per-game RNG stream.
+        accounted_censored = (stats.get('censored_games', 0)
+                              if resizing_workers and old.get('max_combat_turns') is not None else 0)
+        if ((not fork and not enabling_turn_limit and not resizing_workers) or stats.get('rollout') != getattr(model, 'episode_rollouts_completed', None)
+                or stats.get('completed_games', 0) + accounted_censored != cohort['games_per_rank']
+                or stats.get('censored_games') != accounted_censored or stats.get('unfinished_games') != 0):
             raise ValueError('scheduler migration requires an explicit fork at a complete natural boundary')
         model.independent_rollout_migration = dict(
             source_round=stats['rollout'], source_global_step=model.num_timesteps,
