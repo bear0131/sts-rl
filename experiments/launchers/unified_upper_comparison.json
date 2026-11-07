@@ -1721,16 +1721,16 @@
     }
   },
   "monitor": {
-    "root": "/root/autodl-tmp/combat39-learned-budget-20261108",
-    "run_id": "combat39-learned-search-budget-r1",
-    "label": "COMBAT39 · 学习搜索预算 / 2×64 Transformer / 1920局",
+    "root": "/root/autodl-tmp/combat38-resume141-20261108",
+    "run_id": "combat38-transformer64-regret-paired-r1",
+    "label": "COMBAT38 · 共享链 / 2×64 Transformer / 1920局",
     "branch_step": 0,
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
     "status": "training",
-    "note": "全新上下层与预算头；预算0/32/128/512/2048，独立世界审计学习收益和成本；24/24/24/16线程。",
-    "updated_at": "2026-11-07T19:05:28.925886+00:00"
+    "note": "按用户要求从完整150轮继续原38；原250/250/1000、Transformer根/学习CPU链guide、24/24/24/16线程。39已在42轮正常暂停并双份完整保存。",
+    "updated_at": "2026-11-07T22:01:34.494765+00:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
@@ -1901,7 +1901,7 @@
     "reference": "worklog/2026-11-05.md#lower-redesign停止训练先核对完整rollout下层前推次数"
   },
   "learned_budget_training": {
-    "status": "training; two distributed rounds verified; live four-rank search allocation visualization deployed; matched-cost evaluation pending",
+    "status": "paused at user request after complete round42; full four-rank states backed up twice",
     "run_id": "combat39-learned-search-budget-r1",
     "root": "/root/autodl-tmp/combat39-learned-budget-20261108",
     "source_commit": "7b0a3c17",
@@ -1969,7 +1969,15 @@
       "archive": "qualified-budget-start-and-profile-v2.tgz",
       "archive_sha256": "aa8ee82775697ea8a116362fa926e7bffb43ab17e581def1b275d6af82e3fa68",
       "reference": "worklog/2026-11-08.md#learned-budget-production-and-profile"
-    }
+    },
+    "final_round": 42,
+    "final_global_step": 24732380,
+    "final_backup": "paused-for-combat38/rankN-round42.tgz",
+    "backup_ports": [
+      53841,
+      11727
+    ],
+    "automatic_restart": false
   },
   "mature_budget_probe": {
     "id": "COMBAT38-MATURE-BUDGET",
@@ -2049,7 +2057,22 @@
     "post_test": {
       "pause": "combat39-learned-search-budget-r1 at complete boundary with full four-rank dual backup",
       "resume": "combat38-transformer64-regret-paired-r1 from round150 full state with original configuration",
-      "then_optimize": "chain-in/out full Transformer at 5000000 effective nonforced decisions/s end-to-end; large changes and refactoring first"
+      "then_optimize": "chain-in/out full Transformer at 5000000 effective nonforced decisions/s end-to-end; large changes and refactoring first",
+      "execution": {
+        "paused39_round": 42,
+        "paused39_global_step": 24732380,
+        "resumed38_from_round": 150,
+        "resumed38_from_global_step": 157582047,
+        "runtime_commit": "bce66932",
+        "native_sha256": "b40edcf73e671332dc8d5d27287264d8294376605ca6bad865aea36596156103",
+        "trainer_pids": [
+          49375,
+          47549,
+          372920,
+          236648
+        ],
+        "two_round_verification": "pending"
+      }
     },
     "result": {
       "reference_wins": 101,

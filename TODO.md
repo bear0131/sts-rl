@@ -598,8 +598,8 @@
 
 | COMBAT38-RESTORE141 | 迁移与普通恢复验收完成；原训练150轮停机保存，COMBAT39接替 | 原141完整模型/Adam/学习器/环境/RNG双份迁移，141/142/143另留双份完整备份。四bjb2同run续训，144跨rank模型/Adam与完整文件SHA通过，后续150停机完整保存；8773原曲线/worklog和用户发言保持，唯一优化机11727。学习参数和预算保持，按用户要求三25核采样线程调24，16核仍16。见worklog/2026-11-08.md#combat38-restore142-verified及#world-production144-verified；世界批性能问题另按COMBAT38-HYBRID-ROLLOUT继续诊断。 |
 
-| COMBAT39-LEARNED-BUDGET | 四机全新训练运行中；预算可视化已接入；同成本效果待评测 | 新预算模式从头训练：完整根2×64 Transformer预测搜索收益与实际transition成本，随机独立审计预算反事实，单独世界评估动作、保留负收益；强制/Dome/选择契约保持。验收真实两轮学习/聚合/保存恢复、四机新训练及8773接入；冻结同模型/同种子和相同成本对照，未测胜率不得声称改进。旧训练清洁边界完整双份备份。两轮四机更新/保存已验证，详情及剩余同成本评测见worklog/2026-11-08.md#learned-budget-production-and-profile；可视化见worklog/2026-11-08.md#learned-budget-visualization。 |
+| COMBAT39-LEARNED-BUDGET | 用户要求暂停：42轮完整四rank状态双份核验，原38已续训 | 新预算模式从头训练：完整根2×64 Transformer预测搜索收益与实际transition成本，随机独立审计预算反事实，单独世界评估动作、保留负收益；强制/Dome/选择契约保持。验收真实两轮学习/聚合/保存恢复、四机新训练及8773接入；冻结同模型/同种子和相同成本对照，未测胜率不得声称改进。旧训练清洁边界完整双份备份。两轮四机更新/保存已验证，详情及剩余同成本评测见worklog/2026-11-08.md#learned-budget-production-and-profile；可视化见worklog/2026-11-08.md#learned-budget-visualization。 |
 
 | COMBAT38-MATURE-BUDGET | 完成：128局101/92/97胜；默认搜索减半但变差，校准多9.7%搜索未证实改善 | 原上下层/guide全部冻结，只训练预算头；独立训练/验证/校准/128局保留评测，比较原250/250/1000及自适应预算的配对胜率、实际搜索transition、耗时和分布，四机生产继续。协议和进度见worklog/2026-11-08.md#combat38-mature-budget-probe。 |
 
-| COMBAT38-RESUME150 | 进行中：预算实验完成，39已请求完整轮次协调停止/双份备份 | 实验完成后在完整轮次边界暂停COMBAT39并双份保存四rank完整状态，从原COMBAT38 round150/global157582047恢复四机原run训练，原监控曲线连续；验证续训至少两轮学习/聚合/保存/权重与Adam一致，再继续500万/s优化。见worklog/2026-11-08.md#combat38-mature-budget-probe。 |
+| COMBAT38-RESUME150 | 进行中：39停42轮并双份核验，38四机从150启动，待151/152验收 | 实验完成后在完整轮次边界暂停COMBAT39并双份保存四rank完整状态，从原COMBAT38 round150/global157582047恢复四机原run训练，原监控曲线连续；验证续训至少两轮学习/聚合/保存/权重与Adam一致，再继续500万/s优化。见worklog/2026-11-08.md#combat38-mature-budget-probe。 |
