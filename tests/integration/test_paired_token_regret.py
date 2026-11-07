@@ -21,9 +21,17 @@ def test_regret_target_uses_measured_cost_and_conditions_on_tested_actions():
     np.testing.assert_allclose(np.exp(improved_log_target(row)), [.25, .75, 0.], atol=1e-6)
 
 
-def test_shared_search_root_and_guide_are_used_in_training_and_frozen_eval(combat_factory):
+def test_shared_search_root_and_guide_are_used_in_training_and_frozen_eval(combat_factory, monkeypatch):
     env = combat_factory(["BASH", "STRIKE_RED", "DEFEND_RED"] * 3,
                          seed=190, combat_action_contract="autoregressive-v2")
+    dispatched = []
+    native_world_batch = sts.small_playout_world_batch
+
+    def counted_world_batch(*args):
+        dispatched.append(len(args[2]))
+        return native_world_batch(*args)
+
+    monkeypatch.setattr(sts, 'small_playout_world_batch', counted_world_batch)
     torch.manual_seed(91)
     net = OnlineTokenRegretPolicy(sts.small_playout_key_count()).eval()
     policy = None
@@ -51,6 +59,7 @@ def test_shared_search_root_and_guide_are_used_in_training_and_frozen_eval(comba
         policy.bind_environments([env])
         assert policy.decide([req])[0].action == choice
         assert policy._batch.samples == []
+        assert dispatched == [1, 1], "training and evaluation share the world-batch backend"
         assert policy.manifest()["lower_sha256"] == net.collection_pair(collect_samples=False)["sha256"]
     finally:
         if policy is not None:

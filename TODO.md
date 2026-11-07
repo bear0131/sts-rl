@@ -588,7 +588,7 @@
 
 | COMBAT38-NINE-TOKEN-SPEED | 已完成25核独立速度评测 | `rl/policies/entity_action_playout.py` 对照两份上下文投影、真实根部回放和大批CPU/GPU前推；见worklog/2026-11-05.md#combat38-nine-token-speed。 |
 
-| COMBAT38-NINE-ONLINE480 | 完整480最好180.576万/s未达标；持续独立世界308万/s；1024例外批次已通过审计但慢3.68%，不替换 | 冻结141、25核RTX5090，实际完整2层64宽Transformer指导共享链，持续200万非强制决策/s及完整480分别验收，保留四机训练。最快frame128完整480为1017.681660秒/1837685220非强制/360胜/0剔除，详见worklog/2026-11-08.md#fallback-frame-full480-followthrough。原运算边界FP32图修复两份数值失败输入，1024候选通过packet/生命周期/memcheck和自然16逐项审计（386560评分、零top1/抽样差异）；正常16 ABBA平均91.864→95.244秒，负收益且不追加480，三份SHA归档见worklog/2026-11-08.md#fallback-batch-reference-boundaries。目标未完成；下一步工作暂由用户要求的成熟COMBAT38预算实验优先，仍保留后续提速任务。外部中途censor缓存边界未独立验收。 |
+| COMBAT38-NINE-ONLINE480 | 用户目标提高至500万/s，成熟预算实验结束后优先大改进；当前完整480最好180.576万/s | 25核RTX5090、链内外完整2层64宽Transformer，以实际rollout端到端持续500万非强制决策/s为新目标；先固定成熟模型/预算对照，再验证真实训练更新、权重刷新、保存恢复。优先大收益计算/数据流重构，保留四机训练。最快frame128完整480为1017.681660秒/1837685220非强制/360胜/0剔除，详见worklog/2026-11-08.md#fallback-frame-full480-followthrough。原运算边界FP32图修复两份数值失败输入，1024候选通过packet/生命周期/memcheck和自然16逐项审计（386560评分、零top1/抽样差异）；正常16 ABBA平均91.864→95.244秒，负收益且不追加480，三份SHA归档见worklog/2026-11-08.md#fallback-batch-reference-boundaries。目标未完成；下一步工作暂由用户要求的成熟COMBAT38预算实验优先，仍保留后续提速任务。外部中途censor缓存边界未独立验收。 |
 
 | COMBAT38-TURN50 | 已部署；第36/37轮剔除、双层更新与四机保存已验收 | `rl/algorithms/independent_rollout.py`、`rl/training/native_vec_env.py`：可显式在原独立训练的完整自然轮边界启用单场回合上限。显示回合51起标记异常并剔除整局上下层样本，不占胜负分母；同场第50回合可执行。以原35恢复后再次采集第36轮、异常槽含种子/原因、完成更新和保存为生产验收。见 [实施记录](worklog/2026-11-05.md#combat38-turn50)。 |
 
@@ -599,3 +599,7 @@
 | COMBAT38-RESTORE141 | 迁移与普通恢复验收完成；原训练150轮停机保存，COMBAT39接替 | 原141完整模型/Adam/学习器/环境/RNG双份迁移，141/142/143另留双份完整备份。四bjb2同run续训，144跨rank模型/Adam与完整文件SHA通过，后续150停机完整保存；8773原曲线/worklog和用户发言保持，唯一优化机11727。学习参数和预算保持，按用户要求三25核采样线程调24，16核仍16。见worklog/2026-11-08.md#combat38-restore142-verified及#world-production144-verified；世界批性能问题另按COMBAT38-HYBRID-ROLLOUT继续诊断。 |
 
 | COMBAT39-LEARNED-BUDGET | 四机全新训练运行中；预算可视化已接入；同成本效果待评测 | 新预算模式从头训练：完整根2×64 Transformer预测搜索收益与实际transition成本，随机独立审计预算反事实，单独世界评估动作、保留负收益；强制/Dome/选择契约保持。验收真实两轮学习/聚合/保存恢复、四机新训练及8773接入；冻结同模型/同种子和相同成本对照，未测胜率不得声称改进。旧训练清洁边界完整双份备份。两轮四机更新/保存已验证，详情及剩余同成本评测见worklog/2026-11-08.md#learned-budget-production-and-profile；可视化见worklog/2026-11-08.md#learned-budget-visualization。 |
+
+| COMBAT38-MATURE-BUDGET | 进行中：成熟150权重预算头实验及固定预算对照 | 原上下层/guide全部冻结，只训练预算头；独立训练/验证/校准/128局保留评测，比较原250/250/1000及自适应预算的配对胜率、实际搜索transition、耗时和分布，四机生产继续。协议和进度见worklog/2026-11-08.md#combat38-mature-budget-probe。 |
+
+| COMBAT38-RESUME150 | 已授权，等待成熟预算实验完成 | 实验完成后在完整轮次边界暂停COMBAT39并双份保存四rank完整状态，从原COMBAT38 round150/global157582047恢复四机原run训练，原监控曲线连续；验证续训至少两轮学习/聚合/保存/权重与Adam一致，再继续500万/s优化。见worklog/2026-11-08.md#combat38-mature-budget-probe。 |

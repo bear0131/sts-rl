@@ -47,9 +47,7 @@ class PairedTokenBatch(SmallPlayoutBatch):
             raise ValueError("paired token roots require scoring before advancing their environment")
         out, jobs = self.prepare(calls)
         if jobs:
-            results = sts.small_playout_search_batch(self.pool, self.net,
-                [self.envs[i].thick.bc for i, _, _, _ in jobs],
-                [cfg for _, _, cfg, _ in jobs], [nonce for _, _, _, nonce in jobs], self.prior)
+            results = self.search_jobs(self.pool, jobs)
             out.update(self.accept_ready(list(zip(jobs, results, strict=True))))
         return {i: out[i] for i in calls}
 
