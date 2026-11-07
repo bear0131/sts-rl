@@ -5,22 +5,24 @@
 
 .budget-panel{background:#141d2a;border:1px solid #33455d;border-radius:12px;padding:18px;margin:0 0 20px}.budget-panel summary{font-size:18px;font-weight:600;cursor:pointer}.budget-panel summary .label{font-weight:400;margin-left:10px}.budget-controls{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:14px 0;font-size:12px;flex-wrap:wrap}.budget-controls p{max-width:700px}.budget-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}.budget-kpi{border-left:2px solid #3b526d;padding:2px 12px}.budget-kpi strong{display:block;font-size:25px;font-variant-numeric:tabular-nums;margin:5px 0}.budget-kpi small{color:#9caac0;font-size:11px}.budget-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.budget-grid svg{height:220px}.budget-legend{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:12px;font-size:12px;color:#c3cedd}.budget-dot{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}.budget-room-head,.budget-room{display:grid;grid-template-columns:130px minmax(0,1fr) 110px;gap:16px;align-items:center;font-size:12px;margin-top:12px}.budget-room-head{color:#9caac0;margin-top:20px}.budget-room-head span:last-child,.budget-room>span:last-child{text-align:right}.budget-stack{display:flex;height:26px;background:#243146;border-radius:4px;overflow:hidden}.budget-stack span{display:flex;align-items:center;justify-content:center;font-size:10px;color:#07101a;min-width:0;overflow:hidden;white-space:nowrap}.budget-room small{display:block;color:#8fa1b8;font-size:11px;margin-top:3px}.budget-note{font-size:11px;line-height:1.8;margin-top:16px}.budget-grid svg [role=button]{cursor:pointer}.budget-grid svg [role=button]:focus{outline:2px solid white}
 @media(max-width:750px){.budget-panel{padding:12px}.budget-panel summary .label{display:block;margin:7px 0}.budget-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.budget-grid{grid-template-columns:1fr}.budget-room-head,.budget-room{grid-template-columns:76px minmax(0,1fr) 66px;gap:8px}.budget-controls select{max-width:180px}.budget-kpi strong{font-size:22px}}
+
+.battle-comparison{margin-top:14px}.battle-comparison h2{font-size:16px}.battle-comparison svg{height:245px}.budget-cost-controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-top:10px}.budget-cost-controls label{font-size:11px;color:#b6c3d6;white-space:nowrap;margin-bottom:12px}.budget-cost-controls input{vertical-align:middle}.budget-grid .budget-legend{margin-top:10px;gap:12px}.budget-table-scroll{overflow-x:auto;margin-top:10px;border:1px solid #30405a;border-radius:7px}.budget-table{width:100%;min-width:780px;border-collapse:collapse;text-align:right;font-variant-numeric:tabular-nums;font-size:13px}.budget-table th,.budget-table td{padding:12px 10px;border-bottom:1px solid #2b394e;white-space:nowrap}.budget-table thead th{font-weight:400;font-size:11px;color:#a9b9ce;background:#1c293b}.budget-table tbody th{font-weight:500;text-align:left;background:#18202e}.budget-table small{display:block;color:#9caac0;font-size:11px;margin-top:5px}.budget-table tbody tr:last-child>*{border-bottom:0}.budget-table th:first-child{position:sticky;left:0;text-align:left;min-width:130px}.budget-table tbody td:nth-last-child(3){font-weight:600;color:#edf4ff}.budget-scroll-hint{font-size:11px}
+@media(max-width:500px){.budget-bar-value{display:none}}
 </style></head><body>
 <header><div><h1>训练实时曲线</h1><p id="run">正在连接远端日志…</p><p id="connection">等待首次同步</p></div><div><label class="label">横轴 <select id="axis"><option value="absolute">累计训练轮次</option><option value="relative">分支后轮次</option></select></label> <label class="label">查看范围 <select id="range"><option value="0">全部轮次</option><option value="30">最近30轮</option><option value="60">最近60轮</option></select></label></div></header>
 <section id="cards"><div class="card"><div class="label">已完成轮次</div><div class="value" id="round">—</div><div class="sub" id="ongoing">—</div></div><div class="card"><div class="label" id="win-label">本轮完整游戏胜率</div><div class="value" id="win">—</div><div class="sub" id="winavg">—</div></div><div class="card"><div class="label">累计自然完整游戏</div><div class="value" id="games">—</div><div class="sub">训练轨迹统计</div></div><div class="card"><div class="label" id="floor-label">本轮完整游戏平均楼层</div><div class="value" id="floor">—</div><div class="sub" id="seconds">—</div></div></section>
 <div id="ranks"></div><details id="search-budget" class="budget-panel" open>
 <summary>搜索预算分配 <span class="label">当前训练 · 四机日志汇总</span></summary>
-<div class="budget-controls"><p id="budget-status">等待预算记录…</p><div><label>场景 <select id="budget-tier" aria-label="搜索预算场景"><option value="all">全部战斗</option><option value="common">普通战斗</option><option value="elite">精英战斗</option><option value="boss">Boss 战斗</option></select></label> <label>明细 <select id="budget-round" aria-label="搜索预算明细轮次"><option value="latest">最新完整轮次</option></select></label></div></div>
+<div class="budget-controls"><p id="budget-status">等待预算记录…</p><div><label>左图与概览 <select id="budget-tier" aria-label="搜索预算场景"><option value="all">全部战斗</option><option value="common">普通战斗</option><option value="elite">精英战斗</option><option value="boss">Boss 战斗</option></select></label> <label>明细 <select id="budget-round" aria-label="搜索预算明细轮次"><option value="latest">最新完整轮次</option></select></label></div></div>
 <div id="budget-empty" class="sub" hidden>当前训练尚无预算分配记录；旧日志不补造数据。</div>
 <div id="budget-content" hidden>
 <div class="budget-kpis" id="budget-kpis"></div>
-<div class="budget-legend" id="budget-legend"></div>
 <div class="budget-grid">
-<article class="chart"><h2>每轮选择了多少搜索</h2><p>占多动作决策的比例 · 点击柱形查看该轮</p><svg id="budget-history" role="img" aria-label="各轮搜索预算占比"></svg></article>
-<article class="chart"><h2>平均搜索量与额外审计</h2><p><span style="color:#58d3ab">实线：出牌搜索</span> · <span style="color:#e9b86a">虚线：含额外审计</span> · 每次多动作决策的模拟链数</p><svg id="budget-cost" role="img" aria-label="每轮平均搜索模拟链数"></svg></article>
+<article class="chart"><h2>每轮选择了多少搜索</h2><p>占多动作决策的比例 · 点击柱形查看该轮</p><div class="budget-legend" id="budget-legend"></div><svg id="budget-history" role="img" aria-label="各轮搜索预算占比"></svg></article>
+<article class="chart"><h2>不同战斗 · 平均搜索量</h2><p>三类战斗共用同一纵轴 · 模拟链／多动作决策</p><div class="budget-cost-controls"><div class="budget-legend" id="budget-cost-legend"></div><label><input type="checkbox" id="budget-audit"> 计入额外审计</label></div><svg id="budget-cost" role="img" aria-label="普通精英Boss平均搜索量同轴比较"></svg></article>
 </div>
-<div class="budget-room-head"><span id="budget-detail-title"></span><span>分配比例</span><span>平均链数</span></div>
-<div id="budget-rooms"></div>
+<article class="chart battle-comparison"><h2 id="budget-detail-title">场景横向对比</h2><p>每档预算并排展示普通／精英／Boss；百分比分母是各自场景的多动作决策数。</p><div class="budget-legend" id="budget-battle-legend"></div><svg id="budget-comparison" role="img" aria-label="同一轮普通精英Boss各档预算占比并排比较"></svg>
+<div class="budget-table-scroll" role="region" aria-label="战斗预算明细表，可横向滚动" tabindex="0"><table class="budget-table"><thead><tr><th>战斗场景</th><th>0 · 不搜索</th><th>32链</th><th>128链</th><th>512链</th><th>2048链</th><th>平均出牌链数</th><th>含审计链数</th><th>审计成本占比</th></tr></thead><tbody id="budget-rooms"></tbody></table></div><p class="budget-scroll-hint">表格可横向滑动；审计占比按实际模拟推进次数计算。</p></article>
 <p class="budget-note">0 表示直接按模型出牌；32／128／512／2048 是各档搜索链额度。强制单动作与符文圆顶不计入分配。前三轮为探索收集，第4轮起按预测收益和成本分配并保留20%探索。额外审计用于学习“哪里值得搜”，已计入总成本；这些是训练分配统计，不能据此判定胜率提升。</p>
 </div></details><details class="card" style="margin-bottom:18px"><summary>历史数据说明</summary><section id="comparison-status"></section></details><section id="charts"></section><div id="notice">每30秒读取远端日志；曲线在每轮完成后增加。COMBAT27/28完整批次分支使用本批全部960局；新COMBAT30每批启动960局，超限局整局剔除、不补开，胜率与楼层只统计自然结束局，剔除数单列。剔除可能产生选择偏差，不能仅凭剔除后的胜率判断收益。COMBAT23–26/29连续补局分支：保留原来最近400个完成局的滚动统计（虚线）。旧分支没有固定批次末尾长局集中的同种偏差，但滚动窗口仍会波动、重叠，和960局批次不是完全相同的统计口径。两种都是训练统计，不是独立评测。上层 loss/KL 使用最后一遍按样本加权的汇总；提前停止时仅含该遍实际完成更新的样本，不使用最后一个小批次代替。COMBAT27（λ=0.97）与COMBAT28（λ=1）使用相同随机初始权重和种子安排，从第0轮对齐。COMBAT29与COMBAT23使用同一随机初始模型、512步和10次全批更新；29的λ改为0.97且上层改为FP32，不能只归因λ。COMBAT23第216轮起改为30更新，第192轮起修正目标精度；24–26来自215保存点，与全新960局分支不是同起点实验。不同采样方式下，一轮的样本量可以不同。W&B上传受限不影响此窗口。金币按奖励份数、药水按瓶统计：实际领取率＝领取／（领取＋离开时留下）；满栏无法领取也计为留下。遗物只统计奖励页中可领取的遗物（含打开宝箱后的奖励），按件计算；蓝钥匙换掉的那一件记为未领取，Boss三选一、商店购买和事件直接赠送不混入。未打开宝箱不伪造遗物机会。模型概率只统计能领取时当前这一步的拿取概率；无样本不显示，旧轮次不补造数据。</div><div id="tooltip"></div>
 <script>
@@ -118,6 +120,35 @@ const budgetNames={all:'全部战斗',common:'普通战斗',elite:'精英战斗'
 const budgetNumber=x=>finite(x)?x.toLocaleString('zh-CN',{maximumFractionDigits:1}):'—';
 const budgetRatio=(a,b)=>b>0?100*a/b:null;
 function budgetTip(event,text){const box=$('tooltip');box.textContent=text;box.style.display='block';box.style.left=Math.min(event.clientX+12,innerWidth-box.offsetWidth-10)+'px';box.style.top=Math.max(8,Math.min(event.clientY+12,innerHeight-box.offsetHeight-10))+'px';}
+
+const battleTiers=['common','elite','boss'],battleColors=['#56baf0','#b09af9','#f5bc69'];
+function battleLegend(){return battleTiers.map((key,i)=>`<span><i class="budget-dot" style="background:${battleColors[i]}"></i>${budgetNames[key]}</span>`).join('');}
+function compareBattles(selected){
+ const svg=$('budget-comparison'),w=Math.max(280,svg.clientWidth),h=245,L=42,R=12,T=28,B=38,iw=w-L-R,ih=h-T-B,slot=iw/5;
+ const x=(i,j)=>L+slot*i+slot*.14+slot*.24*j,y=v=>T+ih*(1-v/100),bw=slot*.21;
+ svg.setAttribute('viewBox',`0 0 ${w} ${h}`);let markup='';
+ for(let value=0;value<=100;value+=25)markup+=`<path d="M${L} ${y(value)}H${w-R}" stroke="#2c3a50"/><text x="${L-7}" y="${y(value)+4}" text-anchor="end" fill="#9caac0" font-size="10">${value}%</text>`;
+ for(let i=0;i<5;i++){
+  markup+=`<text x="${L+slot*(i+.5)}" y="${h-12}" text-anchor="middle" fill="#c4cfde" font-size="12">${budgetLevels[i]===0?'0 · 不搜索':budgetLevels[i]}</text>`;
+  battleTiers.forEach((key,j)=>{const t=selected.tiers[key],pct=budgetRatio(t.counts[i],t.decisions);
+   if(pct===null){markup+=`<text x="${x(i,j)+bw/2}" y="${y(0)-5}" fill="${battleColors[j]}" text-anchor="middle" font-size="10">—</text>`;return;}
+   markup+=`<g data-tier="${key}" data-level="${i}"><rect x="${x(i,j)}" y="${y(pct)}" width="${bw}" height="${ih*pct/100}" rx="2" fill="${battleColors[j]}"/><text class="budget-bar-value" x="${x(i,j)+bw/2}" y="${y(pct)-6}" text-anchor="middle" fill="${battleColors[j]}" font-size="${w<500?8:11}">${pct<10?pct.toFixed(1):Math.round(pct)}%</text></g>`;
+  });
+ }
+ svg.innerHTML=markup;
+ for(const node of svg.querySelectorAll('[data-tier]')){
+  const t=selected.tiers[node.dataset.tier],i=+node.dataset.level;
+  node.onmousemove=e=>budgetTip(e,`第 ${selected.rollout_round} 轮 · ${budgetNames[node.dataset.tier]}\n${budgetLevels[i]} 链：${budgetNumber(t.counts[i])} 次\n占本类决策 ${budgetNumber(budgetRatio(t.counts[i],t.decisions))}%\n本类共 ${budgetNumber(t.decisions)} 次多动作决策`);
+  node.onmouseleave=()=>{$('tooltip').style.display='none';};
+ }
+ $('budget-battle-legend').innerHTML=battleLegend();$('budget-cost-legend').innerHTML=battleLegend();
+ $('budget-detail-title').textContent='场景横向对比 · 第 '+selected.rollout_round+' 轮';
+ $('budget-rooms').innerHTML=battleTiers.map((key,j)=>{
+  const t=selected.tiers[key],n=t.decisions,trans=t.transitions+t.audit_transitions;
+  return `<tr><th scope="row"><i class="budget-dot" style="background:${battleColors[j]}"></i>${budgetNames[key]}<small>${budgetNumber(n)} 次决策</small></th>${t.counts.map(count=>`<td>${n?budgetNumber(100*count/n)+'%':'—'}</td>`).join('')}<td>${n?budgetNumber(t.simulations/n):'—'}</td><td>${n?budgetNumber((t.simulations+t.audit_simulations)/n):'—'}</td><td>${trans?budgetNumber(100*t.audit_transitions/trans)+'%':'—'}</td></tr>`;
+ }).join('');
+}
+
 function budgetCharts(rows,tier,selectedRound){
  const limit=+$('range').value,visible=limit?rows.filter(r=>r.rollout_round>rows.at(-1).rollout_round-limit):rows;
  for(const kind of ['history','cost']){
@@ -127,7 +158,7 @@ function budgetCharts(rows,tier,selectedRound){
   const first=visible[0].rollout_round,last=visible.at(-1).rollout_round,span=last-first+1,slot=iw/span;
   const x=round=>L+(round-first+.5)*slot;
   const total=t=>(t.simulations+t.audit_simulations)/t.decisions;
-  const max=kind==='history'?100:Math.max(1,...visible.filter(r=>r.tiers[tier].decisions>0).map(r=>total(r.tiers[tier])))*1.12;
+  const max=kind==='history'?100:Math.max(1,...visible.flatMap(r=>battleTiers.map(key=>r.tiers[key]).filter(t=>t.decisions>0).map(t=>(t.simulations+($('budget-audit').checked?t.audit_simulations:0))/t.decisions)))*1.12;
   const y=value=>T+ih*(1-value/max);
   let markup='';
   for(let j=0;j<=4;j++){const v=max*j/4;markup+=`<path d="M${L} ${y(v)}H${w-R}" stroke="#2c3a50"/><text x="${L-8}" y="${y(v)+4}" fill="#8fa1b8" text-anchor="end" font-size="10">${Math.round(v)}${kind==='history'?'%':''}</text>`;}
@@ -142,17 +173,21 @@ function budgetCharts(rows,tier,selectedRound){
     markup+='</g>';
    }
   }else{
-   for(const [key,color,dash] of [['simulations','#58d3ab',''],['total','#e9b86a','5 4']]){
-    let path='',previous=null;for(const row of visible){const t=row.tiers[tier];if(!t.decisions||!row.complete){previous=null;continue;}const v=key==='total'?total(t):t.simulations/t.decisions;
+   const withAudit=$('budget-audit').checked;
+   for(const [j,key] of battleTiers.entries()){
+    let path='',previous=null;const color=battleColors[j];
+    for(const row of visible){const t=row.tiers[key];if(!t.decisions||!row.complete){previous=null;continue;}
+     const v=(t.simulations+(withAudit?t.audit_simulations:0))/t.decisions;
      path+=(previous===row.rollout_round-1?'L':'M')+x(row.rollout_round)+' '+y(v);previous=row.rollout_round;
-     markup+=`<circle cx="${x(row.rollout_round)}" cy="${y(v)}" r="3" fill="${color}" data-round="${row.rollout_round}"/>`;
-    }markup+=`<path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="${dash}" pointer-events="none"/>`;
+     markup+=`<circle cx="${x(row.rollout_round)}" cy="${y(v)}" r="3" fill="${color}" data-round="${row.rollout_round}" data-tier="${key}"/>`;
+    }
+    markup+=`<path d="${path}" fill="none" stroke="${color}" stroke-width="2.3" pointer-events="none"/>`;
    }
   }
   svg.innerHTML=markup;
   for(const node of svg.querySelectorAll('[data-round]')){
-   const row=visible.find(r=>r.rollout_round===+node.dataset.round),t=row.tiers[tier];
-   node.onmousemove=e=>budgetTip(e,`第 ${row.rollout_round} 轮 · ${budgetNames[tier]} · ${row.ranks.length}/${row.expected_ranks} 台\n`+budgetLevels.map((b,i)=>`${b}：${budgetNumber(t.counts[i])} 次（${budgetNumber(budgetRatio(t.counts[i],t.decisions))}%）`).join('\n')+`\n出牌搜索：${budgetNumber(t.simulations/t.decisions)} 链/决策\n含额外审计：${budgetNumber(total(t))} 链/决策`);
+   const row=visible.find(r=>r.rollout_round===+node.dataset.round),hoverTier=node.dataset.tier||tier,t=row.tiers[hoverTier];
+   node.onmousemove=e=>budgetTip(e,`第 ${row.rollout_round} 轮 · ${budgetNames[hoverTier]} · ${row.ranks.length}/${row.expected_ranks} 台\n`+budgetLevels.map((b,i)=>`${b}：${budgetNumber(t.counts[i])} 次（${budgetNumber(budgetRatio(t.counts[i],t.decisions))}%）`).join('\n')+`\n出牌搜索：${budgetNumber(t.simulations/t.decisions)} 链/决策\n含额外审计：${budgetNumber(total(t))} 链/决策`);
    node.onmouseleave=()=>{$('tooltip').style.display='none';};
    const choose=()=>{$('budget-round').value=String(row.rollout_round);renderBudget();};
    node.onclick=choose;node.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();choose();}};
@@ -178,13 +213,10 @@ function renderBudget(){
  ];
  $('budget-kpis').innerHTML=kpis.map(([title,value,sub])=>`<div class="budget-kpi"><span class="label">${title}</span><strong>${value}</strong><small>${sub}</small></div>`).join('');
  $('budget-legend').innerHTML=budgetLevels.map((b,i)=>`<span><i class="budget-dot" style="background:${budgetColors[i]}"></i>${b===0?'0 · 直接出牌':b+' 链'}</span>`).join('');
- $('budget-detail-title').textContent='第 '+selected.rollout_round+' 轮 · 各场景';
- $('budget-rooms').innerHTML=['common','elite','boss'].map(key=>{
-  const r=selected.tiers[key],d=r.decisions;
-  return `<div class="budget-room"><span>${budgetNames[key]}<small>${budgetNumber(d)} 次决策</small></span><div class="budget-stack" aria-label="${budgetNames[key]}预算比例">${d?r.counts.map((count,i)=>`<span style="width:${100*count/d}%;background:${budgetColors[i]}" title="${budgetLevels[i]} 链：${budgetNumber(count)} 次（${budgetNumber(100*count/d)}%）">${100*count/d>=12?Math.round(100*count/d)+'%':''}</span>`).join(''):'<span style="width:100%;color:#9caac0">无多动作决策</span>'}</div><span>${d?budgetNumber(r.simulations/d):'—'}</span></div>`;
- }).join('');
+ compareBattles(selected);
  budgetCharts(rows,tier,selected.rollout_round);
 }
+$('budget-audit').onchange=renderBudget;
 $('budget-tier').onchange=renderBudget;$('budget-round').onchange=renderBudget;
 $('search-budget').ontoggle=()=>{if($('search-budget').open&&state)renderBudget();};
 
