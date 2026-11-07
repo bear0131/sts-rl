@@ -92,7 +92,7 @@ class OnlinePlayoutEvaluationStrategy:
     name = 'small-playout'
     combat_action_contract = 'autoregressive-v2'
 
-    def __init__(self, policy, *, threads=1, paired_worldlines=False):
+    def __init__(self, policy, *, threads=1, paired_worldlines=False, fixed_budget=None):
         from rl.policies.small_playout import export_online_search_pair
         if threads < 1:
             raise ValueError('native search threads must be positive')
@@ -105,6 +105,11 @@ class OnlinePlayoutEvaluationStrategy:
             paired_worldlines = True
         if paired_worldlines:
             self.name = 'paired-worldlines'
+        if fixed_budget is not None:
+            if 'budget_config' not in self.pair or type(fixed_budget) is not int or not 0 <= fixed_budget <= 4096:
+                raise ValueError('fixed-budget reference needs an adaptive checkpoint and 0..4096 simulations')
+            self.name = 'fixed-budget-token'
+        self.fixed_budget = fixed_budget
         self.threads = threads
         self._batch = self._pool = None
         self._indices = {}
@@ -126,7 +131,10 @@ class OnlinePlayoutEvaluationStrategy:
                 batch = SmallPlayoutBatch(envs, pool, self.pair)
             else:
                 from rl.search.paired_token_rollout import PairedTokenBatch
-                batch = PairedTokenBatch(envs, pool, self.pair, self.root_policy)
+                from rl.search.adaptive_budget import AdaptiveBudgetBatch
+                factory = AdaptiveBudgetBatch if 'budget_config' in self.pair else PairedTokenBatch
+                batch = factory(envs, pool, self.pair, self.root_policy,
+                                **(dict(fixed_budget=self.fixed_budget) if 'budget_config' in self.pair else {}))
         except BaseException:
             pool.clear()
             raise
@@ -163,7 +171,11 @@ class OnlinePlayoutEvaluationStrategy:
 
     def manifest(self):
         from rl.policies.token_regret import TOKEN_REGRET_CONTRACT
-        return dict(contract=TOKEN_REGRET_CONTRACT if self.root_policy is not None else self.pair['contract'], search_contract=self.pair['search_contract'],
+        from rl.policies.search_budget import BUDGET_CONTRACT
+        contract = BUDGET_CONTRACT if 'budget_config' in self.pair else TOKEN_REGRET_CONTRACT if self.root_policy is not None else self.pair['contract']
+        return dict(contract=contract, search_contract=self.pair['search_contract'],
+                    budget_config=self.pair.get('budget_config'),
+                    fixed_budget_simulations=self.fixed_budget,
                     lower_sha256=self.pair['sha256'], native_threads=self.threads,
                     config={k: self.pair[k] for k in ('common_simulations', 'elite_simulations',
                             'boss_simulations', 'playout_depth', 'tree_depth')},
@@ -640,10 +652,12 @@ def turn_planner_strategy(model, args, lock=None):
 
 # Registration is deliberately a plain mapping, not discovery/import magic.
 # Embedders can pass any DecisionStrategy directly without registering a CLI.
-def small_playout_strategy(model, args, lock=None, *, paired_worldlines=False):
+def small_playout_strategy(model, args, lock=None, *, paired_worldlines=False, fixed_reference=False):
     from env.search.small_playout import SEARCH_CONTRACT
     from rl.policies.token_regret import OnlineTokenRegretPolicy, TOKEN_REGRET_CONTRACT
-    expected = TOKEN_REGRET_CONTRACT if isinstance(getattr(model.policy, 'small_playout', None), OnlineTokenRegretPolicy) else SEARCH_CONTRACT
+    from rl.policies.search_budget import AdaptiveTokenRegretPolicy, BUDGET_CONTRACT
+    lower = getattr(model.policy, 'small_playout', None)
+    expected = BUDGET_CONTRACT if isinstance(lower, AdaptiveTokenRegretPolicy) else TOKEN_REGRET_CONTRACT if isinstance(lower, OnlineTokenRegretPolicy) else SEARCH_CONTRACT
     if (getattr(args, 'task', 'wholerun') != 'wholerun'
             or C.policy_contract(model.observation_space) != 'autoregressive-v2'
             or not hasattr(model.policy, 'small_playout')
@@ -654,18 +668,24 @@ def small_playout_strategy(model, args, lock=None, *, paired_worldlines=False):
     threads = getattr(args, 'native_search_threads', 0)
     if threads < 0:
         raise ValueError('native search threads must be non-negative')
+    fixed_budget = getattr(args, 'simulations', None) if fixed_reference else None
+    if fixed_reference and fixed_budget is None:
+        raise ValueError('fixed-budget-token requires an explicit --simulations budget')
     for name in ('simulations', 'depth', 'prior_temperature', 'gumbel_scale', 'fixed_worldline', 'leaf_batch_size'):
+        if fixed_reference and name == 'simulations':
+            continue
         if getattr(args, name, None) is not None:
             raise ValueError('small-playout uses the collection search budget; cannot override '+name)
     return PhaseStrategy(policy_strategy(model, args, lock), {'combat':
         OnlinePlayoutEvaluationStrategy(model.policy.small_playout,
-            threads=max(1, threads), paired_worldlines=paired_worldlines)})
+            threads=max(1, threads), paired_worldlines=paired_worldlines, fixed_budget=fixed_budget)})
 
 
 STRATEGIES = {'policy': policy_strategy, 'native': native_strategy, 'value': value_strategy,
               'leftmost': lambda model, args, lock=None: LeftmostStrategy(), 'rules': rule_strategy,
               'turn-planner': turn_planner_strategy, 'small-playout': small_playout_strategy,
-              'paired-worldlines': partial(small_playout_strategy, paired_worldlines=True)}
+              'paired-worldlines': partial(small_playout_strategy, paired_worldlines=True),
+              'fixed-budget-token': partial(small_playout_strategy, fixed_reference=True)}
 
 
 def compose_strategy(upper_model, args, combat_model=None, *, trace=None):

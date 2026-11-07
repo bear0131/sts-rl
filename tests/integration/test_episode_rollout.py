@@ -156,7 +156,7 @@ def test_independent_turn_limit_excludes_whole_game_and_resumes(tmp_path, monkey
                       unified=True, independent=True, censor_case=censor_case)
 
 
-def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override, censor_case=None, resume_target_kl=None, keep_round_multiple=0, fork_resume=False, unified=False, critic_batch=None, independent=False, cohort_error=False):
+def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device, natural_start, lambda_override, censor_case=None, resume_target_kl=None, keep_round_multiple=0, fork_resume=False, unified=False, critic_batch=None, independent=False, cohort_error=False, learned_budget=False):
     turn_guard = censor_case in ('turn', 'turn-all')
     if device == 'cuda':
         assert torch.cuda.is_available(), 'explicit CUDA qualification requires CUDA'
@@ -184,10 +184,18 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
                 **(dict(architecture='upper-latent-actions-v1', target_kl=None, latents=4,
                         effective_batch_size=8, critic_epochs=3) if unified else {})),
             small_playout_config=dict(epochs=2, batch_size=8, micro_batch_size=4,
+                context_mode='token-budget-64x2' if learned_budget else 'none',
                 target_mix=.2, optimizer='adamw', learning_rate=.003, weight_decay=.0001, max_grad_norm=0)),
         seed=42, device=device, amp_mode='off', nosl_is_az=True, nosl_is_az_cpp=True,
         nosl_is_az_inner_only=True, nosl_is_az_combat_strategy='small-playout',
         nosl_is_az_simulations=4, nosl_is_az_replay_enabled=False, hierarchical_combat_hp=True)
+    expected_contract = 'terminal-hp-boss-win-turn128-v1'
+    if learned_budget:
+        from rl.policies.search_budget import BUDGET_CONTRACT
+        expected_contract = model.small_playout_search_contract = BUDGET_CONTRACT
+        model.independent_rollout_config = dict(mode='independent', threads=2, upper_batch=2,
+                                               upper_wait_seconds=.010, seed=42,
+                                               max_combat_turns=None)
     initial = tmp_path/'initial.zip'
     model.save(initial)
     initial_policy = {k: v.detach().cpu().clone() for k, v in model.policy.state_dict().items()}
@@ -254,7 +262,7 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
     natural_count = {'all': 0, 'turn-all': 0, 'mixed': 1, 'turn': 1}.get(censor_case, 2)
     original_learn = AccumulatingMaskablePPO.learn
     def learn(self, *args, **kwargs):
-        assert self.small_playout_search_contract == 'terminal-hp-boss-win-turn128-v1'
+        assert self.small_playout_search_contract == expected_contract
         if not getattr(self, 'episode_rollouts_completed', 0):
             torch.testing.assert_close(self.policy.state_dict(), initial_policy,
                                        rtol=0, atol=0, check_device=False)
@@ -344,8 +352,17 @@ def _cohort_lifecycle(tmp_path, monkeypatch, short_natural_game_env_type, device
             assert 'upper_inference' not in vars(current.policy.core)
             omitted = payloads[i]['nosl_is_az/combat_observation_rows_omitted']
             assert omitted > 0 if natural_start else omitted == 0
-        assert current.small_playout_search_contract == 'terminal-hp-boss-win-turn128-v1'
-        assert manifest['config']['small_playout_search_contract'] == 'terminal-hp-boss-win-turn128-v1'
+        assert current.small_playout_search_contract == expected_contract
+        assert manifest['config']['small_playout_search_contract'] == expected_contract
+        if learned_budget:
+            from rl.policies.search_budget import budget_manifest
+            assert current.search_budget_config == manifest['config']['search_budget_config'] == budget_manifest()
+            assert int(current.policy.small_playout.budget_round) == i + 1
+            assert payloads[i]['small_playout_train/budget_round'] == i + 1
+            assert payloads[i]['small_playout_train/budget_audit_fraction'] > 0
+            assert payloads[i]['small_playout_train/budget_cost_log_mse'] >= 0
+            assert not torch.equal(current.policy.small_playout.budget_head[-1].bias,
+                                   initial_policy['small_playout.budget_head.2.bias'])
         assert current.policy.core.upper_config.gae_lambda == (lambda_override or .97)
         assert manifest['config']['upper_config']['gae_lambda'] == (lambda_override or .97)
         if resume_target_kl is not None:

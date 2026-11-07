@@ -728,7 +728,7 @@ std::vector<SmallSearchResult> smallPairedWorldBatch(NeuralSearchBatch &pool,
     for(std::size_t r=0;r<size;++r) {
         const auto started=std::chrono::steady_clock::now();
         const auto &root=roots[r];const auto &cfg=configs[r];
-        if(!cfg.pairedWorldlines||cfg.usePrior||cfg.publicRoot||cfg.simulations<1||cfg.simulations>1000||
+        if(!cfg.pairedWorldlines||cfg.usePrior||cfg.publicRoot||cfg.simulations<1||cfg.simulations>4096||
            root.outcome!=Outcome::UNDECIDED||root.player.hasRelic<R::RUNIC_DOME>()||
            cfg.playoutDepth<1||cfg.playoutDepth>200||!std::isfinite(cfg.temperature)||cfg.temperature<=0)
             throw std::invalid_argument("unsupported paired-world batch configuration");

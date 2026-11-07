@@ -55,7 +55,7 @@ class OnlinePlayoutConfig:
 
     def __post_init__(self):
         if (not all(math.isfinite(v) for k, v in asdict(self).items() if k not in ('optimizer','context_mode'))
-                or self.context_mode not in ('none','root','turn','state','token-root-64x2')
+                or self.context_mode not in ('none','root','turn','state','token-root-64x2','token-budget-64x2')
                 or self.optimizer not in ('adam', 'adamw')
                 or not 0 <= self.target_mix <= 1 or self.weight_decay < 0
                 or self.key_count < 3 or self.learning_rate <= 0 or self.max_grad_norm < 0

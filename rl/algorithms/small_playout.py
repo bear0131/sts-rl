@@ -42,7 +42,13 @@ def update_online(model, *, rank=0, world_size=1, average=lambda values: values,
     if not out['samples']:
         return out
     net, optimizer = model.policy.small_playout, model.policy.small_playout_optimizer
-    regret = cfg.context_mode == 'token-root-64x2'
+    regret = cfg.context_mode in ('token-root-64x2', 'token-budget-64x2')
+    adaptive = cfg.context_mode == 'token-budget-64x2'
+    clip_groups = None
+    if adaptive:
+        budget_parameters = list(net.budget_head.parameters())
+        budget_ids = {id(p) for p in budget_parameters}
+        clip_groups = [[p for p in net.parameters() if id(p) not in budget_ids], budget_parameters]
     def weights():
         return torch.nn.utils.parameters_to_vector(list(net.parameters())).detach().cpu().numpy() if regret else net.export()
     before = weights()
@@ -56,6 +62,8 @@ def update_online(model, *, rank=0, world_size=1, average=lambda values: values,
     device_totals = {key: [] for key in ('loss', 'entropy', 'teacher_top1')}
     if regret:
         device_totals.update(target_kl=[], guide_kl=[])
+    if adaptive:
+        device_totals.update(budget_gain_mse=[], budget_cost_log_mse=[], budget_audit_fraction=[])
     norms = []
     model.policy.set_training_mode(True)
     with train_phase(model, small_playout=True):
@@ -70,7 +78,11 @@ def update_online(model, *, rank=0, world_size=1, average=lambda values: values,
                         indices[offset:offset+cfg.micro_batch_size], model.device)
                     # Compact learner is FP32 even when upper PPO uses BF16.
                     if regret:
-                        loss, entropy, logp, target_kl, guide_kl = net.update_terms(tensors, target)
+                        terms = net.update_terms(tensors, target)
+                        loss, entropy, logp, target_kl, guide_kl = terms[:5]
+                        if adaptive:
+                            for key, value in terms[5].items():
+                                device_totals[key].append(value.detach())
                         device_totals['target_kl'].append(target_kl.detach())
                         device_totals['guide_kl'].append(guide_kl.detach())
                     else:
@@ -88,7 +100,8 @@ def update_online(model, *, rank=0, world_size=1, average=lambda values: values,
                     stats = synchronize(out['updates'])
                     out['sync_seconds'] += float((stats or {}).get('sync_sec', 0.))
                 norms.append(optimizer_step(model, optimizer=optimizer,
-                    max_grad_norm=cfg.max_grad_norm if cfg.max_grad_norm else float('inf')))
+                    max_grad_norm=cfg.max_grad_norm if cfg.max_grad_norm else float('inf'),
+                    clip_parameter_groups=clip_groups))
                 out['updates'] += 1
     for key, values in device_totals.items():
         totals[key] = float(torch.stack(values).double().sum()) if values else 0.
@@ -100,6 +113,9 @@ def update_online(model, *, rank=0, world_size=1, average=lambda values: values,
     out['grad_norm'] = float(torch.stack(norms).mean())
     out['parameter_l2_change'] = float(np.linalg.norm(weights()-before))
     model.small_playout_optimizer_steps = getattr(model, 'small_playout_optimizer_steps', 0) + out['updates']
+    if adaptive:
+        net.budget_round.add_(1)
+        out['budget_round'] = int(net.budget_round)
     out['optimizer_steps_total'] = model.small_playout_optimizer_steps
     model._small_playout_samples = []
     model._sync_device()

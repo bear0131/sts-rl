@@ -64,6 +64,7 @@ py::dict result(const SmallSearchResult &r) {
 void bindSmallPlayout(py::module_ &m) {
     m.attr("small_playout_search_contract")="terminal-hp-boss-win-turn128-v1";
     m.attr("small_paired_search_contract")="paired-worldlines-eps005-terminal-hp-boss-win-turn128-v1";
+    m.attr("small_paired_world_max_simulations")=4096;
     m.attr("small_playout_max_cards_per_turn")=SMALL_MAX_CARDS_PER_TURN;
     m.def("small_playout_turn_card_limit_reached",&smallTurnCardLimitReached);
     m.def("small_playout_key_count",&smallKeyCount);

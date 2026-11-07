@@ -154,6 +154,12 @@ class SmallPlayoutBatch:
                 out[tier+f'/playout_length_p{int(q*100)}'] = float(np.searchsorted(hist.cumsum(), q*n)) if n else 0.
         return out
 
+    def search_jobs(self, pool, jobs):
+        """Immutable worker dispatch; the controller retains every live slot."""
+        return sts.small_playout_world_batch(pool, self.net,
+            [self.envs[j[0]].thick.bc for j in jobs],
+            [j[2] for j in jobs], [j[3] for j in jobs], self.prior)
+
 
 class SmallPlayoutStream:
     """Independent-root scheduling on GIL-free native searches.
@@ -262,10 +268,7 @@ class PairedWorldPlayoutStream:
         if self._active is not None or not self._queued:
             return
         jobs, self._queued = self._queued[:self.batch_limit], self._queued[self.batch_limit:]
-        future = self._executor.submit(
-            sts.small_playout_world_batch, self._pool, self.batch.net,
-            [self.batch.envs[j[0]].thick.bc for j in jobs],
-            [j[2] for j in jobs], [j[3] for j in jobs], self.batch.prior)
+        future = self._executor.submit(self.batch.search_jobs, self._pool, jobs)
         self._active = future, jobs
         stats = self.batch.stats
         stats['world_dispatch_groups'] = stats.get('world_dispatch_groups', 0) + 1

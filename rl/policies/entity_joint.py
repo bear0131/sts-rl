@@ -190,6 +190,9 @@ class EntityJointPolicy(EntityCombatPolicy):
             elif context == 'token-root-64x2':
                 from rl.policies.token_regret import OnlineTokenRegretPolicy
                 self.small_playout = OnlineTokenRegretPolicy(self.small_playout_config['key_count'])
+            elif context == 'token-budget-64x2':
+                from rl.policies.search_budget import AdaptiveTokenRegretPolicy
+                self.small_playout = AdaptiveTokenRegretPolicy(self.small_playout_config['key_count'])
             else:
                 from rl.policies.public_playout import PublicPlayoutPolicy
                 self.small_playout = PublicPlayoutPolicy(self.small_playout_config['key_count'],context)

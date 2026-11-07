@@ -65,7 +65,7 @@ paired-token 独立采集在原生构建提供 `small_playout_world_batch` 时�
 完整根模型评分、环境推进和样本接收；活动槽不可重复提交，结束或异常时先等待
 所有在途搜索，再释放线程池。每轮重新取得当前轻量头快照，不把工作线程或队列
 存入 checkpoint。预算、合法动作、根部标签和符文圆顶旁路保持原契约。
-当前原生接口支持至多480个根、每根1–1000次模拟、深度1–200且不带独立prior；
+当前原生接口支持至多480个根、每根1–4096次模拟、深度1–200且不带独立prior；
 其他模型和不含该接口的旧构建继续使用原逐根异步路径。冻结评估的普通
 `PairedTokenBatch.decisions` 接口保持兼容。回归见`test_paired_world_stream.py`。
 
@@ -705,3 +705,43 @@ source_rows 只引用动态实体行，target_slots 对应原生怪物槽位，-
 `--check-every`、`--patience`、`--min-gain` 定义验证KL平台，触发后从验证最优的权重和Adam降低学习率，第二次降率后再次达到平台时停止。另记录预算用尽状态。最终在独立测试批对比成熟模型、第105步和验证选中权重的KL及与搜索推荐动作相同的比例。
 
 冻结的原版 COMBAT37 可通过 `python -m rl.evaluation.eval <model.zip> --task wholerun --solver paired-worldlines` 测共享世界线。每条世界线先确定可见信息所允许的抽牌堆和游戏随机状态，给各个合法动作复制相同起点和策略随机流，再用原紧凑策略模拟到终局或截断。普通/精英总250次、首领1000次，每动作分到的次数至多差1，余数随机分配。按各动作的归一化终局均值评分，距最高分0.005以内用原下层logit排序，剩余平分仍均匀抽选。普通战以根最大生命归一化，首领以胜负计，截断保留原保守计分。此评测契约 `paired-worldlines-eps005-terminal-hp-boss-win-turn128-v1` 适用于单个v1策略，符文圆顶沿用公开策略。传统 `small-playout` 保留UCT。
+
+
+### 可学习根部搜索预算
+
+`token-budget-64x2` 的合同是
+`sts1-token64x2-independent-budget-gain-v1`，仅支持 FP32、native independent
+完整游戏采集、根部 2×64 Transformer 和同步学习的 compact 链模型。旧
+`token-root-64x2` 与旧 checkpoint 行为保持。新训练通过现有初始化入口
+`experiments.launchers.initialize_paired_transformer --learned-budget` 建立，
+模型、预算轮数、配置、下层 Adam 随常规恢复包保存；配置不符拒绝恢复。
+
+预算头复用根部 CLS、32维状态及合法 policy 熵/差距/候选数/Boss 标志，
+增加6984参数；主策略表示停止梯度，预算回归和策略更新分别裁剪，避免
+审计的较大回归梯度间接缩小策略更新。候选为0/32/128/512/2048次完整链模拟，
+预测相对零搜索的终局HP收益（Boss按百分胜率）与实际原子transition成本；
+按收益减每1000 transition的0.02单位成本选择。精确同分选较小预算。
+前3次有样本更新用固定探索分布，之后保留20%均匀探索；冻结评估不探索。
+这些是首版实验参数，未证明最优，也不是在搜索过程中逐步停搜。
+
+每个多动作根独立以1/64概率审计全部预算，实际执行仍使用事先选中的预算。
+选择动作只依赖该预算的共享链和原根policy；另外16个独立共享世界评估所有
+被选动作，得到有符号、未截断的相对零搜索收益。相同动作收益差严格为0。
+删失沿现有非负终局回报保守下界统计，不是无偏胜率，也不是已完成样本均值。
+额外预算重复计算和独立验证全部计入 `budget_audit_*`；
+`budget_total_simulations/transitions` 是执行搜索加审计总量。旧
+`simulations/playout_transitions` 仅指实际选择预算，不能代表新模式总成本。
+`budget_dispatch_seconds` 包含审计且在根间均摊；正式rollout wall time仍为端到端。
+
+零预算根没有搜索监督损失，但保留根policy到guide的蒸馏；随机审计即使发生
+也不将其搜索结果当作零预算真实动作或标签。单动作不搜、不审计；Runic Dome
+保留公开policy旁路；多选pending/source/target槽映射沿用已有codec。
+评估复用 `OnlinePlayoutEvaluationStrategy`/`PhaseStrategy` 和同一batch实现，
+无训练样本、无审计和探索。真实两轮训练、payload、Adam/预算头/RNG保存恢复
+回归在 `test_adaptive_search_budget.py`，native扩展必须显式加载且支持4096容量。
+
+
+同checkpoint固定预算对照使用现有评估CLI：
+`python -m rl.evaluation.eval MODEL --task wholerun --solver fixed-budget-token --simulations N ...`，
+N支持0..4096；学习预算使用`--solver paired-worldlines`。两者共用模型、
+根选择、guide和runner，manifest明确记录覆盖值；训练路径拒绝固定覆盖。

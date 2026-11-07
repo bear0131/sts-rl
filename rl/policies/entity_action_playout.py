@@ -165,7 +165,8 @@ class ActionTokenPolicy(SmallPlayoutPolicy):
         return self.final(x)
 
     def scores_and_guide(
-        self, state, actions, keys, slots, features, symbols, sources, targets, mask
+        self, state, actions, keys, slots, features, symbols, sources, targets, mask,
+        *, return_context=False
     ):
         old = super().forward_packed(state, actions, keys, slots, mask)
         x = self.representations(features, symbols)
@@ -188,7 +189,7 @@ class ActionTokenPolicy(SmallPlayoutPolicy):
             mask
         )
 
-        return score, old
+        return (score, old, x[:, 0]) if return_context else (score, old)
 
     def forward_packed(self, *inputs):
         return self.scores_and_guide(*inputs)[0]

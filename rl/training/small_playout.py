@@ -57,19 +57,31 @@ def install_policy_pair(model, path):
 
 
 def configure_collection(model, env):
-    if getattr(model.policy, 'small_playout_config', None) and model.policy.small_playout_config.get('context_mode') == 'token-root-64x2':
+    if getattr(model.policy, 'small_playout_config', None) and model.policy.small_playout_config.get('context_mode') in ('token-root-64x2', 'token-budget-64x2'):
         from rl.policies.token_regret import OnlineTokenRegretPolicy, TOKEN_REGRET_CONTRACT
         from rl.search.paired_token_rollout import PairedTokenBatch
+        from rl.policies.search_budget import AdaptiveTokenRegretPolicy, BUDGET_CONTRACT
+        from rl.search.adaptive_budget import AdaptiveBudgetBatch
         net = model.policy.small_playout
+        adaptive = isinstance(net, AdaptiveTokenRegretPolicy)
+        expected = BUDGET_CONTRACT if adaptive else TOKEN_REGRET_CONTRACT
+        factory = AdaptiveBudgetBatch if adaptive else PairedTokenBatch
+        if adaptive:
+            from rl.policies.search_budget import budget_manifest
+            saved_budget = getattr(model, 'search_budget_config', None)
+            if saved_budget != budget_manifest():
+                if saved_budget is not None or model.num_timesteps != 0:
+                    raise ValueError('saved learned budget configuration differs from this implementation')
+                model.search_budget_config = budget_manifest()
         previous = getattr(model, 'small_playout_search_contract', None)
-        if (not isinstance(net, OnlineTokenRegretPolicy) or previous != TOKEN_REGRET_CONTRACT
+        if (not isinstance(net, OnlineTokenRegretPolicy) or previous != expected
                 or not getattr(model, 'independent_rollout_config', None)
                 or model.nosl_is_az_replay_enabled or getattr(model, '_frozen_upper', False)):
             raise ValueError('online token policy requires its own fresh independent paired-search contract')
         pair = net.collection_pair(collect_samples=True)
         model.small_playout_collection_sha256 = pair['sha256']
         env.configure_small_playout(pair, batch_factory=lambda envs, pool, snapshot:
-                                   PairedTokenBatch(envs, pool, snapshot, net))
+                                   factory(envs, pool, snapshot, net))
         return
     saved_contract = getattr(model, 'small_playout_search_contract', None)
     if saved_contract != SEARCH_CONTRACT:

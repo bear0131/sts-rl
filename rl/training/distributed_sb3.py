@@ -2768,9 +2768,14 @@ def main() -> None:
             from rl.training.small_playout import configure_collection
             configure_collection(model, model.get_env())
             args.small_playout_search_contract = model.small_playout_search_contract
-            if getattr(model.policy, 'small_playout_config', None) and model.policy.small_playout_config.get('context_mode') == 'token-root-64x2':
+            if getattr(model.policy, 'small_playout_config', None) and model.policy.small_playout_config.get('context_mode') in ('token-root-64x2', 'token-budget-64x2'):
                 args.nosl_is_az_combat_strategy_version = args.small_playout_search_contract
-                print(f'[rank {args.rank}] paired chains 250/250/1000, Transformer roots, learned CPU guide', flush=True)
+                if model.policy.small_playout_config['context_mode'] == 'token-budget-64x2':
+                    from rl.policies.search_budget import budget_manifest
+                    args.search_budget_config = model.search_budget_config
+                    print(f'[rank {args.rank}] learned paired-chain budgets {budget_manifest()}', flush=True)
+                else:
+                    print(f'[rank {args.rank}] paired chains 250/250/1000, Transformer roots, learned CPU guide', flush=True)
             else:
                 args.nosl_is_az_combat_strategy_version = ('sts1-small-playout-online-terminal-v2'
                     if hasattr(model.policy, 'small_playout') else 'sts1-small-playout-pair-v1')

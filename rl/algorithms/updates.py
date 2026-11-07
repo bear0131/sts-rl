@@ -32,7 +32,8 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
     return components, loss
 
 
-def optimizer_step(model, micro_batches=1, *, value_only=False, optimizer=None, max_grad_norm=None):
+def optimizer_step(model, micro_batches=1, *, value_only=False, optimizer=None, max_grad_norm=None,
+                   clip_parameter_groups=None):
     """Average accumulation once, clip once, then Adam and clear gradients."""
     if value_only and getattr(model, '_outer_return', False):
         raise ValueError('frozen-upper objective trains the entire lower network from update one')
@@ -47,10 +48,19 @@ def optimizer_step(model, micro_batches=1, *, value_only=False, optimizer=None, 
         for parameter in model.policy.parameters():
             if parameter.grad is not None:
                 parameter.grad.mul_(1.0 / micro_batches)
-    norm = th.nn.utils.clip_grad_norm_(
-        model.policy.parameters(), model.max_grad_norm if max_grad_norm is None else max_grad_norm,
-        error_if_nonfinite=True,
-    )
+    limit = model.max_grad_norm if max_grad_norm is None else max_grad_norm
+    if clip_parameter_groups is None:
+        norm = th.nn.utils.clip_grad_norm_(model.policy.parameters(), limit, error_if_nonfinite=True)
+    else:
+        # Independent objectives must not shrink each other's update through a
+        # shared norm, even when their forward graphs are detached.
+        groups = [list(group) for group in clip_parameter_groups]
+        ids = [id(p) for group in groups for p in group]
+        active = {id(p) for p in model.policy.parameters() if p.grad is not None}
+        if len(ids) != len(set(ids)) or not active.issubset(ids):
+            raise ValueError('gradient clip groups must be disjoint and cover active parameters')
+        norms = [th.nn.utils.clip_grad_norm_(group, limit, error_if_nonfinite=True) for group in groups]
+        norm = th.linalg.vector_norm(th.stack(norms))
     optimizer = model.policy.optimizer if optimizer is None else optimizer
     optimizer.step()
     optimizer.zero_grad()
