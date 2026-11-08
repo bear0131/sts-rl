@@ -12,7 +12,7 @@ from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies import model as model_utils
 from rl.tasks.wholerun import WholeRunTask, _MAX_EPISODE_STEPS
 from rl.training.cached_mask_vec_env import CachedMaskSubprocVecEnv, GroupedCachedMaskSubprocVecEnv
-from rl.training.reward import ShapedRewardWrapper
+from rl.training.reward import ShapedRewardWrapper, StrategicRewardWrapper
 
 
 def startup_stagger_delays(
@@ -230,6 +230,8 @@ class TrainingStateWrapper(gym.Wrapper):
             return "observation_compat"
         if isinstance(wrapper, gym.wrappers.TimeLimit):
             return "time_limit"
+        if isinstance(wrapper, StrategicRewardWrapper):
+            return "strategic_reward"
         if isinstance(wrapper, ShapedRewardWrapper):
             return "shaped_reward"
         raise TypeError(
@@ -278,7 +280,7 @@ class TrainingStateWrapper(gym.Wrapper):
                 "max_episode_steps": wrapper._max_episode_steps,
                 "elapsed_steps": wrapper._elapsed_steps,
             }
-        if kind == "shaped_reward":
+        if kind in ("shaped_reward", "strategic_reward"):
             return {"previous": copy.deepcopy(wrapper._prev)}
         return {}
 
@@ -337,7 +339,7 @@ class TrainingStateWrapper(gym.Wrapper):
         ))):
             kind = saved["kind"]
             values = saved["state"]
-            if kind == "shaped_reward":
+            if kind in ("shaped_reward", "strategic_reward"):
                 wrapper._prev = copy.deepcopy(values["previous"])
             elif kind == "time_limit":
                 if wrapper._max_episode_steps != values["max_episode_steps"]:
@@ -409,7 +411,10 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
     env_args.ascension = args.ascension
     env_args.outer_return_context = bool(getattr(getattr(model.policy, 'core', None), 'frozen_upper', False)
                                          or getattr(model, '_outer_return', False))
-    env_args.combat_value_objective = getattr(getattr(model.policy, 'core', None), 'training_objective', None)
+    core = getattr(model.policy, 'core', None)
+    env_args.combat_value_objective = getattr(core, 'environment_value_objective',
+                                            getattr(core, 'training_objective', None))
+    env_args.strategic_reward = getattr(core, 'training_objective', None) == 'shared-wholerun-ppo-room-v1'
     env_args.global_map_view = flags["global_map_view"]
     env_args.upper_public_context = flags["upper_public_context"]
     env_args.card_language = flags["card_language"]

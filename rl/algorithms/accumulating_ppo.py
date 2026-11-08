@@ -440,6 +440,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self._combat_distribution = self.nosl_supervision_contract in OUTCOME_CONTRACTS
         self._outer_return = self.nosl_supervision_contract in outer.SCALAR_OBJECTIVES
         self._frozen_upper = bool(getattr(getattr(self.policy, 'core', None), 'frozen_upper', False))
+        if self.nosl_supervision_contract == 'shared-wholerun-ppo-room-v1':
+            if (self.nosl_is_az or self.hierarchical_combat_hp or self.gamma != 1
+                    or self.reasoning_coef or self.reasoning_updates):
+                raise ValueError('pure whole-run PPO requires gamma1, no search, HP returns or auxiliary updates')
         if self._outer_return:
             if self._hierarchical_hp_requested:
                 raise ValueError('outer return cannot enable hierarchical HP targets')
@@ -1000,6 +1004,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 finally:
                     runtime.clear()
 
+        if result and self.nosl_supervision_contract == 'shared-wholerun-ppo-room-v1':
+            from rl.algorithms.room_returns import apply_room_returns
+            apply_room_returns(self, rollout_buffer)
         if (result and self.hierarchical_combat_hp
                 and self.nosl_is_az_combat_strategy != 'small-playout'):
             self._apply_hierarchical_returns(rollout_buffer, captured)

@@ -81,6 +81,21 @@ class ShapedRewardWrapper(gym.Wrapper):
         return obs, shaped, terminated, truncated, info
 
 
+class StrategicRewardWrapper(ShapedRewardWrapper):
+    """The current upper's reward, now credited to every actual action."""
+
+    def step(self, action):
+        from env.core.outer_return import strategic_reward
+        obs, raw, terminated, truncated, info = self.env.step(action)
+        now = _gc_state(self.env.thick.gc)
+        reward = strategic_reward(self._prev.act, self._prev.floor,
+            dict(act=now.act, floor=now.floor, outcome=now.outcome),
+            done=terminated, censored=bool(truncated or info.get('dead_screen')))
+        self._prev = now
+        info['env_reward'] = raw
+        return obs, reward, terminated, truncated, info
+
+
 class CombatGauntletRewardWrapper(gym.Wrapper):
     """Reward for the combat-gauntlet pretraining (doc/night_0625/
     combat_pretrain_decision.md): +`win` each time a fight is cleared. An optional

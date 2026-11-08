@@ -99,6 +99,9 @@ def _checkpoint_policy_arch(model: AccumulatingMaskablePPO) -> str | None:
     from rl.policies.entity_combat import EntityCombatPolicy
 
     policy = model.policy
+    from rl.policies.shared_wholerun import SharedWholeRunPolicy
+    if isinstance(policy, SharedWholeRunPolicy):
+        return 'shared-wholerun'
     from rl.policies.entity_joint import EntityJointPolicy
     if isinstance(policy, EntityJointPolicy):
         return "entity-joint"
@@ -594,6 +597,9 @@ def main() -> None:
             resume_settings, _, _ = load_from_zip_file(args.resume, device="cpu")
             from rl.policies.entity_combat import EntityCombatPolicy
             from rl.policies.entity_joint import EntityJointPolicy
+            from rl.policies.shared_wholerun import SharedWholeRunPolicy
+            if resume_settings.get('policy_class') is SharedWholeRunPolicy and args.arch == 'auto':
+                args.arch = 'shared-wholerun'
             if resume_settings.get("policy_class") in (EntityCombatPolicy, EntityJointPolicy) and args.arch == "auto":
                 args.arch = "entity-joint" if resume_settings['policy_class'] is EntityJointPolicy else "entity-combat"
                 args.nosl_is_az_inner_only = resume_settings["nosl_is_az_inner_only"]
@@ -950,11 +956,11 @@ def main() -> None:
         args.combat_action_contract = args.combat_action_contract or source_contract
         if args.resume and args.combat_action_contract != source_contract:
             raise ValueError("combat action migration requires --init-from, not --resume")
-        if args.combat_action_contract == C.AUTOREGRESSIVE_CONTRACT and args.arch not in ('entity-combat', 'entity-joint'):
-            raise ValueError('autoregressive-v2 requires entity-combat')
+        if args.combat_action_contract == C.AUTOREGRESSIVE_CONTRACT and args.arch not in ('entity-combat', 'entity-joint', 'shared-wholerun'):
+            raise ValueError('autoregressive-v2 requires an entity or shared-wholerun policy')
         if args.combat_action_contract in C.NEURAL_CONTRACTS:
-            if args.arch not in ("split-pointer", "entity-combat", "entity-joint") or getattr(args, "combat_arch", "transformer") != "transformer":
-                raise ValueError("joint-v2 requires split-pointer Transformer or entity-combat")
+            if args.arch not in ("split-pointer", "entity-combat", "entity-joint", "shared-wholerun") or getattr(args, "combat_arch", "transformer") != "transformer":
+                raise ValueError("joint actions require a supported Transformer policy")
             if getattr(args, "nosl_is_az", False) and not args.nosl_is_az_cpp:
                 raise ValueError("joint-v2 NOSL requires --nosl-is-az-cpp")
 

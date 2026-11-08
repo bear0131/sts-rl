@@ -54,6 +54,7 @@ class StSMetricsCallback(BaseCallback):
         self._win = deque(maxlen=window)
         self._boss = deque(maxlen=window)
         self._boss_censored = 0
+        self._pure_censored = 0
         self._floor = deque(maxlen=window)
         self._act = deque(maxlen=window)
         self._deck = deque(maxlen=window)
@@ -87,6 +88,11 @@ class StSMetricsCallback(BaseCallback):
                 self._excluded_startup_episodes += 1
                 continue
             stats = info.get('run_stats') or {}
+            if (getattr(getattr(self.model.policy, 'core', None), 'training_objective', None)
+                    == 'shared-wholerun-ppo-room-v1'
+                    and (info.get('TimeLimit.truncated') or info.get('dead_screen'))):
+                self._pure_censored += 1
+                continue
             if (stats.get('episode_scope') == 'boss-opening' and
                     stats.get('combat_outcome') not in ('win', 'loss')):
                 self._boss_censored += 1
@@ -131,6 +137,8 @@ class StSMetricsCallback(BaseCallback):
         if self._deck:
             self.logger.record("game/deck_size_mean", mean(self._deck))
         self.logger.record("game/episodes_total", self._n_episodes)
+        if getattr(getattr(self.model.policy, 'core', None), 'training_objective', None) == 'shared-wholerun-ppo-room-v1':
+            self.logger.record('pure_rl/censored_episodes_since_start', self._pure_censored)
         self.logger.record("game/episodes_window", len(self._win))
         for buf, numerator, denominator, rate in (
             (self._chest_opened, "chest_opened_window", "chest_opportunities_window", "chest_open_rate"),
@@ -257,12 +265,14 @@ class WholeRunTask(Task):
         )
         parser.add_argument(
             "--arch",
-            choices=["auto", "split-pointer", "semantic-reasoning", "entity-combat", "entity-joint"],
+            choices=["auto", "split-pointer", "semantic-reasoning", "entity-combat", "entity-joint", "shared-wholerun"],
             default="auto",
             help="Independent combat and overworld Transformer actor-critics "
                  "with shared card/relic/potion tokenizers. --n-layers is the "
                  "combined layer budget split between both specialists.",
         )
+        parser.add_argument('--room-lambda', type=float, default=.9,
+                            help='Shared whole-run PPO trace decay at an act/floor boundary; within-room lambda is 1.')
         parser.add_argument(
             "--interactive-reasoning",
             action=argparse.BooleanOptionalAction,
@@ -533,7 +543,7 @@ class WholeRunTask(Task):
         parser.add_argument("--nosl-is-az-value-coef", type=float, default=0.5)
 
     def make_env_fn(self, args):
-        from rl.training.reward import ShapedRewardWrapper
+        from rl.training.reward import ShapedRewardWrapper, StrategicRewardWrapper
 
         ascension = args.ascension
         interactive_reasoning = (
@@ -562,7 +572,9 @@ class WholeRunTask(Task):
                 ),
             )
             if not env.outer_return_objective:
-                env = ShapedRewardWrapper(env)
+                wrapper = (StrategicRewardWrapper if args.arch == 'shared-wholerun'
+                           or getattr(args, 'strategic_reward', False) else ShapedRewardWrapper)
+                env = wrapper(env)
             # TimeLimit last so it sees the same steps the policy takes and its
             # truncated=True passes straight through ShapedRewardWrapper.step
             # (which forwards truncated untouched).
@@ -583,6 +595,15 @@ class WholeRunTask(Task):
             raise RuntimeError(
                 "trainer must resolve --arch auto before building the policy"
             )
+        if args.arch == 'shared-wholerun':
+            from rl.policies.shared_wholerun import SharedWholeRunPolicy
+            if (args.nosl_is_az or args.hierarchical_combat_hp or args.interactive_reasoning
+                    or args.card_vector_checkpoint or args.gamma != 1
+                    or args.combat_action_contract != 'autoregressive-v2'):
+                raise ValueError('shared whole-run PPO requires gamma1, AR actions, no search/HP/reasoning/pretrained cards')
+            return SharedWholeRunPolicy, dict(d_model=args.d_model, n_layers=args.n_layers,
+                n_heads=args.n_heads, card_language=args.card_language,
+                map_dag=True, room_lambda=args.room_lambda)
         if args.arch == "split-pointer":
             # The core owns both specialist encoders, policy heads, and value
             # heads, so no SB3 features_extractor/net_arch is needed here.

@@ -78,7 +78,8 @@ def load_checkpoint(checkpoint, *, device='auto', card_vector_checkpoint=None,
     algorithm = MaskablePPO
     with ZipFile(path) as archive:
         if ('policy.upper_optimizer.pth' in archive.namelist() or
-                'outer_return_contract' in json.loads(archive.read('data'))):
+                'outer_return_contract' in json.loads(archive.read('data')) or
+                json.loads(archive.read('data')).get('nosl_supervision_contract') == 'shared-wholerun-ppo-room-v1'):
             # The joint policy owns two optimizers. Its training class declares
             # both saved state dictionaries; COMBAT01 also validates its native
             # objective identity in this loader, including inference-only use.
