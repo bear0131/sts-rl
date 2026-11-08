@@ -2510,5 +2510,46 @@
       ]
     },
     "performance_limitations": "Single complete run per arm; full telemetry 0.2s and guide 1s, with different CPU/GPU pipelines; descriptive timing, not an isolated equivalent-optimization benchmark."
+  },
+  "async_cpu_root_probe": {
+    "status": "rejected_no_end_to_end_gain",
+    "source_round": 221,
+    "policy_digest": "7295bc059c570973e70bc3465df730e971154d3adb734920b025b88fbd75f26f",
+    "workers": 4,
+    "threads_per_worker": 1,
+    "games_per_arm": 16,
+    "first_seeds": [
+      20267105,
+      20268105
+    ],
+    "reference_mean_seconds": 68.73145536798984,
+    "candidate_mean_seconds": 69.2938315118663,
+    "relative_seconds": 0.008182223712061454,
+    "whole_process_mean_seconds": {
+      "reference": 72.7170221065171,
+      "candidate": 73.22161681391299
+    },
+    "paired_game_actions_and_terminal_hashes_equal": true,
+    "qualification": {
+      "real_root_fixture_count": 543,
+      "scores_checked": 693,
+      "natural_audit_games": 4,
+      "natural_audit_roots": 1467,
+      "startup_failure_cleanup_passed": true
+    },
+    "deployed": false,
+    "production_resumed": false,
+    "archive": {
+      "path": "/root/autodl-tmp/token-speed-r7-20261105/nine-token-speed/online480/waves/deviceasyncroot221/async-root-cpu-screened-v1.tgz",
+      "sha256": "9262ac61afca5d334907fd8c7c1ed63bf75dbb7f27485aa5ab6636e5e1fa3333",
+      "bytes": 45931476,
+      "members": 215,
+      "secondary_path": "/root/autodl-tmp/combat38-async-root-cpu-screened-v1.tgz",
+      "copies": [
+        "bjb1-11727",
+        "bjb2-53841",
+        "local"
+      ]
+    }
   }
 }
