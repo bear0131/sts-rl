@@ -743,6 +743,12 @@ class OverworldEncoder(_SpecialistEncoder):
         active_widths=None,
         map_encoding=None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        blocks = self._context_blocks(obs, shared, active_widths)
+        blocks.extend(self._screen_blocks(obs, shared, phase_id))
+        blocks.extend(self._map_blocks(obs, phase_id, map_encoding))
+        return self._run(len(obs["phase"]), blocks, map_features=obs.get("map_full_features"))
+
+    def _context_blocks(self, obs, shared, active_widths):
         batch_size = obs["phase"].shape[0]
         global_parts = [
             obs[key].float().reshape(batch_size, -1)
@@ -772,6 +778,10 @@ class OverworldEncoder(_SpecialistEncoder):
             self._potion_block(obs, shared, "potion", "potions"),
         ]
 
+        return blocks
+
+    def _screen_blocks(self, obs, shared, phase_id):
+        blocks = []
         if phase_id == V.PHASE_VOCAB_INDEX["combat_reward"]:
             blocks.extend([
                 self._card_block(
@@ -857,6 +867,10 @@ class OverworldEncoder(_SpecialistEncoder):
                 blocks.append(
                     ("event_option", event_option, obs["event_option_ids"].long() == 0)
                 )
+        return blocks
+
+    def _map_blocks(self, obs, phase_id, map_encoding):
+        blocks = []
         if "map_full_rooms" in obs and (phase_id == V.PHASE_VOCAB_INDEX["map"] or
                                        "upper_public_context" in self.observation_space.spaces):
             ids = obs["map_full_rooms"].long()
@@ -874,7 +888,7 @@ class OverworldEncoder(_SpecialistEncoder):
             blocks.append(
                 ("map_full", full + self.position["map_full"], ids == 0)
             )
-        return self._run(batch_size, blocks, map_features=obs.get('map_full_features'))
+        return blocks
 
 
 class _SpecialistActorCritic(nn.Module):
