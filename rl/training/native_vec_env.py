@@ -261,14 +261,25 @@ class NativeSearchVecEnv(DummyVecEnv):
         if pending:
             encoder = (self.native_root_observations.encode if observation_keys is None
                        else self.native_root_observations.encode_progress)
-            observations = encoder([self.envs[i].unwrapped for i in pending])
+            destination = None
+            # A contiguous subset can use the final vector rows directly.
+            # Legacy checkpoints missing codec fields retain the owned-output
+            # path; noncontiguous rows still use the original scatter below.
+            if (observation_keys is None
+                    and pending == list(range(pending[0], pending[-1] + 1))
+                    and self.buf_obs.keys() >= self.native_root_observations.prototypes.keys()):
+                destination = {key: self.buf_obs[key][pending[0]:pending[-1] + 1]
+                               for key in self.native_root_observations.prototypes}
+            observations = encoder([self.envs[i].unwrapped for i in pending],
+                **({'destination': destination} if destination is not None else {}))
             if observation_keys is not None:
                 self.strategic_observation_rows_omitted += len(pending)
             pending_indices = np.asarray(pending, dtype=np.intp)
             # Respect the checkpoint's visible keys and leave reset/overworld
             # rows intact. The codec already returned one array per field.
-            for key in (self.keys if observation_keys is None else observations):
-                self.buf_obs[key][pending_indices] = observations[key]
+            if destination is None:
+                for key in (self.keys if observation_keys is None else observations):
+                    self.buf_obs[key][pending_indices] = observations[key]
         if subset:
             rows = np.asarray(indices, dtype=np.intp)
             keys = (self.keys if observation_keys is None else

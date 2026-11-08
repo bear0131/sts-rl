@@ -306,37 +306,42 @@ def native_wrapper_factories():
     from rl.training.environments import CheckpointObservationCompat, TrainingStateWrapper
     from rl.training.reward import ShapedRewardWrapper, StrategicRewardWrapper
 
-    def factory(index, *, outer_return_context, strategic):
+    def factory(index, *, outer_return_context, strategic, hide_boundary):
         def make():
             base = SlayTheSpireEnv(combat_action_contract='autoregressive-v2',
                  card_language=True, global_map_view=True, deck_size_observation=True,
                  neow_observation=True, event_option_observation=True, outer_return_context=outer_return_context,
                  combat_value_objective='combat-outcome-means-v1')
             expected = gym.spaces.Dict({key: space for key, space in base.observation_space.spaces.items()
-                                       if key != 'post_enemy_turn_boundary'})
+                                       if not hide_boundary or key != 'post_enemy_turn_boundary'})
             wrapper = StrategicRewardWrapper if strategic else ShapedRewardWrapper
             env = gym.wrappers.TimeLimit(wrapper(base), max_episode_steps=41+index)
             return TrainingStateWrapper(CheckpointObservationCompat(env, expected))
         return make
-    return lambda count, outer_return_context=True, strategic=False: [
-        factory(i, outer_return_context=outer_return_context, strategic=strategic) for i in range(count)]
+    return lambda count, outer_return_context=True, strategic=False, hide_boundary=True: [
+        factory(i, outer_return_context=outer_return_context, strategic=strategic,
+                hide_boundary=hide_boundary) for i in range(count)]
 
 
+@pytest.mark.parametrize('hide_boundary', [False, True])
 @pytest.mark.parametrize('strategic', [False, True])
-def test_vector_wrappers_autoreset_labels_journals_and_restore(monkeypatch, native_wrapper_factories, strategic):
+def test_vector_wrappers_autoreset_labels_journals_and_restore(
+        monkeypatch, native_wrapper_factories, strategic, hide_boundary):
     from stable_baselines3.common.vec_env import DummyVecEnv
     from rl.training.native_vec_env import NativeSearchVecEnv
-    factories = native_wrapper_factories(8, outer_return_context=not strategic, strategic=strategic)
+    factories = native_wrapper_factories(8, outer_return_context=not strategic, strategic=strategic,
+                                         hide_boundary=hide_boundary)
     reference, candidate = DummyVecEnv(factories), NativeSearchVecEnv(factories, threads=2)
     rng = np.random.default_rng(9001000)
     try:
         assert candidate.native_root_observations is not None
-        pending_batches = []
+        pending_batches, direct_batches = [], []
         indices = {id(env.unwrapped): index for index, env in enumerate(candidate.envs)}
         encode = candidate.native_root_observations.encode
-        def record_pending(envs):
+        def record_pending(envs, **kwargs):
             pending_batches.append(tuple(indices[id(env)] for env in envs))
-            return encode(envs)
+            direct_batches.append(kwargs.get('destination') is not None)
+            return encode(envs, **kwargs)
         monkeypatch.setattr(candidate.native_root_observations, 'encode', record_pending)
         for vec in (reference, candidate):
             vec.seed(9001000)
@@ -357,6 +362,8 @@ def test_vector_wrappers_autoreset_labels_journals_and_restore(monkeypatch, nati
         assert all(not env.unwrapped._defer_combat_observation for env in candidate.envs)
         assert any(len(rows) < len(factories) and any(b-a > 1 for a,b in zip(rows, rows[1:]))
                    for rows in pending_batches), 'fixture must mix noncontiguous combat rows with other phases/reset'
+        assert any(direct_batches) == (not hide_boundary)
+        assert not all(direct_batches), 'mixed noncontiguous rows must retain the scatter path'
     finally:
         reference.close(); candidate.close()
 
@@ -746,3 +753,26 @@ def test_independent_games_match_recorded_transitions_and_samples(
                 np.testing.assert_equal(value, candidate.small_playout_stats()[key])
     finally:
         reference.close(); candidate.close()
+
+
+def test_root_destination_preserves_rows_and_owned_default_output(combat_factory):
+    envs = [combat_factory(['STRIKE_RED', 'DEFEND_RED'] * 5, seed=seed,
+                          combat_action_contract='autoregressive-v2', card_language=True)
+            for seed in (42, 43)]
+    encoder = NativeRootObservationBatch(envs[0])
+    expected = assert_roots(encoder, envs)
+    saved = {key: value.copy() for key, value in expected.items()}
+    destination = {key: np.full_like(value, 99) for key, value in expected.items()}
+    actual = encoder.encode(envs, destination=destination)
+    assert_nested_equal(expected, actual)
+    for key in actual:
+        assert np.shares_memory(actual[key], destination[key])
+        assert not np.shares_memory(actual[key], expected[key])
+    encoder.encode(list(reversed(envs)), destination=destination)
+    for key in expected:
+        assert_nested_equal(destination[key], saved[key][::-1])
+    assert_nested_equal(expected, saved)
+    before = {key: value.copy() for key, value in destination.items()}
+    with pytest.raises(ValueError, match='exactly one row'):
+        encoder.encode(envs[:1], destination=destination)
+    assert_nested_equal(destination, before)

@@ -128,7 +128,10 @@ class NativeRootObservationBatch:
             result['floor'][row, 0] = env.thick.gc.floor_num / encode.FLOOR_SCALE
         return result
 
-    def encode(self, envs):
+    def encode(self, envs, *, destination=None):
+        """Encode owned rows, or fill an internal caller's exact-sized buffers."""
+        if destination is not None and any(len(value) != len(envs) for value in destination.values()):
+            raise ValueError('native root destination must have exactly one row per environment')
         if not envs:
             raise ValueError('native root observation batch must not be empty')
         for env in envs:
@@ -165,7 +168,7 @@ class NativeRootObservationBatch:
         for row, env in enumerate(envs):
             if env.outer_return_context:
                 globals['outer_deck_misc'][row] = permanent_misc(env.thick.gc, env.thick.bc)
-        result = self.decoder.decode(payload, globals)
+        result = self.decoder.decode(payload, globals, destination)
         if 'upper_public_context' in result:
             result['upper_public_context'].fill(1.)
         # The canonical encoder leaves untargetable monsters' power rows at
