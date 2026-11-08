@@ -213,7 +213,7 @@ def test_map_cache_tracks_content_weights_shape_and_schema(capacity, host_metada
                 return graphs(observation)
         rows = list(frames.values())
         with torch.no_grad():
-            for count in (7, 3, 7):
+            for count in (7, 33, 65, 129, 193, 225, 7):
                 chosen = [rows[(i * 2 + 1) % len(rows)] for i in range(count)]
                 obs = obs_as_tensor({k: np.stack([r[k] for r in chosen]) for k in chosen[0]},
                                     model.device)
