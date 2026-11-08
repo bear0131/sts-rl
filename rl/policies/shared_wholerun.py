@@ -29,6 +29,34 @@ class LearnedCardTable(nn.Module):
         return result * ids.ne(0)[..., None]
 
 
+class SharedOverworldEncoder(OverworldEncoder):
+    """Remove only masked queries that no existing action/value head reads."""
+
+    def _transform_tokens(self, source, pad_mask, spans, *, map_features=None):
+        if not self.training:
+            return super()._transform_tokens(source, pad_mask, spans, map_features=map_features)
+        # A key mask does NOT imply an unused query: a PAD card may still be
+        # the explicit skip candidate. Preserve all pointer-head roles in full.
+        discard = torch.zeros_like(pad_mask)
+        for role in ('deck', 'relic', 'selected'):
+            if role in spans:
+                begin, end = spans[role]
+                discard[:, begin:end] = pad_mask[:, begin:end]
+        if 'map_full' in spans and map_features is not None:
+            begin, end = spans['map_full']
+            # Map scores consume choice flags, not room IDs. Preserve a choice
+            # even when its ID is PAD; never infer action validity from identity.
+            discard[:, begin:end] = pad_mask[:, begin:end] & ~(map_features[..., 3] > .5)
+        width = int((~discard).sum(1).max().item())
+        positions = torch.argsort(discard.to(torch.int32), dim=1, stable=True)[:, :width]
+        gather = positions[:, :, None].expand(-1, -1, source.shape[-1])
+        packed = source.gather(1, gather)
+        packed_mask = pad_mask.gather(1, positions)
+        encoded = self.transformer(packed, src_key_padding_mask=packed_mask)
+        # The original role spans and native candidate slots remain unchanged.
+        return torch.zeros_like(source).scatter(1, gather, encoded)
+
+
 class ScalarCombatNetwork(EntityCombatNetwork):
     def __init__(self, space, config, card_embedding):
         super().__init__(space, config, card_embedding=card_embedding)
@@ -87,7 +115,7 @@ class SharedWholeRunCore(EntityJointCore):
         self.combat = ScalarCombatNetwork(space, self.config, cards)
         self.upper_tokenizer = SharedSemanticTokenizer(
             space, width, card_language=False, card_embedding=cards)
-        encoder = OverworldEncoder(space, d_model=width, n_layers=layers,
+        encoder = SharedOverworldEncoder(space, d_model=width, n_layers=layers,
                                   n_heads=heads, features_dim=width, map_dag=True)
         # Both phases call the very same four layers, and one optimizer owns
         # each parameter once. Observation adapters retain their slot semantics.

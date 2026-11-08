@@ -77,7 +77,8 @@ def test_shared_observations_masks_terminal_ownership_recovery_and_cleanup():
         shared_memory.SharedMemory(name=name)
 
 
-def test_phase_graph_eviction_weight_refresh_and_released_scratch():
+@pytest.mark.parametrize('capacity', [1, 2])
+def test_phase_graph_eviction_weight_refresh_and_released_scratch(capacity):
     from rl.policies.collection_graphs import SharedCollectionGraphs
     assert torch.cuda.is_available(), 'explicit CUDA graph qualification required'
     torch.set_float32_matmul_precision('highest')
@@ -88,7 +89,7 @@ def test_phase_graph_eviction_weight_refresh_and_released_scratch():
         policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4))
     model.policy.set_training_mode(False)
     core = model.policy.core
-    graphs = SharedCollectionGraphs(core, capacity=2)
+    graphs = SharedCollectionGraphs(core, capacity=capacity)
     obs = env.reset()
     owned = []
     try:
@@ -116,6 +117,30 @@ def test_phase_graph_eviction_weight_refresh_and_released_scratch():
                 masks = np.stack(env.env_method('action_masks'))
                 obs, *_ = env.step([np.flatnonzero(mask)[-1] for mask in masks])
             assert graphs.stats['evictions'] > 0 and graphs.stats['hits'] > 0
+            # Queue distinct inputs on alternating streams without checking
+            # between calls. Shared scratch must not race another replay or a
+            # caller's still-pending copy of its published output.
+            variants, references, queued = [], [], []
+            for index in range(4):
+                variant = {key: value.clone() for key, value in batch.items()}
+                variant['player_scalars'].add_(index * .1)
+                variant['gold'].add_(index * .1)
+                variants.append(variant)
+                references.append(tuple(x.clone() for x in core.actor_critic(variant)))
+            torch.cuda.synchronize()
+            streams = (torch.cuda.current_stream(), torch.cuda.Stream())
+            for turn, index in enumerate((3, 0, 2, 1, 0, 3, 1, 2) * 2):
+                with torch.cuda.stream(streams[turn % 2]):
+                    result = graphs(variants[index])
+                    queued.append((result, references[index]))
+                    scratch = torch.empty(1024 * 1024, device='cuda')
+                    scratch.fill_(turn)
+                    del scratch
+            graphs.close()
+            torch.cuda.empty_cache()
+            for actual, expected in queued:
+                for x, y in zip(actual, expected, strict=True):
+                    torch.testing.assert_close(x, y, rtol=2e-5, atol=2e-5)
             for actual, snapshot in owned:
                 for x, y in zip(actual, snapshot, strict=True):
                     torch.testing.assert_close(x, y, rtol=0, atol=0)

@@ -24,7 +24,12 @@ class SharedCollectionGraphs:
             raise ValueError('collection graphs require FP32 parameters')
         self.core, self.capacity = core, capacity
         self.parameters = tuple(core.parameters())
+        self.device = self.parameters[0].device
         self.entries = OrderedDict()
+        self.temporary_pool = torch.cuda.graph_pool_handle()
+        self.capture_stream = torch.cuda.Stream(device=self.device)
+        self.sequence_done = torch.cuda.Event()
+        self.sequence_done.record(torch.cuda.current_stream(self.device))
         self.closed = False
         self.map_cache = None
         self.map_entries = OrderedDict()
@@ -50,27 +55,40 @@ class SharedCollectionGraphs:
         count = len(next(iter(batch.values())))
         inputs = {key: torch.cat([value, value[:1].expand(padded-count, *value.shape[1:])]).clone()
                   for key, value in batch.items()}
-        current = torch.cuda.current_stream()
-        stream = torch.cuda.Stream()
+        current = torch.cuda.current_stream(self.device)
+        # One capture stream permits reuse of its temporary allocation blocks.
+        stream = self.capture_stream
         stream.wait_stream(current)
         with torch.cuda.stream(stream):
             for _ in range(3):
                 output = forward(inputs)
         current.wait_stream(stream)
-        torch.cuda.synchronize()
+        torch.cuda.synchronize(self.device)
+        # Each entry owns inputs and published outputs OUTSIDE the shared pool.
+        # No tensor from the pool survives a forward. Unlike sharing ordinary
+        # graph outputs, this permits replay in arbitrary entry/LRU order; the
+        # complete calls are serialized below, including across CUDA streams.
+        published = tuple(torch.empty_like(tensor) for tensor in output)
+        del output
         # cuBLAS scratch must belong to the graph, not an eager allocation that
         # can be freed/reused when another shape is captured or evicted.
         torch._C._cuda_clearCublasWorkspaces()
         graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph, stream=stream):
-            output = forward(inputs)
+        with torch.cuda.graph(graph, stream=stream, pool=self.temporary_pool):
+            temporary = forward(inputs)
+            for target, source in zip(published, temporary, strict=True):
+                target.copy_(source)
+            del target, source, temporary
         current.wait_stream(stream)
         torch._C._cuda_clearCublasWorkspaces()
-        return inputs, graph, output
+        return inputs, graph, published
 
     def _replay(self, cache, signature, batch, padded, forward, capacity):
         if signature not in cache:
             if len(cache) >= capacity:
+                # Evicting the last graph may release the temporary pool's
+                # backing blocks. Finish queued replay before dropping it.
+                torch.cuda.synchronize(self.device)
                 cache.popitem(last=False)
                 self.stats['evictions'] += 1
             started = time.perf_counter()
@@ -84,12 +102,26 @@ class SharedCollectionGraphs:
         count = len(next(iter(batch.values())))
         for key, value in batch.items():
             inputs[key][:count].copy_(value)
+            inputs[key].record_stream(torch.cuda.current_stream(self.device))
         graph.replay()
         for tensor in output:
-            tensor.record_stream(torch.cuda.current_stream())
+            tensor.record_stream(torch.cuda.current_stream(self.device))
         return output
 
     def __call__(self, observations):
+        if self.closed:
+            raise RuntimeError('collection graphs require a live eval/no-grad scope')
+        # One collector owns this runtime. Its serial host calls may use
+        # different CUDA streams; protect caches, outputs and scratch until
+        # the preceding call has copied all of its published results.
+        stream = torch.cuda.current_stream(self.device)
+        stream.wait_event(self.sequence_done)
+        try:
+            return self._forward(observations)
+        finally:
+            self.sequence_done.record(stream)
+
+    def _forward(self, observations):
         if self.closed or self.core.training or torch.is_grad_enabled():
             raise RuntimeError('collection graphs require a live eval/no-grad scope')
         if torch.is_autocast_enabled('cuda'):
@@ -141,7 +173,7 @@ class SharedCollectionGraphs:
                 output = self._replay(self.map_entries, signature, batch, padded,
                                       map_forward, min(16, self.capacity))
                 encoded_map[selected] = output[0][:count]
-                output[0].record_stream(torch.cuda.current_stream())
+                output[0].record_stream(torch.cuda.current_stream(self.device))
                 previous_rooms[selected] = rooms[selected]
                 previous_features[selected] = features[selected]
                 self.map_valid[selected] = True
@@ -205,7 +237,7 @@ class SharedCollectionGraphs:
             # them. Register the clone's stream before releasing private pools.
             out, value = [tensor[:count].clone() for tensor in output]
             for tensor in output:
-                tensor.record_stream(torch.cuda.current_stream())
+                tensor.record_stream(torch.cuda.current_stream(self.device))
             indices.append(selected)
             logits.append(out.float())
             values.append(value.float())
@@ -214,7 +246,7 @@ class SharedCollectionGraphs:
 
     def close(self):
         if not self.closed:
-            torch.cuda.synchronize()
+            torch.cuda.synchronize(self.device)
             self.entries.clear()
             self.map_entries.clear()
             self.map_cache = None

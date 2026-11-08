@@ -273,6 +273,7 @@ class _SpecialistEncoder(nn.Module):
         self,
         batch_size: int,
         blocks: list[tuple[str, torch.Tensor, torch.Tensor]],
+        *, map_features=None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         device = self.cls.device
         tokens = [self._role(self.cls.expand(batch_size, -1, -1), "cls")]
@@ -287,9 +288,12 @@ class _SpecialistEncoder(nn.Module):
             offset += token.shape[1]
         source = torch.cat(tokens, dim=1)
         pad_mask = torch.cat(masks, dim=1)
-        out = self.transformer(source, src_key_padding_mask=pad_mask)
+        out = self._transform_tokens(source, pad_mask, spans, map_features=map_features)
         contextual = {role: out[:, start:end] for role, (start, end) in spans.items()}
         return out[:, 0], contextual
+
+    def _transform_tokens(self, source, pad_mask, spans, *, map_features=None):
+        return self.transformer(source, src_key_padding_mask=pad_mask)
 
 
 class CombatEncoder(_SpecialistEncoder):
@@ -870,7 +874,7 @@ class OverworldEncoder(_SpecialistEncoder):
             blocks.append(
                 ("map_full", full + self.position["map_full"], ids == 0)
             )
-        return self._run(batch_size, blocks)
+        return self._run(batch_size, blocks, map_features=obs.get('map_full_features'))
 
 
 class _SpecialistActorCritic(nn.Module):

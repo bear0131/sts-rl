@@ -14,6 +14,84 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(180)
 
 
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
+@pytest.mark.parametrize('layout', ['holes', 'empty_context', 'dense'])
+def test_upper_compaction_preserves_pad_action_queries_and_map_choices(device, layout):
+    from env.core.run_env import SlayTheSpireEnv
+    from rl.policies.split_policy import OverworldEncoder
+    assert device != 'cuda' or torch.cuda.is_available(), 'explicit CUDA qualification required'
+    torch.manual_seed(20261109)
+    torch.set_float32_matmul_precision('highest')
+    env = SlayTheSpireEnv(card_language=True, global_map_view=True,
+                         combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
+    try:
+        model = AccumulatingMaskablePPO(SharedWholeRunPolicy, env, seed=20261109,
+            n_steps=4, batch_size=4, n_epochs=1, device=device, gamma=1.,
+            reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
+            policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4))
+        encoder = model.policy.core.overworld.encoder
+        encoder.train()
+        initial = deepcopy(encoder.state_dict())
+        source = torch.randn(3, 23, 32, device=device)
+        spans = dict(deck=(1, 5), relic=(5, 8), potion=(8, 11), selected=(11, 14),
+                     select=(14, 18), map_full=(18, 23))
+        mask = torch.zeros(3, 23, dtype=torch.bool, device=device)
+        if layout != 'dense':
+            mask[:, [2, 4, 6, 11, 13, 18, 20, 22]] = True
+            # A PAD candidate can be an executable skip. Potion queries also
+            # reach their head, independently of their attention key mask.
+            mask[:, 8:11] = True
+            mask[:, 14:18] = True
+        if layout == 'empty_context':
+            mask[:, 1:8] = True
+            mask[:, 11:14] = True
+            mask[:, 18:23] = True
+        map_features = torch.zeros(3, 5, 12, device=device)
+        map_features[:, 4, 3] = 1  # Choice at PAD map slot 22 must survive.
+        # Existing heads read CLS, all potion/select candidates and map choices.
+        queries = [0, 8, 9, 10, 14, 15, 16, 17, 22]
+        results, lengths = [], []
+        hook = encoder.transformer.register_forward_pre_hook(
+            lambda module, args: lengths.append(args[0].shape[1]))
+        try:
+            for reference in (True, False):
+                encoder.load_state_dict(initial)
+                optimizer = model.policy.optimizer_class(encoder.parameters(), lr=1e-4,
+                                                           **model.policy.optimizer_kwargs)
+                optimizer.zero_grad()
+                x = source.detach().clone().requires_grad_()
+                output = (OverworldEncoder._transform_tokens(encoder, x, mask, spans,
+                          map_features=map_features) if reference else
+                          encoder._transform_tokens(x, mask, spans, map_features=map_features))
+                selected = output[:, queries]
+                coefficients = torch.linspace(-.3, .7, 32, device=device)
+                (selected.square().mean() + (selected * coefficients).mean()).backward()
+                gradients = {k: p.grad.detach().clone() for k, p in encoder.named_parameters()
+                             if p.grad is not None}
+                torch.nn.utils.clip_grad_norm_(encoder.parameters(), model.max_grad_norm,
+                                               error_if_nonfinite=True)
+                optimizer.step()
+                results.append((selected.detach(), x.grad, gradients,
+                                deepcopy(encoder.state_dict()), deepcopy(optimizer.state_dict())))
+        finally:
+            hook.remove()
+        a, b = results
+        for left, right in zip(a[:2], b[:2], strict=True):
+            torch.testing.assert_close(left, right, rtol=3e-5, atol=3e-6)
+        assert a[2].keys() == b[2].keys()
+        for key in a[2]:
+            torch.testing.assert_close(a[2][key], b[2][key], rtol=3e-5, atol=3e-6)
+        for key in a[3]:
+            torch.testing.assert_close(a[3][key], b[3][key], rtol=2e-5, atol=2e-6)
+        for key in a[4]['state']:
+            for field in ('step', 'exp_avg', 'exp_avg_sq'):
+                torch.testing.assert_close(a[4]['state'][key][field], b[4]['state'][key][field],
+                                           rtol=3e-5, atol=3e-6)
+        assert (lengths[1] < lengths[0]) == (layout != 'dense')
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
 @pytest.mark.parametrize('layout', ['empty', 'holes', 'last'])
 def test_training_relic_padding_preserves_outputs_gradients_and_adam(
         combat_factory, device, layout):

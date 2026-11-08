@@ -76,6 +76,16 @@ env-major随机排列映射到(time, env)双索引，避免整批转置/复制�
 地图编码仍保留梯度，不跨更新缓存，也不跨样本混合信息。普通推理和旧独立上下层
 策略保持原路径；参数名、checkpoint、统计组、损失权重与Adam次数均保持。
 
+共享纯PPO的上层训练还可移除无动作头消费的masked query：deck/relic/selected
+空槽，以及不是地图choice的空地图槽。所有pointer候选（包括PAD卡对应的跳过）
+与地图choice均保留，按原槽位回填结果；旧独立策略的编码器继续使用dense路径。
+这不等同于删除所有masked query，key被屏蔽的候选仍可能需要输出评分。
+
+FP32采样图的输入/发布输出位于池外，只有不跨forward存活的临时张量共用显存池。
+捕获使用同一CUDA stream，完整调用以event串行，淘汰先等待在途工作；一个collector
+拥有一个runtime，不支持多CPU线程同时调用。调用者保留的结果独占storage，
+图缓存不进入checkpoint，更新后的参数/地图缓存和变形重放按现有契约失效。
+
 纯PPO的`pure_rl_game_totals`保存每rank累计自然结束/删失数及计数起点，随
 model.zip普通保存恢复。跨rank汇总为`pure_rl/natural_games_global`与
 `pure_rl/censored_games_global`；仅当起点为0时发布监控兼容字段
