@@ -1729,8 +1729,8 @@
     "iteration_steps": 786432,
     "rollout_mode": "fixed_steps",
     "status": "training",
-    "note": "从18轮保留各机128在途环境并追加128环境，256×768×4；微批1536/累积8/一遍/16次Adam/LR1e-4/FP32，房间lambda不变。全局每轮786432实际动作，500总轮预算。38/39仍暂停，历史保留。",
-    "updated_at": "2026-11-08T15:08:44.159066+00:00"
+    "note": "COMBAT40已从21轮完整状态续训，22起恢复火堆/金币/药水/遗物实际选择与策略概率；旧缺失指标不回填。256×768×4、微批1536/累积8/一遍/16次Adam/LR1e-4/FP32，500总轮预算；38/39仍暂停，历史保留。",
+    "updated_at": "2026-11-08T15:27:09.249523+00:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",

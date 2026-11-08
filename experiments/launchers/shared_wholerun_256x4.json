@@ -3,10 +3,10 @@
   "run_id": "combat40-no-search-shared256x4-r1",
   "root": "/root/autodl-tmp/combat40-pure-rl-20261108",
   "runtime_entry": "rl.training.distributed_sb3",
-  "runtime_source": "a1d22f84",
+  "runtime_source": "766bae23",
   "initial_config": "configs/train/shared_wholerun_256x4.args",
   "training_config": "configs/train/shared_wholerun_distributed.args",
-  "source_archive_sha256": "5a354cdea0a3268ca56ef995a672b922908b642cc91f6f66a7d11ad7ecb68dcf",
+  "source_archive_sha256": "a9522ca48b2658064bd2e59c792245562e4da1b58a1f0d1aa6528bc58e771ffc",
   "initial_sha256": "26257f4b08ae4e3d8803565bab9e7d20d23cb2c0c928bb8e3a7f43fbc2da949c",
   "native_sha256": "b40edcf73e671332dc8d5d27287264d8294376605ca6bad865aea36596156103",
   "host": "connect.bjb2.seetacloud.com",
@@ -29,7 +29,7 @@
   "iteration_timeout_seconds": 1800,
   "qualification_process_timeout_seconds": 4000,
   "precision": "FP32 highest",
-  "state": "training_speed_qualifying",
+  "state": "training_verified",
   "search": false,
   "reward": "env.core.outer_return.strategic_reward",
   "lambda_rule": {
@@ -41,23 +41,23 @@
   },
   "resume": "Own rank full model/Adam/environment/RNG bundle; same initialization across ranks; never reuse old COMBAT38 weights.",
   "monitor": "unified_upper_comparison.json#monitor",
-  "source_directory": "source-runtime-a1d22f84",
-  "source_manifest_sha256": "12cf81deffbcd414169e034e298557ee0f67a8afb98a57915fcb33a7e85e5dfe",
+  "source_directory": "source-runtime-766bae23",
+  "source_manifest_sha256": "c126b03d41cc5ed5c564530509cbcb582eb278eab8a6ee001c1ebbd1e9ed10fd",
   "qualification_completed_global_actions": 524288,
   "qualification_four_rank_sha256": "bcb7bb7466b8c04ae97902c9f196dc7e8d55f7b2e244ae3130bdd29641a77eb6",
   "parameters": 5522740,
-  "resume_from_global_actions": 4718592,
-  "training_process_timeout_seconds": 867900,
-  "training_ring_port": 30342,
-  "training_ssh_control_directory": "/tmp/c40s",
-  "verified_round": 4,
-  "verified_global_actions": 1048576,
-  "optimizer_steps_at_verified_round": 64,
-  "production_four_rank_sha256": "69572204fd038c7e1755d4970557f00c3104f970498c650d7e96c2ecc1f93fd0",
+  "resume_from_global_actions": 7077888,
+  "training_process_timeout_seconds": 862500,
+  "training_ring_port": 30343,
+  "training_ssh_control_directory": "/tmp/c40m",
+  "verified_round": 22,
+  "verified_global_actions": 7864320,
+  "optimizer_steps_at_verified_round": 352,
+  "production_four_rank_sha256": "f5c7dfba7e60dd64b272fc64c3bd860fbb6ed6f7b95b405992281311a7a6878d",
   "evidence": {
-    "path": "/root/autodl-tmp/combat40-pure-rl-20261108/evidence/combat40-production-evidence-v1.tgz",
-    "bytes": 200190,
-    "sha256": "4376f989a116bc74a414186d1037292c9af6c099b8fb3cd81619d897b9ad91bf",
+    "path": "/root/autodl-tmp/combat40-pure-rl-20261108/evidence/pure-speed-monitor-evidence.tgz",
+    "bytes": 10828580,
+    "sha256": "c11764a16b1cb20a69469b1ff3ff4a7df58196657e22c1ade719553946283557",
     "copies": [
       "bjb2-53841",
       "bjb1-11727",
@@ -65,8 +65,8 @@
     ]
   },
   "qualification_reference": "runs/combat40-no-search-shared256x4-r1/references/qualified-round2",
-  "production_reference": "runs/combat40-no-search-shared256x4-r1/references/verified-round4",
-  "resume_from_round": 18,
+  "production_reference": "runs/combat40-no-search-shared256x4-r1/references/verified-monitor-round22",
+  "resume_from_round": 21,
   "geometry": {
     "environments_per_rank": 256,
     "ranks": 4,
@@ -89,6 +89,19 @@
     "parameter_max_abs": 5.960464477539063e-08,
     "baseline_seconds": 394.9589860830456,
     "candidate_seconds": 200.39986576791853,
-    "scope": "single-rank identical 256x768 collection and 16 updates; includes full-buffer hashing; four-rank production verification pending"
+    "scope": "Single-rank identical 256x768 collection and 16 updates, including full-buffer hashing; four-rank real rounds 19/20 verified separately (round20 max wall 205.501s, max rollout 125.056s)."
+  },
+  "current_plan": "monitor-plan.json",
+  "current_resume_reference": "runs/combat40-no-search-shared256x4-r1/references/before-choice-monitor",
+  "choice_monitor": {
+    "first_round": 22,
+    "metrics": [
+      "upper/reward_gold_*",
+      "upper/reward_potion_*",
+      "upper/reward_relic_*",
+      "upper/campfire_*"
+    ],
+    "status": "four-rank and local HTTP verified",
+    "historical_missing": "remain absent; no backfill"
   }
 }

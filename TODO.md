@@ -628,4 +628,4 @@
 
 | PURE-RL-DEVICE-UTILIZATION | 已完成：四机19/20轮通过，持续训练 | 按用户追加改256env×768×4，一遍/16Adam/LR1e-4/FP32，微批1536累积8，原256优势归一化保持；共享128旧槽保留并新增128。固定同工作量单机394.959→200.400秒，102个buffer字段SHA相同，16次更新后参数maxabs5.96e-8。四机第20轮整体约205.5秒、采样最大125.06秒，模型/Adam跨rank完全一致、每轮16更新、无OOM；原18及新20全状态有独立保护。见worklog/2026-11-08.md#pure-rl-device-utilization-intention。 |
 
-| PURE-RL-CHOICE-MONITOR | 进行中 | `rl/algorithms/accumulating_ppo.py`、`rl/training/distributed_sb3.py`；接回纯PPO火堆/金币/药水实际选择与已有masked策略概率，复用统计契约，全rank按计数聚合，真实双轮保存恢复、无额外模型前推/RNG、前端最新轮可见。见worklog/2026-11-08.md#pure-rl-choice-monitor。 |
+| PURE-RL-CHOICE-MONITOR | 已完成：22轮四rank与8773实际数据可见 | 纯PPO接回火堆/金币/药水/遗物实际选择与已有masked策略概率；跨rank先计数后除，无额外前推/RNG。42测试与65536动作全字段SHA一致通过；从21普通恢复，22轮完整保存/模型与Adam同步/实时HTTP数据和18组历史均通过，旧指标留空。见worklog/2026-11-08.md#pure-rl-choice-monitor。 |
