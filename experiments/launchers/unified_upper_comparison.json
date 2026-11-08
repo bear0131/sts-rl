@@ -1728,9 +1728,9 @@
     "branch_round": 0,
     "iteration_steps": null,
     "rollout_mode": "complete_games",
-    "status": "training",
-    "note": "原38从150完整恢复，151/152四机真实更新/保存核验通过，连续曲线；原250/250/1000、Transformer根/学习CPU链guide。39正常暂停于42轮并双份保存。",
-    "updated_at": "2026-11-07T22:28:58.484999+00:00"
+    "status": "paused",
+    "note": "按用户要求在第221轮完整保存后暂停，正在复测当前学习率与更新次数；四rank正常exit0且状态已双备份。COMBAT39保持第42轮暂停。",
+    "updated_at": "2026-11-08T08:35:50.066863+00:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
