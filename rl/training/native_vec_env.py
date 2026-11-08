@@ -1,4 +1,5 @@
 """Resident Python environments with a GIL-free C++ search thread pool."""
+from collections import OrderedDict
 from copy import deepcopy
 from contextlib import contextmanager
 import time
@@ -52,6 +53,7 @@ class NativeSearchVecEnv(DummyVecEnv):
         self._prefetched_steps = {}
         self._small_overlap_stats = dict(prefetched_steps=0, step_call_seconds_sum=0.)
         self._step_observation_buffers = None
+        self._root_destination_cache = OrderedDict()
         self._strategic_observation_keys = None
         self._deferred_observation_rows = set()
         self.strategic_observation_rows_omitted = 0
@@ -268,8 +270,15 @@ class NativeSearchVecEnv(DummyVecEnv):
             if (observation_keys is None
                     and pending == list(range(pending[0], pending[-1] + 1))
                     and self.buf_obs.keys() >= self.native_root_observations.prototypes.keys()):
-                destination = {key: self.buf_obs[key][pending[0]:pending[-1] + 1]
-                               for key in self.native_root_observations.prototypes}
+                span = (pending[0], pending[-1] + 1)
+                destination = self._root_destination_cache.get(span)
+                if destination is None:
+                    destination = {key: self.buf_obs[key][span[0]:span[1]]
+                                   for key in self.native_root_observations.prototypes}
+                    self._root_destination_cache[span] = destination
+                    if len(self._root_destination_cache) > 16:
+                        self._root_destination_cache.popitem(last=False)
+                self._root_destination_cache.move_to_end(span)
             observations = encoder([self.envs[i].unwrapped for i in pending],
                 **({'destination': destination} if destination is not None else {}))
             if observation_keys is not None:
@@ -418,6 +427,7 @@ class NativeSearchVecEnv(DummyVecEnv):
         return super().env_method(method_name, *method_args, indices=indices, **method_kwargs)
 
     def close(self):
+        self._root_destination_cache.clear()
         self.__dict__.pop('small_playout_batch', None)
         self.native_search_batch.close()
         super().close()

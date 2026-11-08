@@ -1,6 +1,6 @@
 """Real native transitions and CUDA allocation lifetimes for shared PPO."""
 from copy import deepcopy
-from multiprocessing import shared_memory
+from multiprocessing import get_all_start_methods, shared_memory
 
 import numpy as np
 import pytest
@@ -40,9 +40,11 @@ def _equal(a, b):
         assert a == b
 
 
-def test_shared_observations_masks_terminal_ownership_recovery_and_cleanup():
+@pytest.mark.parametrize('start_method', [m for m in ('spawn', 'forkserver')
+                                        if m in get_all_start_methods()])
+def test_shared_observations_masks_terminal_ownership_recovery_and_cleanup(start_method):
     serial = NativeSearchVecEnv([_environment] * 3, threads=1)
-    grouped = NativeSubprocVecEnv([_environment] * 3, envs_per_worker=2, start_method='spawn')
+    grouped = NativeSubprocVecEnv([_environment] * 3, envs_per_worker=2, start_method=start_method)
     name = grouped.memory.name
     try:
         for env in (serial, grouped):
@@ -152,8 +154,10 @@ def test_phase_graph_eviction_weight_refresh_and_released_scratch(capacity):
         graphs(batch)
 
 
-def test_native_transport_reports_worker_death_and_releases_shared_memory():
-    env = NativeSubprocVecEnv([_environment] * 3, envs_per_worker=2, start_method='spawn')
+@pytest.mark.parametrize('start_method', [m for m in ('spawn', 'forkserver')
+                                        if m in get_all_start_methods()])
+def test_native_transport_reports_worker_death_and_releases_shared_memory(start_method):
+    env = NativeSubprocVecEnv([_environment] * 3, envs_per_worker=2, start_method=start_method)
     name = env.memory.name
     try:
         env.reset()

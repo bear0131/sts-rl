@@ -154,6 +154,12 @@ class RunMap:
             options = dict(nodes=[(x, 'BOSS' if current_y == MAX_Y else
                                   self.room_type(x, max(0, current_y + 1)))
                                  for x in columns])
+            if (global_map_view and type(current_x) is int and type(current_y) is int
+                    and -1 <= current_y <= MAX_Y):
+                fields = self._project_numeric_map(current_x, current_y, options['nodes'])
+                cached = self._m, key, fields
+                self._encoded_view = cached
+                return fields
             if global_map_view:
                 options['full_map'] = self.full_view(
                     current_x, current_y, next_columns=columns)
@@ -168,3 +174,59 @@ class RunMap:
             cached = self._m, key, fields
             self._encoded_view = cached
         return cached[2]
+
+
+    def _project_numeric_map(self, current_x, current_y, nodes):
+        from . import encode
+        import numpy as np
+
+        # The sole codec validates both topology and complete live candidates.
+        # Only immutable topology survives a position/choice change.
+        choices = encode._map_choice_ids(nodes, encode.MAP_COLS)
+        cached = getattr(self, '_numeric_map_topology', None)
+        if cached is None or cached[0] is not self._m:
+            graph = self.full_view(-1, -1, next_columns=[])
+            empty = encode._empty(global_map_view=True)
+            fields = {name: value for name, value in empty.items() if name.startswith('map_')}
+            encode._encode_options(fields, dict(phase='map', options=dict(nodes=[], full_map=graph)))
+            descendants = np.zeros((encode.MAP_FULL_SLOTS, encode.MAP_FULL_SLOTS), dtype=bool)
+            for node in sorted(graph, key=lambda n: n['y'], reverse=True):
+                slot = node['y'] * encode.MAP_COLS + node['x']
+                descendants[slot, slot] = True
+                for child in node['children']:
+                    descendants[slot] |= descendants[(node['y'] + 1) * encode.MAP_COLS + child]
+            for value in fields.values():
+                value.setflags(write=False)
+            descendants.setflags(write=False)
+            cached = self._m, fields, descendants
+            self._numeric_map_topology = cached
+        _, template, descendants = cached
+        fields = {key: value.copy() for key, value in template.items()}
+        features = fields['map_full_features']
+        rooms = fields['map_full_rooms']
+        if 0 <= current_x < encode.MAP_COLS and 0 <= current_y < encode.MAP_ROWS:
+            current_slot = current_y * encode.MAP_COLS + current_x
+            if rooms[current_slot]:
+                features[current_slot, 2] = 1.
+        if current_y == MAX_Y:
+            expected = {current_x} if current_x >= 0 else set()
+            if set(choices) != expected:
+                raise ValueError("full-map choices do not cover the complete action candidates")
+        row = max(0, min(MAX_Y, current_y + 1))
+        slots = [row * encode.MAP_COLS + x for x in choices]
+        for (x, room), slot in zip(nodes, slots, strict=True):
+            if not rooms[slot]:
+                raise ValueError("full-map choices do not cover the complete action candidates")
+            boss = room == 'BOSS' and len(nodes) == 1 and current_y == MAX_Y and x == current_x
+            if not boss and rooms[slot] != choices[x]:
+                raise ValueError("map candidate room differs from full-map room")
+        if slots:
+            features[slots, 3] = 1.
+            features[np.any(descendants[slots], axis=0), 4] = 1.
+        # Keep the frozen three-slot preview in the same codec. Capacity was
+        # checked against all seven live columns above, not this preview.
+        preview = {key: fields[key] for key in ('map_node_rooms', 'map_node_x')}
+        encode._encode_options(preview, dict(phase='map', options=dict(nodes=nodes[:encode.MAP_EDGES])))
+        for value in fields.values():
+            value.setflags(write=False)
+        return fields

@@ -4,6 +4,7 @@ import argparse
 from env.core import native_actions as C
 import copy
 import hashlib
+import multiprocessing
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
@@ -481,6 +482,11 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
         if not env_args.strategic_reward:
             raise ValueError('native-subproc currently supports shared whole-run PPO only')
         from rl.training.native_subproc_vec_env import NativeSubprocVecEnv
+        if args.start_method == 'forkserver':
+            # Import CPU libraries in the clean server, not once per worker.
+            # The training parent may already own CUDA; never fork that parent.
+            multiprocessing.set_forkserver_preload([
+                'torch', 'rl.training.native_subproc_vec_env', 'rl.training.environments'])
         venv = NativeSubprocVecEnv(env_fns, envs_per_worker=args.envs_per_worker,
                                   start_method=args.start_method)
     elif args.vec == "subproc":

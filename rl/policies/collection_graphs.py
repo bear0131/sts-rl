@@ -238,19 +238,24 @@ class SharedCollectionGraphs:
         # submits only a few gathers/copies; views are reconstructed in its graph.
         schema = tuple((key, tuple(value.shape[1:]), value.dtype)
                        for key, value in observations.items())
-        groups = {}
-        for key, value in observations.items():
-            groups.setdefault(value.dtype, []).append(key)
-        layout, packed = {}, {}
-        for index, keys in enumerate(groups.values()):
-            group = 'packed' + str(index)
-            offset = 0
-            packed[group] = torch.cat([observations[k].reshape(len(phase), -1) for k in keys], dim=1)
-            for key in keys:
-                shape = observations[key].shape[1:]
-                end = offset + int(np.prod(shape))
-                layout[key] = (group, offset, end, shape)
-                offset = end
+        if getattr(self, '_packed_schema', None) != schema:
+            groups = {}
+            for key, value in observations.items():
+                groups.setdefault(value.dtype, []).append(key)
+            layout, grouped = {}, {}
+            for index, keys in enumerate(groups.values()):
+                group = 'packed' + str(index)
+                grouped[group] = keys
+                offset = 0
+                for key in keys:
+                    shape = observations[key].shape[1:]
+                    end = offset + int(np.prod(shape))
+                    layout[key] = (group, offset, end, shape)
+                    offset = end
+            self._packed_schema, self._packed_layout, self._packed_groups = schema, layout, grouped
+        layout = self._packed_layout
+        packed = {group: torch.cat([observations[k].reshape(len(phase), -1) for k in keys], dim=1)
+                  for group, keys in self._packed_groups.items()}
         indices, logits, values = [], [], []
         combat_id = vocab.PHASE_VOCAB_INDEX['combat']
         selection_id = vocab.PHASE_VOCAB_INDEX['card_select']
@@ -275,10 +280,10 @@ class SharedCollectionGraphs:
             deck = None if combat else self._width(meta[rows, relic_end:-1], 16)
             if use_map and not combat:
                 batch['_map_encoding'] = encoded_map[selected]
-            union_width = (self.core.overworld.encoder.merged_width(host, rows)
+            union_width = (self.core.overworld.encoder.merged_width(host, rows, multiple=16)
                 if phase_id == MERGED_UPPER_PHASE else None)
             count = len(selected)
-            padded = 1 << (count - 1).bit_length()
+            padded = (1 << (count - 1).bit_length()) if count <= 16 else ((count + 15) // 16) * 16
             signature = (phase_id, padded, deck, relic, union_width, schema,
                          tuple((key, tuple(value.shape[1:]), value.dtype) for key, value in batch.items()))
 
