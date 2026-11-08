@@ -642,6 +642,14 @@ actor 的冻结 GAE、奖励、终局定义、搜索、样本遍数和上下层 
 记录1秒资源采样及精确Torch峰值；固定有效batch/样本顺序时可比较microbatch执行分块。
 CPU资源缺GPU项填null；单次诊断吞吐不是完整训练资格，也不能证明同墙钟学习收益。
 
+同一协议可选 `lower_arms`，各臂只允许改变下层 `learning_rate` 和 `epochs`。
+`small_playout_probe` 仅支持 `token-root-64x2` 的完整局 cohort，每个环境必须对应一局，
+与上层按相同整局划分训练/留出。调用原 `small_playout.update_online` 和梯度传输，
+逐臂恢复模型、非空 Adam、RNG、样本和更新计数，再运行上层诊断。
+报告反向/正向目标 KL、top1、原策略漂移，以及轻量头对当前/冻结根策略的 KL，
+区分学习目标与变化中的蒸馏 teacher；原始逐样本结果带环境 ID 供整局配对统计。
+没有 `lower_arms` 时保持原只测上层行为。离线更新结果不等同于整局胜率或长期最优配置。
+
 独立完整游戏采集的原生 small-playout 路径可省去未被消费的战斗观测：
 战斗中内部传输只保证 `phase/act/floor` 当前有效，非战斗传输完整上层字段；
 下层搜索仍读取完整模拟器状态，终局 `info` 保留完整观测。该路径仅在具体回调类

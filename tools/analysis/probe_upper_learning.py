@@ -395,6 +395,7 @@ def unified_candidates():
     from unittest.mock import patch
     from rl.algorithms import small_playout
     from rl.algorithms.upper_probe import run_probe
+    from rl.algorithms.small_playout_probe import run_lower_probe
     from rl.training import distributed_sb3 as trainer
     from rl.training.resource_monitor import ResourceMonitor
 
@@ -505,6 +506,11 @@ def unified_candidates():
             control_repeat_exact=result['control_repeat_exact'],
             control_repeat_numerical=result['control_repeat_numerical'])), flush=True)
         raise ProbeComplete()
+    def diagnose_lower(model, **kwargs):
+        if collection_only or not protocol.get('lower_arms'):
+            return {}
+        run_lower_probe(model, protocol, output_dir=args.probe_output / f'rank{kwargs["rank"]}', **kwargs)
+        return {}
     original = sys.argv
     sys.argv = [original[0], *remaining]
     try:
@@ -527,7 +533,7 @@ def unified_candidates():
                         stack.enter_context(patch.object(trainer, 'restore_learner', restore))
                     stack.enter_context(patch.object(trainer, 'update_upper', diagnose))
                     stack.enter_context(patch.object(
-                        small_playout, 'update_online', lambda *a, **kw: {}))
+                        small_playout, 'update_online', diagnose_lower))
                     try:
                         trainer.main()
                     except ProbeComplete:

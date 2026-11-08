@@ -2122,5 +2122,151 @@
       "artifact_sha256": "4f2c2c1dedf85f99bd9b43b772820d3f310531eebc275c9a165ea3573f085a36",
       "reference": "worklog/2026-11-08.md#combat38-mature-budget-probe"
     }
+  },
+  "current_hyperparameter_probe": {
+    "protocol": "unified-upper-candidate-screen-v1",
+    "issue": "COMBAT38-CURRENT-HYPERPARAMETERS",
+    "seed": 20261108,
+    "source": {
+      "run_id": "combat38-transformer64-regret-paired-r1",
+      "round": 221,
+      "global_step": 257830119,
+      "restore": "full four-rank model/Adam/learner/environment/RNG fork; never save candidate updates"
+    },
+    "diagnostic": {
+      "world_size": 4,
+      "games_per_rank": 480,
+      "holdout_games_per_rank": 48,
+      "max_probe_decisions_per_split_per_rank": 8192,
+      "full_critic_mse": true,
+      "profile_updates": true,
+      "maximum_wall_seconds": 5400,
+      "rank_process_timeout_seconds": 6000,
+      "fresh_cohort_offset": 0,
+      "training_round": false,
+      "model_updates_persisted": false,
+      "source_state_restored_after_each_arm": true,
+      "repeat_tolerances": {
+        "kl": 1e-05,
+        "value": 0.0001,
+        "surrogate_gain": 1e-05,
+        "relative_l2": 3e-05
+      }
+    },
+    "arms": [
+      {
+        "id": "control",
+        "changes": {}
+      },
+      {
+        "id": "actor_half_lr",
+        "changes": {
+          "learning_rate": 6e-05
+        }
+      },
+      {
+        "id": "actor_quarter_lr",
+        "changes": {
+          "learning_rate": 3e-05
+        }
+      },
+      {
+        "id": "actor_one_epoch",
+        "changes": {
+          "epochs": 1
+        }
+      },
+      {
+        "id": "actor_half_lr_one_epoch",
+        "changes": {
+          "learning_rate": 6e-05,
+          "epochs": 1
+        }
+      },
+      {
+        "id": "critic_half_lr",
+        "changes": {
+          "value_learning_rate": 5e-05
+        }
+      },
+      {
+        "id": "critic_quarter_lr",
+        "changes": {
+          "value_learning_rate": 2.5e-05
+        }
+      },
+      {
+        "id": "critic_two_epochs",
+        "changes": {
+          "critic_epochs": 2
+        }
+      },
+      {
+        "id": "critic_one_epoch",
+        "changes": {
+          "critic_epochs": 1
+        }
+      },
+      {
+        "id": "critic_half_lr_two_epochs",
+        "changes": {
+          "value_learning_rate": 5e-05,
+          "critic_epochs": 2
+        }
+      },
+      {
+        "id": "control_repeat",
+        "changes": {}
+      }
+    ],
+    "lower_arms": [
+      {
+        "id": "control",
+        "changes": {}
+      },
+      {
+        "id": "half_lr",
+        "changes": {
+          "learning_rate": 0.00015
+        }
+      },
+      {
+        "id": "quarter_lr",
+        "changes": {
+          "learning_rate": 7.5e-05
+        }
+      },
+      {
+        "id": "two_epochs",
+        "changes": {
+          "epochs": 2
+        }
+      },
+      {
+        "id": "one_epoch",
+        "changes": {
+          "epochs": 1
+        }
+      },
+      {
+        "id": "half_lr_two_epochs",
+        "changes": {
+          "learning_rate": 0.00015,
+          "epochs": 2
+        }
+      },
+      {
+        "id": "control_repeat",
+        "changes": {}
+      }
+    ],
+    "acceptance": {
+      "critic": "At least 3% relative heldout MC MSE reduction versus control, paired whole-game bootstrap 95% CI below zero; actual MC labels fixed. Report bias and all phase/epoch metrics.",
+      "actor": "Positive heldout clipped-surrogate difference versus control with paired whole-game bootstrap 95% CI above zero; multi-action categorical KL mean <=0.02 and p95 <=0.1. A lower KL alone is not better learning.",
+      "lower": "At least 3% heldout reverse-KL target reduction versus control, paired game 95% CI below zero; guide frozen-root KL must not deteriorate more than 2%. Report forward KL, teacher top1 and root-prior drift independently.",
+      "confirmation": "For nominated settings rerun original plus selected candidates on next disjoint complete cohort from same paused source with fresh_cohort_offset=1. This is an offline update diagnostic, not a win-rate proof or global optimum; leave original training paused until results reviewed."
+    },
+    "fixed": "All original model/search/rewards/observation/MC target/actual batch sizes/FP32/native source unchanged; no prototype full-chain Transformer or budget allocator. Native world-v3 and original 24/24/24/16 threads. Each split consists of whole games; heldout samples never used for gradients or advantage normalization.",
+    "status": "prepared; qualification pending"
   }
 }
