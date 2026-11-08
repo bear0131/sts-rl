@@ -3527,6 +3527,12 @@ def main() -> None:
                 upper_update = update_upper(model, rank=args.rank, world_size=args.world_size,
                     average=lambda values: average_scalar_dict(values, ring_transport),
                     synchronize=sync_upper)
+            elif pure_ppo:
+                from rl.training import reward_monitor, campfire_monitor
+                choice_counts = average_scalar_dict({**reward_monitor.counts(model),
+                    **campfire_monitor.counts(model)}, ring_transport)
+                upper_update = {**reward_monitor.metrics(choice_counts, args.world_size),
+                    **campfire_monitor.metrics(choice_counts, args.world_size)}
             upper_seconds = time.perf_counter() - upper_started if joint_upper(model) else 0.0
 
             reasoning_records = []

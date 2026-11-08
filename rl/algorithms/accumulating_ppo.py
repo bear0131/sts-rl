@@ -903,6 +903,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 "and log-probabilities"
             )
         captured = []
+        pure_ppo = self.nosl_supervision_contract == 'shared-wholerun-ppo-room-v1'
+        if pure_ppo:
+            reward_monitor.begin_collection(self)
+            campfire_monitor.begin_collection(self)
         if joint_upper(self):
             self._upper_completed = []
             self._upper_censored = 0
@@ -976,6 +980,32 @@ class AccumulatingMaskablePPO(MaskablePPO):
             env.step_async = MethodType(capture_reasoning_step_async, env)
             env.step_wait = MethodType(capture_reasoning_step_wait, env)
 
+        choice_hook = None
+        if pure_ppo:
+            # Standard SB3 owns action sampling. Observe that exact masked
+            # distribution without a second forward or another RNG draw.
+            pending_choice = {}
+            def observe_choice(policy, args, kwargs, output):
+                pending_choice['masks'] = kwargs['action_masks']
+                pending_choice['reward'] = reward_monitor.policy_probabilities(
+                    policy.action_dist, self._last_obs)
+                pending_choice['campfire'] = campfire_monitor.policy_probabilities(
+                    policy.action_dist, self._last_obs)
+            choice_hook = self.policy.register_forward_hook(observe_choice, with_kwargs=True)
+            choice_step_async, choice_step_wait = env.step_async, env.step_wait
+            def capture_choice_async(_env, actions):
+                pending_choice['actions'] = np.asarray(actions).reshape(-1).copy()
+                return choice_step_async(actions)
+            def capture_choice_wait(_env):
+                result = choice_step_wait()
+                reward_monitor.record_step(self, self._last_obs, pending_choice['actions'],
+                    pending_choice['masks'], pending_choice['reward'], result[3])
+                campfire_monitor.record_step(self, pending_choice['actions'],
+                    pending_choice['masks'], pending_choice['campfire'], result[3])
+                return result
+            env.step_async = MethodType(capture_choice_async, env)
+            env.step_wait = MethodType(capture_choice_wait, env)
+
         try:
             if self._outer_return:
                 from rl.search.rollout_inference import RolloutInference
@@ -994,6 +1024,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         env, callback, rollout_buffer, n_rollout_steps, use_masking
                     )
         finally:
+            if choice_hook is not None:
+                choice_hook.remove()
             env.step_wait = original_step_wait
             env.step_async = original_step_async
             runtime = self.__dict__.pop('_rollout_inference', None)

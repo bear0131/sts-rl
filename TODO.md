@@ -626,4 +626,6 @@
 
 | PURE-RL-256X4 | 启动验收完成，COMBAT40四机继续训练 | 随机共享256宽4层8头/5522740参数，γ1、房间内λ1/跨房.9，保持strategic_reward、全部阶段普通PPO，无搜索/guide/蒸馏。完整两轮+恢复后两轮已通过，四rank共同第4轮/global1048576模型和Adam逐成员SHA一致，实际步数32→64；8773新曲线、38/39历史保留，旧38在226暂停并备份。有限总500轮/131072000动作预算，128×512/rank、每轮16Adam、FP32；不按轮与旧完整局比较。验收与局限见worklog/2026-11-08.md#pure-rl-256x4-production-verified。 |
 
-| PURE-RL-DEVICE-UTILIZATION | 进行中：独立实验机诊断并验证更高设备利用率 | 用户要求“做加速，多用设备资源”。当前COMBAT40保持训练，先在11727冻结同一checkpoint/样本测微批融合与采集快路径，保持32768有效batch/16Adam/两遍/FP32/房间λ及奖励动作；批次归一化须保留原256统计分组，核输出/梯度/Adam容差，端到端同硬件有界比较后部署四机并验收完整两轮和恢复。见worklog/2026-11-08.md#pure-rl-device-utilization-intention。 |
+| PURE-RL-DEVICE-UTILIZATION | 已完成：四机19/20轮通过，持续训练 | 按用户追加改256env×768×4，一遍/16Adam/LR1e-4/FP32，微批1536累积8，原256优势归一化保持；共享128旧槽保留并新增128。固定同工作量单机394.959→200.400秒，102个buffer字段SHA相同，16次更新后参数maxabs5.96e-8。四机第20轮整体约205.5秒、采样最大125.06秒，模型/Adam跨rank完全一致、每轮16更新、无OOM；原18及新20全状态有独立保护。见worklog/2026-11-08.md#pure-rl-device-utilization-intention。 |
+
+| PURE-RL-CHOICE-MONITOR | 进行中 | `rl/algorithms/accumulating_ppo.py`、`rl/training/distributed_sb3.py`；接回纯PPO火堆/金币/药水实际选择与已有masked策略概率，复用统计契约，全rank按计数聚合，真实双轮保存恢复、无额外模型前推/RNG、前端最新轮可见。见worklog/2026-11-08.md#pure-rl-choice-monitor。 |

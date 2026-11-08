@@ -90,13 +90,27 @@ def test_real_ppo_two_rounds_and_resume(tmp_path, device):
 
 
 @pytest.mark.parametrize('grow', [False, True])
-def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, grow):
+@pytest.mark.parametrize('scene', ['ordinary', 'campfire'])
+def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, grow,
+                                              scene, campfire_env_type):
     import json
     import sys
     from types import SimpleNamespace
     from rl.training import distributed_sb3
+    from rl.training import reward_monitor, campfire_monitor
 
-    env = DummyVecEnv([make_env, make_env])
+    factory = make_env
+    if scene == 'campfire':
+        from stable_baselines3.common.vec_env import VecMonitor
+        from rl.training.native_vec_env import NativeSearchVecEnv
+        def factory():
+            return TrainingStateWrapper(TimeLimit(StrategicRewardWrapper(campfire_env_type(
+                card_language=True, global_map_view=True, combat_action_contract='autoregressive-v2')),
+                max_episode_steps=6000))
+        monkeypatch.setattr(distributed_sb3, 'make_env', lambda model, args:
+            VecMonitor(NativeSearchVecEnv([factory for _ in range(args.n_envs)], threads=2)))
+
+    env = DummyVecEnv([factory, factory])
     model = make_model(env, 'cpu')
     checkpoint = tmp_path/'initial.zip'
     model.save(checkpoint)
@@ -148,6 +162,17 @@ def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, gr
         count = 128 if grow and row['rollout_round'] > 2 else 64
         assert row['pure_rl/combat_samples'] + row['pure_rl/upper_samples'] == count
         assert row['optimizer_steps'] == count // 32
+        for key in {**reward_monitor.counts(None), **campfire_monitor.counts(None)}:
+            assert row['upper/'+key] == payload['upper/'+key]
+        for key, value in row.items():
+            if key.startswith(('upper/campfire_', 'upper/reward_')) and key.endswith(
+                    ('choice_rate', 'pickup_rate', 'policy_probability')):
+                assert 0 <= value <= 1
+                assert value == payload[key]
+    if scene == 'campfire':
+        assert sum(r['upper/campfire_decisions'] for r in records) > 0
+        assert sum(r['upper/reward_gold_resolved'] for r in records) > 0
+        assert sum(r['upper/reward_potion_resolved'] for r in records) > 0
 
 
 def test_grow_live_pure_ppo_environments_without_resetting_source_slots(tmp_path):

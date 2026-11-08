@@ -560,10 +560,11 @@ MC搜索尺度由两部分共同决定：根/叶保持raw V/M，Full-Gumbel再�
 是存在合法对应领取动作时，已有 masked 策略分配给这一类动作的概率质量均值，
 并非整张奖励页最终领取的概率。日志同时保留 resolved/taken/policy_decisions/
 policy_probability_sum；跨 rank 先聚合计数再除，无分母时省略比例，旧日志不补零。
-当前支持 joint-upper 的 NOSL/小网整局采样入口；计数不参与损失、动作或 RNG，
+当前支持 joint-upper 的 NOSL/小网整局采样，以及共享纯PPO分布式入口。
+后者观察标准SB3已经用于选动作的masked分布，不额外前推。计数不参与损失、动作或 RNG，
 无需新增 pending 状态，尚未处理的奖励通过原环境保存恢复。
 
-同一 joint-upper 入口记录火堆七种主选择（rest/smith/recall/lift/toke/dig/skip）。
+这些入口同样记录火堆七种主选择（rest/smith/recall/lift/toke/dig/skip）。
 `upper/campfire_{option}_choice_rate` 是实际选择次数除以该项合法的主选择次数；
 `policy_probability` 是这些相同状态上已有 masked 策略的平均概率，先在合法火堆
 选项内归一化，排除药水等其他操作。仅实际提交合法主选择时计数，升级/删牌后的
