@@ -617,3 +617,5 @@
 | COMBAT38-ASYNC-ROOT-CPU | 筛选完成，不晋级：4个CPU进程提前根评分，16局成对ABBA慢0.82% | 同221原权重/搜索量；693评分、4自然局1467根审计、失败/取消/启动清理通过。两独立16局原/候选均值68.731→69.294秒，逐局动作及最终观测/mask hash相同；父root_accept大幅减少却无端到端收益，不追加480、不部署或恢复训练。215成员三份SHA归档。见worklog/2026-11-08.md#combat38-async-root-cpu-results。 |
 
 | COMBAT38-TOKEN-PROJECTION-SHARING | 诊断中：真实帧逐token完整输入重复率 | 保留全部128维输入位模式/symbol/slot，测跨世界线可复用的input+第一QKV；不能复用上下文不同的attention/后续层。先精确unique/重建与成本上界，再决定GPU实现，真实闭环和生命周期未验收前不部署。见worklog/2026-11-08.md#combat38-token-projection-sharing。 |
+
+| COMBAT38-RESUME221 | 恢复中：用户明确要求原221继续训练 | 沿原四机run、原超参/链内guide和已验收优化；共同恢复模型/Adam/环境/RNG，验证新共同轮与checkpoint及8773续接。COMBAT39不恢复。见worklog/2026-11-08.md#combat38-resume221-request。 |
