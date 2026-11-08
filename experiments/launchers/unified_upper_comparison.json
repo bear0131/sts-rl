@@ -1729,8 +1729,8 @@
     "iteration_steps": 262144,
     "rollout_mode": "fixed_steps",
     "status": "training",
-    "note": "从随机初值重新训练；每rank128环境×512动作，四机两轮完整资格进行中。COMBAT38已保存226并暂停；39仍暂停。固定步数轮与旧完整局轮不能按轮数直接比较。",
-    "updated_at": "2026-11-08T13:49:30.525820+00:00"
+    "note": "共享256宽4层无搜索纯PPO，房间内lambda1/跨房间.9/gamma1；已完成两轮完整保存与恢复，继续有限500轮预算。每轮262144实际动作；38在226暂停、39在42暂停，历史保留。",
+    "updated_at": "2026-11-08T14:10:25.463927+00:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",

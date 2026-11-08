@@ -3,10 +3,10 @@
   "run_id": "combat40-no-search-shared256x4-r1",
   "root": "/root/autodl-tmp/combat40-pure-rl-20261108",
   "runtime_entry": "rl.training.distributed_sb3",
-  "runtime_source": "d679b9c4",
+  "runtime_source": "e5e9c65f",
   "initial_config": "configs/train/shared_wholerun_256x4.args",
   "training_config": "configs/train/shared_wholerun_distributed.args",
-  "source_archive_sha256": "bae8adba28434ba688d75be4f5499bdbafb07e42dfea02ef2b86fe4daf1d4ccd",
+  "source_archive_sha256": "26a9513f69d709f1eeef4a8f201dfcb07957e4b020b57ec4b029c3fca05c792b",
   "initial_sha256": "26257f4b08ae4e3d8803565bab9e7d20d23cb2c0c928bb8e3a7f43fbc2da949c",
   "native_sha256": "b40edcf73e671332dc8d5d27287264d8294376605ca6bad865aea36596156103",
   "host": "connect.bjb2.seetacloud.com",
@@ -29,7 +29,7 @@
   "iteration_timeout_seconds": 1800,
   "qualification_process_timeout_seconds": 4000,
   "precision": "FP32 highest",
-  "state": "qualification_running",
+  "state": "training_verified",
   "search": false,
   "reward": "env.core.outer_return.strategic_reward",
   "lambda_rule": {
@@ -40,5 +40,30 @@
     "gamma": 1
   },
   "resume": "Own rank full model/Adam/environment/RNG bundle; same initialization across ranks; never reuse old COMBAT38 weights.",
-  "monitor": "unified_upper_comparison.json#monitor"
+  "monitor": "unified_upper_comparison.json#monitor",
+  "source_directory": "source-runtime-e5e9c65f",
+  "source_manifest_sha256": "b515faa041576188c99ab57cecc2cc9c33384217dd218a5769320d84ada0c189",
+  "qualification_completed_global_actions": 524288,
+  "qualification_four_rank_sha256": "bcb7bb7466b8c04ae97902c9f196dc7e8d55f7b2e244ae3130bdd29641a77eb6",
+  "parameters": 5522740,
+  "resume_from_global_actions": 524288,
+  "training_process_timeout_seconds": 897000,
+  "training_ring_port": 30341,
+  "training_ssh_control_directory": "/tmp/c40",
+  "verified_round": 4,
+  "verified_global_actions": 1048576,
+  "optimizer_steps_at_verified_round": 64,
+  "production_four_rank_sha256": "69572204fd038c7e1755d4970557f00c3104f970498c650d7e96c2ecc1f93fd0",
+  "evidence": {
+    "path": "/root/autodl-tmp/combat40-pure-rl-20261108/evidence/combat40-production-evidence-v1.tgz",
+    "bytes": 200190,
+    "sha256": "4376f989a116bc74a414186d1037292c9af6c099b8fb3cd81619d897b9ad91bf",
+    "copies": [
+      "bjb2-53841",
+      "bjb1-11727",
+      "local"
+    ]
+  },
+  "qualification_reference": "runs/combat40-no-search-shared256x4-r1/references/qualified-round2",
+  "production_reference": "runs/combat40-no-search-shared256x4-r1/references/verified-round4"
 }
