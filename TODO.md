@@ -612,4 +612,4 @@
 
 | COMBAT38-LOWER-GENERALIZATION | 待诊断；不自动改训练 | 221冻结两独立批均出现lower更新后heldout搜索目标KL高于更新前；降低LR缓解但未消除。复用真实root+guide联合更新和整局留出，区分目标/共享参数梯度与过拟合，验证不损害guide并报告在线胜率边界。见worklog/2026-11-08.md#combat38-current-hyperparameter-recheck。 |
 
-| COMBAT38-CHAIN-TRANSFORMER221 | 执行中：221链内Transformer完整480局；guide同种子对照随后 | 根部/链内Transformer对原根部Transformer+guide；真实完整局、固定250/250/1000/深度200/FP32，记录删失边界与实际资源/计数、逐局日志，核原权重不变和生命周期；正式训练保持暂停。见worklog/2026-11-08.md#combat38-chain-transformer221。 |
+| COMBAT38-CHAIN-TRANSFORMER221 | 已完成：全Transformer390/480；guide366胜+1删失/480 | 同原221权重/A0/种子/250/250/1000/深度200；全Transformer81.25%，guide76.25–76.46%；479自然配对Δ95%CI +1.25～+8.56pp，采样923.00/383.05秒。959份动作journal已保存、6局严格回放通过，模型与资源关闭核验、三份归档完成；不自动修改/恢复正式训练。见worklog/2026-11-08.md#combat38-chain-transformer221-results。 |

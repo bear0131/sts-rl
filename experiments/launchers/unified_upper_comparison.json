@@ -2383,7 +2383,7 @@
     }
   },
   "checkpoint221_chain_comparison": {
-    "status": "full_transformer_running",
+    "status": "complete",
     "source_round": 221,
     "source_global_step": 257830119,
     "games_per_arm": 480,
@@ -2413,6 +2413,102 @@
     "guide_tag": "hybrid480221-02",
     "source_policy_digest": "7295bc059c570973e70bc3465df730e971154d3adb734920b025b88fbd75f26f",
     "incomplete_budget": "error; existing 50-turn censor path recorded separately",
-    "remote_evidence": "/root/autodl-tmp/combat38-chaincompare221-20261108"
+    "remote_evidence": "/root/autodl-tmp/combat38-chaincompare221-20261108",
+    "ascension": 0,
+    "results": [
+      {
+        "arm": "transformer",
+        "wins": 390,
+        "requested": 480,
+        "completed": 480,
+        "censored": 0,
+        "win_fraction_bounds": [
+          0.8125,
+          0.8125
+        ],
+        "wilson95_with_censor_envelope": [
+          0.7751521761341909,
+          0.8448856369362605
+        ],
+        "collection_seconds": 922.9992272807285,
+        "process_seconds": 936.4564431170002,
+        "effective_chain_decisions": 1717693479,
+        "effective_chain_decisions_per_second": 1860991.242712673,
+        "search_simulations": 96559250,
+        "search_transitions": 2198932111,
+        "censored_slots": []
+      },
+      {
+        "arm": "guide",
+        "wins": 366,
+        "requested": 480,
+        "completed": 479,
+        "censored": 1,
+        "win_fraction_bounds": [
+          0.7625,
+          0.7645833333333333
+        ],
+        "wilson95_with_censor_envelope": [
+          0.7224403997572642,
+          0.8003441076760381
+        ],
+        "collection_seconds": 383.04962376784533,
+        "process_seconds": 396.26247062999755,
+        "effective_chain_decisions": 1690510811,
+        "effective_chain_decisions_per_second": 4413294.534455846,
+        "search_simulations": 93381500,
+        "search_transitions": 2166083510,
+        "censored_slots": [
+          {
+            "slot": 320,
+            "seed": 20267425,
+            "actions": 289,
+            "reason": "combat-turn-limit:51>50"
+          }
+        ]
+      }
+    ],
+    "paired_comparison": {
+      "matched_initial_game_ids": true,
+      "natural_pairs": 479,
+      "both_win": 337,
+      "both_loss": 61,
+      "transformer_only_win": 52,
+      "guide_only_win": 29,
+      "complete_pair_mean_difference": 0.04801670146137787,
+      "complete_pair_bootstrap_ci95": [
+        0.012526096033402923,
+        0.08559498956158663
+      ],
+      "bootstrap_seed": 20261108,
+      "bootstrap_repetitions": 10000,
+      "full_denominator_difference_bounds": [
+        0.04791666666666667,
+        0.05
+      ],
+      "mcnemar_exact_two_sided": 0.013999473719986943,
+      "limitation": "Internal search RNG implementations differ; paired game seeds compare complete architectures, not an isolated capacity intervention."
+    },
+    "journal_validation": {
+      "saved_natural_games": [
+        480,
+        479
+      ],
+      "strict_replay_samples_per_arm": 3,
+      "passed": true
+    },
+    "evidence_archive": {
+      "path": "/root/autodl-tmp/combat38-chaincompare221-20261108/combat38-chaincompare221-evidence-v1.tgz",
+      "sha256": "c48e8e18939fa8e332fa78b4a85eee18b1921033025de984ef0357623643b29c",
+      "bytes": 28555348,
+      "members": 135,
+      "source_files_verified": 66,
+      "copies": [
+        "bjb1-11727",
+        "bjb2-53841",
+        "local"
+      ]
+    },
+    "performance_limitations": "Single complete run per arm; full telemetry 0.2s and guide 1s, with different CPU/GPU pipelines; descriptive timing, not an isolated equivalent-optimization benchmark."
   }
 }
