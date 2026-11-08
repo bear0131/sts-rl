@@ -3807,6 +3807,9 @@ def main() -> None:
                 key: float(callback_scalars.get(key, 0.0))
                 for key in _DISTRIBUTED_NOSL_METRIC_KEYS
             })
+            if model.nosl_supervision_contract == 'shared-wholerun-ppo-room-v1':
+                aggregate_scalars.update({key: value for key, value in callback_scalars.items()
+                                          if key.startswith('pure_rl/')})
             if getattr(model, '_frozen_upper', False):
                 model.policy.core.teacher.assert_integrity()
                 aggregate_scalars.update({key: value for key, value in callback_scalars.items()
@@ -4084,7 +4087,7 @@ def main() -> None:
                     for key in ('upper/effective_batch_size_global', 'upper/micro_batch_size'):
                         wandb_payload[key] = record[key]
                 wandb_payload.update({key: value for key, value in record.items()
-                                      if key.startswith(('outer_return/', 'frozen_upper/'))})
+                                      if key.startswith(('outer_return/', 'frozen_upper/', 'pure_rl/'))})
                 wandb_payload.update({
                     key: record[key]
                     for key in _DISTRIBUTED_NOSL_METRIC_KEYS

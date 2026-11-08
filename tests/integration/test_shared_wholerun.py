@@ -87,3 +87,56 @@ def test_real_ppo_two_rounds_and_resume(tmp_path, device):
     assert int(optimizer.state[shared]['step']) > old_steps[shared]
     assert all(int(optimizer.state[p]['step']) >= step for p, step in old_steps.items())
     env.close(); resumed_env.close()
+
+
+def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys):
+    import json
+    import sys
+    from types import SimpleNamespace
+    from rl.training import distributed_sb3
+
+    env = DummyVecEnv([make_env, make_env])
+    model = make_model(env, 'cpu')
+    checkpoint = tmp_path/'initial.zip'
+    model.save(checkpoint)
+    env.close()
+    payloads = []
+    monkeypatch.setitem(sys.modules, 'wandb', SimpleNamespace(
+        init=lambda **kw: SimpleNamespace(finish=lambda **kw: None),
+        config=SimpleNamespace(update=lambda *a, **kw: None),
+        define_metric=lambda *a, **kw: None,
+        log=lambda payload: payloads.append(json.loads(json.dumps(payload, allow_nan=False)))))
+    argv = ['distributed_sb3', '--rank', '0', '--world-size', '1',
+        '--checkpoint', str(checkpoint), '--updates', '2', '--n-envs', '2',
+        '--n-steps', '32', '--batch-size', '32', '--n-epochs', '1',
+        '--gradient-accumulation-steps', '1', '--device', 'cpu', '--vec', 'native',
+        '--native-search-threads', '2', '--gamma', '1', '--gae-lambda', '1',
+        '--reasoning-updates', '0', '--reasoning-coef', '0', '--no-interactive-reasoning',
+        '--remote-root', str(tmp_path/'transport'), '--ssh-control-dir', str(tmp_path/'ssh'),
+        '--run-id', 'shared-pure-lifecycle', '--wandb', '--wandb-id', 'shared-pure-lifecycle',
+        '--training-state-dir', str(tmp_path/'state'), '--save-every-updates', '1',
+        '--max-checkpoints', '2', '--seed', '20261108']
+    monkeypatch.setattr(sys, 'argv', argv)
+    distributed_sb3.main()
+    bundle = tmp_path/'state/rank0/step-000000000128'
+    assert json.loads((bundle/'manifest.json').read_text())['schema_version'] == 2
+    resumed = list(argv)
+    resumed[resumed.index('--checkpoint')+1] = str(bundle/'model.zip')
+    resumed += ['--resume-state', str(bundle)]
+    monkeypatch.setattr(sys, 'argv', resumed)
+    distributed_sb3.main()
+    output = capsys.readouterr().out
+    assert 'ENVIRONMENT_RESTORED ' in output
+    records = [json.loads(line) for line in output.splitlines()
+               if line.startswith('{') and '"rollout_sec"' in line]
+    assert [p['global_step'] for p in payloads] == [64, 128, 192, 256]
+    assert len(records) == 4
+    for row, payload in zip(records, payloads, strict=True):
+        for key in ('room_lambda', 'combat_samples', 'upper_samples', 'in_room_edges',
+                    'boundary_edges', 'search_simulations', 'return_version',
+                    'censored_episodes_since_start'):
+            assert row['pure_rl/'+key] == payload['pure_rl/'+key]
+        assert row['pure_rl/search_simulations'] == 0
+        assert row['pure_rl/room_lambda'] == .9
+        assert row['pure_rl/combat_samples'] + row['pure_rl/upper_samples'] == 64
+        assert row['optimizer_steps'] == 2
