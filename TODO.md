@@ -613,3 +613,5 @@
 | COMBAT38-LOWER-GENERALIZATION | 待诊断；不自动改训练 | 221冻结两独立批均出现lower更新后heldout搜索目标KL高于更新前；降低LR缓解但未消除。复用真实root+guide联合更新和整局留出，区分目标/共享参数梯度与过拟合，验证不损害guide并报告在线胜率边界。见worklog/2026-11-08.md#combat38-current-hyperparameter-recheck。 |
 
 | COMBAT38-CHAIN-TRANSFORMER221 | 已完成：全Transformer390/480；guide366胜+1删失/480 | 同原221权重/A0/种子/250/250/1000/深度200；全Transformer81.25%，guide76.25–76.46%；479自然配对Δ95%CI +1.25～+8.56pp，采样923.00/383.05秒。959份动作journal已保存、6局严格回放通过，模型与资源关闭核验、三份归档完成；不自动修改/恢复正式训练。见worklog/2026-11-08.md#combat38-chain-transformer221-results。 |
+
+| COMBAT38-ASYNC-ROOT-CPU | 已登记待实现：CPU根评分提前异步并行，与GPU链搜索重叠 | 同221原权重/完整公开token/近同分选牌/监督/预算与RNG；复用原CPU编码/模型，显式根版本与结果所有权，额外CPU worker不能初始化CUDA。先固定根等价/取消与失败/权重/关闭，再同自然局ABBA；正式38/39保持暂停，不把可重叠234秒全部当必得收益。见worklog/2026-11-08.md#combat38-async-root-cpu。 |
