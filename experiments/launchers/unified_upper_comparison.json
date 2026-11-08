@@ -1728,7 +1728,7 @@
     "branch_round": 0,
     "iteration_steps": 262144,
     "rollout_mode": "fixed_steps",
-    "status": "qualification",
+    "status": "training",
     "note": "从随机初值重新训练；每rank128环境×512动作，四机两轮完整资格进行中。COMBAT38已保存226并暂停；39仍暂停。固定步数轮与旧完整局轮不能按轮数直接比较。",
     "updated_at": "2026-11-08T13:49:30.525820+00:00"
   },
