@@ -1,5 +1,6 @@
 """Reusable whole-run PPO storage, with SB3's original sample ordering."""
 import numpy as np
+import torch
 from gymnasium import spaces
 from sb3_contrib.common.maskable.buffers import (
     MaskableDictRolloutBuffer, MaskableDictRolloutBufferSamples,
@@ -69,14 +70,36 @@ class SharedRolloutBuffer(MaskableDictRolloutBuffer):
         self.generator_ready = True
         if batch_size is None:
             batch_size = len(indices)
+        # Cache only this update's immutable dataset, never checkpoint or
+        # cross-collection storage. Advanced-indexed samples still own data.
+        arrays = [*self.observations.values(), self.actions, self.values,
+                  self.log_probs, self.advantages, self.returns, self.action_masks]
+        size = sum(array.nbytes for array in arrays)
+        storage = None
+        if (self.device.type == 'cuda'
+                and size <= torch.cuda.get_device_properties(self.device).total_memory // 4):
+            storage = {}
+            try:
+                for array in arrays:
+                    storage[id(array)] = torch.as_tensor(array, device=self.device)
+            except torch.OutOfMemoryError:
+                # No sample/optimizer update has started. Retain the same
+                # permutation and use the ordinary host-backed gather below.
+                storage = None
+            if storage is None:
+                torch.cuda.empty_cache()
         for start in range(0, len(indices), batch_size):
-            yield self._get_samples(indices[start:start + batch_size])
+            yield self._get_samples(indices[start:start + batch_size], device_storage=storage)
 
-    def _get_samples(self, batch_inds, env=None):
+    def _get_samples(self, batch_inds, env=None, *, device_storage=None):
         # SB3 swap_and_flatten enumerates environment first, then vector time.
+        if device_storage is not None:
+            batch_inds = torch.as_tensor(batch_inds, device=self.device)
         rows = (batch_inds % self.buffer_size, batch_inds // self.buffer_size)
 
         def take(array):
+            if device_storage is not None:
+                return device_storage[id(array)][rows]
             # Advanced indexing owns this batch; to_torch need not copy again.
             return self.to_torch(array[rows], copy=False)
 

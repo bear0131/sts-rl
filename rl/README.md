@@ -86,6 +86,13 @@ FP32采样图的输入/发布输出位于池外，只有不跨forward存活的�
 拥有一个runtime，不支持多CPU线程同时调用。调用者保留的结果独占storage，
 图缓存不进入checkpoint，更新后的参数/地图缓存和变形重放按现有契约失效。
 
+共享PPO更新可在显存允许时保留本轮完整不可变数据集（上限设备显存的1/4），
+分配失败在任何更新前退回host路径，随机排列与样本所有权不变。先按原256行组
+归一化优势，再分别反向战斗/上层子批释放activation，按原行数加权；OOM失败
+丢弃整块本次梯度和指标并恢复已有累积。6144×2仍是原12288本地/49152全局批次。
+`update_sec`从采样结束量至全部learner工作结束，包含取批/前后向/同步/Adam，
+不含保存；`update_sec_max`为最慢rank。不能把`backward_sec`当完整更新时间。
+
 纯PPO的`pure_rl_game_totals`保存每rank累计自然结束/删失数及计数起点，随
 model.zip普通保存恢复。跨rank汇总为`pure_rl/natural_games_global`与
 `pure_rl/censored_games_global`；仅当起点为0时发布监控兼容字段

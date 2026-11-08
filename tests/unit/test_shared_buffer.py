@@ -9,15 +9,12 @@ from sb3_contrib.common.maskable.buffers import MaskableDictRolloutBuffer
 from rl.algorithms.shared_buffer import SharedRolloutBuffer
 
 
-@pytest.mark.parametrize('prefill', [False, True])
-@pytest.mark.parametrize('environments', [1, 3])
-@pytest.mark.parametrize('batch_size', [4, None])
-def test_owned_storage_returns_and_env_major_shuffle_match_sb3(environments, batch_size, prefill):
+def assert_owned_storage_returns_and_env_major_shuffle(environments, batch_size, prefill, device='cpu'):
     observation_space = spaces.Dict({
         'vector': spaces.Box(-10, 100, (2, 3), dtype=np.float32),
         'category': spaces.Discrete(9),
     })
-    buffers = [cls(5, observation_space, spaces.Discrete(4), device='cpu',
+    buffers = [cls(5, observation_space, spaces.Discrete(4), device=device,
                    gamma=1., gae_lambda=.9, n_envs=environments)
                for cls in (MaskableDictRolloutBuffer, SharedRolloutBuffer)]
     fast = buffers[1]
@@ -78,6 +75,13 @@ def test_owned_storage_returns_and_env_major_shuffle_match_sb3(environments, bat
     for actual, saved in retained_samples:
         for key in saved.observations:
             torch.testing.assert_close(actual.observations[key], saved.observations[key], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize('prefill', [False, True])
+@pytest.mark.parametrize('environments', [1, 3])
+@pytest.mark.parametrize('batch_size', [4, None])
+def test_owned_storage_returns_and_env_major_shuffle_match_sb3(environments, batch_size, prefill):
+    assert_owned_storage_returns_and_env_major_shuffle(environments, batch_size, prefill)
 
 
 def test_prefill_replacement_and_aborted_collection_do_not_reuse_old_observation():

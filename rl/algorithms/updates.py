@@ -1,14 +1,16 @@
 """Shared differentiable batches and optimizer boundary; orchestration stays outside."""
 from __future__ import annotations
+from dataclasses import replace
 import time
 import numpy as np
 import torch as th
 from gymnasium import spaces
-from rl.algorithms.ppo import ppo_loss_components
+from rl.algorithms.ppo import ppo_loss_components, normalize_ppo_advantages
 from rl.search.native import observation_as_tensor
 
 
-def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_forward=None):
+def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_forward=None,
+                pre_normalized_advantages=None):
     def select(value):
         return value if indices is None else value.index_select(0, indices)
     observations = {key: select(value) for key, value in batch.observations.items()}
@@ -22,8 +24,10 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
         after_forward(observations)
     components = ppo_loss_components(
         hierarchical=model.hierarchical_combat_hp,
-        normalize_advantage=model.normalize_advantage, observations=observations,
-        advantages=select(batch.advantages), returns=select(batch.returns),
+        normalize_advantage=model.normalize_advantage and pre_normalized_advantages is None,
+        observations=observations,
+        advantages=select(batch.advantages if pre_normalized_advantages is None
+                          else pre_normalized_advantages), returns=select(batch.returns),
         old_values=select(batch.old_values), old_log_prob=select(batch.old_log_prob),
         values=values.flatten(), log_prob=log_prob, entropy=entropy,
         clip_range=clip_range, clip_range_vf=clip_range_vf,
@@ -59,11 +63,40 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf):
         previous = [p.grad for p in parameters]
         for p in parameters:
             p.grad = None
-        components = loss = None
+        components = loss = phase_loss = pending_metrics = phase_losses = None
         failed = False
         try:
-            components, loss = ppo_forward(model, part(start, count), clip_range, clip_range_vf)
-            (loss * (count / total)).backward()
+            chunk = part(start, count)
+            if ('phase' in getattr(chunk, 'observations', {})
+                    and not getattr(model, 'hierarchical_combat_hp', False)):
+                from env.core import vocab
+                # Normalize BEFORE splitting combat/upper rows. Re-normalizing
+                # either subset would change the original 256-row objective.
+                advantages = (normalize_ppo_advantages(chunk.advantages, group)
+                              if model.normalize_advantage else chunk.advantages)
+                combat = chunk.observations['phase'].long().flatten() == vocab.PHASE_VOCAB_INDEX['combat']
+                pending_metrics, phase_losses = [], []
+                for mask in (combat, ~combat):
+                    indices = mask.nonzero().flatten()
+                    rows = len(indices)
+                    if not rows:
+                        continue
+                    components, phase_loss = ppo_forward(model, chunk, clip_range, clip_range_vf,
+                        indices=indices, pre_normalized_advantages=advantages)
+                    (phase_loss * (rows / total)).backward()
+                    phase_losses.append(phase_loss.detach() * (rows / count))
+                    # Retain only detached metrics until the entire chunk
+                    # succeeds. A failed later phase must discard earlier
+                    # gradients AND metrics before the existing OOM retry.
+                    pending_metrics.append((replace(components, **{
+                        key: value.detach() for key, value in vars(components).items()
+                        if isinstance(value, th.Tensor)}), rows))
+                    components = phase_loss = None
+                loss = th.stack(phase_losses).sum()
+            else:
+                components, loss = ppo_forward(model, chunk, clip_range, clip_range_vf)
+                (loss * (count / total)).backward()
+                pending_metrics = [(components, count)]
         except th.OutOfMemoryError:
             failed = True
         except BaseException:
@@ -71,7 +104,7 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf):
                 p.grad = old
             raise
         if failed:
-            components = loss = None
+            components = loss = phase_loss = pending_metrics = phase_losses = None
             for p, old in zip(parameters, previous, strict=True):
                 p.grad = old
             if count <= group:
@@ -98,7 +131,8 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf):
             th._foreach_add_(old_grads, additions)
         losses.append(loss.detach() * (count / total))
         from rl.algorithms.ppo_metrics import accumulate_update_metrics
-        accumulate_update_metrics(model, components, count)
+        for components, rows in pending_metrics:
+            accumulate_update_metrics(model, components, rows)
         stats['chunks'] += 1
         stats['rows'] += count
         stats['min_rows'] = min(stats['min_rows'], count)

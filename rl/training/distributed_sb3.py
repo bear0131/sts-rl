@@ -3336,6 +3336,8 @@ def main() -> None:
             if not ok:
                 raise RuntimeError("collect_rollouts returned False")
 
+            update_started = time.perf_counter()
+
             # The inference graphs are unused during learner backpropagation.
             # Release their private pools before the full training microbatch;
             # the compiled callable remains and graphs are captured again on
@@ -3654,14 +3656,24 @@ def main() -> None:
                 sum(row["sampled_samples"] for row in reasoning_records)
             )
 
+            # Complete learner wall time includes data gathering, all backward
+            # passes, transport/waiting and optimizer work. Saves are separate.
+            if model.device.type == "cuda":
+                th.cuda.synchronize(model.device)
+            update_seconds = time.perf_counter() - update_started
+
             actual_rollout_size = (int(model.episode_rollout_stats['transitions'])
                                    if episode_config is not None else rollout_size)
             global_actions = int(round(average_scalar_dict(
                 {'actions': float(actual_rollout_size)}, ring_transport)['actions'] * args.world_size))
-            rank_rollout_seconds = average_scalar_dict({
-                f'rank{i}': rollout_sec if i == args.rank else 0.
+            rank_phase_seconds = average_scalar_dict({
+                f'{phase}{i}': seconds if i == args.rank else 0.
+                for phase, seconds in (('rollout', rollout_sec), ('update', update_seconds))
                 for i in range(args.world_size)}, ring_transport)
-            rollout_max_seconds = max(rank_rollout_seconds.values()) * args.world_size
+            rollout_max_seconds = max(rank_phase_seconds[f'rollout{i}']
+                                      for i in range(args.world_size)) * args.world_size
+            update_max_seconds = max(rank_phase_seconds[f'update{i}']
+                                     for i in range(args.world_size)) * args.world_size
             cumulative_global_steps += global_actions
             record = {
                 "rank": args.rank,
@@ -3677,6 +3689,8 @@ def main() -> None:
                 "leaf_graph_release_memory": graph_release_memory,
                 "rollout_steps_per_sec_local": actual_rollout_size / rollout_sec,
                 "rollout_sec_max": rollout_max_seconds,
+                "update_sec": update_seconds,
+                "update_sec_max": update_max_seconds,
                 "rollout_steps_per_sec_global": global_actions / rollout_max_seconds,
                 "loss_mean": float(np.mean(losses)) if losses else 0.0,
                 "optimizer_steps": optimizer_steps,
@@ -4008,6 +4022,8 @@ def main() -> None:
                         "dist/checkpoint_sec": record["checkpoint_sec"],
                         "dist/rollout_sec": record["rollout_sec"],
                         "dist/rollout_sec_max": record["rollout_sec_max"],
+                        "dist/update_sec": record["update_sec"],
+                        "dist/update_sec_max": record["update_sec_max"],
                         "speed/rollout_env_steps_per_second": record["rollout_steps_per_sec_global"],
                         "dist/leaf_graph_release_sec": record["leaf_graph_release_sec"],
                         "dist/backward_sec": record["backward_sec"],

@@ -33,6 +33,17 @@ def _phase_balanced_mean(
     return th.stack(means).mean()
 
 
+def normalize_ppo_advantages(advantages, group_size=None):
+    """Normalize the original statistical groups before any model routing."""
+    if group_size is not None and advantages.numel() > group_size:
+        if group_size < 2 or advantages.numel() % group_size:
+            raise ValueError('PPO batch must contain complete advantage normalization groups')
+        groups = advantages.reshape(-1, group_size)
+        return ((groups - groups.mean(dim=1, keepdim=True)) /
+                (groups.std(dim=1, keepdim=True) + 1e-8)).reshape_as(advantages)
+    return (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+
 def ppo_loss_components(
     *,
     hierarchical: bool,
@@ -77,16 +88,7 @@ def ppo_loss_components(
     if not hierarchical:
         normalized_advantages = advantages
         if normalize_advantage:
-            if normalization_group_size is not None and advantages.numel() > normalization_group_size:
-                if normalization_group_size < 2 or advantages.numel() % normalization_group_size:
-                    raise ValueError('PPO batch must contain complete advantage normalization groups')
-                groups = advantages.reshape(-1, normalization_group_size)
-                normalized_advantages = ((groups - groups.mean(dim=1, keepdim=True)) /
-                    (groups.std(dim=1, keepdim=True) + 1e-8)).reshape_as(advantages)
-            else:
-                normalized_advantages = (
-                    advantages - advantages.mean()
-                ) / (advantages.std() + 1e-8)
+            normalized_advantages = normalize_ppo_advantages(advantages, normalization_group_size)
         policy_loss = -th.min(
             normalized_advantages * ratio,
             normalized_advantages * clipped_ratio,
