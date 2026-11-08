@@ -737,6 +737,7 @@ class OverworldEncoder(_SpecialistEncoder):
         shared: SharedSemanticTokenizer,
         phase_id: int,
         active_widths=None,
+        map_encoding=None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         batch_size = obs["phase"].shape[0]
         global_parts = [
@@ -855,7 +856,9 @@ class OverworldEncoder(_SpecialistEncoder):
         if "map_full_rooms" in obs and (phase_id == V.PHASE_VOCAB_INDEX["map"] or
                                        "upper_public_context" in self.observation_space.spaces):
             ids = obs["map_full_rooms"].long()
-            if self.map_dag is not None:
+            if map_encoding is not None:
+                full = map_encoding
+            elif self.map_dag is not None:
                 full = self.map_dag(
                     self.room_embedding(ids), obs["map_full_features"].float()
                 )
@@ -945,14 +948,15 @@ class _SpecialistActorCritic(nn.Module):
 
     def forward(
         self, obs, shared, phase_id=None, *, active_relic_width=None, evaluate_subsets=True,
-        upper_active_widths=None,
+        upper_active_widths=None, upper_map_encoding=None,
     ):
         if self.kind == "combat":
             global_token, blocks = self.encoder(
                 obs, shared, active_relic_width=active_relic_width
             )
         else:
-            global_token, blocks = self.encoder(obs, shared, phase_id, active_widths=upper_active_widths)
+            global_token, blocks = self.encoder(obs, shared, phase_id,
+                active_widths=upper_active_widths, map_encoding=upper_map_encoding)
         blocks["__global__"] = global_token
         logits = self.fixed_head(global_token).clone()
         if self.kind != "combat":

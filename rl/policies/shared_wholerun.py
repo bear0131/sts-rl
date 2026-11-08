@@ -4,12 +4,13 @@ import math
 import torch
 from torch import nn
 
-from env.core import native_actions as C
+from env.core import native_actions as C, vocab
 from rl.policies.entity_combat import EntityCombatConfig, EntityCombatNetwork
 from rl.policies.entity_joint import EntityJointCore, UpperConfig
 from rl.policies.split_policy import (
     SharedSemanticTokenizer, OverworldEncoder, _SpecialistActorCritic,
     SplitStSPointerPolicy,
+    _active_prefix_width,
 )
 
 
@@ -47,10 +48,32 @@ class SharedWholeRunCore(EntityJointCore):
     training_objective = CONTRACT
     environment_value_objective = None
 
+    def combat_actor_critic(self, observations, **kwargs):
+        if self.training and kwargs.get('active_relic_width') is None:
+            # Masked trailing queries never reach a head; keeping interior
+            # positions preserves every actual relic and its counter.
+            kwargs['active_relic_width'] = _active_prefix_width(observations['relics'])
+        return super().combat_actor_critic(observations, **kwargs)
+
     def actor_critic(self, observations, **kwargs):
         runtime = getattr(self, '_collection_graphs', None)
         if runtime is not None:
             return runtime(observations)
+        if (self.training and self.map_dag_enabled
+                and 'upper_public_context' in observations):
+            phase = observations['phase'].long().flatten()
+            selected = (phase != vocab.PHASE_VOCAB_INDEX['combat']).nonzero().flatten()
+            if selected.numel():
+                encoder = self.overworld.encoder
+                # Map encoding is independent of the active upper screen. Run
+                # its recurrent passes once for the entire upper sub-batch;
+                # each phase still receives its own rows, tokens and action head.
+                encoded = encoder.map_dag(
+                    encoder.room_embedding(observations['map_full_rooms'][selected].long()),
+                    observations['map_full_features'][selected].float())
+                positions = torch.zeros_like(phase)
+                positions[selected] = torch.arange(len(selected), device=phase.device)
+                kwargs['upper_map_encoding'] = (positions, encoded)
         return super().actor_critic(observations, **kwargs)
 
     def __init__(self, space, *, width, layers, heads):

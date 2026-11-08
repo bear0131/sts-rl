@@ -134,7 +134,10 @@ class EntityJointCore(EntityCombatCore):
             else:
                 keys = encode.upper_observation_keys(phase_id, obs)
                 batch = {k: v[selected] for k, v in obs.items() if k in keys}
-                out, value = self.overworld(batch, self.upper_tokenizer, phase_id)
+                map_encoding = kwargs.get('upper_map_encoding')
+                out, value = self.overworld(batch, self.upper_tokenizer, phase_id,
+                    upper_map_encoding=(None if map_encoding is None else
+                                        map_encoding[1][map_encoding[0][selected]]))
             indices.append(selected)
             logits.append(out.float())
             values.append(value.float())

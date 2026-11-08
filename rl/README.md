@@ -60,6 +60,12 @@ CUDA/FP32采样自动使用有容量限制的分phase执行图，保留全部有
 浮点验证容差为rtol/atol 2e-5；不宣称不同形状的矩阵运算逐位相等。更新仍走
 原有FP32前后向，图不会改变学习率、样本分组或Adam次数。
 
+共享纯PPO更新只保留战斗遗物序列到最后一个有效槽，中间空位与对应计数位置
+保持；末尾PAD不参与任何动作或value头。开启完整外层公开上下文时，同一微批
+的全部上层行先合批执行地图DAG，再按原行号交给各phase的Transformer和动作头。
+地图编码仍保留梯度，不跨更新缓存，也不跨样本混合信息。普通推理和旧独立上下层
+策略保持原路径；参数名、checkpoint、统计组、损失权重与Adam次数均保持。
+
 纯PPO的`pure_rl_game_totals`保存每rank累计自然结束/删失数及计数起点，随
 model.zip普通保存恢复。跨rank汇总为`pure_rl/natural_games_global`与
 `pure_rl/censored_games_global`；仅当起点为0时发布监控兼容字段
