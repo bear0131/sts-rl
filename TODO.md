@@ -630,7 +630,9 @@
 
 | PURE-RL-CHOICE-MONITOR | 已完成：22轮四rank与8773实际数据可见 | 纯PPO接回火堆/金币/药水/遗物实际选择与已有masked策略概率；跨rank先计数后除，无额外前推/RNG。42测试与65536动作全字段SHA一致通过；从21普通恢复，22轮完整保存/模型与Adam同步/实时HTTP数据和18组历史均通过，旧指标留空。见worklog/2026-11-08.md#pure-rl-choice-monitor。 |
 
-| PURE-RL-SAMPLING-HALF | 进行中：空闲11727有界实验 | 当前共享纯PPO256×768、FP32、固定checkpoint/seed/完整768步，语义/资源通过且同硬件采样时间至少减半，四训练机保持推进。见worklog/2026-11-09.md#pure-rl-sampling-half。 |
+| PURE-RL-SAMPLING-HALF | 实验资格通过：完整采样123.281→51.905秒，待四机部署 | 当前共享纯PPO256×768、FP32、固定checkpoint/seed/完整768步，语义/资源通过且同硬件采样时间至少减半，四训练机保持推进。见worklog/2026-11-09.md#pure-rl-sampling-half。 |
 | PURE-RL-LOSS-MONITOR | 已完成（38轮四机/8773） | 纯PPO更新前λ-return MSE整体/分phase、训练中policy/value/entropy/KL/clip及时间/更新数；sum/count跨rank、真实PPO/NOSL双轮上报保存恢复与8773显示，不改变梯度/RNG。见worklog/2026-11-09.md#pure-rl-loss-monitor。 |
 
-- **PURE-RL-NATURAL-GAMES-MONITOR** — 待下一次采样优化一起部署。用户要求累计自然完成游戏计数接入；复用真实outcome计数、排除截断，跨四rank/保存恢复连续，不把滚动400局窗口当累计总数。适用`rl/training`、`apps/dashboard_static/training.html`；验收自然终局/截断/续训计数与8773实际页面。
+- **PURE-RL-NATURAL-GAMES-MONITOR** — 实现及恢复/页面资格通过，待随本次采样优化部署；38轮历史计数132628已核对。用户要求累计自然完成游戏计数接入；复用真实outcome计数、排除截断，跨四rank/保存恢复连续，不把滚动400局窗口当累计总数。适用`rl/training`、`apps/dashboard_static/training.html`；验收自然终局/截断/续训计数与8773实际页面。
+
+- **PURE-RL-UPDATE-HALF** — 等待采样减半验收后启动。用户目标“达到目标之后对训练更新做加速，目标也是加速一倍”。适用当前COMBAT40共享256×4纯PPO，冻结相同buffer/model/Adam、FP32、小LR/小更新次数、统计组256与globalbatch49152，目标实测更新计算耗时至少-50%（当前65–68s，参考≤33s）。须区分反向/Adam/同步/保存，验证梯度/Adam与完整两轮生产生命周期，不以减少样本或更新次数冒充等价提速。

@@ -531,7 +531,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional CUDA autocast for rollout inference and PPO backward. "
              "BF16 keeps parameters and synchronized gradients in FP32.",
     )
-    parser.add_argument("--vec", choices=("subproc", "dummy", "native"), default="subproc")
+    parser.add_argument("--vec", choices=("subproc", "dummy", "native", "native-subproc"), default="subproc")
     parser.add_argument('--native-search-threads', type=int, default=4)
     parser.add_argument("--start-method", default="fork")
     parser.add_argument(
@@ -3886,6 +3886,13 @@ def main() -> None:
                 hp_order_fraction(aggregate_scalars) or 0.0
             )
             record.update(aggregate_scalars)
+            if pure_ppo:
+                record['pure_rl/natural_games_global'] = int(round(
+                    record['pure_rl/game_total/natural'] * args.world_size))
+                record['pure_rl/censored_games_global'] = int(round(
+                    record['pure_rl/game_total/censored'] * args.world_size))
+                if record['pure_rl/game_total/start_step'] == 0:
+                    record['completed_full_games_global'] = record['pure_rl/natural_games_global']
             record['training_scope'] = args.training_scope
             record.update({'upper/' + key: value for key, value in upper_update.items()})
             record.update({'small_playout_train/' + key: value for key, value in small_update.items()})
@@ -4141,6 +4148,8 @@ def main() -> None:
                         wandb_payload[key] = record[key]
                 wandb_payload.update({key: value for key, value in record.items()
                                       if key.startswith(('outer_return/', 'frozen_upper/', 'pure_rl/'))})
+                if pure_ppo and 'completed_full_games_global' in record:
+                    wandb_payload['game/completed_full_games_global'] = record['completed_full_games_global']
                 wandb_payload.update({
                     key: record[key]
                     for key in _DISTRIBUTED_NOSL_METRIC_KEYS

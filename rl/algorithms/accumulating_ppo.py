@@ -1006,7 +1006,13 @@ class AccumulatingMaskablePPO(MaskablePPO):
             env.step_async = MethodType(capture_choice_async, env)
             env.step_wait = MethodType(capture_choice_wait, env)
 
+        collection_graphs = None
         try:
+            if pure_ppo and self.device.type == 'cuda' and self.amp_mode == 'off':
+                from rl.policies.collection_graphs import SharedCollectionGraphs
+                self.policy.set_training_mode(False)
+                collection_graphs = SharedCollectionGraphs(self.policy.core)
+                self.policy.core._collection_graphs = collection_graphs
             if self._outer_return:
                 from rl.search.rollout_inference import RolloutInference
                 self._rollout_inference = RolloutInference(self, upper_value_only=True)
@@ -1024,6 +1030,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         env, callback, rollout_buffer, n_rollout_steps, use_masking
                     )
         finally:
+            if collection_graphs is not None:
+                self.policy.core.__dict__.pop('_collection_graphs', None)
+                collection_graphs.close()
+                for key, value in collection_graphs.stats.items():
+                    self.logger.record('pure_rl/collection_graph_' + key, value)
             if choice_hook is not None:
                 choice_hook.remove()
             env.step_wait = original_step_wait

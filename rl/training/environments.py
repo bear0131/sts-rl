@@ -473,7 +473,13 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
         return make
 
     env_fns = [compat_env_fn(delay, index) for index, delay in enumerate(stagger_delays)]
-    if args.vec == "subproc":
+    if args.vec == 'native-subproc':
+        if not env_args.strategic_reward:
+            raise ValueError('native-subproc currently supports shared whole-run PPO only')
+        from rl.training.native_subproc_vec_env import NativeSubprocVecEnv
+        venv = NativeSubprocVecEnv(env_fns, envs_per_worker=args.envs_per_worker,
+                                  start_method=args.start_method)
+    elif args.vec == "subproc":
         if args.envs_per_worker == 1:
             venv = CachedMaskSubprocVecEnv(
                 env_fns, start_method=args.start_method

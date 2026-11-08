@@ -73,6 +73,21 @@ class StSMetricsCallback(BaseCallback):
         self._last_speed_t = self._t0
         self._last_speed_steps = int(self.num_timesteps)
         self._start_steps = int(self.num_timesteps)
+        if self._pure_ppo():
+            self._pure_totals()
+
+    def _pure_ppo(self):
+        return getattr(getattr(getattr(self.model, 'policy', None), 'core', None),
+                       'training_objective', None) == 'shared-wholerun-ppo-room-v1'
+
+    def _pure_totals(self):
+        # Ordinary model save/load retains this small rank-local dictionary.
+        # Older checkpoints need an audited migration seed to claim a lifetime
+        # total; otherwise mark the counting origin instead of guessing history.
+        if not hasattr(self.model, 'pure_rl_game_totals'):
+            self.model.pure_rl_game_totals = dict(natural=0, censored=0,
+                start_step=int(getattr(self.model, 'num_timesteps', 0)))
+        return self.model.pure_rl_game_totals
 
     def _on_step(self) -> bool:
         for info in self.locals.get("infos", []):
@@ -88,16 +103,18 @@ class StSMetricsCallback(BaseCallback):
                 self._excluded_startup_episodes += 1
                 continue
             stats = info.get('run_stats') or {}
-            if (getattr(getattr(self.model.policy, 'core', None), 'training_objective', None)
-                    == 'shared-wholerun-ppo-room-v1'
+            if (self._pure_ppo()
                     and (info.get('TimeLimit.truncated') or info.get('dead_screen'))):
                 self._pure_censored += 1
+                self._pure_totals()['censored'] += 1
                 continue
             if (stats.get('episode_scope') == 'boss-opening' and
                     stats.get('combat_outcome') not in ('win', 'loss')):
                 self._boss_censored += 1
                 continue
             self._n_episodes += 1
+            if self._pure_ppo():
+                self._pure_totals()['natural'] += 1
             self._rew.append(ep["r"])
             self._len.append(ep["l"])
 
@@ -137,8 +154,10 @@ class StSMetricsCallback(BaseCallback):
         if self._deck:
             self.logger.record("game/deck_size_mean", mean(self._deck))
         self.logger.record("game/episodes_total", self._n_episodes)
-        if getattr(getattr(self.model.policy, 'core', None), 'training_objective', None) == 'shared-wholerun-ppo-room-v1':
+        if self._pure_ppo():
             self.logger.record('pure_rl/censored_episodes_since_start', self._pure_censored)
+            for key, value in self._pure_totals().items():
+                self.logger.record('pure_rl/game_total/' + key, value)
         self.logger.record("game/episodes_window", len(self._win))
         for buf, numerator, denominator, rate in (
             (self._chest_opened, "chest_opened_window", "chest_opportunities_window", "chest_open_rate"),

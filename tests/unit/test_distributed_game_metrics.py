@@ -42,6 +42,38 @@ def test_no_chest_offers_does_not_report_zero_probability():
     assert 'game/chest_relic_take_rate' not in payload
 
 
+def test_pure_natural_totals_survive_new_callback_and_exclude_truncation():
+    from copy import deepcopy
+    from types import SimpleNamespace
+    from stable_baselines3.common.logger import Logger
+    from rl.tasks.wholerun import StSMetricsCallback
+    model = SimpleNamespace(logger=Logger(None, []), num_timesteps=0,
+        policy=SimpleNamespace(core=SimpleNamespace(training_objective='shared-wholerun-ppo-room-v1')))
+    callback = StSMetricsCallback()
+    callback.model = model
+    callback._on_training_start()
+    natural = {'episode': {'r': 0, 'l': 20}, 'run_stats': {
+        'outcome': 'PLAYER_LOSS', 'act': 1, 'floor': 3, 'deck_size': 10}}
+    callback.locals = {'infos': [natural, {**natural, 'TimeLimit.truncated': True},
+                                  {**natural, 'dead_screen': True}, {}]}
+    callback._on_step()
+    callback._on_rollout_end()
+    assert model.pure_rl_game_totals == dict(natural=1, censored=2, start_step=0)
+    model.num_timesteps = 100
+    model.pure_rl_game_totals = deepcopy(model.pure_rl_game_totals)
+    resumed = StSMetricsCallback()
+    resumed.model = model
+    resumed._on_training_start()
+    resumed.locals = {'infos': [natural]}
+    resumed._on_step()
+    resumed._on_rollout_end()
+    assert model.pure_rl_game_totals == dict(natural=2, censored=2, start_step=0)
+    assert model.logger.name_to_value['pure_rl/game_total/natural'] == 2
+    del model.pure_rl_game_totals
+    resumed._on_training_start()
+    assert model.pure_rl_game_totals == dict(natural=0, censored=0, start_step=100)
+
+
 def test_game_metrics_are_weighted_by_their_actual_rank_windows():
     left = {
         "game/episodes_window": 40.0,

@@ -217,6 +217,9 @@ state.rollout_mode='fixed_steps';state.iteration_steps=1;render();
 assert.equal($('win').textContent,'100.00%');assert.equal($('floor').textContent,'99');
 assert.equal($('win-label').textContent,'最近400个完成局胜率');
 assert.ok($('winavg').textContent.includes('连续补局滚动窗口'));
+state.rows=[{...old,completed_full_games_global:12345}];render();
+assert.equal($('games').textContent,'12,345');
+state.rows=[old];render();assert.equal($('games').textContent,'—');
 const grown={rollout_mode:'fixed_steps',iteration_steps:786432,branch_step:0,branch_round:0,
  rows:[{global_timesteps:1048576,transitions_global:262144},
        {global_timesteps:1835008,transitions_global:786432,rollout_round:5}]};

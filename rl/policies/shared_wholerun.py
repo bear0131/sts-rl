@@ -47,6 +47,12 @@ class SharedWholeRunCore(EntityJointCore):
     training_objective = CONTRACT
     environment_value_objective = None
 
+    def actor_critic(self, observations, **kwargs):
+        runtime = getattr(self, '_collection_graphs', None)
+        if runtime is not None:
+            return runtime(observations)
+        return super().actor_critic(observations, **kwargs)
+
     def __init__(self, space, *, width, layers, heads):
         nn.Module.__init__(self)
         if C.policy_contract(space) != C.AUTOREGRESSIVE_CONTRACT:

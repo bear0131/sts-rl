@@ -23,7 +23,7 @@
 `--arch shared-wholerun` 的 `--n-layers` 是实际共享层数，不再按上下层平分。
 一个 Adam 仅登记每个共享参数一次，所有实际动作均进入普通 PPO；没有搜索、
 蒸馏、预训练卡向量或辅助监督。支持 FP32、autoregressive-v2、native/dummy
-向量环境及既有 SSH ring；评估复用 `PolicyStrategy`，不新增搜索分支。
+向量环境、`native-subproc`及既有 SSH ring；评估复用 `PolicyStrategy`，不新增搜索分支。
 
 奖励直接复用 `outer_return.strategic_reward`：每层 .002、跨幕 .1/.2、通关1，
 不是通用 PPO 的旧 ShapedReward。恢复包把 `strategic_reward` wrapper 独立标记，
@@ -50,6 +50,21 @@ micro1536×累积8×四rank=49152有效batch、1遍，共16次Adam/轮，LR1e-4�
 目标无方差不显示解释方差，零样本不补零。`pure_rl/{policy_loss,value_loss,entropy,
 approx_kl,clip_fraction}` 汇总更新过程中成功反向的真实样本，OOM失败尝试不计入。
 这些不是最终权重的重测，也不能与旧上层MC标签的误差直接比较。
+
+`native-subproc --envs-per-worker 8 --start-method spawn` 将每组环境留在独立
+CPU进程内用原生批步进，完整当前观测通过共享内存回传。逻辑槽位、RNG、mask、
+终局观测及恢复journal不变，返回给采样器的数组拥有独立存储。当前仅支持上述
+共享纯PPO；初始化进程开销单列，不包含在稳态rollout计时内。
+CUDA/FP32采样自动使用有容量限制的分phase执行图，保留全部有效token，只裁剪
+末尾padding并对独立batch补齐。图在每次collection结束释放，不进入checkpoint。
+浮点验证容差为rtol/atol 2e-5；不宣称不同形状的矩阵运算逐位相等。更新仍走
+原有FP32前后向，图不会改变学习率、样本分组或Adam次数。
+
+纯PPO的`pure_rl_game_totals`保存每rank累计自然结束/删失数及计数起点，随
+model.zip普通保存恢复。跨rank汇总为`pure_rl/natural_games_global`与
+`pure_rl/censored_games_global`；仅当起点为0时发布监控兼容字段
+`completed_full_games_global`。旧checkpoint没有计数时从恢复步开始计，不能
+直接冒称从训练开始累计；补齐历史需核对VecMonitor持久计数与全部分段日志。
 
 
 训练异常在关闭 resident 环境前，将现场 JSON 与单槽环境 journal 写入

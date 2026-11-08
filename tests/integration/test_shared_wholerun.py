@@ -51,8 +51,11 @@ def test_real_ppo_two_rounds_and_resume(tmp_path, device):
     params = [p for g in model.policy.optimizer.param_groups for p in g['params']]
     assert len(params) == len({id(p) for p in params})
     before = deepcopy(model.policy.state_dict())
-    model.learn(total_timesteps=128)
+    from rl.tasks.wholerun import StSMetricsCallback
+    model.learn(total_timesteps=128, callback=StSMetricsCallback())
     assert model.num_timesteps == 128 and model._n_updates == 2
+    totals = deepcopy(model.pure_rl_game_totals)
+    assert not hasattr(model.policy.core, '_collection_graphs')
     assert recorded['pure_rl/combat_samples'] > 0
     assert not model.nosl_is_az and not model.hierarchical_combat_hp
     assert not hasattr(model.policy, 'upper_optimizer')
@@ -66,6 +69,8 @@ def test_real_ppo_two_rounds_and_resume(tmp_path, device):
     assert bundle is not None
     model.save(tmp_path/'policy.zip')
     loaded = load_checkpoint(tmp_path/'policy.zip', device=device)
+    assert loaded.pure_rl_game_totals == totals
+    assert not hasattr(loaded.policy.core, '_collection_graphs')
     assert isinstance(loaded, AccumulatingMaskablePPO)
     assert loaded.policy.core.combat.transformer is loaded.policy.core.overworld.encoder.transformer
     obs = model._last_obs
@@ -80,8 +85,11 @@ def test_real_ppo_two_rounds_and_resume(tmp_path, device):
     optimizer = loaded.policy.optimizer
     old_steps = {p: int(s['step']) for p, s in optimizer.state.items()}
     shared = next(loaded.policy.core.combat.transformer.parameters())
-    loaded.learn(total_timesteps=128, reset_num_timesteps=False)
+    loaded.learn(total_timesteps=128, reset_num_timesteps=False, callback=StSMetricsCallback())
     assert loaded.num_timesteps == 256
+    assert loaded.pure_rl_game_totals['natural'] >= totals['natural']
+    assert loaded.pure_rl_game_totals['censored'] >= totals['censored']
+    assert loaded.pure_rl_game_totals['start_step'] == 0
     # A phase-specific head need not occur in both batches. Shared backbone
     # moments must advance; every existing head must retain its prior steps.
     assert int(optimizer.state[shared]['step']) > old_steps[shared]
@@ -90,9 +98,12 @@ def test_real_ppo_two_rounds_and_resume(tmp_path, device):
 
 
 @pytest.mark.parametrize('grow', [False, True])
-@pytest.mark.parametrize('scene', ['ordinary', 'campfire'])
+@pytest.mark.parametrize('scene,backend', [
+    ('ordinary', 'native'), ('campfire', 'native'),
+    ('ordinary', 'native-subproc'),
+])
 def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, grow,
-                                              scene, campfire_env_type):
+                                              scene, backend, campfire_env_type):
     import json
     import sys
     from types import SimpleNamespace
@@ -124,7 +135,8 @@ def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, gr
     argv = ['distributed_sb3', '--rank', '0', '--world-size', '1',
         '--checkpoint', str(checkpoint), '--updates', '2', '--n-envs', '2',
         '--n-steps', '32', '--batch-size', '32', '--n-epochs', '1',
-        '--gradient-accumulation-steps', '1', '--device', 'cpu', '--vec', 'native',
+        '--gradient-accumulation-steps', '1', '--device', 'cpu', '--vec', backend,
+        '--envs-per-worker', '2', '--start-method', 'spawn',
         '--native-search-threads', '2', '--gamma', '1', '--gae-lambda', '1',
         '--reasoning-updates', '0', '--reasoning-coef', '0', '--no-interactive-reasoning',
         '--remote-root', str(tmp_path/'transport'), '--ssh-control-dir', str(tmp_path/'ssh'),
@@ -170,6 +182,8 @@ def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, gr
             assert row['pure_rl/'+key] == payload['pure_rl/'+key]
         assert row['pure_rl/value_loss'] >= 0
         assert 0 <= row['pure_rl/clip_fraction'] <= 1
+        assert row['completed_full_games_global'] == row['pure_rl/natural_games_global']
+        assert row['completed_full_games_global'] == payload['game/completed_full_games_global']
         for key in {**reward_monitor.counts(None), **campfire_monitor.counts(None)}:
             assert row['upper/'+key] == payload['upper/'+key]
         for key, value in row.items():
@@ -181,6 +195,8 @@ def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, gr
         assert sum(r['upper/campfire_decisions'] for r in records) > 0
         assert sum(r['upper/reward_gold_resolved'] for r in records) > 0
         assert sum(r['upper/reward_potion_resolved'] for r in records) > 0
+    assert [r['completed_full_games_global'] for r in records] == sorted(
+        r['completed_full_games_global'] for r in records)
 
 
 def test_grow_live_pure_ppo_environments_without_resetting_source_slots(tmp_path):

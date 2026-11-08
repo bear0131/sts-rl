@@ -33,7 +33,11 @@ off
 --float32-matmul-precision
 highest
 --vec
-native
+native-subproc
+--envs-per-worker
+8
+--start-method
+spawn
 --native-search-threads
 24
 --updates
