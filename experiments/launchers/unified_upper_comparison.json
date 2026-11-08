@@ -2267,6 +2267,18 @@
       "confirmation": "For nominated settings rerun original plus selected candidates on next disjoint complete cohort from same paused source with fresh_cohort_offset=1. This is an offline update diagnostic, not a win-rate proof or global optimum; leave original training paused until results reviewed."
     },
     "fixed": "All original model/search/rewards/observation/MC target/actual batch sizes/FP32/native source unchanged; no prototype full-chain Transformer or budget allocator. Native world-v3 and original 24/24/24/16 threads. Each split consists of whole games; heldout samples never used for gradients or advantage normalization.",
-    "status": "prepared; qualification pending"
+    "status": "screen02 running four ranks from protected221 after environment restore; screen01 pre-collection SSH path failure retained",
+    "runtime": {
+      "root": "/root/autodl-tmp/combat38-hyperparameter-recheck-20261108",
+      "tag": "screen02",
+      "source_commit": "acacfc20",
+      "trainer_pids": [
+        152711,
+        149272,
+        475712,
+        339403
+      ],
+      "native_sha256": "b40edcf73e671332dc8d5d27287264d8294376605ca6bad865aea36596156103"
+    }
   }
 }
