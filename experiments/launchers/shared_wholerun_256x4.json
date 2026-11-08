@@ -3,10 +3,10 @@
   "run_id": "combat40-no-search-shared256x4-r1",
   "root": "/root/autodl-tmp/combat40-pure-rl-20261108",
   "runtime_entry": "rl.training.distributed_sb3",
-  "runtime_source": "766bae23",
+  "runtime_source": "474a1bb1",
   "initial_config": "configs/train/shared_wholerun_256x4.args",
   "training_config": "configs/train/shared_wholerun_distributed.args",
-  "source_archive_sha256": "a9522ca48b2658064bd2e59c792245562e4da1b58a1f0d1aa6528bc58e771ffc",
+  "source_archive_sha256": "e1e02b92c404628d22e13eb832019eca95fe048cdb3fb111fd5194354a4532b7",
   "initial_sha256": "26257f4b08ae4e3d8803565bab9e7d20d23cb2c0c928bb8e3a7f43fbc2da949c",
   "native_sha256": "b40edcf73e671332dc8d5d27287264d8294376605ca6bad865aea36596156103",
   "host": "connect.bjb2.seetacloud.com",
@@ -41,19 +41,19 @@
   },
   "resume": "Own rank full model/Adam/environment/RNG bundle; same initialization across ranks; never reuse old COMBAT38 weights.",
   "monitor": "unified_upper_comparison.json#monitor",
-  "source_directory": "source-runtime-766bae23",
-  "source_manifest_sha256": "c126b03d41cc5ed5c564530509cbcb582eb278eab8a6ee001c1ebbd1e9ed10fd",
+  "source_directory": "source-runtime-474a1bb1",
+  "source_manifest_sha256": "e31b9dcc967ce0645f37023df3dcd79561960fe567437cbcdf46e1da8342ec87",
   "qualification_completed_global_actions": 524288,
   "qualification_four_rank_sha256": "bcb7bb7466b8c04ae97902c9f196dc7e8d55f7b2e244ae3130bdd29641a77eb6",
   "parameters": 5522740,
-  "resume_from_global_actions": 7077888,
-  "training_process_timeout_seconds": 862500,
-  "training_ring_port": 30343,
-  "training_ssh_control_directory": "/tmp/c40m",
-  "verified_round": 22,
-  "verified_global_actions": 7864320,
-  "optimizer_steps_at_verified_round": 352,
-  "production_four_rank_sha256": "f5c7dfba7e60dd64b272fc64c3bd860fbb6ed6f7b95b405992281311a7a6878d",
+  "resume_from_global_actions": 19660800,
+  "training_process_timeout_seconds": 833700,
+  "training_ring_port": 30347,
+  "training_ssh_control_directory": "/tmp/c40l",
+  "verified_round": 38,
+  "verified_global_actions": 20447232,
+  "optimizer_steps_at_verified_round": 608,
+  "production_four_rank_sha256": "8f16b87391b614bea011f4b56cff98050e19b0cebaf27ef3e6725eeb2ff621b2",
   "evidence": {
     "path": "/root/autodl-tmp/combat40-pure-rl-20261108/evidence/pure-speed-monitor-evidence.tgz",
     "bytes": 10828580,
@@ -65,8 +65,8 @@
     ]
   },
   "qualification_reference": "runs/combat40-no-search-shared256x4-r1/references/qualified-round2",
-  "production_reference": "runs/combat40-no-search-shared256x4-r1/references/verified-monitor-round22",
-  "resume_from_round": 21,
+  "production_reference": "runs/combat40-no-search-shared256x4-r1/references/verified-loss-round38",
+  "resume_from_round": 37,
   "geometry": {
     "environments_per_rank": 256,
     "ranks": 4,
@@ -91,8 +91,8 @@
     "candidate_seconds": 200.39986576791853,
     "scope": "Single-rank identical 256x768 collection and 16 updates, including full-buffer hashing; four-rank real rounds 19/20 verified separately (round20 max wall 205.501s, max rollout 125.056s)."
   },
-  "current_plan": "monitor-plan.json",
-  "current_resume_reference": "runs/combat40-no-search-shared256x4-r1/references/before-choice-monitor",
+  "current_plan": "loss-plan.json",
+  "current_resume_reference": "runs/combat40-no-search-shared256x4-r1/references/before-loss-monitor",
   "choice_monitor": {
     "first_round": 22,
     "metrics": [
@@ -102,6 +102,21 @@
       "upper/campfire_*"
     ],
     "status": "four-rank and local HTTP verified",
+    "historical_missing": "remain absent; no backfill"
+  },
+  "loss_monitor": {
+    "first_round": 38,
+    "status": "four-rank and local HTTP verified",
+    "target": "frozen room lambda return, behavior V pre-update",
+    "metrics": [
+      "pure_rl/value_pre/{all,combat,upper}/mse",
+      "pure_rl/value_pre/{all,combat,upper}/explained_variance",
+      "pure_rl/value_loss",
+      "pure_rl/policy_loss",
+      "pure_rl/entropy",
+      "pure_rl/approx_kl",
+      "pure_rl/clip_fraction"
+    ],
     "historical_missing": "remain absent; no backfill"
   }
 }
