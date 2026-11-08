@@ -428,6 +428,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
             raise ValueError("bf16 AMP requires a CUDA device")
 
     def _setup_model(self) -> None:
+        from rl.policies.shared_wholerun import SharedWholeRunPolicy
+        if issubclass(self.policy_class, SharedWholeRunPolicy):
+            from rl.algorithms.shared_buffer import SharedRolloutBuffer
+            self.rollout_buffer_class = SharedRolloutBuffer
         super()._setup_model()
         from env.core.encode import OBS_VERSION
         self.observation_version = OBS_VERSION
@@ -483,6 +487,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         return [
             *super()._excluded_save_params(),
             "_native_leaf_inference",
+            "_shared_collection_graphs",
             "_rollout_inference",
             "_independent_rollout_progress",
             "_nosl_leaf_batch_controller",
@@ -1007,11 +1012,19 @@ class AccumulatingMaskablePPO(MaskablePPO):
             env.step_wait = MethodType(capture_choice_wait, env)
 
         collection_graphs = None
+        result = False
         try:
             if pure_ppo and self.device.type == 'cuda' and self.amp_mode == 'off':
                 from rl.policies.collection_graphs import SharedCollectionGraphs
                 self.policy.set_training_mode(False)
-                collection_graphs = SharedCollectionGraphs(self.policy.core)
+                collection_graphs = getattr(self, '_shared_collection_graphs', None)
+                if collection_graphs is not None and not collection_graphs.compatible(self.policy.core):
+                    collection_graphs.close()
+                    collection_graphs = None
+                if collection_graphs is None:
+                    collection_graphs = SharedCollectionGraphs(self.policy.core)
+                    self._shared_collection_graphs = collection_graphs
+                collection_graphs.begin_collection()
                 self.policy.core._collection_graphs = collection_graphs
             if self._outer_return:
                 from rl.search.rollout_inference import RolloutInference
@@ -1032,7 +1045,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
         finally:
             if collection_graphs is not None:
                 self.policy.core.__dict__.pop('_collection_graphs', None)
-                collection_graphs.close()
+                if not result:
+                    collection_graphs.close()
+                    self.__dict__.pop('_shared_collection_graphs', None)
                 for key, value in collection_graphs.stats.items():
                     self.logger.record('pure_rl/collection_graph_' + key, value)
             if choice_hook is not None:

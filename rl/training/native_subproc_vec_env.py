@@ -4,6 +4,8 @@ Control, masks, terminal infos and recovery use the existing grouped protocol.
 Only current observations use shared storage; public returns always own copies.
 """
 from multiprocessing import shared_memory
+import os
+import selectors
 
 import numpy as np
 from stable_baselines3.common.vec_env.base_vec_env import CloudpickleWrapper
@@ -52,7 +54,7 @@ class _NativeStepPipe:
                 self.native = NativeSearchVecEnv([lambda env=env: env for env in self.envs], threads=1)
                 self.remote.send(None)
             elif cmd == 'step' and self.native is not None:
-                obs, rewards, dones, infos = self.native.step(np.asarray(data))
+                obs, rewards, dones, infos = self.native._step_for_transport(np.asarray(data))
                 self.write(obs)
                 self.remote.send([(None, rewards[i], dones[i], info, self.native.reset_infos[i])
                                   for i, info in enumerate(infos)])
@@ -115,6 +117,33 @@ class NativeSubprocVecEnv(cv.GroupedCachedMaskSubprocVecEnv):
         # SB3 retains the previous observation until after step_wait. Returning
         # views would silently overwrite its training sample on the next step.
         return {k: v.copy() for k, v in self.arrays.items()}
+
+    def _receive_groups(self, pending):
+        if os.name != 'posix':
+            return super()._receive_groups(pending)
+        # Register each pipe/sentinel once for this request batch. Rebuilding a
+        # selector after each early worker response was quadratic in workers.
+        # Windows retains multiprocessing's named-pipe-aware implementation.
+        results = {}
+        with selectors.PollSelector() as selector:
+            for remote in pending:
+                selector.register(remote, selectors.EVENT_READ)
+            for sentinel in self._worker_sentinels:
+                selector.register(sentinel, selectors.EVENT_READ)
+            while pending:
+                ready = [key.fileobj for key, events in selector.select()]
+                for item in ready:
+                    if item in self._worker_sentinels:
+                        self._raise_worker_failure(self._worker_sentinels[item])
+                for remote in ready:
+                    group_index = pending.pop(remote)
+                    selector.unregister(remote)
+                    try:
+                        payload, _timing = cv._unwrap_timed_payload(remote.recv())
+                        results[group_index] = cv._unpack_leaf_responses(payload)
+                    except (EOFError, BrokenPipeError, OSError) as exc:
+                        self._raise_worker_failure(group_index, exc)
+        return results
 
     def results(self):
         grouped = self._receive_groups({r: i for i, r in enumerate(self.remotes)})

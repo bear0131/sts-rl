@@ -125,3 +125,88 @@ def test_phase_graph_eviction_weight_refresh_and_released_scratch():
     assert not graphs.entries
     with torch.no_grad(), pytest.raises(RuntimeError, match='live eval'):
         graphs(batch)
+
+
+def test_native_transport_reports_worker_death_and_releases_shared_memory():
+    env = NativeSubprocVecEnv([_environment] * 3, envs_per_worker=2, start_method='spawn')
+    name = env.memory.name
+    try:
+        env.reset()
+        masks = env.env_method('action_masks')
+        env.step_async(np.asarray([np.flatnonzero(mask)[0] for mask in masks]))
+        env.processes[1].terminate()
+        env.processes[1].join(timeout=5)
+        with pytest.raises(RuntimeError, match=r'group=1 logical_envs=\[2\]'):
+            env.step_wait()
+    finally:
+        env.close()
+    assert all(not process.is_alive() for process in env.processes)
+    with pytest.raises(FileNotFoundError):
+        shared_memory.SharedMemory(name=name)
+
+
+@pytest.mark.parametrize('capacity', [1, 4])
+def test_map_cache_tracks_content_weights_shape_and_schema(capacity):
+    from env.core import vocab
+    from rl.policies.collection_graphs import SharedCollectionGraphs
+    assert torch.cuda.is_available(), 'explicit CUDA map-cache qualification required'
+    torch.set_float32_matmul_precision('highest')
+    env = SlayTheSpireEnv(card_language=True, global_map_view=True, upper_public_context=True,
+                         event_option_observation=True, neow_observation=True,
+                         combat_action_contract='autoregressive-v2')
+    graphs = None
+    try:
+        frame, _ = env.reset(seed=20261109)
+        frames = {}
+        combat = vocab.PHASE_VOCAB_INDEX['combat']
+        for _ in range(128):
+            frames.setdefault(int(frame['phase'][0]), deepcopy(frame))
+            if combat in frames and len(frames) >= 3:
+                break
+            frame, _, ended, truncated, _ = env.step(int(np.flatnonzero(env.action_masks())[0]))
+            if ended or truncated:
+                frame, _ = env.reset()
+        assert combat in frames and len(frames) >= 3
+        model = AccumulatingMaskablePPO(SharedWholeRunPolicy, env, seed=20261109,
+            n_steps=4, batch_size=4, n_epochs=1, device='cuda', gamma=1.,
+            reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
+            policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4))
+        model.policy.set_training_mode(False)
+        core = model.policy.core
+        graphs = SharedCollectionGraphs(core, capacity=capacity)
+        rows = list(frames.values())
+        with torch.no_grad():
+            for count in (7, 3, 7):
+                chosen = [rows[(i * 2 + 1) % len(rows)] for i in range(count)]
+                obs = obs_as_tensor({k: np.stack([r[k] for r in chosen]) for k in chosen[0]},
+                                    model.device)
+                for actual, expected in zip(graphs(obs), core.actor_critic(obs), strict=True):
+                    torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-5)
+                processed = graphs.stats['map_rows']
+                graphs(obs)
+                assert graphs.stats['map_rows'] == processed
+                upper_row = int((obs['phase'].flatten() != combat).nonzero()[0])
+                node = int(obs['map_full_rooms'][upper_row].ne(0).nonzero()[0])
+                obs['map_full_features'][upper_row, node, 2] = 1 - obs['map_full_features'][upper_row, node, 2]
+                for actual, expected in zip(graphs(obs), core.actor_critic(obs), strict=True):
+                    torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-5)
+                assert graphs.stats['map_rows'] == processed + 1
+                # The schema itself participates in the graph identity; a
+                # reordered dict cannot reinterpret packed field offsets.
+                obs = dict(reversed(list(obs.items())))
+                core.overworld.encoder.map_dag.node[0].bias.add_(.01)
+                core.combat.card.weight.add_(.001)
+                graphs.begin_collection()
+                torch._C._cuda_clearCublasWorkspaces()
+                scratch = torch.empty(1024 * 1024, device='cuda')
+                scratch.fill_(17)
+                del scratch
+                torch.cuda.empty_cache()
+                for actual, expected in zip(graphs(obs), core.actor_critic(obs), strict=True):
+                    torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-5)
+                assert graphs.stats['map_rows'] > 0
+                assert len(graphs.entries) <= capacity and len(graphs.map_entries) <= capacity
+    finally:
+        if graphs is not None:
+            graphs.close()
+        env.close()

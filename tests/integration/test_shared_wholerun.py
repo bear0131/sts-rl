@@ -56,6 +56,8 @@ def test_real_ppo_two_rounds_and_resume(tmp_path, device):
     assert model.num_timesteps == 128 and model._n_updates == 2
     totals = deepcopy(model.pure_rl_game_totals)
     assert not hasattr(model.policy.core, '_collection_graphs')
+    if device == 'cuda':
+        assert not model._shared_collection_graphs.closed
     assert recorded['pure_rl/combat_samples'] > 0
     assert not model.nosl_is_az and not model.hierarchical_combat_hp
     assert not hasattr(model.policy, 'upper_optimizer')
@@ -71,6 +73,7 @@ def test_real_ppo_two_rounds_and_resume(tmp_path, device):
     loaded = load_checkpoint(tmp_path/'policy.zip', device=device)
     assert loaded.pure_rl_game_totals == totals
     assert not hasattr(loaded.policy.core, '_collection_graphs')
+    assert not hasattr(loaded, '_shared_collection_graphs')
     assert isinstance(loaded, AccumulatingMaskablePPO)
     assert loaded.policy.core.combat.transformer is loaded.policy.core.overworld.encoder.transformer
     obs = model._last_obs

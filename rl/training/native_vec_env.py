@@ -102,6 +102,19 @@ class NativeSearchVecEnv(DummyVecEnv):
             return super().step_wait()
         return self._step_indices(range(self.num_envs))
 
+    def _step_for_transport(self, actions):
+        """Borrow results only until the worker's synchronous write/send ends.
+
+        Public step()/step_subset() retain owned arrays and infos. The private
+        transport owner never advances a slot until serialization has finished.
+        """
+        if self.native_root_observations is None:
+            return self.step(actions)
+        if self._strategic_observation_keys is not None:
+            raise RuntimeError('cannot transport partial observations')
+        self.step_async(actions)
+        return self._step_indices(range(self.num_envs), borrow=True)
+
     def step_subset(self, actions):
         """Advance only ready logical slots, preserving all other slot state.
 
@@ -181,7 +194,7 @@ class NativeSearchVecEnv(DummyVecEnv):
             for base, enabled in zip(bases, previous, strict=True):
                 base._emit_nosl_value_observations = enabled
 
-    def _step_indices(self, indices, *, subset=False, observation_keys=None):
+    def _step_indices(self, indices, *, subset=False, observation_keys=None, borrow=False):
         cohort = getattr(self, 'episode_rollout_active', None)
         prefetched, self._prefetched_steps = self._prefetched_steps, {}
         self._small_step_plan = None
@@ -264,6 +277,8 @@ class NativeSearchVecEnv(DummyVecEnv):
             return ({key: self.buf_obs[key][rows] for key in keys},
                     self.buf_rews[rows].copy(), self.buf_dones[rows].copy(),
                     _copy_step_infos([self.buf_infos[i] for i in indices]))
+        if borrow:
+            return self.buf_obs, self.buf_rews, self.buf_dones, self.buf_infos
         return (self._obs_from_buf(), np.copy(self.buf_rews), np.copy(self.buf_dones), _copy_step_infos(self.buf_infos))
 
     def _step_one(self, index, action):

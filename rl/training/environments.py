@@ -464,6 +464,10 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
                 group = 0 if env_index < args.n_envs // 2 else 1 if env_index < 3 * args.n_envs // 4 else 2
                 local_args.backend_factory = boss_pool.factory(boss=BOSSES[group], ascension=args.ascension)
             env = WholeRunTask().make_env_fn(local_args)()
+            if env_args.strategic_reward:
+                # Pure PPO consumes real transitions and its room returns, not
+                # historical search-only end-turn/terminal auxiliary snapshots.
+                env.unwrapped._emit_nosl_value_observations = False
             if expected_space is not None:
                 env = CheckpointObservationCompat(env, expected_space)
             if stagger_steps:
