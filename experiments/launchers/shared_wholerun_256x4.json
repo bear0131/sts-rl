@@ -1,0 +1,44 @@
+{
+  "protocol": "shared-wholerun-ppo-room-v1",
+  "run_id": "combat40-no-search-shared256x4-r1",
+  "root": "/root/autodl-tmp/combat40-pure-rl-20261108",
+  "runtime_entry": "rl.training.distributed_sb3",
+  "runtime_source": "d679b9c4",
+  "initial_config": "configs/train/shared_wholerun_256x4.args",
+  "training_config": "configs/train/shared_wholerun_distributed.args",
+  "source_archive_sha256": "bae8adba28434ba688d75be4f5499bdbafb07e42dfea02ef2b86fe4daf1d4ccd",
+  "initial_sha256": "26257f4b08ae4e3d8803565bab9e7d20d23cb2c0c928bb8e3a7f43fbc2da949c",
+  "native_sha256": "b40edcf73e671332dc8d5d27287264d8294376605ca6bad865aea36596156103",
+  "host": "connect.bjb2.seetacloud.com",
+  "ports": [
+    53841,
+    13208,
+    15409,
+    49017
+  ],
+  "threads": [
+    24,
+    24,
+    24,
+    16
+  ],
+  "seed": 20261108,
+  "qualification_rounds": 2,
+  "total_round_budget": 500,
+  "total_global_actions": 131072000,
+  "iteration_timeout_seconds": 1800,
+  "qualification_process_timeout_seconds": 4000,
+  "precision": "FP32 highest",
+  "state": "qualification_running",
+  "search": false,
+  "reward": "env.core.outer_return.strategic_reward",
+  "lambda_rule": {
+    "in_room": 1,
+    "room_boundary": 0.9,
+    "act_boundary": 0.9,
+    "terminal_bootstrap": 0,
+    "gamma": 1
+  },
+  "resume": "Own rank full model/Adam/environment/RNG bundle; same initialization across ranks; never reuse old COMBAT38 weights.",
+  "monitor": "unified_upper_comparison.json#monitor"
+}

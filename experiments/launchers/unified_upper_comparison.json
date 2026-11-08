@@ -1721,16 +1721,16 @@
     }
   },
   "monitor": {
-    "root": "/root/autodl-tmp/combat38-resume141-20261108",
-    "run_id": "combat38-transformer64-regret-paired-r1",
-    "label": "COMBAT38 · 共享链 / 2×64 Transformer / 1920局",
+    "root": "/root/autodl-tmp/combat40-pure-rl-20261108",
+    "run_id": "combat40-no-search-shared256x4-r1",
+    "label": "COMBAT40 · 共享256×4 / 无搜索纯PPO / 房间λ=.9",
     "branch_step": 0,
     "branch_round": 0,
-    "iteration_steps": null,
-    "rollout_mode": "complete_games",
-    "status": "paused",
-    "note": "按用户要求在第221轮完整保存后暂停，正在复测当前学习率与更新次数；四rank正常exit0且状态已双备份。COMBAT39保持第42轮暂停。",
-    "updated_at": "2026-11-08T08:35:50.066863+00:00"
+    "iteration_steps": 262144,
+    "rollout_mode": "fixed_steps",
+    "status": "qualification",
+    "note": "从随机初值重新训练；每rank128环境×512动作，四机两轮完整资格进行中。COMBAT38已保存226并暂停；39仍暂停。固定步数轮与旧完整局轮不能按轮数直接比较。",
+    "updated_at": "2026-11-08T13:49:30.525820+00:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
