@@ -1025,6 +1025,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 env.step_async = MethodType(overlapped_async, env)
 
         collection_graphs = None
+        host_observation_hook = None
         result = False
         try:
             if pure_ppo and self.device.type == 'cuda' and self.amp_mode == 'off':
@@ -1039,6 +1040,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     self._shared_collection_graphs = collection_graphs
                 collection_graphs.begin_collection()
                 self.policy.core._collection_graphs = collection_graphs
+                # Unknown hooks may mutate the converted tensors. Keep the
+                # GPU-derived metadata path for those callers.
+                if not self.policy._forward_pre_hooks:
+                    def bind_host(_policy, args):
+                        collection_graphs.bind_host_observations(args[0], self._last_obs)
+                    host_observation_hook = self.policy.register_forward_pre_hook(bind_host)
             if self._outer_return:
                 from rl.search.rollout_inference import RolloutInference
                 self._rollout_inference = RolloutInference(self, upper_value_only=True)
@@ -1056,6 +1063,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         env, callback, rollout_buffer, n_rollout_steps, use_masking
                     )
         finally:
+            if host_observation_hook is not None:
+                host_observation_hook.remove()
             if collection_graphs is not None:
                 self.policy.core.__dict__.pop('_collection_graphs', None)
                 if not result:

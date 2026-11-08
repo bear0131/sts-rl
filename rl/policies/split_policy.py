@@ -935,6 +935,9 @@ class _SpecialistActorCritic(nn.Module):
             return
         score = self._score(blocks[role], blocks["__global__"])
         base = A.seg_base(segment)
+        active = blocks.get('__active_roles__', {}).get(role)
+        if active is not None:
+            score = torch.where(active[:, None], score, logits[:, base:base + score.shape[1]])
         logits[:, base:base + score.shape[1]] = score
 
     def _map_logits(self, logits, obs, blocks):

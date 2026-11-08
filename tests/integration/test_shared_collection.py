@@ -171,7 +171,8 @@ def test_native_transport_reports_worker_death_and_releases_shared_memory():
 
 
 @pytest.mark.parametrize('capacity', [1, 4])
-def test_map_cache_tracks_content_weights_shape_and_schema(capacity):
+@pytest.mark.parametrize('host_metadata', [False, True])
+def test_map_cache_tracks_content_weights_shape_and_schema(capacity, host_metadata):
     from env.core import vocab
     from rl.policies.collection_graphs import SharedCollectionGraphs
     assert torch.cuda.is_available(), 'explicit CUDA map-cache qualification required'
@@ -199,21 +200,42 @@ def test_map_cache_tracks_content_weights_shape_and_schema(capacity):
         model.policy.set_training_mode(False)
         core = model.policy.core
         graphs = SharedCollectionGraphs(core, capacity=capacity)
+        invocations = 0
+        def forward(observation):
+            nonlocal invocations
+            invocations += 1
+            if host_metadata:
+                graphs.bind_host_observations(observation,
+                    {key: value.detach().cpu().numpy() for key, value in observation.items()})
+            # Owned graph buffers must also survive mode changes, including a
+            # subsequent no_grad bootstrap after an inference-mode collection.
+            with torch.inference_mode(host_metadata and bool(invocations % 2)), torch.no_grad():
+                return graphs(observation)
         rows = list(frames.values())
         with torch.no_grad():
             for count in (7, 3, 7):
                 chosen = [rows[(i * 2 + 1) % len(rows)] for i in range(count)]
                 obs = obs_as_tensor({k: np.stack([r[k] for r in chosen]) for k in chosen[0]},
                                     model.device)
-                for actual, expected in zip(graphs(obs), core.actor_critic(obs), strict=True):
+                for actual, expected in zip(forward(obs), core.actor_critic(obs), strict=True):
                     torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-5)
                 processed = graphs.stats['map_rows']
-                graphs(obs)
+                forward(obs)
                 assert graphs.stats['map_rows'] == processed
+                if host_metadata:
+                    graphs.bind_host_observations(obs,
+                        {key: value.detach().cpu().numpy() for key, value in obs.items()})
+                    # A binding for a different dict cannot be reused by an
+                    # arbitrary caller, even when it contains the same tensors.
+                    other = dict(obs)
+                    for actual, expected in zip(graphs(other), core.actor_critic(other), strict=True):
+                        torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-5)
+                forward(obs)
+                processed = graphs.stats['map_rows']
                 upper_row = int((obs['phase'].flatten() != combat).nonzero()[0])
                 node = int(obs['map_full_rooms'][upper_row].ne(0).nonzero()[0])
                 obs['map_full_features'][upper_row, node, 2] = 1 - obs['map_full_features'][upper_row, node, 2]
-                for actual, expected in zip(graphs(obs), core.actor_critic(obs), strict=True):
+                for actual, expected in zip(forward(obs), core.actor_critic(obs), strict=True):
                     torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-5)
                 assert graphs.stats['map_rows'] == processed + 1
                 # The schema itself participates in the graph identity; a
@@ -227,7 +249,7 @@ def test_map_cache_tracks_content_weights_shape_and_schema(capacity):
                 scratch.fill_(17)
                 del scratch
                 torch.cuda.empty_cache()
-                for actual, expected in zip(graphs(obs), core.actor_critic(obs), strict=True):
+                for actual, expected in zip(forward(obs), core.actor_critic(obs), strict=True):
                     torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-5)
                 assert graphs.stats['map_rows'] > 0
                 assert len(graphs.entries) <= capacity and len(graphs.map_entries) <= capacity

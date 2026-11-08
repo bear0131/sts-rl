@@ -29,7 +29,7 @@ import shlex
 import subprocess
 import time
 from itertools import count
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -3336,12 +3336,15 @@ def main() -> None:
                 monitor = resource_stack.enter_context(ResourceMonitor(
                     interval=args.rollout_resource_interval,
                     gpu=model.device.type=='cuda', torch_device=model.device))
-            ok = model.collect_rollouts(
-                model.env,
-                callback,
-                model.rollout_buffer,
-                n_rollout_steps=args.n_steps,
-            )
+            # This entry owns its metrics-only callbacks. Keep arbitrary
+            # library callbacks' autograd behavior unchanged.
+            with th.inference_mode() if pure_ppo else nullcontext():
+                ok = model.collect_rollouts(
+                    model.env,
+                    callback,
+                    model.rollout_buffer,
+                    n_rollout_steps=args.n_steps,
+                )
             if model.device.type == "cuda":
                 th.cuda.synchronize(model.device)
             if monitor is not None:

@@ -1,4 +1,6 @@
 """Reusable whole-run PPO storage, with SB3's original sample ordering."""
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import torch
 from gymnasium import spaces
@@ -21,12 +23,25 @@ class SharedRolloutBuffer(MaskableDictRolloutBuffer):
     def reset(self):
         if not hasattr(self, 'observations'):
             super().reset()
-        for value in self.observations.values():
-            value.fill(0)
-        for key in ('actions', 'rewards', 'episode_starts', 'values', 'log_probs',
-                    'advantages', 'returns'):
-            getattr(self, key).fill(0)
-        self.action_masks.fill(1)
+        else:
+            arrays = [*self.observations.values(), *[getattr(self, key) for key in
+                ('actions', 'rewards', 'episode_starts', 'values', 'log_probs',
+                 'advantages', 'returns')], self.action_masks]
+            parallel = (sum(value.nbytes for value in arrays) >= 256 * 1024 * 1024
+                        and all(value.flags.c_contiguous for value in arrays))
+            if parallel:
+                jobs = []
+                for value in arrays:
+                    flat = value.reshape(-1)
+                    chunk = max(1, 32 * 1024 * 1024 // value.itemsize)
+                    fill = int(value is self.action_masks)
+                    jobs.extend((flat[start:start + chunk], fill)
+                                for start in range(0, len(flat), chunk))
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    list(pool.map(lambda item: item[0].fill(item[1]), jobs))
+            else:
+                for value in arrays:
+                    value.fill(int(value is self.action_masks))
         self.generator_ready = False
         self._prefilled = None
         BaseBuffer.reset(self)

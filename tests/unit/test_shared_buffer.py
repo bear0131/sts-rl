@@ -106,3 +106,22 @@ def test_prefill_replacement_and_aborted_collection_do_not_reuse_old_observation
     stale['x'][:] = 9
     add(stale)
     np.testing.assert_array_equal(buffer.observations['x'][1], stale['x'])
+
+
+
+def test_large_reused_buffer_reset_clears_every_field_and_prefill():
+    buffer = SharedRolloutBuffer(32, spaces.Dict({
+        'x': spaces.Box(-100, 100, (2048,), dtype=np.float32),
+    }), spaces.Discrete(2), device='cpu', n_envs=1024)
+    arrays = [*buffer.observations.values(), *[getattr(buffer, k) for k in
+        ('actions', 'rewards', 'episode_starts', 'values', 'log_probs',
+         'advantages', 'returns')], buffer.action_masks]
+    for value in arrays:
+        value.fill(7)
+    buffer.pos = 4
+    buffer._prefilled = (4, {})
+    buffer.reset()
+    assert buffer.pos == 0 and not buffer.full and buffer._prefilled is None
+    assert all(not value.any() for value in arrays[:-1])
+    assert buffer.action_masks.all()
+    assert arrays[0] is buffer.observations['x']

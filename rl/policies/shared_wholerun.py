@@ -3,6 +3,7 @@ import math
 
 import torch
 from torch import nn
+from sb3_contrib.common.maskable.distributions import MaskableCategorical, MaskableCategoricalDistribution
 
 from env.core import native_actions as C, vocab
 from rl.policies.entity_combat import EntityCombatConfig, EntityCombatNetwork
@@ -15,6 +16,8 @@ from rl.policies.split_policy import (
 
 
 CONTRACT = 'shared-wholerun-ppo-room-v1'
+# Internal dispatch only; the observation keeps its real screen identity.
+MERGED_UPPER_PHASE = -1
 
 
 class LearnedCardTable(nn.Module):
@@ -31,6 +34,83 @@ class LearnedCardTable(nn.Module):
 
 class SharedOverworldEncoder(OverworldEncoder):
     """Remove only masked queries that no existing action/value head reads."""
+
+    @staticmethod
+    def merged_width(obs, rows=None, *, multiple=32):
+        """Physical width for common upper screens; accepts host arrays or tensors."""
+        def take(key):
+            return obs[key] if rows is None else obs[key][rows]
+        phase = take('phase').reshape(-1)
+        kept = (2 + obs['potions'].shape[1] + (take('deck_ids') != 0).sum(axis=1)
+                + (take('relics') != 0).sum(axis=1))
+        kept += ((take('map_full_rooms') != 0)
+                 | (take('map_full_features')[..., 3] > .5)).sum(axis=1)
+        counts = {
+            'combat_reward': sum(obs[k].shape[1] for k in
+                ('offer_card_ids', 'reward_gold', 'reward_relic_ids', 'reward_potion_ids'))
+                + (1 if 'reward_keys' in obs else 0),
+            'event': sum(obs[k].shape[1] for k in ('neow_bonus_ids', 'event_option_ids')
+                         if k in obs),
+            'shop': sum(obs[k].shape[1] for k in
+                        ('shop_card_ids', 'shop_relic_ids', 'shop_potion_ids')),
+            'boss_relic': obs['boss_relic_ids'].shape[1],
+            'map': obs['map_node_rooms'].shape[1],
+        }
+        for name, extra in counts.items():
+            kept += (phase == vocab.PHASE_VOCAB_INDEX[name]) * extra
+        return (int(kept.max().item()) + multiple - 1) // multiple * multiple
+
+    def forward(self, obs, shared, phase_id, active_widths=None, map_encoding=None):
+        if phase_id != MERGED_UPPER_PHASE:
+            return super().forward(obs, shared, phase_id,
+                                   active_widths=active_widths, map_encoding=map_encoding)
+        # A shared Transformer has no cross-row attention. Pack each screen's
+        # original role sequence, then run the independent rows together.
+        phase = obs['phase'].long().flatten()
+        blocks = self._context_blocks(obs, shared, active_widths)
+        active_roles = {}
+        # Absent training branches must remain absent from autograd: a zero
+        # gradient would still advance their existing Adam momentum.
+        present = set(torch.unique(phase).tolist()) if self.training else None
+        for name in ('combat_reward', 'map', 'shop', 'boss_relic', 'event'):
+            screen = vocab.PHASE_VOCAB_INDEX[name]
+            if present is not None and screen not in present:
+                continue
+            added = self._screen_blocks(obs, shared, screen)
+            blocks.extend(added)
+            for role, _, _ in added:
+                active_roles[role] = phase == screen
+        blocks.extend(self._map_blocks(obs, MERGED_UPPER_PHASE, map_encoding))
+        count, device = len(phase), phase.device
+        tokens = [self._role(self.cls.expand(count, -1, -1), 'cls')]
+        masks = [torch.zeros(count, 1, dtype=torch.bool, device=device)]
+        discards = [torch.zeros_like(masks[0])]
+        spans, offset = {}, 1
+        for role, token, pad in blocks:
+            spans[role] = offset, offset + token.shape[1]
+            offset += token.shape[1]
+            active = active_roles.get(role)
+            inactive = (torch.zeros_like(pad) if active is None
+                        else (~active[:, None]).expand_as(pad))
+            discard = inactive.clone()
+            if role in ('deck', 'relic', 'selected'):
+                discard = discard | pad
+            if role == 'map_full':
+                discard = discard | (pad & ~(obs['map_full_features'][..., 3] > .5))
+            tokens.append(self._role(token, role))
+            masks.append(pad | inactive)
+            discards.append(discard)
+        source, pad_mask = torch.cat(tokens, 1), torch.cat(masks, 1)
+        discard = torch.cat(discards, 1)
+        width = min(source.shape[1], active_widths[2])
+        positions = torch.argsort(discard.to(torch.int32), dim=1, stable=True)[:, :width]
+        gather = positions[:, :, None].expand(-1, -1, source.shape[-1])
+        encoded = self.transformer(source.gather(1, gather),
+                                   src_key_padding_mask=pad_mask.gather(1, positions))
+        output = torch.zeros_like(source).scatter(1, gather, encoded)
+        contextual = {role: output[:, begin:end] for role, (begin, end) in spans.items()}
+        contextual['__active_roles__'] = active_roles
+        return output[:, 0], contextual
 
     def _transform_tokens(self, source, pad_mask, spans, *, map_features=None):
         if not self.training:
@@ -102,7 +182,35 @@ class SharedWholeRunCore(EntityJointCore):
                 positions = torch.zeros_like(phase)
                 positions[selected] = torch.arange(len(selected), device=phase.device)
                 kwargs['upper_map_encoding'] = (positions, encoded)
+            return self._merged_upper_actor_critic(observations, kwargs.get('upper_map_encoding'))
         return super().actor_critic(observations, **kwargs)
+
+    def _merged_upper_actor_critic(self, observations, map_encoding):
+        phase = observations['phase'].long().flatten()
+        combat, selection = (vocab.PHASE_VOCAB_INDEX[name] for name in ('combat', 'card_select'))
+        indices, logits, values = [], [], []
+        groups = ((phase == combat, combat), (phase == selection, selection),
+                  ((phase != combat) & (phase != selection), MERGED_UPPER_PHASE))
+        for mask, screen in groups:
+            rows = mask.nonzero().flatten()
+            if not len(rows):
+                continue
+            batch = {key: value[rows] for key, value in observations.items()}
+            if screen == combat:
+                out, value = self.combat_actor_critic(batch)
+            else:
+                widths = None if screen != MERGED_UPPER_PHASE else (
+                    _active_prefix_width(batch['deck_ids']),
+                    _active_prefix_width(batch['relics']),
+                    self.overworld.encoder.merged_width(batch, multiple=1))
+                out, value = self.overworld(batch, self.upper_tokenizer, screen,
+                    upper_active_widths=widths,
+                    upper_map_encoding=map_encoding[1][map_encoding[0][rows]])
+            indices.append(rows)
+            logits.append(out.float())
+            values.append(value.float())
+        order = torch.argsort(torch.cat(indices))
+        return torch.cat(logits)[order], torch.cat(values)[order]
 
     def __init__(self, space, *, width, layers, heads):
         nn.Module.__init__(self)
@@ -126,6 +234,18 @@ class SharedWholeRunCore(EntityJointCore):
         self.map_dag_enabled = encoder.map_dag_enabled
 
 
+class _SharedCategoricalDistribution(MaskableCategoricalDistribution):
+    def proba_distribution(self, action_logits):
+        if action_logits.is_cuda and not torch.is_grad_enabled():
+            logits = action_logits.view(-1, self.action_dim)
+            # Keep a device-side finite check without synchronizing the host
+            # solely to validate each already-produced distribution.
+            torch._assert_async(torch.isfinite(logits).all(), 'nonfinite shared-policy logits')
+            self.distribution = MaskableCategorical(logits=logits, validate_args=False)
+            return self
+        return super().proba_distribution(action_logits)
+
+
 class SharedWholeRunPolicy(SplitStSPointerPolicy):
     # The original learner normalized each 256-row microbatch. Fusing their
     # model computation must preserve those statistical groups and sample order.
@@ -142,6 +262,7 @@ class SharedWholeRunPolicy(SplitStSPointerPolicy):
         if (cfg['card_vector_checkpoint'] is not None or cfg['combat_arch'] != 'transformer'
                 or self.action_space.n != C.AUTOREGRESSIVE_SIZE):
             raise ValueError('pure PPO rejects pretrained cards or incompatible actions')
+        self.action_dist = _SharedCategoricalDistribution(self.action_space.n)
         self.core = SharedWholeRunCore(self.observation_space, width=cfg['d_model'],
                                       layers=cfg['n_layers'], heads=cfg['n_heads'])
         self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1),
