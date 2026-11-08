@@ -620,6 +620,6 @@
 
 | COMBAT38-RESUME221 | 恢复中：用户明确要求原221继续训练 | 沿原四机run、原超参/链内guide和已验收优化；共同恢复模型/Adam/环境/RNG，验证新共同轮与checkpoint及8773续接。COMBAT39不恢复。见worklog/2026-11-08.md#combat38-resume221-request。 |
 
-| COMBAT38-GUIDE-BUDGET2X221 | 评测准备：原221轻量链内预算500/500/2000 | 与已有250/250/1000相同480种子对照，保存配对胜率/删失/耗时/实际模拟数及回放证据，不改正在恢复的正式训练预算。见worklog/2026-11-08.md#combat38-guide-budget2x221。 |
+| COMBAT38-GUIDE-BUDGET2X221 | 已完成：双倍轻量预算370胜+1删失/480，较原净多4胜，未显著 | 同原221/480种子，500/500/2000对250/250/1000：配对Δ+.835pp，95%CI[-2.714,+4.384]pp/p=.720；采样533.698对383.050秒（+39.33%），实际模拟2.006倍。479新journal保存/3局严格回放/58成员三份SHA归档。正式训练保持原预算；见worklog/2026-11-08.md#combat38-guide-budget2x221-results。 |
 
 | COMBAT38-UPPER-LR-REDUCTION | 切换中：用户指定上层actor降至已测3e-5 | 当前完整轮边界保存后从同一状态恢复；actor2遍、critic1e-4/4遍，其余不变，真实日志/Adam组lr/跨rank新checkpoint及监控验收。原实验仅点估计改善，独立CI跨0。见worklog/2026-11-08.md#combat38-upper-lr-reduction221。 |
