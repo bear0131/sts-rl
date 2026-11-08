@@ -106,6 +106,47 @@ class RingAllReduce:
             sock.close()
 
 
+class ParallelRingAllReduce(RingAllReduce):
+    """Stripe each exchange over independent links, retaining reduction order.
+
+    Each link must connect the same neighboring ranks. Small scalar collectives
+    use the first link; average() calls are serial, just like the original ring.
+    """
+
+    def __init__(self, links):
+        self.links = tuple(links)
+        if len(self.links) not in (2, 4):
+            raise ValueError("parallel ring requires two or four links")
+        self.rank, self.world_size = self.links[0].rank, self.links[0].world_size
+        if any((link.rank, link.world_size) != (self.rank, self.world_size)
+               for link in self.links):
+            raise ValueError("parallel links must have identical rank topology")
+        self._exchanges = ThreadPoolExecutor(max_workers=len(self.links),
+                                            thread_name_prefix=f"ring-stripe-{self.rank}")
+        self._parallel = False
+
+    def average(self, flat):
+        # Every rank has the same tensor length; decide once per collective,
+        # never from individual uneven chunks at a threshold boundary.
+        self._parallel = flat.numel() >= 65536
+        return super().average(flat)
+
+    def _exchange(self, send, receive):
+        if not self._parallel:
+            return self.links[0]._exchange(send, receive)
+        sends = np.array_split(send, len(self.links))
+        receives = np.array_split(receive, len(self.links))
+        futures = [self._exchanges.submit(link._exchange, a, b)
+                   for link, a, b in zip(self.links, sends, receives, strict=True)]
+        for future in futures:
+            future.result()
+
+    def close(self):
+        self._exchanges.shutdown(wait=True, cancel_futures=True)
+        for link in self.links:
+            link.close()
+
+
 class SshRingAllReduce(RingAllReduce):
     """Ring connection whose outgoing edge is an OpenSSH local forward."""
 

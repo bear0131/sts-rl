@@ -44,7 +44,7 @@ from rl.algorithms.accumulating_ppo import (
 )
 from rl.training.environments import make_env
 from rl.training.checkpoints import read_bundle, restore_learner, save_bundle, prune_bundles
-from rl.training.ring_allreduce import SshRingAllReduce
+from rl.training.ring_allreduce import SshRingAllReduce, ParallelRingAllReduce
 from rl.training.monitoring import HP_ORDER_PREFIX, hp_order_fraction
 from rl.tasks.wholerun import WholeRunTask
 
@@ -865,6 +865,10 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=29750,
         help="Loopback listener port forwarded by the ssh-ring transport.",
+    )
+    parser.add_argument(
+        "--ring-streams", type=int, choices=(1, 2, 4), default=1,
+        help="Independent SSH streams per ring edge; uses consecutive listener ports.",
     )
     parser.add_argument(
         "--profile-cuda-memory",
@@ -2313,8 +2317,10 @@ def main() -> None:
         raise ValueError("--peer is meaningless for world_size=1")
     if args.gradient_transport == "ssh-ring" and args.world_size < 2:
         raise ValueError("--gradient-transport ssh-ring requires world_size >= 2")
-    if not 1 <= args.ring_port <= 65535:
-        raise ValueError("--ring-port must be in [1, 65535]")
+    if not 1 <= args.ring_port <= 65536 - args.ring_streams:
+        raise ValueError("all --ring-port listener ports must be in [1, 65535]")
+    if args.ring_streams != 1 and args.gradient_transport != "ssh-ring":
+        raise ValueError("--ring-streams requires --gradient-transport ssh-ring")
     if args.reasoning_gradient_accumulation_steps < 1:
         raise ValueError(
             "--reasoning-gradient-accumulation-steps must be at least 1"
@@ -3135,9 +3141,9 @@ def main() -> None:
         next_rank = (args.rank + 1) % args.world_size
         next_peer = next(peer for peer in peers if peer.rank == next_rank)
 
-        def ring_ready_barrier() -> None:
+        def ring_ready_barrier(stream=0) -> None:
             all_rank_file_barrier(
-                tag="ssh_ring_listening",
+                tag=f"ssh_ring_listening_{stream}",
                 rank=args.rank,
                 peers=peers,
                 key=key,
@@ -3148,20 +3154,28 @@ def main() -> None:
                 timeout=args.barrier_timeout,
             )
 
-        ring_transport = SshRingAllReduce(
-            rank=args.rank,
-            world_size=args.world_size,
-            next_host=next_peer.host,
-            next_port=next_peer.port,
-            next_user=next_peer.user,
-            ssh_key=key,
-            listen_port=args.ring_port,
-            timeout=args.barrier_timeout,
-            ready_barrier=ring_ready_barrier,
-        )
+        links = []
+        try:
+            for stream in range(args.ring_streams):
+                links.append(SshRingAllReduce(
+                    rank=args.rank,
+                    world_size=args.world_size,
+                    next_host=next_peer.host,
+                    next_port=next_peer.port,
+                    next_user=next_peer.user,
+                    ssh_key=key,
+                    listen_port=args.ring_port + stream,
+                    timeout=args.barrier_timeout,
+                    ready_barrier=lambda stream=stream: ring_ready_barrier(stream),
+                ))
+            ring_transport = links[0] if len(links) == 1 else ParallelRingAllReduce(links)
+        except BaseException:
+            for link in links:
+                link.close()
+            raise
         print(
             f"[rank {args.rank}] persistent SSH gradient ring connected to "
-            f"rank {next_rank}",
+            f"rank {next_rank} over {args.ring_streams} stream(s)",
             flush=True,
         )
 
