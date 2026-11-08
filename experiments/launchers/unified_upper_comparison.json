@@ -2268,7 +2268,7 @@
       "confirmation": "For nominated settings rerun original plus selected candidates on next disjoint complete cohort from same paused source with fresh_cohort_offset=1. This is an offline update diagnostic, not a win-rate proof or global optimum; leave original training paused until results reviewed."
     },
     "fixed": "All original model/search/rewards/observation/MC target/actual batch sizes/FP32/native source unchanged; no prototype full-chain Transformer or budget allocator. Native world-v3 and original 24/24/24/16 threads. Each split consists of whole games; heldout samples never used for gradients or advantage normalization. Preserve the current max_combat_turns=50 whole-game exclusion. Retained complete games plus explicitly censored slots must equal 480 per rank; only combat-turn-limit reasons with matching source cap/seeds are permitted, and no upper/lower sample from excluded slots may enter any arm. Holdout remains 48 retained whole games per rank; actual training count is reported.",
-    "status": "screen03 running after production-cohort qualification; original training remains paused",
+    "status": "screen03 all arms accepted; independent confirmation prepared",
     "runtime": {
       "root": "/root/autodl-tmp/combat38-hyperparameter-recheck-20261108",
       "tag": "screen03",
@@ -2280,6 +2280,99 @@
         341820
       ],
       "native_sha256": "b40edcf73e671332dc8d5d27287264d8294376605ca6bad865aea36596156103"
+    },
+    "screening_result": {
+      "nominated": {
+        "lower": [
+          "half_lr",
+          "quarter_lr",
+          "half_lr_two_epochs"
+        ],
+        "upper": [
+          "actor_half_lr",
+          "actor_quarter_lr",
+          "actor_half_lr_one_epoch",
+          "critic_quarter_lr",
+          "critic_one_epoch"
+        ]
+      },
+      "source_round": 221,
+      "control_repeat_exact": [
+        [
+          true,
+          true,
+          true,
+          true
+        ],
+        [
+          true,
+          true,
+          true,
+          true
+        ]
+      ],
+      "max_process_seconds": 2868.8902821224183
+    },
+    "confirmation": {
+      "tag": "confirm01",
+      "fresh_cohort_offset": 1,
+      "arms": [
+        {
+          "id": "control",
+          "changes": {}
+        },
+        {
+          "id": "actor_quarter_lr",
+          "changes": {
+            "learning_rate": 3e-05
+          }
+        },
+        {
+          "id": "critic_quarter_lr",
+          "changes": {
+            "value_learning_rate": 2.5e-05
+          }
+        },
+        {
+          "id": "critic_one_epoch",
+          "changes": {
+            "critic_epochs": 1
+          }
+        },
+        {
+          "id": "control_repeat",
+          "changes": {}
+        }
+      ],
+      "lower_arms": [
+        {
+          "id": "control",
+          "changes": {}
+        },
+        {
+          "id": "quarter_lr",
+          "changes": {
+            "learning_rate": 7.5e-05
+          }
+        },
+        {
+          "id": "control_repeat",
+          "changes": {}
+        }
+      ],
+      "selection": {
+        "selected": {
+          "actor": "actor_quarter_lr",
+          "critic": [
+            "critic_quarter_lr",
+            "critic_one_epoch"
+          ],
+          "lower": "quarter_lr"
+        },
+        "rule": "Best passed actor and lower by heldout point estimate; both passed critic candidates are confirmed because their relative ranking is unresolved in the screening cohort."
+      },
+      "source_screen_sha256": "d11caec058d1d39e9e44051811bbc80c598e3435489e310fdc28be6b81734257",
+      "status": "prepared"
     }
   }
 }
