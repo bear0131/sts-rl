@@ -12,7 +12,7 @@ import numpy as np
 import torch
 
 from rl.algorithms.small_playout import update_online
-from rl.algorithms.upper_probe import split_games, state_digest
+from rl.algorithms.upper_probe import split_games, state_digest, probe_cohort
 from rl.policies.small_playout import OnlinePlayoutConfig
 from rl.training.resource_monitor import ResourceMonitor
 
@@ -80,8 +80,7 @@ def run_lower_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: 
         raise ValueError('lower diagnostic supports the current token-root cohort only')
     samples = model._small_playout_samples
     records = model._upper_completed
-    if len({(r['env'], r['episode']) for r in records}) != limits['games_per_rank']:
-        raise ValueError('lower diagnostic requires the complete cohort')
+    cohort = probe_cohort(model, protocol, average=average)
     splits, games = split_lower_games(samples, records, limits['holdout_games_per_rank'], protocol['seed'] + rank)
     net = model.policy.small_playout
     prepared = net.prepare_samples(samples, cfg.target_mix)
@@ -100,7 +99,7 @@ def run_lower_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: 
     output = Path(output_dir) if output_dir else None
     if output:
         output.mkdir(parents=True, exist_ok=True)
-    report = dict(rank=rank, world_size=world_size, games_per_split=games,
+    report = dict(rank=rank, world_size=world_size, games_per_split=games, cohort=cohort,
         samples_per_split=[len(x) for x in splits], source_digest=digest, arms=[])
     control = {}
 
@@ -131,7 +130,7 @@ def run_lower_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: 
             result[name] = {k: v / totals['n'] for k, v in totals.items() if k != 'n'}
             result[name]['samples_global'] = int(round(totals['n'] * world_size))
             if output:
-                np.savez_compressed(output/f'{label}-{name}.npz', **arrays,
+                np.savez_compressed(output/f'lower-{label}-{name}.npz', **arrays,
                     env=np.array([int(samples[i]['env']) for i in ids]), indices=ids)
             if label == 'control':
                 control[name] = arrays

@@ -61,8 +61,15 @@ def probe_model(combat_factory, request):
 
 
 @pytest.mark.parametrize('probe_model', ['cpu', 'cuda'], indirect=True)
-def test_real_optimizer_rate_epochs_holdout_and_full_restore(probe_model, monkeypatch, tmp_path):
+@pytest.mark.parametrize('with_censor', [False, True])
+def test_real_optimizer_rate_epochs_holdout_and_full_restore(probe_model, monkeypatch, tmp_path, with_censor):
     model = probe_model
+    if with_censor:
+        model._small_playout_samples = [r for r in model._small_playout_samples if r['env'] != 1]
+        model._upper_completed = [r for r in model._upper_completed if r['env'] != 1]
+        model.independent_rollout_config = dict(max_combat_turns=50)
+        model.episode_rollout_stats = dict(games=4, completed_games=3, censored_games=1, unfinished_games=0, first_seed=20)
+        model.episode_rollout_censored_slots = [dict(slot=1, seed=21, reason='combat-turn-limit:51>50')]
     before = state_digest((model.policy.state_dict(), model.policy.small_playout_optimizer.state_dict()))
     steps = model.small_playout_optimizer_steps
     source_rows = model._small_playout_samples
@@ -73,15 +80,21 @@ def test_real_optimizer_rate_epochs_holdout_and_full_restore(probe_model, monkey
             [g['lr'] for g in m.policy.small_playout_optimizer.param_groups]))
         return original(m, **kwargs)
     monkeypatch.setattr(probe, 'update_online', observed)
-    protocol = dict(seed=37, diagnostic=dict(world_size=1, games_per_rank=4, holdout_games_per_rank=1),
+    protocol = dict(seed=37, diagnostic=dict(world_size=1, games_per_rank=4, holdout_games_per_rank=1,
+        allow_combat_turn_censoring=with_censor),
         lower_arms=[dict(id='control', changes={}),
             dict(id='half', changes={'learning_rate': 1.5e-4}),
             dict(id='one_epoch', changes={'epochs': 1}),
             dict(id='control_repeat', changes={})])
+    upper_control = tmp_path / 'control-holdout.npz'
+    upper_control.write_bytes(b'upper probe owns this artifact')
     result = probe.run_lower_probe(model, protocol, output_dir=tmp_path)
+    assert upper_control.read_bytes() == b'upper probe owns this artifact'
+    with np.load(tmp_path / 'lower-control-holdout.npz') as held:
+        assert set(held['env']) == set(result['games_per_split'][1])
     assert result['completed'] and result['control_repeat_exact']
     assert result['source_state_restored'] and result['rng_restored'] and result['upper_optimizer_unchanged']
-    assert [a['stats']['updates'] for a in result['arms']] == [4, 4, 2, 4]
+    assert [a['stats']['updates'] for a in result['arms']] == ([2, 2, 1, 2] if with_censor else [4, 4, 2, 4])
     assert [c[1] for c in calls] == [[3e-4], [1.5e-4], [3e-4], [3e-4]]
     assert all(c[0] == result['games_per_split'][0] for c in calls)
     assert result['arms'][0]['final_digest'] != result['arms'][1]['final_digest']

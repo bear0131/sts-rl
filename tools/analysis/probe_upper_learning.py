@@ -477,11 +477,12 @@ def unified_candidates():
         rank = kwargs['rank']
         if not model._recovery_environment_restored:
             raise ValueError('candidate source environment was not restored')
-        if model.episode_rollout_stats['censored_games']:
+        if collection_only and model.episode_rollout_stats['censored_games']:
             raise ValueError('candidate screen cannot accept censored games')
         output = args.probe_output / f'rank{rank}'
         output.mkdir(parents=True, exist_ok=True)
-        (output/'cohort.json').write_text(json.dumps(model.episode_rollout_stats, indent=2))
+        (output/'cohort.json').write_text(json.dumps(dict(model.episode_rollout_stats,
+            censored_slots=getattr(model, 'episode_rollout_censored_slots', [])), indent=2))
         if collection_only:
             if not collection:
                 raise AssertionError('missing measured collection')
@@ -509,7 +510,11 @@ def unified_candidates():
     def diagnose_lower(model, **kwargs):
         if collection_only or not protocol.get('lower_arms'):
             return {}
-        run_lower_probe(model, protocol, output_dir=args.probe_output / f'rank{kwargs["rank"]}', **kwargs)
+        output = args.probe_output / f'rank{kwargs["rank"]}'
+        output.mkdir(parents=True, exist_ok=True)
+        (output/'cohort.json').write_text(json.dumps(dict(model.episode_rollout_stats,
+            censored_slots=model.episode_rollout_censored_slots), indent=2))
+        run_lower_probe(model, protocol, output_dir=output, **kwargs)
         return {}
     original = sys.argv
     sys.argv = [original[0], *remaining]

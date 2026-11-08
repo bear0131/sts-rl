@@ -2151,7 +2151,8 @@
         "value": 0.0001,
         "surrogate_gain": 1e-05,
         "relative_l2": 3e-05
-      }
+      },
+      "allow_combat_turn_censoring": true
     },
     "arms": [
       {
@@ -2266,8 +2267,8 @@
       "lower": "At least 3% heldout reverse-KL target reduction versus control, paired game 95% CI below zero; guide frozen-root KL must not deteriorate more than 2%. Report forward KL, teacher top1 and root-prior drift independently.",
       "confirmation": "For nominated settings rerun original plus selected candidates on next disjoint complete cohort from same paused source with fresh_cohort_offset=1. This is an offline update diagnostic, not a win-rate proof or global optimum; leave original training paused until results reviewed."
     },
-    "fixed": "All original model/search/rewards/observation/MC target/actual batch sizes/FP32/native source unchanged; no prototype full-chain Transformer or budget allocator. Native world-v3 and original 24/24/24/16 threads. Each split consists of whole games; heldout samples never used for gradients or advantage normalization.",
-    "status": "screen02 running four ranks from protected221 after environment restore; screen01 pre-collection SSH path failure retained",
+    "fixed": "All original model/search/rewards/observation/MC target/actual batch sizes/FP32/native source unchanged; no prototype full-chain Transformer or budget allocator. Native world-v3 and original 24/24/24/16 threads. Each split consists of whole games; heldout samples never used for gradients or advantage normalization. Preserve the current max_combat_turns=50 whole-game exclusion. Retained complete games plus explicitly censored slots must equal 480 per rank; only combat-turn-limit reasons with matching source cap/seeds are permitted, and no upper/lower sample from excluded slots may enter any arm. Holdout remains 48 retained whole games per rank; actual training count is reported.",
+    "status": "screen02 failed before any candidate update because strict historical probe rejected retained cohort; exact production combat-turn exclusion support under qualification; all four diagnostic processes exited",
     "runtime": {
       "root": "/root/autodl-tmp/combat38-hyperparameter-recheck-20261108",
       "tag": "screen02",
