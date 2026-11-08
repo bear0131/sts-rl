@@ -606,7 +606,7 @@
 
 | COMBAT38-PASSIVE-COMBAT | 待诊断；用户指定后续处理，不改当前训练 | 区分有收益防御/蓄力与无收益拖延，量化战斗回合、状态进展、结束率及rollout长尾；再提出目标/奖励/终局处理的独立实验，验证胜率与学习效果，不能把修改游戏统计方法当等价提速。环境数×step候选保留跨轮状态/RNG与正确bootstrap，并与完整局采样分别评估。见worklog/2026-11-08.md#combat38-step-full480。 |
 
-| COMBAT38-CURRENT-HYPERPARAMETERS | 已完成诊断：两独立cohort，仅下层降LR通过；原训练保持暂停 | 用户要求暂停四机38并检查学习率过高/更新次数过多。实际源参数、四rank正常停止/完整状态双备份，冻结同源整局留出对照各学习率/次数、权重Adam随机数还原、独立cohort确认；训练/验证/实际更新与资源均报告，离线代理不冒称胜率或全局最优。保留39暂停与原模型，诊断期间不自动恢复。见worklog/2026-11-08.md#combat38-current-hyperparameter-recheck。 |
+| COMBAT38-CURRENT-HYPERPARAMETERS | 已完成诊断：两独立cohort，仅下层降LR通过 | 冻结同源整局留出对照学习率/次数，核权重/Adam/RNG还原与实际更新；离线代理不冒称胜率或全局最优。后续用户要求恢复，并指定actor降至3e-5，已完成223验收；下层7.5e-5候选未自动采纳，39保持暂停。诊断见worklog/2026-11-08.md#combat38-current-hyperparameter-recheck，运行变更见COMBAT38-UPPER-LR-REDUCTION。 |
 
 | COMBAT38-WINNING-REPLAYS | 已完成：141/221胜局概要；各480保存局筛选，另25候选胜局重放，确认壁垒+巩固/全身撞击 | 超参数诊断同时继续；各源固定首32局、至多3胜局概要；追加各480保存局筛选两种壁垒组合并重放候选，核同源native/动作日志/最终观测与mask SHA，明确区别测试终态概要与历史训练重放，不编造缺失打法。见worklog/2026-11-08.md#combat38-winning-replays。 |
 
@@ -618,8 +618,8 @@
 
 | COMBAT38-TOKEN-PROJECTION-SHARING | CPU诊断已归档；按用户指令停止后续开发 | 三个真实141帧全key重复率90.46%/90.87%/80.86%，2322919 token重建exact；仅input+第一QKV潜力，无GPU实现或闭环收益。21成员三份SHA归档，原全Transformer提速goal paused。见worklog/2026-11-08.md#combat38-token-projection-sharing-stopped。 |
 
-| COMBAT38-RESUME221 | 恢复中：用户明确要求原221继续训练 | 沿原四机run、原超参/链内guide和已验收优化；共同恢复模型/Adam/环境/RNG，验证新共同轮与checkpoint及8773续接。COMBAT39不恢复。见worklog/2026-11-08.md#combat38-resume221-request。 |
+| COMBAT38-RESUME221 | 已完成：原参数恢复并保存四机共同222 | 从221完整模型/Adam/环境/RNG恢复，222正常退出并双备份；同run及8773续接。随后按用户新指令降低actor学习率并继续，见COMBAT38-UPPER-LR-REDUCTION。39未恢复。验收见worklog/2026-11-08.md#combat38-resume221-upperlr3e5-verified。 |
 
 | COMBAT38-GUIDE-BUDGET2X221 | 已完成：双倍轻量预算370胜+1删失/480，较原净多4胜，未显著 | 同原221/480种子，500/500/2000对250/250/1000：配对Δ+.835pp，95%CI[-2.714,+4.384]pp/p=.720；采样533.698对383.050秒（+39.33%），实际模拟2.006倍。479新journal保存/3局严格回放/58成员三份SHA归档。正式训练保持原预算；见worklog/2026-11-08.md#combat38-guide-budget2x221-results。 |
 
-| COMBAT38-UPPER-LR-REDUCTION | 切换中：用户指定上层actor降至已测3e-5 | 当前完整轮边界保存后从同一状态恢复；actor2遍、critic1e-4/4遍，其余不变，真实日志/Adam组lr/跨rank新checkpoint及监控验收。原实验仅点估计改善，独立CI跨0。见worklog/2026-11-08.md#combat38-upper-lr-reduction221。 |
+| COMBAT38-UPPER-LR-REDUCTION | 已完成切换：四机共同223验收通过，训练继续 | actor1.2e-4→3e-5/2遍，critic1e-4/4遍、下层3e-4/4遍及250/250/1000预算不变；实际Adam组lr、完整恢复/步数增加、四rank权重/优化器一致与8773同曲线核验，222/223全状态双备份。累计自然游戏上限615804，约再98轮。独立离线CI跨0，不宣称胜率已改善。见worklog/2026-11-08.md#combat38-resume221-upperlr3e5-verified。 |
