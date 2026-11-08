@@ -27,17 +27,34 @@ class SharedRolloutBuffer(MaskableDictRolloutBuffer):
             getattr(self, key).fill(0)
         self.action_masks.fill(1)
         self.generator_ready = False
+        self._prefilled = None
         BaseBuffer.reset(self)
 
-    def add(self, obs, action, reward, episode_start, value, log_prob, *, action_masks=None):
-        if action_masks is not None:
-            self.action_masks[self.pos] = action_masks.reshape(self.n_envs, self.mask_dims)
+    def _write_observation(self, obs):
         for key in self.observations:
             source = np.asarray(obs[key])
             if isinstance(self.observation_space.spaces[key], spaces.Discrete):
                 source = source.reshape((self.n_envs,) + self.obs_shape[key])
             # Assignment already copies; no intermediate np.array is needed.
             self.observations[key][self.pos] = source
+
+    def prefill_observation(self, obs):
+        """Copy the pre-action observation while environment workers advance.
+
+        The collector may use this only when intervening callbacks explicitly
+        promise not to inspect or mutate rollout observations. add() still owns
+        all bookkeeping; reset discards a prefill from an aborted collection.
+        """
+        self._write_observation(obs)
+        self._prefilled = (self.pos, obs)
+
+    def add(self, obs, action, reward, episode_start, value, log_prob, *, action_masks=None):
+        if action_masks is not None:
+            self.action_masks[self.pos] = action_masks.reshape(self.n_envs, self.mask_dims)
+        pending = self._prefilled
+        if pending is None or pending[0] != self.pos or pending[1] is not obs:
+            self._write_observation(obs)
+        self._prefilled = None
         self.actions[self.pos] = action.reshape(self.n_envs, self.action_dim)
         self.rewards[self.pos] = reward
         self.episode_starts[self.pos] = episode_start

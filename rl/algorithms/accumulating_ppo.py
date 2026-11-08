@@ -1011,6 +1011,19 @@ class AccumulatingMaskablePPO(MaskablePPO):
             env.step_async = MethodType(capture_choice_async, env)
             env.step_wait = MethodType(capture_choice_wait, env)
 
+        if pure_ppo:
+            from rl.algorithms.independent_rollout import _callback_uses_observations
+            if (hasattr(rollout_buffer, 'prefill_observation')
+                    and not _callback_uses_observations(callback)):
+                prefill_async = env.step_async
+
+                def overlapped_async(_env, actions):
+                    result = prefill_async(actions)
+                    rollout_buffer.prefill_observation(self._last_obs)
+                    return result
+
+                env.step_async = MethodType(overlapped_async, env)
+
         collection_graphs = None
         result = False
         try:

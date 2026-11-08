@@ -33,6 +33,53 @@ def make_model(env, device):
         policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=.9))
 
 
+@pytest.mark.parametrize('callback_kind', ['read_only', 'unknown', 'subclass', 'abort'])
+def test_prefill_respects_callback_mutation_and_restores_environment_hooks(callback_kind):
+    from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+
+    class ReadOnly(BaseCallback):
+        _uses_rollout_observations = False
+
+        def _on_step(self):
+            return callback_kind != 'abort'
+
+    class Mutating(ReadOnly):
+        # An undeclared subclass must not inherit permission to prefill early.
+        def _on_step(self):
+            self.model._last_obs['gold'][:] += 1
+            expected.append(self.model._last_obs['gold'].copy())
+            return True
+
+    class Unknown(BaseCallback):
+        _on_step = Mutating._on_step
+
+    expected, prefills = [], []
+    env = DummyVecEnv([make_env, make_env])
+    model = make_model(env, 'cpu')
+    buffer = model.rollout_buffer
+    original_prefill, original_wait, original_async = buffer.prefill_observation, env.step_wait, env.step_async
+
+    def prefill(obs):
+        prefills.append(buffer.pos)
+        original_prefill(obs)
+
+    buffer.prefill_observation = prefill
+    selected = {'read_only': ReadOnly, 'abort': ReadOnly, 'unknown': Unknown, 'subclass': Mutating}[callback_kind]
+    _, callback = model._setup_learn(64, callback=CallbackList([selected()]))
+    result = model.collect_rollouts(env, callback, buffer, 32)
+    assert env.step_async == original_async and env.step_wait == original_wait
+    assert result == (callback_kind != 'abort')
+    if callback_kind in ('read_only', 'abort'):
+        assert prefills == list(range(32 if result else 1))
+    else:
+        assert not prefills
+        np.testing.assert_array_equal(buffer.observations['gold'], np.stack(expected))
+    if not result:
+        buffer.reset()
+        assert buffer._prefilled is None and buffer.pos == 0
+    env.close()
+
+
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 def test_real_ppo_two_rounds_and_resume(tmp_path, device):
     assert device != 'cuda' or torch.cuda.is_available(), 'explicit CUDA qualification required'
