@@ -2381,5 +2381,38 @@
       },
       "result": "Only lower learning_rate=7.5e-5, epochs=4 passed both independent cohorts; production remains unchanged and paused. Lower heldout KL still worsens versus frozen pre-update."
     }
+  },
+  "checkpoint221_chain_comparison": {
+    "status": "full_transformer_running",
+    "source_round": 221,
+    "source_global_step": 257830119,
+    "games_per_arm": 480,
+    "first_seed": 20267105,
+    "last_seed": 20267584,
+    "simulation_budgets": [
+      250,
+      250,
+      1000
+    ],
+    "playout_depth": 200,
+    "max_combat_turns": 50,
+    "max_steps": 2424,
+    "censoring": "report bounds over all requested games; no reseeding",
+    "host": "bjb1-11727",
+    "arms": [
+      "full_transformer",
+      "native_guide"
+    ],
+    "hard_seconds": [
+      3660,
+      2460
+    ],
+    "frozen_original_weights": true,
+    "production_resumed": false,
+    "full_tag": "stepfull480221-02",
+    "guide_tag": "hybrid480221-02",
+    "source_policy_digest": "7295bc059c570973e70bc3465df730e971154d3adb734920b025b88fbd75f26f",
+    "incomplete_budget": "error; existing 50-turn censor path recorded separately",
+    "remote_evidence": "/root/autodl-tmp/combat38-chaincompare221-20261108"
   }
 }

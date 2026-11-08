@@ -611,3 +611,5 @@
 | COMBAT38-WINNING-REPLAYS | 已完成：141/221胜局概要；各480保存局筛选，另25候选胜局重放，确认壁垒+巩固/全身撞击 | 超参数诊断同时继续；各源固定首32局、至多3胜局概要；追加各480保存局筛选两种壁垒组合并重放候选，核同源native/动作日志/最终观测与mask SHA，明确区别测试终态概要与历史训练重放，不编造缺失打法。见worklog/2026-11-08.md#combat38-winning-replays。 |
 
 | COMBAT38-LOWER-GENERALIZATION | 待诊断；不自动改训练 | 221冻结两独立批均出现lower更新后heldout搜索目标KL高于更新前；降低LR缓解但未消除。复用真实root+guide联合更新和整局留出，区分目标/共享参数梯度与过拟合，验证不损害guide并报告在线胜率边界。见worklog/2026-11-08.md#combat38-current-hyperparameter-recheck。 |
+
+| COMBAT38-CHAIN-TRANSFORMER221 | 执行中：221链内Transformer完整480局；guide同种子对照随后 | 根部/链内Transformer对原根部Transformer+guide；真实完整局、固定250/250/1000/深度200/FP32，记录删失边界与实际资源/计数、逐局日志，核原权重不变和生命周期；正式训练保持暂停。见worklog/2026-11-08.md#combat38-chain-transformer221。 |
