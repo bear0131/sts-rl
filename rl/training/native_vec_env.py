@@ -83,9 +83,9 @@ class NativeSearchVecEnv(DummyVecEnv):
         # path. Only the actual training stack can carry the internal placeholder.
         from env.core.run_env import SlayTheSpireEnv
         from rl.training.environments import CheckpointObservationCompat, TrainingStateWrapper
-        from rl.training.reward import ShapedRewardWrapper
+        from rl.training.reward import ShapedRewardWrapper, StrategicRewardWrapper
         allowed = (CheckpointObservationCompat, TrainingStateWrapper,
-                   ShapedRewardWrapper, gym.wrappers.TimeLimit)
+                   ShapedRewardWrapper, StrategicRewardWrapper, gym.wrappers.TimeLimit)
         current = env
         while isinstance(current, gym.Wrapper):
             if type(current) not in allowed:

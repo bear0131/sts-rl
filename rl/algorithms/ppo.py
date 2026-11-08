@@ -48,6 +48,7 @@ def ppo_loss_components(
     clip_range: float,
     clip_range_vf: float | None,
     skip_combat: bool = False,
+    normalization_group_size: int | None = None,
 ) -> PPOLossComponents:
     """Compute the shared native/distributed PPO objective.
 
@@ -76,9 +77,16 @@ def ppo_loss_components(
     if not hierarchical:
         normalized_advantages = advantages
         if normalize_advantage:
-            normalized_advantages = (
-                advantages - advantages.mean()
-            ) / (advantages.std() + 1e-8)
+            if normalization_group_size is not None and advantages.numel() > normalization_group_size:
+                if normalization_group_size < 2 or advantages.numel() % normalization_group_size:
+                    raise ValueError('PPO batch must contain complete advantage normalization groups')
+                groups = advantages.reshape(-1, normalization_group_size)
+                normalized_advantages = ((groups - groups.mean(dim=1, keepdim=True)) /
+                    (groups.std(dim=1, keepdim=True) + 1e-8)).reshape_as(advantages)
+            else:
+                normalized_advantages = (
+                    advantages - advantages.mean()
+                ) / (advantages.std() + 1e-8)
         policy_loss = -th.min(
             normalized_advantages * ratio,
             normalized_advantages * clipped_ratio,

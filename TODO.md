@@ -625,3 +625,5 @@
 | COMBAT38-UPPER-LR-REDUCTION | 已完成切换：223验收；随后按新任务在226暂停 | actor1.2e-4→3e-5/2遍，critic1e-4/4遍、下层3e-4/4遍及250/250/1000预算不变；实际Adam组lr、完整恢复/步数增加、四rank权重/优化器一致与8773同曲线核验，222/223全状态双备份。原续训预算自然游戏615804；用户随后切换PURE-RL-256X4，旧38在226完整保存暂停。独立离线CI跨0，不宣称胜率已改善。见worklog/2026-11-08.md#combat38-resume221-upperlr3e5-verified。 |
 
 | PURE-RL-256X4 | 启动验收完成，COMBAT40四机继续训练 | 随机共享256宽4层8头/5522740参数，γ1、房间内λ1/跨房.9，保持strategic_reward、全部阶段普通PPO，无搜索/guide/蒸馏。完整两轮+恢复后两轮已通过，四rank共同第4轮/global1048576模型和Adam逐成员SHA一致，实际步数32→64；8773新曲线、38/39历史保留，旧38在226暂停并备份。有限总500轮/131072000动作预算，128×512/rank、每轮16Adam、FP32；不按轮与旧完整局比较。验收与局限见worklog/2026-11-08.md#pure-rl-256x4-production-verified。 |
+
+| PURE-RL-DEVICE-UTILIZATION | 进行中：独立实验机诊断并验证更高设备利用率 | 用户要求“做加速，多用设备资源”。当前COMBAT40保持训练，先在11727冻结同一checkpoint/样本测微批融合与采集快路径，保持32768有效batch/16Adam/两遍/FP32/房间λ及奖励动作；批次归一化须保留原256统计分组，核输出/梯度/Adam容差，端到端同硬件有界比较后部署四机并验收完整两轮和恢复。见worklog/2026-11-08.md#pure-rl-device-utilization-intention。 |

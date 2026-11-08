@@ -89,7 +89,8 @@ def test_real_ppo_two_rounds_and_resume(tmp_path, device):
     env.close(); resumed_env.close()
 
 
-def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize('grow', [False, True])
+def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, grow):
     import json
     import sys
     from types import SimpleNamespace
@@ -123,14 +124,20 @@ def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys):
     resumed = list(argv)
     resumed[resumed.index('--checkpoint')+1] = str(bundle/'model.zip')
     resumed += ['--resume-state', str(bundle)]
+    if grow:
+        resumed[resumed.index('--n-envs')+1] = '4'
+        resumed += ['--resume-grow-environments']
     monkeypatch.setattr(sys, 'argv', resumed)
     distributed_sb3.main()
     output = capsys.readouterr().out
     assert 'ENVIRONMENT_RESTORED ' in output
     records = [json.loads(line) for line in output.splitlines()
                if line.startswith('{') and '"rollout_sec"' in line]
-    assert [p['global_step'] for p in payloads] == [64, 128, 192, 256]
+    assert [p['global_step'] for p in payloads] == ([64, 128, 256, 384] if grow else [64, 128, 192, 256])
+    assert ('ENVIRONMENT_EXPANDED_ON_RESUME ' in output) == grow
     assert len(records) == 4
+    assert [row['rollout_round'] for row in records] == [1, 2, 3, 4]
+    assert [p['legacy_step'] for p in payloads] == [1, 2, 3, 4]
     for row, payload in zip(records, payloads, strict=True):
         for key in ('room_lambda', 'combat_samples', 'upper_samples', 'in_room_edges',
                     'boundary_edges', 'search_simulations', 'return_version',
@@ -138,5 +145,35 @@ def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys):
             assert row['pure_rl/'+key] == payload['pure_rl/'+key]
         assert row['pure_rl/search_simulations'] == 0
         assert row['pure_rl/room_lambda'] == .9
-        assert row['pure_rl/combat_samples'] + row['pure_rl/upper_samples'] == 64
-        assert row['optimizer_steps'] == 2
+        count = 128 if grow and row['rollout_round'] > 2 else 64
+        assert row['pure_rl/combat_samples'] + row['pure_rl/upper_samples'] == count
+        assert row['optimizer_steps'] == count // 32
+
+
+def test_grow_live_pure_ppo_environments_without_resetting_source_slots(tmp_path):
+    original_env = DummyVecEnv([make_env, make_env])
+    model = make_model(original_env, 'cpu')
+    model.learn(total_timesteps=64)
+    before_obs = deepcopy(model._last_obs)
+    before_starts = model._last_episode_starts.copy()
+    model.ppo_rollouts_completed = 1
+    bundle = save_bundle(model, tmp_path/'state', rank=0, world_size=1,
+        run_id='pure-growth', wandb_id=None, config=dict(n_envs=2, seed=20261108))
+    source_rng = torch.get_rng_state().clone()
+    grown_env = DummyVecEnv([make_env for _ in range(4)])
+    resumed = AccumulatingMaskablePPO.load(bundle/'model.zip', env=grown_env, device='cpu')
+    resumed._setup_learn(total_timesteps=128, reset_num_timesteps=False)
+    restore_learner(resumed, bundle, rank=0, world_size=1, grow_environments=True)
+    for key, expected in before_obs.items():
+        np.testing.assert_array_equal(resumed._last_obs[key][:2], expected)
+    np.testing.assert_array_equal(resumed._last_episode_starts[:2], before_starts)
+    assert resumed._last_episode_starts[2:].all()
+    assert torch.equal(source_rng, torch.get_rng_state())
+    growth = resumed._recovery_environment_growth
+    assert growth['restored_environments'] == 2 and growth['appended_environments'] == 2
+    assert growth['appended_first_seed'] == 20261108 + 64 + 2
+    shared = next(resumed.policy.core.combat.transformer.parameters())
+    old_step = int(resumed.policy.optimizer.state[shared]['step'])
+    resumed.learn(total_timesteps=128, reset_num_timesteps=False)
+    assert int(resumed.policy.optimizer.state[shared]['step']) > old_step
+    original_env.close(); grown_env.close()

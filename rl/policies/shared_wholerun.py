@@ -70,6 +70,10 @@ class SharedWholeRunCore(EntityJointCore):
 
 
 class SharedWholeRunPolicy(SplitStSPointerPolicy):
+    # The original learner normalized each 256-row microbatch. Fusing their
+    # model computation must preserve those statistical groups and sample order.
+    ppo_advantage_group_size = 256
+
     def __init__(self, *args, room_lambda=.9, **kwargs):
         if not math.isfinite(room_lambda) or not 0 <= room_lambda <= 1:
             raise ValueError('room lambda must be in [0, 1]')

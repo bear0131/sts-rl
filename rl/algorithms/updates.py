@@ -27,9 +27,82 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
         old_values=select(batch.old_values), old_log_prob=select(batch.old_log_prob),
         values=values.flatten(), log_prob=log_prob, entropy=entropy,
         clip_range=clip_range, clip_range_vf=clip_range_vf,
-        skip_combat=bool(getattr(model, 'nosl_is_az', False)))
+        skip_combat=bool(getattr(model, 'nosl_is_az', False)),
+        normalization_group_size=getattr(model.policy, 'ppo_advantage_group_size', None))
     loss = components.policy_loss + model.ent_coef * components.entropy_loss + model.vf_coef * components.value_loss
     return components, loss
+
+
+def ppo_chunked_backward(model, batch, clip_range, clip_range_vf):
+    """Fuse statistical groups; retry smaller chunks without corrupting accumulation.
+
+    Only the shared whole-run policy uses this path (no dropout/running stats).
+    A failed backward may already have written some gradients. Keep prior
+    accumulation separate until an entire chunk succeeds, then add it once.
+    """
+    parameters = list(model.policy.parameters())
+    total = len(batch.advantages)
+    group = model.policy.ppo_advantage_group_size
+    stats = model.__dict__.setdefault('_ppo_microbatch_stats',
+        dict(chunks=0, rows=0, oom_retries=0, min_rows=total, max_rows=0))
+    losses = []
+    def part(start, count):
+        data = batch._asdict() if hasattr(batch, '_asdict') else vars(batch)
+        return type(batch)(**{k: ({n: v[start:start+count] for n, v in x.items()}
+            if isinstance(x, dict) else x[start:start+count]) for k, x in data.items()})
+    def backward(start, count):
+        cap = getattr(model, '_ppo_microbatch_cap', total)
+        if count > cap:
+            backward(start, cap)
+            backward(start + cap, count - cap)
+            return
+        previous = [p.grad for p in parameters]
+        for p in parameters:
+            p.grad = None
+        components = loss = None
+        failed = False
+        try:
+            components, loss = ppo_forward(model, part(start, count), clip_range, clip_range_vf)
+            (loss * (count / total)).backward()
+        except th.OutOfMemoryError:
+            failed = True
+        except BaseException:
+            for p, old in zip(parameters, previous, strict=True):
+                p.grad = old
+            raise
+        if failed:
+            components = loss = None
+            for p, old in zip(parameters, previous, strict=True):
+                p.grad = old
+            if count <= group:
+                raise th.OutOfMemoryError('PPO minimum statistical group does not fit device memory')
+            # Leave the exception scope before clearing its failed autograd graph.
+            import gc
+            gc.collect()
+            if model.device.type == 'cuda':
+                th.cuda.empty_cache()
+            cap = max(group, (count // group // 2) * group)
+            model._ppo_microbatch_cap = cap
+            stats['oom_retries'] += 1
+            backward(start, cap)
+            backward(start + cap, count - cap)
+            return
+        old_grads, additions = [], []
+        for p, old in zip(parameters, previous, strict=True):
+            if old is not None:
+                if p.grad is not None:
+                    old_grads.append(old)
+                    additions.append(p.grad)
+                p.grad = old
+        if old_grads:
+            th._foreach_add_(old_grads, additions)
+        losses.append(loss.detach() * (count / total))
+        stats['chunks'] += 1
+        stats['rows'] += count
+        stats['min_rows'] = min(stats['min_rows'], count)
+        stats['max_rows'] = max(stats['max_rows'], count)
+    backward(0, total)
+    return float(th.stack(losses).sum().cpu())
 
 
 def optimizer_step(model, micro_batches=1, *, value_only=False, optimizer=None, max_grad_norm=None,

@@ -304,9 +304,9 @@ def assert_nested_equal(left, right):
 def native_wrapper_factories():
     import gymnasium as gym
     from rl.training.environments import CheckpointObservationCompat, TrainingStateWrapper
-    from rl.training.reward import ShapedRewardWrapper
+    from rl.training.reward import ShapedRewardWrapper, StrategicRewardWrapper
 
-    def factory(index, *, outer_return_context):
+    def factory(index, *, outer_return_context, strategic):
         def make():
             base = SlayTheSpireEnv(combat_action_contract='autoregressive-v2',
                  card_language=True, global_map_view=True, deck_size_observation=True,
@@ -314,17 +314,19 @@ def native_wrapper_factories():
                  combat_value_objective='combat-outcome-means-v1')
             expected = gym.spaces.Dict({key: space for key, space in base.observation_space.spaces.items()
                                        if key != 'post_enemy_turn_boundary'})
-            env = gym.wrappers.TimeLimit(ShapedRewardWrapper(base), max_episode_steps=41+index)
+            wrapper = StrategicRewardWrapper if strategic else ShapedRewardWrapper
+            env = gym.wrappers.TimeLimit(wrapper(base), max_episode_steps=41+index)
             return TrainingStateWrapper(CheckpointObservationCompat(env, expected))
         return make
-    return lambda count, outer_return_context=True: [
-        factory(i, outer_return_context=outer_return_context) for i in range(count)]
+    return lambda count, outer_return_context=True, strategic=False: [
+        factory(i, outer_return_context=outer_return_context, strategic=strategic) for i in range(count)]
 
 
-def test_vector_wrappers_autoreset_labels_journals_and_restore(monkeypatch, native_wrapper_factories):
+@pytest.mark.parametrize('strategic', [False, True])
+def test_vector_wrappers_autoreset_labels_journals_and_restore(monkeypatch, native_wrapper_factories, strategic):
     from stable_baselines3.common.vec_env import DummyVecEnv
     from rl.training.native_vec_env import NativeSearchVecEnv
-    factories = native_wrapper_factories(8)
+    factories = native_wrapper_factories(8, outer_return_context=not strategic, strategic=strategic)
     reference, candidate = DummyVecEnv(factories), NativeSearchVecEnv(factories, threads=2)
     rng = np.random.default_rng(9001000)
     try:

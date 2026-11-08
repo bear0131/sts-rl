@@ -80,7 +80,7 @@ function displayRow(row,run={}){
   ...Object.fromEntries(['policy_loss','value_loss','kl'].map(k=>['display/upper_'+k,lastEpochMetric(row,k)]))};
 }
 for(const [i,s] of specs.entries()){let el=document.createElement('article');el.className='chart';el.innerHTML=`<h2>${s[0]}</h2><div class="legend">${s[2].map((v,j)=>`<span style="color:${colors[j]}">● ${v}</span>`).join('')}</div><svg role="img" aria-label="${s[0]}" id="chart${i}"></svg>`;$('charts').append(el)}
-function roundAt(run,step){if(run.rollout_mode==='complete_games')return (run.rows||[]).find(r=>r.global_timesteps===step)?.rollout_round??0;return (run.branch_round??((run.branch_step||0)/run.iteration_steps))+(step-(run.branch_step||0))/run.iteration_steps}
+function roundAt(run,step){const row=(run.rows||[]).find(r=>r.global_timesteps===step);if(finite(row?.rollout_round))return row.rollout_round;if(run.rollout_mode==='complete_games')return 0;const size=finite(row?.transitions_global)&&row.transitions_global>0?row.transitions_global:run.iteration_steps;return (run.branch_round??((run.branch_step||0)/size))+(step-(run.branch_step||0))/size}
 function datasets(){
  const relative=$('axis').value==='relative', n=Number($('range').value);
  return [...(state.comparisons||[]),state].map((run,j)=>{let rows=(run.rows||[]).map(r=>displayRow(r,run));if(relative)rows=rows.filter(r=>r.global_timesteps>=run.branch_step);if(n)rows=rows.slice(-n);return {label:run.label||run.run_id,gameScope:run.rollout_mode==='complete_games'?'本批自然结束局':'最近400个完成局 · 连续补局',rolling:run.rollout_mode!=='complete_games',rows,color:runColors[j%runColors.length],x:r=>relative?roundAt(run,r.global_timesteps)-(run.branch_round||0):roundAt(run,r.global_timesteps),branch:(relative?0:roundAt(run,run.branch_step||0))}});

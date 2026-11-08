@@ -35,8 +35,15 @@ GAE同时产生actor优势与固定critic标签，使用采样旧V、FP64递推�
 TimeLimit保持标准PPO终局观察自举；此类删失局不计自然胜率，计数单列。
 
 初始化参数见 `configs/train/shared_wholerun_256x4.args`（现有trainer可用`--steps 0`），
-四机配置见 `configs/train/shared_wholerun_distributed.args`。每机128环境×512动作、
-micro256×累积32×四rank=32768有效batch、2遍，共16次Adam/轮。
+四机配置见 `configs/train/shared_wholerun_distributed.args`。每机256环境×768动作、
+micro1536×累积8×四rank=49152有效batch、1遍，共16次Adam/轮，LR1e-4。
+全局每轮786432实际动作；原128×512两遍配置为262144动作、同样16次更新。
+物理微批可以合并多个256样本统计组；优势仍在每组内归一化，避免扩大微批时
+悄悄改变目标。分布式共享PPO遇到显存不足会按完整统计组拆分，丢弃失败反向的
+部分梯度后重试，保留此前累积梯度；日志记录请求/实际块大小和重试数。
+普通恢复可显式使用`--resume-grow-environments`追加环境，原有在途游戏、Adam
+和learner随机流保持；新槽使用独立种子。仅用于此次扩容，等量恢复不带此参数。
+共享PPO保存独立`rollout_round`，环境数/步长变化后监控轮次仍连续。
 动作前缀仍算真实策略决策，不把它或强制动作误称搜索simulation。
 
 训练异常在关闭 resident 环境前，将现场 JSON 与单槽环境 journal 写入

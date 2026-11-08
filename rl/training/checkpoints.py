@@ -146,23 +146,33 @@ def _restore_environment_states(env, states):
     return restore_many(states)
 
 
-def _grow_complete_cohort(model, manifest, state, environment, *, rank, world_size):
+def _grow_environment_slots(model, manifest, state, environment, *, rank, world_size):
     """Append seeded slots while retaining every source slot and learner field.
 
-    configure() validates the complete natural-game boundary before this call.
-    Here the saved bundle, per-slot learner arrays and live geometry must agree
-    with that explicit migration. Caller restores learner RNG after replay.
+    Complete-game collectors require a natural-game boundary; continuous PPO
+    retains its live action journals. Per-slot arrays must match the source.
+    Caller restores learner RNG after replay.
     """
     env = model.get_env()
     growth = getattr(model, 'episode_rollout_growth', None)
     old_count = len(environment['states'])
-    if (env is None or not growth or old_count != growth['source_games_per_rank']
+    pure_ppo = getattr(model, 'nosl_supervision_contract', None) == 'shared-wholerun-ppo-room-v1'
+    if pure_ppo:
+        if (env is None or env.num_envs <= old_count
+                or manifest['config'].get('n_envs') != old_count
+                or model.nosl_is_az or model.hierarchical_combat_hp):
+            raise ValueError('continuous PPO environment growth geometry mismatch')
+        growth = dict(mode='continuous-ppo', source_games_per_rank=old_count,
+            games_per_rank=env.num_envs, source_round=getattr(model, 'ppo_rollouts_completed', 0),
+            next_global_seed=int(manifest['config']['seed']) + manifest['global_step'] * world_size)
+    elif (env is None or not growth or old_count != growth['source_games_per_rank']
             or env.num_envs != growth['games_per_rank'] or env.num_envs <= old_count
             or manifest.get('rollout_round') != growth['source_round']
             or manifest['config'].get('episode_rollout_config', {}).get('games_per_rank') != old_count
             or getattr(model, 'episode_rollout_world_size', None) != world_size
-            or getattr(model, 'episode_rollout_rank', None) != rank
-            or getattr(model, '_outer_return', False) or state['replay'] is not None
+            or getattr(model, 'episode_rollout_rank', None) != rank):
+        raise ValueError('environment growth source/geometry/boundary mismatch')
+    if (getattr(model, '_outer_return', False) or state['replay'] is not None
             or any(state.get('upper_pending') or ())
             or any(state.get('nosl_is_az_pending_fights') or ())):
         raise ValueError('environment growth source/geometry/boundary mismatch')
@@ -182,6 +192,8 @@ def _grow_complete_cohort(model, manifest, state, environment, *, rank, world_si
                        ('upper_episode_ids', growth['source_round'])):
         values = state.get(name)
         if values is not None:
+            if pure_ppo and len(values) == 0:
+                continue  # Inactive NOSL/joint-PPO queues have no per-slot state.
             if len(values) != old_count:
                 raise ValueError('environment growth source slot mismatch: ' + name)
             state[name] = copy.deepcopy(list(values)) + [copy.deepcopy(fill) for _ in range(extra)]
@@ -287,7 +299,8 @@ def save_bundle(model, root, *, rank, world_size, run_id, wandb_id, config):
             outer_return_contract=identity,
             rank=rank, world_size=world_size,
             global_step=step, run_id=run_id, wandb_id=wandb_id,
-            rollout_round=getattr(model, 'episode_rollouts_completed', None),
+            rollout_round=getattr(model, 'episode_rollouts_completed',
+                                  getattr(model, 'ppo_rollouts_completed', None)),
             environment_resume=(
                 'action-journal replay; live episodes restored'
                 if schema_version >= 2
@@ -359,7 +372,7 @@ def restore_learner(
                 raise ValueError('invalid environment recovery state')
             source_count = len(environment['states'])
             if grow_environments:
-                state, environment, source_count = _grow_complete_cohort(
+                state, environment, source_count = _grow_environment_slots(
                     model, manifest, state, environment, rank=rank, world_size=world_size)
             observations = _restore_environment_states(
                 env, environment['states']

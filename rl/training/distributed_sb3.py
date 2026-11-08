@@ -15,7 +15,7 @@ experiment targets.
 
 from __future__ import annotations
 
-from rl.algorithms.updates import ppo_forward, optimizer_step, reasoning_microbatch_backward
+from rl.algorithms.updates import ppo_forward, ppo_chunked_backward, optimizer_step, reasoning_microbatch_backward
 from rl.algorithms.upper_ppo import enabled as joint_upper, combat_update, update_upper
 from rl.algorithms.update_schedule import parse_update_schedule
 from rl.search.native import NATIVE_TIMING_KEYS, WORKER_TIMING_KEYS, apply_strict_training_settings
@@ -568,6 +568,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--fork-grow-environments', action='store_true',
                         help='With --fork-state and --episode-rollout, preserve the complete natural '
                              'unified cohort and append new seeded environments; never reset source slots.')
+    parser.add_argument('--resume-grow-environments', action='store_true',
+                        help='Pure whole-run PPO only: retain live source slots and append seeded slots.')
     parser.add_argument(
         "--resume-reset-environments",
         action="store_true",
@@ -1216,6 +1218,14 @@ def ppo_microbatch_backward(
             "reserved_before": th.cuda.memory_reserved(model.device),
         }
 
+    if getattr(model, 'nosl_supervision_contract', None) == 'shared-wholerun-ppo-room-v1':
+        loss_value = ppo_chunked_backward(model, rollout_data, clip_range, clip_range_vf)
+        if cuda_profile is not None:
+            cuda_profile.update(allocated_after_backward=th.cuda.memory_allocated(model.device),
+                peak_allocated=th.cuda.max_memory_allocated(model.device),
+                peak_reserved=th.cuda.max_memory_reserved(model.device))
+        return dict(loss=loss_value, combat_value_loss=None, overworld_value_loss=None,
+                    cuda_profile=cuda_profile)
     phase = rollout_data.observations["phase"].long().reshape(-1)
     valid = th.isfinite(rollout_data.advantages) & th.isfinite(
         rollout_data.returns
@@ -2246,6 +2256,9 @@ def main() -> None:
         raise ValueError("--fork-reset-environments requires --fork-state")
     if args.resume_reset_environments and args.resume_state is None:
         raise ValueError("--resume-reset-environments requires --resume-state")
+    if args.resume_grow_environments and (args.resume_state is None or args.resume_reset_environments
+                                          or args.episode_rollout):
+        raise ValueError('--resume-grow-environments requires ordinary PPO resume without reset')
     if args.fork_grow_environments and (
             args.fork_state is None or not args.episode_rollout
             or args.fork_reset_environments or args.resume_reset_environments):
@@ -2472,6 +2485,13 @@ def main() -> None:
     # Load once without env to infer obs flags, then load again with env and
     # custom_objects so SB3 rebuilds the rollout buffer at the requested shape.
     probe_model = AccumulatingMaskablePPO.load(args.checkpoint, device=args.device)
+    pure_ppo = probe_model.nosl_supervision_contract == 'shared-wholerun-ppo-room-v1'
+    if args.resume_grow_environments and not pure_ppo:
+        raise ValueError('--resume-grow-environments only supports shared whole-run PPO')
+    source_ppo_round = (getattr(probe_model, 'ppo_rollouts_completed',
+        args.wandb_step_base if args.wandb_step_base is not None else
+        probe_model.num_timesteps // (probe_model.n_envs * probe_model.n_steps * args.world_size))
+        if pure_ppo else None)
     if args.upper_auxiliary_search is not None and not joint_upper(probe_model):
         raise ValueError('--upper-auxiliary-search requires joint strategic PPO')
     if args.upper_micro_batch_size is not None and not joint_upper(probe_model):
@@ -3213,6 +3233,8 @@ def main() -> None:
         tb_log_name=f"dist_sb3_rank{args.rank}",
         progress_bar=False,
     )
+    if pure_ppo:
+        model.ppo_rollouts_completed = int(source_ppo_round)
     if recovery_state is not None:
         recovery_manifest = restore_learner(
             model,
@@ -3221,10 +3243,13 @@ def main() -> None:
             world_size=args.world_size,
             restore_environment=not bool(
                 args.fork_reset_environments or args.resume_reset_environments),
-            grow_environments=args.fork_grow_environments,
+            grow_environments=args.fork_grow_environments or args.resume_grow_environments,
         )
         if args.fork_grow_environments:
             print('ENVIRONMENT_EXPANDED_ON_FORK ' + json.dumps(
+                model._recovery_environment_growth, sort_keys=True), flush=True)
+        if args.resume_grow_environments:
+            print('ENVIRONMENT_EXPANDED_ON_RESUME ' + json.dumps(
                 model._recovery_environment_growth, sort_keys=True), flush=True)
         if args.fork_reset_environments or args.resume_reset_environments:
             print(
@@ -3356,6 +3381,9 @@ def main() -> None:
             grad_bytes = 0
             optimizer_steps = 0
             cuda_memory_peak = None
+            if pure_ppo:
+                model._ppo_microbatch_stats = dict(chunks=0, rows=0, oom_retries=0,
+                                                  min_rows=args.batch_size, max_rows=0)
 
             inner_only_nosl = bool(
                 model.nosl_is_az and model.nosl_is_az_inner_only
@@ -3751,6 +3779,14 @@ def main() -> None:
             # Average the fixed set across ranks before printing or sending it
             # to W&B, so the dashboard represents the global rollout rather
             # than rank 0's local subset.
+            if pure_ppo:
+                for key, value in model._ppo_microbatch_stats.items():
+                    model.logger.record('pure_rl/backward_' + key, value)
+                for key, value in dict(learning_rate=model.policy.optimizer.param_groups[0]['lr'],
+                        epochs=args.n_epochs, microbatch_rows_requested=args.batch_size,
+                        normalization_group_size=model.policy.ppo_advantage_group_size,
+                        effective_batch_size_global=args.batch_size * args.gradient_accumulation_steps * args.world_size).items():
+                    model.logger.record('pure_rl/' + key, value)
             callback_scalars = logger_scalars(model)
             upper_counts = getattr(model, "_nosl_is_az_rollout_upper_counts", {})
             record["nosl_is_az_upper_strategy"] = model.nosl_is_az_upper_strategy
@@ -3872,6 +3908,9 @@ def main() -> None:
                 record['episode_scope'] = 'boss-opening'
 
             global_timesteps = int(record["global_timesteps"])
+            if pure_ppo:
+                model.ppo_rollouts_completed += 1
+                record['rollout_round'] = model.ppo_rollouts_completed
             # Keep saved checkpoints/resumes on the global env-step axis rather
             # than SB3's local rank counter.
             model.num_timesteps = global_timesteps
@@ -4092,7 +4131,9 @@ def main() -> None:
                     key: record[key]
                     for key in _DISTRIBUTED_NOSL_METRIC_KEYS
                 })
-                if episode_config is not None:
+                if pure_ppo:
+                    legacy_step = model.ppo_rollouts_completed
+                elif episode_config is not None:
                     legacy_step = model.episode_rollouts_completed
                     wandb_payload['episode_rollout/round'] = legacy_step
                     wandb_payload['episode_rollout/games_global'] = args.n_envs * args.world_size
