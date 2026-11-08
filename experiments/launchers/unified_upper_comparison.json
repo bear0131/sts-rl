@@ -2372,7 +2372,7 @@
         "rule": "Best passed actor and lower by heldout point estimate; both passed critic candidates are confirmed because their relative ranking is unresolved in the screening cohort."
       },
       "source_screen_sha256": "d11caec058d1d39e9e44051811bbc80c598e3435489e310fdc28be6b81734257",
-      "status": "prepared"
+      "status": "running"
     }
   }
 }

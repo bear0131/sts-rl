@@ -606,6 +606,6 @@
 
 | COMBAT38-PASSIVE-COMBAT | 待诊断；用户指定后续处理，不改当前训练 | 区分有收益防御/蓄力与无收益拖延，量化战斗回合、状态进展、结束率及rollout长尾；再提出目标/奖励/终局处理的独立实验，验证胜率与学习效果，不能把修改游戏统计方法当等价提速。环境数×step候选保留跨轮状态/RNG与正确bootstrap，并与完整局采样分别评估。见worklog/2026-11-08.md#combat38-step-full480。 |
 
-| COMBAT38-CURRENT-HYPERPARAMETERS | 执行中：221暂停；screen03全臂完成，独立confirm01已登记待启动 | 用户要求暂停四机38并检查学习率过高/更新次数过多。实际源参数、四rank正常停止/完整状态双备份，冻结同源整局留出对照各学习率/次数、权重Adam随机数还原、独立cohort确认；训练/验证/实际更新与资源均报告，离线代理不冒称胜率或全局最优。保留39暂停与原模型，诊断期间不自动恢复。见worklog/2026-11-08.md#combat38-current-hyperparameter-recheck。 |
+| COMBAT38-CURRENT-HYPERPARAMETERS | 执行中：221暂停；screen03全臂完成，独立confirm01四机运行 | 用户要求暂停四机38并检查学习率过高/更新次数过多。实际源参数、四rank正常停止/完整状态双备份，冻结同源整局留出对照各学习率/次数、权重Adam随机数还原、独立cohort确认；训练/验证/实际更新与资源均报告，离线代理不冒称胜率或全局最优。保留39暂停与原模型，诊断期间不自动恢复。见worklog/2026-11-08.md#combat38-current-hyperparameter-recheck。 |
 
-| COMBAT38-WINNING-REPLAYS | 执行中：已找到221/141动作日志，准备只读重放 | 超参数诊断同时继续；各源固定首32局、至多3胜局概要，核同源native/动作日志/最终观测与mask SHA，明确区别测试终态概要与历史训练重放，不编造缺失打法。见worklog/2026-11-08.md#combat38-winning-replays。 |
+| COMBAT38-WINNING-REPLAYS | 已完成：141/221各三胜局精确重放，含壁垒跨回合积盾证据 | 超参数诊断同时继续；各源固定首32局、至多3胜局概要，核同源native/动作日志/最终观测与mask SHA，明确区别测试终态概要与历史训练重放，不编造缺失打法。见worklog/2026-11-08.md#combat38-winning-replays。 |
