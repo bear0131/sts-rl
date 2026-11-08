@@ -220,3 +220,57 @@ def test_batched_map_keeps_phase_rows_outputs_and_gradients(device):
             torch.testing.assert_close(a[2][key], b[2][key], rtol=3e-5, atol=3e-6)
     finally:
         env.close()
+
+
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+@pytest.mark.parametrize('phase_subset', ['all', 'one'])
+def test_upper_phase_batch_preserves_unused_parameters_and_adam(upper_phase_batch, device, phase_subset):
+    from rl.policies.entity_joint import EntityJointCore
+    assert device != 'cuda' or torch.cuda.is_available(), 'explicit CUDA qualification required'
+    torch.set_float32_matmul_precision('highest')
+    env, frames = upper_phase_batch
+    frames = [frames[i] for i in ([4, 0, 6, 2, 7, 1, 3, 5, 2] if phase_subset == 'all' else [4, 4, 4])]
+    obs = obs_as_tensor({key: np.stack([r[key] for r in frames]) for key in frames[0]},
+                        torch.device(device))
+    model = AccumulatingMaskablePPO(SharedWholeRunPolicy, env, seed=20261109,
+        n_steps=4, batch_size=4, n_epochs=1, device=device, gamma=1.,
+        reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
+        policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4))
+    core = model.policy.core
+    core.train()
+    initial = deepcopy(core.state_dict())
+    results = []
+    for reference in (True, False):
+        core.load_state_dict(initial)
+        optimizer = torch.optim.Adam(core.parameters(), lr=1e-4, eps=1e-5)
+        # Existing momentum makes a spurious zero gradient observably different
+        # from None, even when that head has no samples in this update.
+        for parameter in core.parameters():
+            parameter.grad = torch.full_like(parameter, .003)
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+        logits, values = (EntityJointCore.actor_critic(core, obs) if reference
+                          else core.actor_critic(obs))
+        coefficients = torch.linspace(-.2, .4, logits.shape[1], device=device)
+        loss = (logits.masked_fill(logits.abs() >= 1e8, 0) * coefficients).mean()
+        (loss + values.square().mean()).backward()
+        gradients = {key: None if p.grad is None else p.grad.detach().clone()
+                     for key, p in core.named_parameters()}
+        optimizer.step()
+        results.append((logits.detach(), values.detach(), gradients,
+                        deepcopy(core.state_dict()), deepcopy(optimizer.state_dict())))
+    left, right = results
+    for x, y in zip(left[:2], right[:2], strict=True):
+        torch.testing.assert_close(x, y, rtol=2e-5, atol=2e-5)
+    for key, x in left[2].items():
+        y = right[2][key]
+        assert (x is None) == (y is None), key
+        if x is not None:
+            torch.testing.assert_close(x, y, rtol=3e-5, atol=3e-6)
+    for key in left[3]:
+        torch.testing.assert_close(left[3][key], right[3][key], rtol=2e-5, atol=2e-6)
+    assert left[4]['state'].keys() == right[4]['state'].keys()
+    for key in left[4]['state']:
+        for field in ('step', 'exp_avg', 'exp_avg_sq'):
+            torch.testing.assert_close(left[4]['state'][key][field], right[4]['state'][key][field],
+                                       rtol=3e-5, atol=3e-6)

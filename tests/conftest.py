@@ -476,3 +476,32 @@ def finite_curve_bank(frozen_upper_source):
                     [base+.025*p+slope*x for x in (.01, .5, 1.)] for p in range(6)]
     return dict(schema=SCHEMA, teacher_sha256=teacher.assert_integrity(),
                 hp_fractions=[.01, .5, 1.], potion_counts=list(range(6)), curves=curves)
+
+
+@pytest.fixture
+def upper_phase_batch():
+    """Mixed real observation schema, including PAD pointer candidates and map choices."""
+    from copy import deepcopy
+    from env.core import vocab
+    from env.core.run_env import SlayTheSpireEnv
+    env = SlayTheSpireEnv(card_language=True, global_map_view=True, upper_public_context=True,
+        event_option_observation=True, neow_observation=True,
+        combat_action_contract='autoregressive-v2')
+    frame, _ = env.reset(seed=20261109)
+    frames = []
+    for name in ('shop', 'map', 'combat_reward', 'card_select', 'event', 'boss_relic', 'rest', 'chest'):
+        row = deepcopy(frame)
+        row['phase'][0] = vocab.PHASE_VOCAB_INDEX[name]
+        row['relics'][:] = 0
+        row['relics'][3] = 1
+        row['relic_counters'][:] = .7
+        row['deck_ids'][1::2] = 0
+        row['selected_card_ids'][:] = 0
+        row['select_card_ids'][:] = 0
+        row['select_native_indices'][:] = 0
+        row['select_native_indices'][0] = 1  # Executable skip carries PAD card ID.
+        row['map_full_rooms'][-1] = 0
+        row['map_full_features'][-1, 3] = 1  # Choice at a PAD map slot.
+        frames.append(row)
+    yield env, frames
+    env.close()
