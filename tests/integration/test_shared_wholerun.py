@@ -162,6 +162,14 @@ def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, gr
         count = 128 if grow and row['rollout_round'] > 2 else 64
         assert row['pure_rl/combat_samples'] + row['pure_rl/upper_samples'] == count
         assert row['optimizer_steps'] == count // 32
+        assert row['pure_rl/update/count'] == count
+        assert row['pure_rl/value_pre/all/count'] == count
+        for key in ('value_loss', 'policy_loss', 'entropy', 'approx_kl', 'clip_fraction',
+                    'value_pre/all/mse', 'value_pre/combat/mse', 'value_pre/upper/mse'):
+            assert np.isfinite(row['pure_rl/'+key])
+            assert row['pure_rl/'+key] == payload['pure_rl/'+key]
+        assert row['pure_rl/value_loss'] >= 0
+        assert 0 <= row['pure_rl/clip_fraction'] <= 1
         for key in {**reward_monitor.counts(None), **campfire_monitor.counts(None)}:
             assert row['upper/'+key] == payload['upper/'+key]
         for key, value in row.items():

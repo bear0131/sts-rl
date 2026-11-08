@@ -3384,6 +3384,8 @@ def main() -> None:
             if pure_ppo:
                 model._ppo_microbatch_stats = dict(chunks=0, rows=0, oom_retries=0,
                                                   min_rows=args.batch_size, max_rows=0)
+                model._ppo_update_metric_sums = None
+                model._ppo_update_metric_count = 0
 
             inner_only_nosl = bool(
                 model.nosl_is_az and model.nosl_is_az_inner_only
@@ -3786,6 +3788,9 @@ def main() -> None:
             # to W&B, so the dashboard represents the global rollout rather
             # than rank 0's local subset.
             if pure_ppo:
+                from rl.algorithms.ppo_metrics import update_moments
+                for key, value in update_moments(model).items():
+                    model.logger.record(key, value)
                 for key, value in model._ppo_microbatch_stats.items():
                     model.logger.record('pure_rl/backward_' + key, value)
                 for key, value in dict(learning_rate=model.policy.optimizer.param_groups[0]['lr'],
@@ -3871,6 +3876,9 @@ def main() -> None:
             _finalize_distributed_game_scalars(
                 aggregate_scalars, world_size=args.world_size,
             )
+            if pure_ppo:
+                from rl.algorithms.ppo_metrics import finalize_metrics
+                aggregate_scalars.update(finalize_metrics(aggregate_scalars))
             # Both counters underwent the same mean reduction, so their ratio
             # is sum(matches)/sum(count), even with unequal rank populations.
             # Keep the historical zero/count=0 logging convention for W&B.

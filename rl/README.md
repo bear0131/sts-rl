@@ -45,6 +45,12 @@ micro1536×累积8×四rank=49152有效batch、1遍，共16次Adam/轮，LR1e-4�
 和learner随机流保持；新槽使用独立种子。仅用于此次扩容，等量恢复不带此参数。
 共享PPO保存独立`rollout_round`，环境数/步长变化后监控轮次仍连续。
 动作前缀仍算真实策略决策，不把它或强制动作误称搜索simulation。
+分布式纯PPO的 `pure_rl/value_pre/{all,combat,upper}/mse` 比较采样时的旧V
+与本轮冻结λ-return，不额外前推。先跨rank归约sum/count再求MSE、偏差与解释方差；
+目标无方差不显示解释方差，零样本不补零。`pure_rl/{policy_loss,value_loss,entropy,
+approx_kl,clip_fraction}` 汇总更新过程中成功反向的真实样本，OOM失败尝试不计入。
+这些不是最终权重的重测，也不能与旧上层MC标签的误差直接比较。
+
 
 训练异常在关闭 resident 环境前，将现场 JSON 与单槽环境 journal 写入
 `training_state_dir/failure-scenes/rankN/`。有明确故障槽时只保存该槽；否则最多保存

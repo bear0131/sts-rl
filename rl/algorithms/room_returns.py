@@ -61,6 +61,9 @@ def apply_room_returns(model, buffer):
     buffer.advantages[...] = advantages
     buffer.returns[...] = returns
     phase = buffer.observations['phase'][..., 0]
+    from rl.algorithms.ppo_metrics import value_moments
+    for key, value in value_moments(buffer.values, buffer.returns, phase).items():
+        model.logger.record(key, value)
     model.logger.record('pure_rl/combat_samples', int((phase == vocab.PHASE_VOCAB_INDEX['combat']).sum()))
     model.logger.record('pure_rl/upper_samples', int((phase != vocab.PHASE_VOCAB_INDEX['combat']).sum()))
     model.logger.record('pure_rl/room_lambda', model.policy.room_lambda)

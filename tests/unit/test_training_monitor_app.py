@@ -197,6 +197,11 @@ assert.ok($('chart0').previousElementSibling.children[0].textContent.includes('�
 assert.ok($('comparison-status').children.some(n=>n.textContent.includes('legacy')&&n.textContent.includes('最近400个完成局')));
 assert.equal(JSON.stringify(state),before); // Display must not rewrite raw/history data.
 assert.ok(!specs.flatMap(s=>s[1]).some(k=>['game/win_rate','game/floor_mean','upper/policy_loss','upper/value_loss','upper/kl'].includes(k)));
+const pure={'pure_rl/value_pre/all/mse':.25,'pure_rl/value_loss':.2,'pure_rl/approx_kl':.001};
+assert.equal(displayRow(pure)['pure_rl/value_pre/all/mse'],.25);
+assert.equal(displayRow(old)['pure_rl/value_pre/all/mse'],undefined);
+assert.ok(specs.some(s=>s[1].includes('pure_rl/value_pre/combat/mse')));
+assert.ok(specs.some(s=>s[1].includes('pure_rl/policy_loss')));
 const reference={...first,global_timesteps:8,rollout_round:1};
 state.comparisons.push({run_id:'lambda-reference',label:'lambda-reference',rollout_mode:'complete_games',branch_step:0,branch_round:0,rows:[reference]});
 render();

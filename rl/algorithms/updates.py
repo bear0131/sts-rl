@@ -97,6 +97,8 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf):
         if old_grads:
             th._foreach_add_(old_grads, additions)
         losses.append(loss.detach() * (count / total))
+        from rl.algorithms.ppo_metrics import accumulate_update_metrics
+        accumulate_update_metrics(model, components, count)
         stats['chunks'] += 1
         stats['rows'] += count
         stats['min_rows'] = min(stats['min_rows'], count)

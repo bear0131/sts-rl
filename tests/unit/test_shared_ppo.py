@@ -92,7 +92,9 @@ def test_oom_retry_preserves_prior_and_partial_backward_gradients(monkeypatch):
     batch = SimpleNamespace(advantages=torch.arange(16, dtype=torch.float64))
     def forward(model, data, *args):
         x = data.advantages[:, None] * model.policy.weight[None, :]
-        return None, x.square().mean()
+        loss = x.square().mean()
+        return SimpleNamespace(policy_loss=loss, value_loss=loss,
+            entropy_loss=-loss, approx_kl=loss * 0, clip_fraction=loss * 0), loss
     monkeypatch.setattr(updates, 'ppo_forward', forward)
     for model in (original, retry):
         model.policy.weight.grad = torch.tensor([2., 3.], dtype=torch.float64)
@@ -115,6 +117,10 @@ def test_oom_retry_preserves_prior_and_partial_backward_gradients(monkeypatch):
     assert retry._ppo_microbatch_stats == dict(chunks=2, rows=16, oom_retries=1,
                                               min_rows=8, max_rows=8)
     assert retry._ppo_microbatch_cap == 8
+    from rl.algorithms.ppo_metrics import update_moments, finalize_metrics
+    assert retry._ppo_update_metric_count == original._ppo_update_metric_count == 16
+    assert finalize_metrics(update_moments(retry)) == pytest.approx(
+        finalize_metrics(update_moments(original)), rel=1e-12)
     for model in (original, retry):
         torch.optim.Adam(model.policy.parameters(), lr=1e-4).step()
     torch.testing.assert_close(original.policy.weight, retry.policy.weight,
