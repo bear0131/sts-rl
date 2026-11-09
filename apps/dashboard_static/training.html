@@ -38,7 +38,7 @@ const specs=[
  ['纯 PPO · 更新中 KL',['pure_rl/approx_kl'],['行为策略到更新策略 · 近似 KL'],false],
  ['纯 PPO · 策略熵',['pure_rl/entropy'],['合法动作分布熵'],false],
  ['纯 PPO · 裁剪比例',['pure_rl/clip_fraction'],['超出 PPO 裁剪区间的样本比例'],true],
- ['纯 PPO · 更新前 value 解释方差',['pure_rl/value_pre/all/explained_variance','pure_rl/value_pre/combat/explained_variance','pure_rl/value_pre/upper/explained_variance'],['整体','战斗内','战斗外'],false],
+ ['纯 PPO · 更新前 value 解释方差',['pure_rl/value_pre/all/explained_variance','pure_rl/value_pre/combat/explained_variance','pure_rl/value_pre/upper/explained_variance'],['整体','战斗内','战斗外'],false,[0,1]],
  ['纯 PPO · 更新配置',['optimizer_steps','pure_rl/epochs'],['实际 Adam 次数','更新遍数'],false],
  ['纯 PPO · 学习率',['pure_rl/learning_rate'],['Adam 学习率'],false],
  ['纯 PPO · 阶段耗时（秒）',['rollout_sec','backward_sec','sync_sec','checkpoint_sec'],['采样','反向计算','梯度同步','保存'],false],
@@ -62,7 +62,7 @@ const specs=[
   ['火堆 · '+label,['upper/campfire_'+key+'_choice_rate','upper/campfire_'+key+'_policy_probability'],['可选时实际选择率','可选时模型概率'],true])
 ];
 let state=null;
-document.getElementById('notice').append(' 纯 PPO 的更新前 value loss 使用本轮采样旧 V 与冻结的房间 λ-return，整体/战斗内/战斗外分别按样本数汇总；不是旧训练的 MC 标签。更新中损失、KL、熵、裁剪比例汇总实际成功反向的样本，不包含 OOM 失败尝试，也不代表全部更新完成后的重测。解释方差可能为负，目标无方差时不显示；历史缺失轮次不补零。');
+document.getElementById('notice').append(' 纯 PPO 的更新前 value loss 使用本轮采样旧 V 与冻结的房间 λ-return，整体/战斗内/战斗外分别按样本数汇总；不是旧训练的 MC 标签。更新中损失、KL、熵、裁剪比例汇总实际成功反向的样本，不包含 OOM 失败尝试，也不代表全部更新完成后的重测。解释方差可能为负；该图纵轴固定0～1，范围外的真实值仍可悬停查看。目标无方差时不显示；历史缺失轮次不补零。');
 document.getElementById('notice').append(' 冻结前后MSE图使用同一批完整训练样本，分别在全部上层更新前、全部critic更新后固定权重重算；实际目标MSE在冻结λ模式下与MC不同。这些是训练集误差，不是留出集评测，下降不直接证明泛化改善或过拟合；未启用测量的旧轮次不补零。测量耗时取机器1，已包含在完整轮时间内。');
 document.getElementById('notice').append(' COMBAT31使用全新独立actor/critic，下层继承旧203轮权重；每轮960起始局，actor两遍GAE优势、critic四遍实际完整回报监督，无上层分支续玩。value loss取critic最后一遍；与旧λ-return监督不是同一标签，不能直接比较数值判断模型优劣。整轮耗时图取机器1的iteration_wall_sec（含保存，未含随后W&B客户端排队），不是四机最慢值；阶段耗时不能替代整轮耗时。');
 document.getElementById('notice').append(' 火堆仅从启用监控后的轮次记录：只统计主选择，升级/删牌后的选牌不重复计数；每项以其可选次数为分母，模型概率在合法火堆选项内归一化（排除药水操作）。未解锁或无样本不显示，各项条件比例不必相加为100%。');
@@ -97,12 +97,13 @@ function datasets(){
  const relative=$('axis').value==='relative', n=Number($('range').value);
  return [...(state.comparisons||[]),state].map((run,j)=>{let rows=(run.rows||[]).map(r=>displayRow(r,run));if(relative)rows=rows.filter(r=>r.global_timesteps>=run.branch_step);if(n)rows=rows.slice(-n);return {label:run.label||run.run_id,gameScope:run.rollout_mode==='complete_games'?'本批自然结束局':'最近400个完成局 · 连续补局',rolling:run.rollout_mode!=='complete_games',rows,color:runColors[j%runColors.length],x:r=>relative?roundAt(run,r.global_timesteps)-(run.branch_round||0):roundAt(run,r.global_timesteps),branch:(relative?0:roundAt(run,run.branch_step||0))}});
 }
-function plot(i,sets){const [title,keys,names,pct]=specs[i],svg=$('chart'+i),w=svg.clientWidth,h=230,left=64,right=18,top=12,bottom=33;svg.setAttribute('viewBox',`0 0 ${w} ${h}`);svg.replaceChildren();
+function plot(i,sets){const [title,keys,names,pct,fixedY]=specs[i],svg=$('chart'+i),w=svg.clientWidth,h=230,left=64,right=18,top=12,bottom=33;svg.setAttribute('viewBox',`0 0 ${w} ${h}`);svg.replaceChildren();
  const visible=sets.filter(run=>run.rows.some(row=>keys.some(k=>finite(row[k]))));
  const entries=visible.flatMap(run=>run.rows.map(row=>({run,row,x:run.x(row)}))),xs=entries.map(e=>e.x),vals=entries.flatMap(e=>keys.map(k=>e.row[k])).filter(finite);
  const legend=svg.previousElementSibling;legend.replaceChildren();svg.onpointermove=null;svg.onpointerleave=null;if(!vals.length||w<100){legend.textContent='暂无同口径数据';return;}visible.forEach(run=>keys.forEach((key,j)=>{if(!run.rows.some(row=>finite(row[key])))return;const span=document.createElement('span');span.style.color=run.color;span.textContent=`${j||i<2&&run.rolling?'┄':'━'} ${run.label} · ${i<2?run.gameScope:names[j]}`;legend.append(span)}));
- let ymin=Math.min(...vals),ymax=Math.max(...vals),pad=(ymax-ymin)*.12||Math.max(Math.abs(ymax)*.1,.01);ymin-=pad;ymax+=pad;if(pct){ymin=Math.max(0,ymin);ymax=Math.min(1,ymax)}const xmin=Math.min(...xs),xmax=Math.max(...xs),x=v=>left+(v-xmin)/(xmax-xmin||1)*(w-left-right),y=v=>h-bottom-(v-ymin)/(ymax-ymin)*(h-top-bottom);
- function add(tag,attrs,txt){let n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);if(txt!==undefined)n.textContent=txt;svg.append(n);return n}
+ let ymin=Math.min(...vals),ymax=Math.max(...vals),pad=(ymax-ymin)*.12||Math.max(Math.abs(ymax)*.1,.01);ymin-=pad;ymax+=pad;if(pct){ymin=Math.max(0,ymin);ymax=Math.min(1,ymax)}if(fixedY){[ymin,ymax]=fixedY}const xmin=Math.min(...xs),xmax=Math.max(...xs),x=v=>left+(v-xmin)/(xmax-xmin||1)*(w-left-right),y=v=>h-bottom-(v-ymin)/(ymax-ymin)*(h-top-bottom);
+ function add(tag,attrs,txt){let n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);if(txt!==undefined)n.textContent=txt;if(fixedY&&(tag==='path'||tag==='circle'))n.setAttribute('clip-path','url(#chart'+i+'-clip)');svg.append(n);return n}
+ if(fixedY){const clip=add('clipPath',{id:'chart'+i+'-clip'});clip.append(add('rect',{x:left,y:top,width:w-left-right,height:h-top-bottom}));}
  for(let t=0;t<=4;t++){let v=ymin+(ymax-ymin)*t/4,yy=y(v);add('line',{x1:left,x2:w-right,y1:yy,y2:yy,stroke:'#2a364b'});add('text',{x:left-9,y:yy+4,'text-anchor':'end',fill:'#96a7bf','font-size':11},fmt(v,pct))}
  for(let t=0;t<=4;t++){let v=xmin+(xmax-xmin)*t/4;add('text',{x:x(v),y:h-13,'text-anchor':'middle',fill:'#96a7bf','font-size':11},Math.round(v))}
  add('text',{x:w-right,y:h,'text-anchor':'end',fill:'#96a7bf','font-size':11},$('axis').value==='relative'?'分支后轮次':'累计训练轮次');
