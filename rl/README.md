@@ -60,6 +60,12 @@ checkpoint建同合同，真实bridge不支持这些模拟训练专用阶段。
 `--ppo-advantage-normalization rollout`。FP32紧凑更新配置为
 `configs/train/shared_wholerun_packed_fp32.json`，不改变每Adam的样本成员。
 
+`configs/train/shared_wholerun_lambda1_sequential.args` 保留同一256×4、LR5e-5
+和遗物优先顺序奖励，但采用 `combat-value-target=whole-run`、lambda=1。
+战斗与上层均学习整局回报，不插入战斗锚点行或对应观察字段；固定采样段尾部
+仍以旧V自举。此配置用于前期从头训练，未设置自动切回锚点的轮数或稳定阈值。
+两个配置的战斗输入形状不同，后期若切换须显式迁移与验收，不能直接普通恢复。
+
 初始化参数见 `configs/train/shared_wholerun_256x4.args`（现有trainer可用`--steps 0`），
 四机配置见 `configs/train/shared_wholerun_distributed.args`。每机256环境×768动作、
 micro1536×累积8×四rank=49152有效batch、1遍，共16次Adam/轮，LR1e-4。
