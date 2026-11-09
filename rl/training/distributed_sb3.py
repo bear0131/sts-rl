@@ -1086,6 +1086,13 @@ def pack_gradients(model: AccumulatingMaskablePPO) -> th.Tensor:
     return flat
 
 
+def count_nonfinite_gradients(flat: th.Tensor) -> int:
+    """Scan the transport's CPU FP32 view without Torch's temporary passes."""
+    if flat.device.type != "cpu" or flat.dtype != th.float32:
+        raise TypeError("gradient diagnostics require a CPU float32 tensor")
+    return int(np.count_nonzero(~np.isfinite(flat.detach().numpy())))
+
+
 def save_gradients(flat: th.Tensor, path: Path) -> int:
     """Publish a fixed-layout raw gradient vector for SCP transport."""
     flat.numpy().tofile(path)
@@ -1360,7 +1367,7 @@ def synchronize_gradient_step(
     """Average current gradients over all ranks using the selected transport."""
     pack_started = time.perf_counter()
     local_flat = pack_gradients(model)
-    local_nonfinite = int(th.count_nonzero(~th.isfinite(local_flat)))
+    local_nonfinite = count_nonfinite_gradients(local_flat)
     first_nonfinite_parameter = None
     if local_nonfinite:
         first_index = int(th.nonzero(~th.isfinite(local_flat), as_tuple=False)[0, 0])
@@ -1412,7 +1419,7 @@ def synchronize_gradient_step(
         )
         local_flat = pack_gradients(model)
         paths_to_remove = [grad_path, *peer_paths]
-    synchronized_nonfinite = int(th.count_nonzero(~th.isfinite(local_flat)))
+    synchronized_nonfinite = count_nonfinite_gradients(local_flat)
     for path in paths_to_remove:
         try:
             path.unlink()
