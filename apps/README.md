@@ -103,24 +103,29 @@ seed 当作原始开场种子，也不能将留出失败筛选集的结果作为
 
 ### 私有云端训练监控
 
-`python -m apps.training_site_sync --config CONFIG --state STATE --credentials CREDENTIALS`
-在训练机运行，复用 Monitor 的 SSH/PID/日志增量读取，不启动模型、不修改训练。
-CONFIG 复用上面的 host/ports/ssh_key/root/run_id/iteration_steps，另设
-`discovery_root`（含 training-plan*.json 的训练根父目录）和 `site_url`（精确 HTTPS origin）。
-CREDENTIALS 为只在采集机保存、权限0600的 `{"service_token":"…"}`，
-不能提交或复制到前端。只向该 origin 发送 Sites 服务授权头，禁止跟随重定向。
-`--poll-seconds 30 --max-polls 0` 持续运行；验收可用 `--max-polls 2`。
+远端运行 `python -m apps.training_site_sync --collect-only --config CONFIG --state STATE`，
+复用Monitor的SSH/PID/日志读取，不加载模型或修改训练。`--poll-seconds 30`，
+`--max-polls 0`持续运行；有预算验收可指定`--max-polls 2`。
+CONFIG复用host/ports/ssh_key/root/run_id/iteration_steps，另设
+`discovery_root`（含training-plan*.json的训练根父目录）。
+按plan与真实PID/cmdline/cwd/启动时间识别continuous distributed_sb3；
+仅run改变会自动归档旧曲线，SSH机器地址改变需更新配置。
 
-活动训练按 plan 对应真实 PID、cmdline、cwd、进程启动时间识别，
-不按文件修改日期推断；支持当前四机 continuous distributed_sb3。
-机器 SSH 地址改变须更新配置；仅 run 改变自动切换并归档旧曲线。
-没有运行中的新目标时继续展示原训练及其存活状态。
-STATE 保留私有日志游标；云端只接收曲线指标白名单、四机状态、最新资源。
-历史训练按 SHA256 存一次；页面勾选后加载，当前指标30秒更新。
-`STATE.publisher.json` 记录最近上传结果，`STATE.uploaded.json` 缓存历史对象摘要；
-连续失败时保留上次数据，网页90秒后显示过期。采集机关闭时不能产生新数据。
+Site每约30秒在页面或GPT读取时拉取远端快照，缓存至私有R2；
+远端始终持续采集，电脑关机不影响采集或云端读取。
+站点专用SSH公钥在sshd中用`restrict,command="… --serve-state STATE"`限制，
+只能请求`current`或`history:<sha256>`，不能自行指定文件、打开shell或转发端口。
+Site以部署secret保存专用私钥，并固定校验训练机host key；
+不要复用训练运维密钥、把私钥提交Git，或把凭据送进网页。
+状态文件含私有游标，受限读取入口只输出指标白名单与存活状态。
 
-网站源代码单独保存在 Sites 项目的源码仓库，项目ID/部署及验证见
-worklog/2026-11-10.md 的 TRAINING-SITES；其私有 R2 保存快照与历史。
-`/mcp` 的 training_status/list_training_runs/training_metrics 只读，
-指标缺失为 null；最多读取100轮、12项指标。不是远端控制或发 prompt 入口。
+历史曲线按SHA独立缓存、勾选后加载；未记录的值为null，不补零。
+数据超过90秒未更新会标记过期；断连保留上次曲线。
+`/mcp`的training_status/list_training_runs/training_metrics只读，
+每次最多读取100轮、12项指定指标，不提供训练控制或发送prompt。
+站点源码独立保存在Sites项目源码仓库，部署身份与远端启动位置见
+`experiments/launchers/training_site_monitor.json`，验证见worklog/2026-11-10.md#training-sites私有移动端与gpt训练监控。
+
+可选直接上传仍使用`--credentials CREDENTIALS`和CONFIG的`site_url`，
+CREDENTIALS含0600权限的service_token；只向精确HTTPS站点origin发送授权，
+不跟随重定向。当前训练机直连Sites被边缘403拒绝，生产使用上述只读拉取。

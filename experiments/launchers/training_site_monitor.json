@@ -1,0 +1,38 @@
+{
+  "site_project_id": "appgprj_6af1f136ff74819181f6a37a2f8910a7",
+  "site_url": "https://sts-training-monitor-tony.bentmuffin.chatgpt.site",
+  "plugin_id": "plugin_asdk_app_sites_8ce3141671c48191bf51d59a35b41927",
+  "collector": {
+    "host": "root@connect.bjb2.seetacloud.com",
+    "port": 53841,
+    "root": "/root/autodl-tmp/sts-training-site-20261110",
+    "pid_file": "collector.pid",
+    "log_file": "collector.log",
+    "poll_seconds": 30,
+    "command": [
+      "/root/miniconda3/bin/python",
+      "-u",
+      "-m",
+      "apps.training_site_sync",
+      "--collect-only",
+      "--config",
+      "/root/autodl-tmp/sts-training-site-20261110/config.json",
+      "--state",
+      "/root/autodl-tmp/sts-training-site-20261110/state.json",
+      "--poll-seconds",
+      "30"
+    ],
+    "env": {
+      "PYTHONPATH": "/root/autodl-tmp/sts-training-site-20261110/source"
+    }
+  },
+  "read_transport": {
+    "mode": "site-pulls-restricted-ssh",
+    "allowed_commands": [
+      "current",
+      "history:<sha256>"
+    ],
+    "private_key_location": "Sites secret REMOTE_MONITOR_PRIVATE_KEY",
+    "host_hash": "962677eaf342b0d70d757796b387fe83964884f33f66284ff37e2fc6cf1496a7"
+  }
+}

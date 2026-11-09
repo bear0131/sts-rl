@@ -12,6 +12,8 @@ import json
 import math
 import os
 from pathlib import Path
+import re
+import sys
 import time
 import urllib.request
 from urllib.parse import urlsplit
@@ -70,6 +72,33 @@ def public_snapshot(state):
         result['resources'] = {key: clean(latest[0][key]) for key in
             ('iteration_resources', 'rollout_resources') if key in latest[0]}
     return result
+
+
+def indexed_snapshot(state):
+    snapshot = public_snapshot(state)
+    objects = {}
+    index = []
+    for run in snapshot['comparisons']:
+        encoded = json.dumps(run, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+        key = hashlib.sha256(encoded.encode()).hexdigest()
+        objects[key] = encoded
+        index.append({k: v for k, v in run.items() if k != 'rows'}
+                     | dict(rows=[], row_count=len(run['rows']), history_key=key))
+    snapshot['comparisons'] = index
+    return snapshot, objects
+
+
+def serve_state(path, command):
+    """Forced SSH command: fixed file and two read-only requests, no shell input."""
+    if command != 'current' and not re.fullmatch(r'history:[a-f0-9]{64}', command):
+        raise ValueError('Only current or history:<sha256> is allowed')
+    state, history = indexed_snapshot(json.loads(path.read_text(encoding='utf-8')))
+    if command == 'current':
+        return json.dumps(state, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+    key = command.removeprefix('history:')
+    if key not in history:
+        raise ValueError('Unknown history object')
+    return history[key]
 
 
 def expanded_args(argv):
@@ -164,17 +193,11 @@ def upload(url, token, state, uploaded=None):
         return result, payload
 
     uploaded = uploaded if uploaded is not None else {}
-    snapshot = public_snapshot(state)
-    index = []
-    for run in snapshot['comparisons']:
-        text = json.dumps(run, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
-        digest = hashlib.sha256(text.encode()).hexdigest()
+    snapshot, objects = indexed_snapshot(state)
+    for digest, text in objects.items():
         if not uploaded.get(digest):
             post('/api/ingest-history', dict(schema_version=1, sha256=digest, run_json=text))
             uploaded[digest] = True
-        index.append({key: value for key, value in run.items() if key != 'rows'}
-                     | dict(rows=[], row_count=len(run['rows']), history_key=digest))
-    snapshot['comparisons'] = index
     result, payload = post('/api/ingest', dict(schema_version=1, state=snapshot))
     return dict(bytes=len(payload), sha256=hashlib.sha256(payload).hexdigest(),
                 received_at=result['received_at'])
@@ -182,12 +205,25 @@ def upload(url, token, state, uploaded=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', type=Path, required=True)
-    parser.add_argument('--state', type=Path, required=True)
-    parser.add_argument('--credentials', type=Path, required=True)
+    parser.add_argument('--config', type=Path)
+    parser.add_argument('--state', type=Path)
+    parser.add_argument('--credentials', type=Path)
+    parser.add_argument('--serve-state', type=Path,
+                        help='Forced SSH command: only serve this fixed public snapshot')
+    parser.add_argument('--collect-only', action='store_true',
+                        help='Persist remote snapshots for an authenticated Site to pull')
     parser.add_argument('--poll-seconds', type=float, default=30)
     parser.add_argument('--max-polls', type=int, default=0)
     args = parser.parse_args()
+    if args.serve_state:
+        try:
+            print(serve_state(args.serve_state, os.environ.get('SSH_ORIGINAL_COMMAND', '')))
+        except (OSError, ValueError):
+            print('Snapshot request rejected', file=sys.stderr)
+            raise SystemExit(1)
+        return
+    if not args.config or not args.state or (not args.collect_only and not args.credentials):
+        parser.error('config/state required; uploads also require credentials')
     if not math.isfinite(args.poll_seconds) or args.poll_seconds < 10 or args.max_polls < 0:
         parser.error('poll-seconds must be >=10 and max-polls >=0 (0 means continuous)')
     config = json.loads(args.config.read_text())
@@ -211,9 +247,12 @@ def main():
             temporary = args.state.with_suffix('.tmp')
             temporary.write_text(json.dumps(clean(monitor.state), ensure_ascii=False, allow_nan=False))
             os.replace(temporary, args.state)
-            credentials = json.loads(args.credentials.read_text())
-            receipt = upload(config['site_url'], credentials['service_token'], monitor.state, uploaded)
-            cache_file.write_text(json.dumps(uploaded))
+            if args.collect_only:
+                receipt = dict(collected_only=True)
+            else:
+                credentials = json.loads(args.credentials.read_text())
+                receipt = upload(config['site_url'], credentials['service_token'], monitor.state, uploaded)
+                cache_file.write_text(json.dumps(uploaded))
             status = dict(ok=True, at=time.time(), run_id=monitor.config['run_id'],
                 round=(monitor.state['rows'][-1].get('rollout_round') if monitor.state['rows'] else None), **receipt)
         except Exception as exc:

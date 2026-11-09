@@ -5,10 +5,24 @@ import unittest
 from unittest.mock import patch
 from io import BytesIO
 
-from apps.training_site_sync import compact_rows, discover_training, public_snapshot, switch_monitor, upload
+from apps.training_site_sync import compact_rows, discover_training, public_snapshot, switch_monitor, upload, serve_state
 
 
 class TrainingSiteSyncTests(unittest.TestCase):
+    def test_forced_ssh_requests_expose_only_public_current_and_known_history(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'state.json'
+            path.write_text(json.dumps(dict(run_id='new', rows=[{'global_timesteps': 2}],
+                ranks=[dict(rank=0, cursor={'offset': 99}, alive=True)],
+                comparisons=[dict(run_id='old', rows=[{'global_timesteps': 1}])])), encoding='utf-8')
+            current = json.loads(serve_state(path, 'current'))
+            self.assertNotIn('cursor', current['ranks'][0])
+            key = current['comparisons'][0]['history_key']
+            self.assertEqual(json.loads(serve_state(path, 'history:' + key))['rows'], [{'global_timesteps': 1}])
+            for request in ['echo should-not-run', '../state.json', 'history:' + '0' * 64]:
+                with self.assertRaises(ValueError):
+                    serve_state(path, request)
+
     def test_upload_sends_history_once_and_current_each_poll(self):
         class Opener:
             calls = []

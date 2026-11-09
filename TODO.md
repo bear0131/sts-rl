@@ -664,4 +664,4 @@
 
 - **PURE-RL-LAMBDA1-SEQUENTIAL** — 已完成从零重启及四机两轮验收；COMBAT45持续训练。前期战斗/上层统一lambda1，从头重新训练，保留遗物优先顺序奖励/256×4/LR5e-5/16Adam/FP32；后期锚点只作待考虑候选。适用configs/train/shared_wholerun_lambda1_sequential.args与launcher；旧44第13轮完整保护，新初值空Adam/无锚点观察已核；45前两轮参数及Adam一致、return_version1、16Adam/0OOM，最慢47.647/44.907秒，8773四alive并保留44历史。验收详见worklog/2026-11-10.md#pure-rl-lambda1-sequential四机生产验收。见worklog/2026-11-09.md同题小节。
 
-- **TRAINING-SITES** — 进行中。新建owner-only训练监控Site，复用曲线指标与历史，远端独立采集/自动跟随真实活动run，提供GPT只读状态/指标工具。适用apps/training_site_sync.py、Sites源码与部署声明；须两次新采样云端可读、保密/过期/手机UI/工具验证，保持COMBAT45不变。见worklog/2026-11-10.md#training-sites私有移动端与gpt训练监控。
+- **TRAINING-SITES** — 已完成。独立owner-only监控Site v3、远端持续采集与受限SSH拉取、历史曲线勾选、GPT只读查询均已接通；电脑离线不影响读取。云端原生工具读到109→110→113轮，COMBAT44末两轮与远端逐值一致；四机原PID保持。适用apps/training_site_sync.py、experiments/launchers/training_site_monitor.json及Sites源码；Python5项/Node3项、手机/桌面布局、私有访问及部署通过。见worklog/2026-11-10.md#training-sites私有移动端与gpt训练监控。
