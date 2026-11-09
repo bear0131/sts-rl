@@ -2686,7 +2686,7 @@
     "protected_reference": "/root/autodl-tmp/combat43-scale512x6-20261109/references/update-half-paused218/rankN"
   },
   "shared_wholerun_anchor": {
-    "status": "training-started-awaiting-production-acceptance",
+    "status": "training",
     "root": "/root/autodl-tmp/combat44-anchor-sequential-20261109",
     "run_id": "combat44-no-search-shared256x4-anchor-lambda1-sequential-r1",
     "runtime_source": "3c335b4f",
@@ -2726,6 +2726,46 @@
     "total_seconds": null,
     "initial_sha256": "1c7355d5b4f35d262aa0d1292c261d2a3775d1865edbb07869298743f47878a9",
     "initialization": "Fresh random weights, empty Adam, environments and counters from zero",
-    "comparison": "New action/observation and target contracts; historical comparison cannot isolate one causal change."
+    "comparison": "New action/observation and target contracts; historical comparison cannot isolate one causal change.",
+    "production_acceptance": {
+      "rounds": [
+        1,
+        2
+      ],
+      "global_steps": [
+        786432,
+        1572864
+      ],
+      "max_rollout_seconds": [
+        24.31842828122899,
+        22.86256716772914
+      ],
+      "max_update_seconds": [
+        22.905075918883085,
+        23.87671777047217
+      ],
+      "max_full_wall_seconds": [
+        46.39409422595054,
+        45.49912772513926
+      ],
+      "weights_and_adam_identical_across_ranks": true,
+      "optimizer_steps_each_round": 16,
+      "global_anchor_rows": [
+        24469,
+        23925
+      ],
+      "anchor_global_wins": [
+        24351,
+        23792
+      ],
+      "anchor_global_escapes": [
+        118,
+        133
+      ],
+      "oom_retries": 0,
+      "monitor_round_observed": 2,
+      "monitor_all_alive": true,
+      "evidence_sha256": "013ca0054fa6e5e93b93f32673ea8ba4917f3c826425a62f606f593e5df15f07"
+    }
   }
 }
