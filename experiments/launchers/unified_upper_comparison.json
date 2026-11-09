@@ -2609,6 +2609,34 @@
     },
     "comparison": "Compare natural outcomes and relic pickup at matched sampled actions and wall time. Historical baseline, one training seed; no demonstrated quality gain yet.",
     "initialization": "Fresh random 512x6 model and empty Adam; no copied COMBAT42 weights.",
-    "architecture": "Existing shared pre-LN Transformer; width and depth change together. Same tokenizer/action/reward contracts."
+    "architecture": "Existing shared pre-LN Transformer; width and depth change together. Same tokenizer/action/reward contracts.",
+    "production_acceptance": {
+      "rounds": [
+        1,
+        2
+      ],
+      "global_steps": [
+        786432,
+        1572864
+      ],
+      "max_rollout_seconds": [
+        33.09791183,
+        31.76296806
+      ],
+      "max_update_seconds": [
+        62.20823288,
+        62.39707184
+      ],
+      "max_full_wall_seconds": [
+        95.53564342,
+        93.02924678
+      ],
+      "weights_and_adam_identical_across_ranks": true,
+      "optimizer_steps_each_round": 16,
+      "oom_retries": 0,
+      "initial_sha256": "dace775f7f255d38eee50b7b2464446f2e9015ee04035aea19c12526df7a0391",
+      "evidence_sha256": "0cd6c4b28d7540b670c50dc4c41f6ea7cb8246c930a0297306b31e62c9ecb084",
+      "monitor_round_observed": 3
+    }
   }
 }

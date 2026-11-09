@@ -652,6 +652,6 @@
 
 - **PURE-RL-FRESH-LAMBDA095** — 已按用户后续指令完整保存并停用COMBAT41，四rank正常exit0，旧数据保留；继任为PURE-RL-FRESH-LAMBDA097。紧急启动时未做预检/测试（明确用户要求），continuous支持提交f33b13bd，.95长期效果未下结论。
 
-- **PURE-RL-FRESH-LAMBDA097** — 远端顺序重启完成，四机COMBAT42持续无上限。用户“趁电脑还有电，向远端发送连续的指令重启训练，改成0.97”；远端控制器独立执行STOP→完整保存正常退出→同未训练随机初值、全新Adam/环境/计数重启。保持模型/奖励/学习率/采样更新设置，跨房间.97、房间内1；monitor声明为唯一活动任务来源。适用experiments/launchers/unified_upper_comparison.json#monitor与distributed continuous入口；已见54轮ROUND_COMPLETE，长期领取退化是否避免仍待观察，不把初期高领取率等同修好。
+- **PURE-RL-FRESH-LAMBDA097** — 按最新用户指令于534轮完整暂停并双机备份，后续容量实验见PURE-RL-SCALE512X6。用户“趁电脑还有电，向远端发送连续的指令重启训练，改成0.97”；远端控制器独立执行STOP→完整保存正常退出→同未训练随机初值、全新Adam/环境/计数重启。保持模型/奖励/学习率/采样更新设置，跨房间.97、房间内1；monitor声明为唯一活动任务来源。适用experiments/launchers/unified_upper_comparison.json#monitor与distributed continuous入口；已见54轮ROUND_COMPLETE，长期领取退化是否避免仍待观察，不把初期高领取率等同修好。
 
-- **PURE-RL-SCALE512X6** — 进行中：暂停COMBAT42，以512宽6层8heads共享Transformer从头训练。适用configs/train、distributed PPO与monitor声明；lambda.97/房内1、奖励、观测动作和低LR/16Adam保持，micro1536×accum8维持有效batch。验收包括旧状态完整保存、新随机初始化、两轮真实768步GPU生命周期及四机启动/监控；参数容量与长期收益分开评估。见worklog/2026-11-09.md#pure-rl-scale512x6更大共享transformer从头训练。
+- **PURE-RL-SCALE512X6** — 已完成启动与两轮正式保存验收，COMBAT43持续训练、长期效果观察中。COMBAT42在534轮完整暂停双机备份。512宽6共享层8heads/27225652参数（4.93倍），lambda.97/房内1、原奖励与观测动作、LR1e-4、16Adam/globalbatch49152保持；micro1536×accum8，FP32highest。11727两轮完整GPU资格+保存重载/合法预测/一步环境通过；四机正式1/2轮0OOM、全部权重Adam逐SHA相等、768步完整采集与环境保存，整轮最慢95.536/93.029秒，8773第3轮四alive。配置configs/train/shared_wholerun_512x6.args、活动声明unified_upper_comparison.json#monitor；不宣称容量增加已改善胜率，比较同采样数与墙钟长期曲线。见worklog/2026-11-09.md#pure-rl-scale512x6更大共享transformer从头训练。
