@@ -855,7 +855,7 @@ N支持0..4096；学习预算使用`--solver paired-worldlines`。两者共用�
 根选择、guide和runner，manifest明确记录覆盖值；训练路径拒绝固定覆盖。
 
 
-SSH ring可用`--ring-streams 2/4`把每个原始exchange的字节区间分到独立通道；
+SSH ring可用`--ring-streams 2/4/8`把每个原始exchange的字节区间分到独立通道；
 保留原rank分块和FP32累加顺序，不重新切分数学规约。各通道占用从ring-port开始
 的连续监听端口，每通道有独立就绪屏障；小于65536元素的统计量仍只走首通道。
 默认单通道兼容旧配置。需要同硬件测量，更多连接不能保证同比增加网络吞吐。

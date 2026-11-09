@@ -873,7 +873,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Loopback listener port forwarded by the ssh-ring transport.",
     )
     parser.add_argument(
-        "--ring-streams", type=int, choices=(1, 2, 4), default=1,
+        "--ring-streams", type=int, choices=(1, 2, 4, 8), default=1,
         help="Independent SSH streams per ring edge; uses consecutive listener ports.",
     )
     parser.add_argument(

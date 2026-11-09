@@ -44,7 +44,7 @@ def test_ring_allreduce_averages_uneven_flat_tensors():
             ring.close()
 
 
-@pytest.mark.parametrize("streams", [2, 4])
+@pytest.mark.parametrize("streams", [2, 4, 8])
 def test_parallel_ring_preserves_float32_order_across_large_and_small_collectives(streams):
     def make_rings():
         links = [socket.socketpair() for _ in range(4)]

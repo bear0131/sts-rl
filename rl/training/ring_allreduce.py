@@ -115,8 +115,8 @@ class ParallelRingAllReduce(RingAllReduce):
 
     def __init__(self, links):
         self.links = tuple(links)
-        if len(self.links) not in (2, 4):
-            raise ValueError("parallel ring requires two or four links")
+        if len(self.links) not in (2, 4, 8):
+            raise ValueError("parallel ring requires two, four or eight links")
         self.rank, self.world_size = self.links[0].rank, self.links[0].world_size
         if any((link.rank, link.world_size) != (self.rank, self.world_size)
                for link in self.links):
