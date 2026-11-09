@@ -394,7 +394,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--updates", type=int, default=1)
     parser.add_argument("--continuous", action="store_true",
-                        help="Keep training until coordinated STOP; supports fixed-rate inner-only NOSL or joint-upper small-playout, with full recovery saves.")
+                        help="Keep training until coordinated STOP; supports fixed-rate shared whole-run PPO, inner-only NOSL or joint-upper small-playout, with full recovery saves.")
     parser.add_argument(
         "--total-steps",
         type=int,
@@ -2866,13 +2866,13 @@ def main() -> None:
         and hasattr(model.policy, 'small_playout')
         and model.policy.core.upper_config.learning_rate > 0
         and model.policy.small_playout_config['learning_rate'] > 0)
-    if args.continuous and not (
+    if args.continuous and not ((pure_ppo and args.reasoning_updates == 0) or (
         getattr(model, 'nosl_is_az', False)
         and getattr(model, 'nosl_is_az_inner_only', False)
         and (not joint_upper(model) or continuous_joint)
         and args.reasoning_updates == 0
-    ):
-        raise ValueError('--continuous supports fixed-rate inner-only NOSL or joint-upper small-playout without reasoning updates')
+    )):
+        raise ValueError('--continuous supports fixed-rate shared whole-run PPO, inner-only NOSL or joint-upper small-playout without reasoning updates')
     model.nosl_is_az_replay_enabled = bool(args.nosl_is_az_replay_enabled)
     print(
         f"[rank {args.rank}] NOSL-IS-AZ replay enabled: "

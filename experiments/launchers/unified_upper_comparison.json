@@ -1721,16 +1721,16 @@
     }
   },
   "monitor": {
-    "root": "/root/autodl-tmp/combat40-pure-rl-20261108",
-    "run_id": "combat40-no-search-shared256x4-r1",
-    "label": "COMBAT40 · 共享256×4 / 无搜索纯PPO / 房间λ=.9",
+    "root": "/root/autodl-tmp/combat41-pure-rl-lambda095-20261109",
+    "run_id": "combat41-no-search-shared256x4-lambda095-r1",
+    "label": "COMBAT41 · 共享256×4 / 无搜索纯PPO / 跨房间λ=.95",
     "branch_step": 0,
     "branch_round": 0,
     "iteration_steps": 786432,
     "rollout_mode": "fixed_steps",
     "status": "training",
-    "note": "COMBAT40从500轮完整四rank状态续训；rank3已迁至25核机，其余三机保持，下一段有界训练至600轮。同一run连续监控，256×768×4、微批6144/累积2/一遍/16次Adam/LR1e-4/FP32；奖励和房间λ保持，38/39仍暂停。",
-    "updated_at": "2026-11-09T00:34:24.854391+00:00"
+    "note": "用户要求立即从头训练、不做启动前检查且无训练步数上限。复用COMBAT40未训练的seed20261108随机初值，Adam/环境/计数从零；跨房间λ=.95、房间内1。4台25核，256×768×4、微批6144/累积2/一遍/16次Adam/LR1e-4/FP32及奖励保持；continuous无总轮数/步数/时长限，保留每轮恢复保存和故障超时。COMBAT40在600轮结束，旧数据保留。",
+    "updated_at": "2026-11-09T02:03:49.379881+00:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
