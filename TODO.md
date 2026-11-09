@@ -641,6 +641,6 @@
 
 - **PURE-RL-PHASES-20S** — 进行中，尚未稳定四机达标。正式ce4c10fd从共同440续训，441–443模型/Adam/256env/指标资格通过；461–482三台25核采样均值18.47–18.65秒，16核rank3为20.22秒，完整更新偶发20.75秒。剩余重点为16核采样及同步等待；不使用单rank18秒冒充四机。保持共享256×4、四rank256×768实际动作、FP32、小LR和16Adam；完整更新包括取批/前后向/Adam/同步等待，保存单列，不以减少样本/更新冒充加速。验收为语义/生命周期与四机最慢采样和完整更新均<20秒。见worklog/2026-11-09.md#pure-rl-phases-20s。
 
-- **PURE-RL-HYPERPARAM-CHECK** — 进行中；检查COMBAT40现LR1e-4/1遍/16Adam是否偏大。11727固定443完整四rank快照和786432样本，比较LR1e-4/5e-5×16/8Adam；8次须有效batch翻倍而非漏样本，明确属于统计方法实验。验收为同样本/旧Adam/固定目标、独立新seed样本的更新后KL/clip/value误差/代理目标、资源与有界退出记录；不把单次离线误差当长期胜率。正式参数暂不改。见worklog/2026-11-09.md#pure-rl-hyperparam-check当前学习率更新次数是否偏大。
+- **PURE-RL-HYPERPARAM-CHECK** — 已完成当前有界诊断；固定443四rank786432样本，LR1e-4/5e-5×16/8Adam均通过，完整更新后独立32768样本KL均约.0006–.0012、clip<1%，当前1e-4×16的value误差微降0.14%，减半未显示改善；无足够证据认为参数偏大，正式保持。单批离线差别不作为长期胜率结论，若需改统计配置再做多批/在线对照。证据与协议见worklog/2026-11-09.md#pure-rl-hyperparam-check当前学习率更新次数是否偏大。
 
 - **CFG-LEGACY-EXPECTATIONS** — 既存待修；tests/unit/test_experiment_configs.py 的 test_entity_runtime_matches_train24_except_requested_batch_settings 与 test_old90_worker_grouping_probes_only_change_grouping_and_duration 两个参数例，已在改动前冻结 qualified-phase-candidate 重现同三失败（旧30M预期与现50M等配置不同）。本次20秒性能优化不改旧训练预设/不跳过测试；验收须按实际配置意图修正预期并让三例通过。
