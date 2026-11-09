@@ -169,6 +169,11 @@ class NativeRootObservationBatch:
             if env.outer_return_context:
                 globals['outer_deck_misc'][row] = permanent_misc(env.thick.gc, env.thick.bc)
         result = self.decoder.decode(payload, globals, destination)
+        if 'combat_exit_anchor' in result:
+            # Anchor rows use the canonical codec; all native live rows are zero.
+            result['combat_exit_anchor'].fill(0.)
+        if 'reward_stage' in result:
+            result['reward_stage'].fill(0.)
         if 'upper_public_context' in result:
             result['upper_public_context'].fill(1.)
         # The canonical encoder leaves untargetable monsters' power rows at

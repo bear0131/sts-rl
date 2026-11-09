@@ -45,6 +45,7 @@ def _active_prefix_width(ids: torch.Tensor) -> int:
 # Runtime routing is deliberately stricter than the unified Gym Dict space.
 # A specialist cannot accidentally consume fields owned by the other phase.
 COMBAT_OBSERVATION_KEYS = frozenset({
+    "combat_exit_anchor",
     "combat_is_boss",
     "combat_legal",
     "arg_step",
@@ -587,7 +588,7 @@ class OverworldEncoder(_SpecialistEncoder):
         self.global_category_keys = global_category_keys
         scalar_keys = [
             "run_hp", "ascension", "act", "floor", "gold", "pick_remaining",
-            "can_pick_zero", "can_pick_any", "shop_remove_cost", "run_keys",
+            "can_pick_zero", "can_pick_any", "shop_remove_cost", "run_keys", "reward_stage",
         ]
         scalar_keys = [
             key for key in scalar_keys if key in observation_space.spaces

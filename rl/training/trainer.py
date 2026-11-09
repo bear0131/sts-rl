@@ -605,6 +605,9 @@ def main() -> None:
                 args.nosl_is_az_inner_only = resume_settings["nosl_is_az_inner_only"]
                 args.nosl_is_az_cpp = resume_settings["nosl_is_az_cpp"]
             saved_policy_kwargs = resume_settings.get("policy_kwargs") or {}
+            if resume_settings.get('policy_class') is SharedWholeRunPolicy:
+                args.combat_value_target = saved_policy_kwargs.get('combat_value_target', 'whole-run')
+                args.reward_flow = saved_policy_kwargs.get('reward_flow', 'full')
             saved_entity_config = saved_policy_kwargs.get("entity_config") or {}
             if args.card_vector_checkpoint is None:
                 args.card_vector_checkpoint = (

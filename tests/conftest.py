@@ -81,7 +81,7 @@ def short_combat_env_type():
 def upper_search_env_factory():
     """Real public room entries with native callbacks, not a saved-run claim."""
     created = []
-    def make(kind, *, relics=()):
+    def make(kind, *, relics=(), room_type=None):
         env = SlayTheSpireEnv(global_map_view=True, upper_public_context=True,
             event_option_observation=True, combat_action_contract='autoregressive-v2')
         created.append(env)
@@ -90,7 +90,7 @@ def upper_search_env_factory():
         for seed in range(1, 65):
             env.reset(seed=seed)
             gc = env.thick.gc
-            room = 'MONSTER' if kind == 'combat_reward' else kind.upper()
+            room = room_type or ('MONSTER' if kind == 'combat_reward' else kind.upper())
             choices = [(x, y) for y in range(15) for x in range(7)
                        if env.thick.rmap.room_type(x, y) == room]
             if not choices:
@@ -119,8 +119,8 @@ def run_combat_factory():
     """Controlled battle with a real run exit continuation; seed 42101."""
     from env.core.game_env import SimGameEnv
 
-    def make(encounter='Looter', potions=()):
-        env = SimGameEnv()
+    def make(encounter='Looter', potions=(), **env_options):
+        env = SimGameEnv(**env_options)
         env.reset(seed=42101)
         for _ in range(64):
             if env.bc is not None:

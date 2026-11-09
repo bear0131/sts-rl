@@ -19,18 +19,21 @@ from rl.training.checkpoints import save_bundle, restore_learner
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(180)]
 
 
-def make_env():
+def make_env(staged=False):
     return TrainingStateWrapper(TimeLimit(StrategicRewardWrapper(SlayTheSpireEnv(
-        card_language=True, global_map_view=True, combat_action_contract='autoregressive-v2')),
+        card_language=True, global_map_view=True, combat_action_contract='autoregressive-v2',
+        combat_exit_anchor=staged, reward_flow='sequential-v1' if staged else 'full')),
         max_episode_steps=6000))
 
 
-def make_model(env, device):
+def make_model(env, device, staged=False):
     return AccumulatingMaskablePPO(SharedWholeRunPolicy, env, seed=20261108,
         n_steps=32, batch_size=32, n_epochs=1, device=device,
         gamma=1., gae_lambda=1., learning_rate=1e-4,
         reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
-        policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=.9))
+        policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=1. if staged else .9,
+            combat_value_target='pre-reward-anchor' if staged else 'whole-run',
+            reward_flow='sequential-v1' if staged else 'full'))
 
 
 @pytest.mark.parametrize('callback_kind', ['read_only', 'unknown', 'subclass', 'abort'])
@@ -188,16 +191,23 @@ def test_packed_distributed_payload_and_resume(tmp_path, monkeypatch, capsys,
         'ordinary', 'native', campfire_env_type, 'rollout', precision)
 
 
+@pytest.mark.parametrize('precision,backend', [('fp32', 'native-subproc'), ('fp16', 'native')])
+def test_anchor_sequential_distributed_payload_and_resume(tmp_path, monkeypatch, capsys,
+                                                         campfire_env_type, precision, backend):
+    _check_native_distributed_lifecycle(tmp_path, monkeypatch, capsys, False,
+        'ordinary', backend, campfire_env_type, 'rollout', precision, staged=True)
+
+
 def _check_native_distributed_lifecycle(tmp_path, monkeypatch, capsys, grow,
                                        scene, backend, campfire_env_type, normalization,
-                                       precision=None):
+                                       precision=None, staged=False):
     import json
     import sys
     from types import SimpleNamespace
     from rl.training import distributed_sb3
     from rl.training import reward_monitor, campfire_monitor
 
-    factory = make_env
+    factory = (lambda: make_env(staged=True)) if staged else make_env
     if scene == 'campfire':
         from stable_baselines3.common.vec_env import VecMonitor
         from rl.training.native_vec_env import NativeSearchVecEnv
@@ -209,7 +219,7 @@ def _check_native_distributed_lifecycle(tmp_path, monkeypatch, capsys, grow,
             VecMonitor(NativeSearchVecEnv([factory for _ in range(args.n_envs)], threads=2)))
 
     env = DummyVecEnv([factory, factory])
-    model = make_model(env, 'cpu')
+    model = make_model(env, 'cpu', staged=staged)
     checkpoint = tmp_path/'initial.zip'
     model.save(checkpoint)
     env.close()
@@ -269,14 +279,16 @@ def _check_native_distributed_lifecycle(tmp_path, monkeypatch, capsys, grow,
                     'censored_episodes_since_start'):
             assert row['pure_rl/'+key] == payload['pure_rl/'+key]
         assert row['pure_rl/search_simulations'] == 0
-        assert row['pure_rl/room_lambda'] == .9
+        assert row['pure_rl/room_lambda'] == (1. if staged else .9)
+        assert row['pure_rl/return_version'] == (2 if staged else 1)
         count = 128 if grow and row['rollout_round'] > 2 else 64
         assert row['pure_rl/advantage_normalization_rollout'] == int(normalization == 'rollout')
         if normalization == 'rollout':
             assert row['pure_rl/advantage_normalization/count'] == count
             assert row['pure_rl/normalization_group_size'] == count
             assert np.isfinite(row['pure_rl/advantage_normalization/std'])
-        assert row['pure_rl/combat_samples'] + row['pure_rl/upper_samples'] == count
+        assert (row['pure_rl/combat_samples'] + row['pure_rl/upper_samples']
+                + row.get('pure_rl/combat_anchor_samples', 0)) == count
         assert row['optimizer_steps'] == count // 32
         assert row['pure_rl/update/count'] == count
         if precision:

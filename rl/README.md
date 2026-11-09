@@ -34,6 +34,32 @@ GAE同时产生actor优势与固定critic标签，使用采样旧V、FP64递推�
 固定步数rollout尾部以旧V自举，游戏状态跨轮保留，未把rollout尾部当作整局结束。
 TimeLimit保持标准PPO终局观察自举；此类删失局不计自然胜率，计数单列。
 
+`configs/train/shared_wholerun_anchor.args` 是独立的256×4从头训练合同：
+lambda=1、LR5e-5、`combat-value-target=pre-reward-anchor`、
+`reward-flow=sequential-v1`。仅支持原生共享纯PPO，无搜索/outer-return/reasoning。
+胜利或逃跑在 `bc.exit_battle(gc)` 前显式停一行，尚未结算、生成或揭示奖励；
+保留末尾战斗实体并增加 `combat_exit_anchor=[win,escape]`。此时唯一合法动作
+autoregressive-v2的0只表示继续结算。死亡照常终止；连续战斗也逐场保留锚点。
+普通战斗行使用截至锚点的奖励加采样旧V(anchor)，锚点自身和所有上层行仍使用
+原始lambda=1整局目标；不能用局部截断递推切断更早的上层标签。rollout未完成的
+战斗用末尾旧V自举。标签和优势在更新前冻结；新增锚点行无动作选择梯度，但训练
+价值并参与全局优势统计。每轮768行包含这些强制继续行，不能全称非强制决策。
+`pure_rl/combat_anchor_{samples,wins,escapes}` 与 `value_pre/anchor/*` 单列；
+combat样本和误差组排除锚点，all仍包含，return_version=2。
+
+顺序奖励按遗物（含蓝钥匙交换）→独立钥匙→金币→药水→卡牌→离开推进；
+金币可领取或跳过，满药水先决定领取再选替换槽。只有当前候选进入观测，未来
+类别的奖励字段清零，实体物理槽位不重排。`reward_stage` 是7项one-hot：
+relic/key/gold/potion/replace_potion/card/done。PROCEED在普通阶段只跳过当前
+候选、done才离开；卡牌使用原生REWARD_SKIP（含歌唱碗效果）。replace_potion
+阶段的POTION+槽位表示丢弃该槽并领取，不表示饮用。遗物引发的选牌保留原生流程。
+原奖励数值、领取效果与RNG生成仍归模拟器。恢复包保存两个合同并拒绝混用；
+旧checkpoint默认whole-run/full，形状不变，新合同需重新初始化。评估环境按
+checkpoint建同合同，真实bridge不支持这些模拟训练专用阶段。
+分布式入口沿用下述配置并显式覆盖 `--learning-rate 0.00005`
+`--ppo-advantage-normalization rollout`。FP32紧凑更新配置为
+`configs/train/shared_wholerun_packed_fp32.json`，不改变每Adam的样本成员。
+
 初始化参数见 `configs/train/shared_wholerun_256x4.args`（现有trainer可用`--steps 0`），
 四机配置见 `configs/train/shared_wholerun_distributed.args`。每机256环境×768动作、
 micro1536×累积8×四rank=49152有效batch、1遍，共16次Adam/轮，LR1e-4。

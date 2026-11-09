@@ -48,6 +48,20 @@ def record_step(model, observations, actions, masks, policy, infos):
     current = counts(model)
     for row, index in enumerate(indices):
         info = infos[index]
+        sequential = info.get('reward_flow')
+        if sequential is not None and not (info.get('TimeLimit.truncated') or info.get('dead_screen')):
+            kind = sequential['kind']
+            if kind in KINDS:
+                prefix = f'reward_{kind}_'
+                if sequential['decision'] and sequential['available']:
+                    current[prefix + 'policy_decisions'] += 1
+                    current[prefix + 'policy_probability_sum'] += float(masses[row, list(KINDS).index(kind)])
+                current[prefix + 'resolved'] += int(sequential['resolved'])
+                current[prefix + 'taken'] += int(sequential['taken'])
+                current[prefix + 'unavailable_left'] += int(
+                    sequential['resolved'] and not sequential['available'])
+                current['reward_relic_key_exchanged'] += int(sequential['key_exchanged'])
+            continue
         if (info.get('simulator_transition') is False or info.get('TimeLimit.truncated')
                 or info.get('dead_screen')):
             continue

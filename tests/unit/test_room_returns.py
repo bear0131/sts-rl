@@ -47,3 +47,42 @@ def test_act_change_is_one_boundary_and_envs_do_not_mix():
 def test_invalid_lambda_rejected():
     with pytest.raises(ValueError):
         calculate([0], [0], [1], lam=float('nan'))
+
+
+def test_anchor_cuts_combat_only_and_learns_from_future_without_changing_upper():
+    from env.core import vocab
+    from rl.algorithms.room_returns import combat_anchor_returns
+    c, u = (vocab.PHASE_VOCAB_INDEX[k] for k in ('combat', 'map'))
+    r = np.array([.01, 0, 0, 0, .02, 0, 0]).reshape(-1, 1)
+    v = np.array([8., 9., -6., .4, -4., 3., 4.]).reshape(-1, 1)
+    phases = np.array([u, c, c, c, u, c, c]).reshape(-1, 1)
+    anchors = np.array([0, 0, 0, 1, 0, 0, 0], bool).reshape(-1, 1)
+    original = np.array([.03, .02, .02, .02, .02, 0., 0.]).reshape(-1, 1)
+    advantages, target = combat_anchor_returns(r, v, np.zeros_like(r), phases, anchors,
+        original, last_values=np.array([99.]), last_dones=np.array([True]),
+        last_phases=np.array([u]), last_anchors=np.array([False]))
+    np.testing.assert_allclose(target[:, 0], [.03, .4, .4, .02, .02, 0., 0.])
+    np.testing.assert_allclose(advantages, target - v)
+    assert original[1, 0] == .02  # no in-place rewrite of the upper MC trace
+
+
+@pytest.mark.parametrize('anchor_at_tail', [False, True])
+def test_anchor_collection_cut_uses_old_tail_value(anchor_at_tail):
+    from env.core import vocab
+    from rl.algorithms.room_returns import combat_anchor_returns
+    c = vocab.PHASE_VOCAB_INDEX['combat']
+    x = np.zeros((2, 1))
+    _, target = combat_anchor_returns(x, x, x, np.full_like(x, c), x.astype(bool), x,
+        last_values=np.array([.7]), last_dones=np.array([False]),
+        last_phases=np.array([c]), last_anchors=np.array([anchor_at_tail]))
+    np.testing.assert_allclose(target, .7)
+
+
+def test_anchor_missing_boundary_is_an_error_not_future_reward_leak():
+    from env.core import vocab
+    from rl.algorithms.room_returns import combat_anchor_returns
+    x = np.zeros((1, 1))
+    with pytest.raises(ValueError, match='without the required'):
+        combat_anchor_returns(x, x, x, np.full_like(x, vocab.PHASE_VOCAB_INDEX['combat']),
+            x.astype(bool), x, last_values=np.array([.7]), last_dones=np.array([False]),
+            last_phases=np.array([vocab.PHASE_VOCAB_INDEX['map']]), last_anchors=np.array([False]))

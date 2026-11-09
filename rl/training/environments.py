@@ -416,6 +416,8 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
     env_args.combat_value_objective = getattr(core, 'environment_value_objective',
                                             getattr(core, 'training_objective', None))
     env_args.strategic_reward = getattr(core, 'training_objective', None) == 'shared-wholerun-ppo-room-v1'
+    env_args.combat_value_target = getattr(model.policy, 'combat_value_target', 'whole-run')
+    env_args.reward_flow = getattr(model.policy, 'reward_flow', 'full')
     env_args.global_map_view = flags["global_map_view"]
     env_args.upper_public_context = flags["upper_public_context"]
     env_args.card_language = flags["card_language"]
@@ -432,7 +434,8 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
         else bool(args.interactive_reasoning)
     )
     env_args.arch = (
-        "semantic-reasoning" if interactive_reasoning else "split-pointer"
+        'shared-wholerun' if env_args.strategic_reward and getattr(core, 'training_objective', None) == 'shared-wholerun-ppo-room-v1'
+        else "semantic-reasoning" if interactive_reasoning else "split-pointer"
     )
     env_args.interactive_reasoning = interactive_reasoning
     env_args.map_dag = True

@@ -292,6 +292,10 @@ class WholeRunTask(Task):
         )
         parser.add_argument('--room-lambda', type=float, default=.9,
                             help='Shared whole-run PPO trace decay at an act/floor boundary; within-room lambda is 1.')
+        parser.add_argument('--combat-value-target', choices=('whole-run', 'pre-reward-anchor'),
+                            default='whole-run', help='Shared PPO combat target; anchor mode requires room lambda=1.')
+        parser.add_argument('--reward-flow', choices=('full', 'sequential-v1'), default='full',
+                            help='Reveal and resolve reward categories sequentially for fresh shared PPO.')
         parser.add_argument(
             "--interactive-reasoning",
             action=argparse.BooleanOptionalAction,
@@ -564,6 +568,9 @@ class WholeRunTask(Task):
     def make_env_fn(self, args):
         from rl.training.reward import ShapedRewardWrapper, StrategicRewardWrapper
 
+        if (getattr(args, 'combat_value_target', 'whole-run') != 'whole-run'
+                or getattr(args, 'reward_flow', 'full') != 'full') and args.arch != 'shared-wholerun':
+            raise ValueError('anchor targets and sequential rewards support shared whole-run PPO only')
         ascension = args.ascension
         interactive_reasoning = (
             args.arch == "semantic-reasoning"
@@ -585,6 +592,8 @@ class WholeRunTask(Task):
                 interactive_reasoning=interactive_reasoning,
                 outer_return_context=bool(getattr(args, 'outer_return_context', False)),
                 combat_value_objective=getattr(args, 'combat_value_objective', None),
+                combat_exit_anchor=(getattr(args, 'combat_value_target', 'whole-run') == 'pre-reward-anchor'),
+                reward_flow=getattr(args, 'reward_flow', 'full'),
                 combat_action_contract=getattr(args, "combat_action_contract", None) or "legacy",
                 nosl_is_az_boss_transition_target=bool(
                     getattr(args, "nosl_is_az_boss_transition_target", False)
@@ -622,7 +631,9 @@ class WholeRunTask(Task):
                 raise ValueError('shared whole-run PPO requires gamma1, AR actions, no search/HP/reasoning/pretrained cards')
             return SharedWholeRunPolicy, dict(d_model=args.d_model, n_layers=args.n_layers,
                 n_heads=args.n_heads, card_language=args.card_language,
-                map_dag=True, room_lambda=args.room_lambda)
+                map_dag=True, room_lambda=args.room_lambda,
+                combat_value_target=getattr(args, 'combat_value_target', 'whole-run'),
+                reward_flow=getattr(args, 'reward_flow', 'full'))
         if args.arch == "split-pointer":
             # The core owns both specialist encoders, policy heads, and value
             # heads, so no SB3 features_extractor/net_arch is needed here.

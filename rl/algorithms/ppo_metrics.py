@@ -8,7 +8,7 @@ from env.core import vocab
 UPDATE_METRICS = ('policy_loss', 'value_loss', 'entropy', 'approx_kl', 'clip_fraction')
 
 
-def value_moments(values, returns, phase):
+def value_moments(values, returns, phase, *, anchors=None):
     """Behavior V against the actual frozen lambda-return targets, before updates.
 
     Return additive moments, not rank-local means: combat/upper populations can
@@ -21,8 +21,15 @@ def value_moments(values, returns, phase):
     if not (np.isfinite(values).all() and np.isfinite(returns).all()):
         raise ValueError('value diagnostics require finite predictions and targets')
     combat = phase == vocab.PHASE_VOCAB_INDEX['combat']
+    groups = [('all', np.ones_like(combat)), ('combat', combat), ('upper', ~combat)]
+    if anchors is not None:
+        anchors = np.asarray(anchors, dtype=bool)
+        if anchors.shape != values.shape:
+            raise ValueError('anchor diagnostic mask has the wrong shape')
+        groups[1] = ('combat', combat & ~anchors)
+        groups.append(('anchor', anchors))
     result = {}
-    for name, mask in [('all', np.ones_like(combat)), ('combat', combat), ('upper', ~combat)]:
+    for name, mask in groups:
         target, error = returns[mask], (returns - values)[mask]
         prefix = f'pure_rl/value_pre/{name}/'
         result.update({prefix + key: float(value) for key, value in dict(
@@ -56,7 +63,7 @@ def update_moments(model):
 def finalize_metrics(moments):
     """Derive ratios after cross-rank reduction. Missing data stays missing."""
     result = {}
-    for name in ('all', 'combat', 'upper'):
+    for name in ('all', 'combat', 'upper', 'anchor'):
         p = f'pure_rl/value_pre/{name}/'
         count = moments.get(p + 'count', 0)
         if count <= 0:

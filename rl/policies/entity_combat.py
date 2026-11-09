@@ -111,6 +111,8 @@ class EntityCombatNetwork(nn.Module):
                             'can_pick_zero','can_pick_any')
         if 'run_keys' in space.spaces:
             self.scalar_keys += ('run_keys',)
+        if 'combat_exit_anchor' in space.spaces:
+            self.scalar_keys += ('combat_exit_anchor',)
         if config.boss_win_weight:
             self.scalar_keys += ('combat_is_boss',)
         # Additional HP deficit, log turn, and soft threshold features.

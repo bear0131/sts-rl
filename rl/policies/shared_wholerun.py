@@ -306,14 +306,27 @@ class SharedWholeRunPolicy(SplitStSPointerPolicy):
     # model computation must preserve those statistical groups and sample order.
     ppo_advantage_group_size = 256
 
-    def __init__(self, *args, room_lambda=.9, **kwargs):
+    def __init__(self, *args, room_lambda=.9, combat_value_target='whole-run', reward_flow='full', **kwargs):
         if not math.isfinite(room_lambda) or not 0 <= room_lambda <= 1:
             raise ValueError('room lambda must be in [0, 1]')
         self.room_lambda = float(room_lambda)
+        if combat_value_target not in ('whole-run', 'pre-reward-anchor'):
+            raise ValueError('unknown shared PPO combat value target')
+        if combat_value_target == 'pre-reward-anchor' and self.room_lambda != 1:
+            raise ValueError('pre-reward anchor requires lambda=1 outside combat')
+        self.combat_value_target = combat_value_target
+        if reward_flow not in ('full', 'sequential-v1'):
+            raise ValueError('unknown shared PPO reward flow')
+        self.reward_flow = reward_flow
         super().__init__(*args, **kwargs)
 
     def _build(self, lr_schedule):
         cfg = self._core_cfg
+        if (('reward_stage' in self.observation_space.spaces) != (self.reward_flow == 'sequential-v1')):
+            raise ValueError('shared PPO reward flow and observation contract disagree')
+        if (('combat_exit_anchor' in self.observation_space.spaces)
+                != (self.combat_value_target == 'pre-reward-anchor')):
+            raise ValueError('shared PPO combat target and observation contract disagree')
         if (cfg['card_vector_checkpoint'] is not None or cfg['combat_arch'] != 'transformer'
                 or self.action_space.n != C.AUTOREGRESSIVE_SIZE):
             raise ValueError('pure PPO rejects pretrained cards or incompatible actions')
@@ -325,4 +338,5 @@ class SharedWholeRunPolicy(SplitStSPointerPolicy):
 
     def _get_constructor_parameters(self):
         return dict(super()._get_constructor_parameters(), **self._core_cfg,
-                    room_lambda=self.room_lambda)
+                    room_lambda=self.room_lambda, combat_value_target=self.combat_value_target,
+                    reward_flow=self.reward_flow)

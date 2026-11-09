@@ -69,6 +69,7 @@ OBS_VERSION = 20  # owned/claimable Act-4 keys are explicit, not inferred
 
 # Sparse split-upper transport uses the same public observation fields.
 OVERWORLD_OBSERVATION_KEYS = frozenset({
+    "reward_stage",
     "upper_public_context",
     "act",
     "arg_step",

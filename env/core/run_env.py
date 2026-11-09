@@ -335,7 +335,7 @@ class SlayTheSpireEnv(gym.Env):
                  event_option_observation=False,
                  interactive_reasoning=False, combat_action_contract='legacy',
                  nosl_is_az_boss_transition_target=False, outer_return_context=False,
-                 combat_value_objective=None):
+                 combat_value_objective=None, combat_exit_anchor=False, reward_flow='full'):
         super().__init__()
         # Owned only by NativeSearchVecEnv during one synchronous step_wait.
         # Ordinary Gym/evaluation calls always construct their observation here.
@@ -365,6 +365,16 @@ class SlayTheSpireEnv(gym.Env):
         self.combat_action_contract = combat_action_contract
         self._joint_actions = combat_action_contract in C.NEURAL_CONTRACTS
         self._autoregressive_actions = combat_action_contract == C.AUTOREGRESSIVE_CONTRACT
+        self.combat_exit_anchor = bool(combat_exit_anchor)
+        if reward_flow not in ('full', 'sequential-v1'):
+            raise ValueError('unknown reward flow')
+        self.reward_flow = reward_flow
+        self._sequential_rewards = None
+        if reward_flow == 'sequential-v1' and (not self._autoregressive_actions or outer_return_context):
+            raise ValueError('sequential rewards require ordinary AR whole-run observations')
+        if self.combat_exit_anchor and (not self._autoregressive_actions or outer_return_context
+                                        or interactive_reasoning):
+            raise ValueError('pre-reward anchor requires ordinary AR whole-run observations')
         self._neural_size = C.policy_size(combat_action_contract) if self._joint_actions else A.N_ACTIONS
         self._policy_offset = C.policy_offset(combat_action_contract)
         self._neural_width = self._neural_size - self._policy_offset
@@ -459,11 +469,28 @@ class SlayTheSpireEnv(gym.Env):
         if self._joint_actions:
             self.observation_space.spaces['combat_legal'] = spaces.Box(
                 low=0, high=1, shape=(self._neural_width,), dtype=bool)
+        if self.combat_exit_anchor:
+            # Optional schema extension: [victory, escape], both zero in play.
+            self.observation_space.spaces['combat_exit_anchor'] = spaces.Box(
+                low=0, high=1, shape=(2,), dtype=np.float32)
+        if self.reward_flow == 'sequential-v1':
+            from .reward_flow import STAGES
+            self.observation_space.spaces['reward_stage'] = spaces.Box(
+                low=0, high=1, shape=(len(STAGES),), dtype=np.float32)
 
     # ---------------------------------------------------------------- gym API
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self.thick = self._backend_factory()
+        if self.reward_flow == 'sequential-v1':
+            from .reward_flow import SequentialRewardFlow
+            if type(self.thick) is not SimGameEnv:
+                raise ValueError('sequential rewards currently require SimGameEnv')
+            self._sequential_rewards = SequentialRewardFlow()
+        if self.combat_exit_anchor:
+            if type(self.thick) is not SimGameEnv:
+                raise ValueError('pre-reward anchor currently requires SimGameEnv')
+            self.thick.combat_exit_anchor_enabled = True
         self.thick._finite_curve_objective = self.finite_curve_objective
         self.thick._actual_run_return = self.outer_return_monte_carlo
         if self._joint_actions and not hasattr(self.thick, 'bc'):
@@ -523,6 +550,8 @@ class SlayTheSpireEnv(gym.Env):
             "schema_version": 2 if self.thick.is_over else 1,
             "terminal": bool(self.thick.is_over),
             "combat_action_contract": self.combat_action_contract,
+            "combat_exit_anchor": self.combat_exit_anchor,
+            "reward_flow": self.reward_flow,
             "outer_return_context": self.outer_return_context,
             "outer_return_objective": self.outer_return_objective,
             "outer_return_normalized": self.outer_return_normalized,
@@ -555,6 +584,10 @@ class SlayTheSpireEnv(gym.Env):
             raise ValueError('terminal environment schema requires an explicit terminal state')
         if state.get("combat_action_contract") != self.combat_action_contract:
             raise ValueError("environment combat action contract mismatch")
+        if state.get('combat_exit_anchor', False) != self.combat_exit_anchor:
+            raise ValueError('environment pre-reward anchor contract mismatch')
+        if state.get('reward_flow', 'full') != self.reward_flow:
+            raise ValueError('environment reward flow contract mismatch')
         if state.get('outer_return_context', False) != self.outer_return_context:
             raise ValueError('environment outer-return context mismatch')
         if state.get('outer_return_objective', state.get('outer_return_context', False)) != self.outer_return_objective:
@@ -1219,6 +1252,7 @@ class SlayTheSpireEnv(gym.Env):
         if 'nosl_value_terminal_outcome' in (transition_info or {}):
             info['nosl_value_terminal_outcome'] = transition_info['nosl_value_terminal_outcome']
         if (self._defer_combat_observation and not terminated
+                and not self._at_combat_exit_anchor()
                 and self.thick.bc is not None and self._phase() == 'combat'):
             self._combat_observation_pending = True
             # The native vector owner fills this before returning to callers.
@@ -1230,6 +1264,16 @@ class SlayTheSpireEnv(gym.Env):
         return observation, reward, terminated, False, info
 
     def _step_impl(self, action_id):
+        if self._sequential_rewards is not None and self._phase() == 'combat_reward':
+            return self._sequential_rewards.step(self, int(action_id))
+        if self._at_combat_exit_anchor():
+            if int(action_id) != C.AUTOREGRESSIVE_END:
+                raise ValueError('pre-reward combat anchor only accepts continue')
+            _canon, reward, terminated, tinfo = self._backend_step(ga.proceed())
+            result = self._post_step(reward, terminated, tinfo, action_id=int(action_id))
+            result[4]['combat_anchor_continue'] = True
+            result[4]['simulator_transition'] = False
+            return result
         if self._joint_actions and self._phase() == 'combat':
             mapping = dict(self._joint_policy_actions())
             aid = int(action_id)
@@ -2831,7 +2875,22 @@ class SlayTheSpireEnv(gym.Env):
             self._nosl_current_context = {key: obs[key].copy() for key in CONTEXT_KEYS}
         if self.outer_return_monte_carlo and not upper_value_only and _out is None:
             obs['combat_mc_exit'] = np.zeros(1, dtype=np.float32)
+        if self.combat_exit_anchor:
+            marker = np.zeros(2, dtype=np.float32)
+            if self._at_combat_exit_anchor():
+                from .combat_value import combat_terminal_outcome
+                marker[int(combat_terminal_outcome(self.thick.bc) == 'escape')] = 1.
+            if _out is None:
+                obs['combat_exit_anchor'] = marker
+            else:
+                obs['combat_exit_anchor'][...] = marker
+        if self._sequential_rewards is not None:
+            self._sequential_rewards.project(self, obs)
         return obs
+
+    def _at_combat_exit_anchor(self):
+        return (self.combat_exit_anchor and self.thick is not None
+                and self.thick.combat_exit_anchor_pending)
 
     def equivalent_action_groups(self):
         """Map complete card plays to executable representatives, keeping targets."""
@@ -2857,6 +2916,11 @@ class SlayTheSpireEnv(gym.Env):
         if self._cached_action_mask is not None:
             return self._cached_action_mask.copy()
         mask = np.zeros(self.action_space.n, dtype=bool)
+        if self._sequential_rewards is not None and self._phase() == 'combat_reward':
+            return self._sequential_rewards.mask(self)
+        if self._at_combat_exit_anchor():
+            mask[C.AUTOREGRESSIVE_END] = True  # forced continue; never executes End Turn
+            return mask
         if self._joint_actions and self._phase() == 'combat':
             # Settlement clears bc on death while the room still says combat.
             ids = [] if self.thick.bc is None else [aid for aid, _ in self._joint_policy_actions()]
@@ -2897,6 +2961,10 @@ class SlayTheSpireEnv(gym.Env):
     def render(self):
         if self.thick is None:
             return "(run not started — call reset())"
+        if self._at_combat_exit_anchor():
+            return '战斗已结束，尚未结算或揭示奖励。\n' + self.thick.render()
+        if self._sequential_rewards is not None and self._phase() == 'combat_reward':
+            return self._sequential_rewards.render(self)
         out = self.thick.render()
         if self._pending is not None and self._pending[0] == "play":
             out += f"\n[awaiting target for hand card #{self._pending[1]}]"
@@ -2912,6 +2980,14 @@ class SlayTheSpireEnv(gym.Env):
         aid = int(action_id)
         legal = self._legal()
         phase = self._phase()
+
+        if self._at_combat_exit_anchor():
+            return '继续至战斗结算（奖励尚未揭示）'
+        if self._sequential_rewards is not None and phase == 'combat_reward':
+            self._sequential_rewards.sync(self)
+            description = self._sequential_rewards.describe_action(aid)
+            if description is not None:
+                return description
 
         if self._joint_actions and phase == "combat":
             if self._autoregressive_actions and C.AUTOREGRESSIVE_MULTI <= aid <= C.AUTOREGRESSIVE_STOP:
