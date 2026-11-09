@@ -646,3 +646,6 @@
 - **PURE-RL-HYPERPARAM-CHECK** — 已完成当前有界诊断；固定443四rank786432样本，LR1e-4/5e-5×16/8Adam均通过，完整更新后独立32768样本KL均约.0006–.0012、clip<1%，当前1e-4×16的value误差微降0.14%，减半未显示改善；无足够证据认为参数偏大，正式保持。单批离线差别不作为长期胜率结论，若需改统计配置再做多批/在线对照。证据与协议见worklog/2026-11-09.md#pure-rl-hyperparam-check当前学习率更新次数是否偏大。
 
 - **CFG-LEGACY-EXPECTATIONS** — 既存待修；tests/unit/test_experiment_configs.py 的 test_entity_runtime_matches_train24_except_requested_batch_settings 与 test_old90_worker_grouping_probes_only_change_grouping_and_duration 两个参数例，已在改动前冻结 qualified-phase-candidate 重现同三失败（旧30M预期与现50M等配置不同）。本次20秒性能优化不改旧训练预设/不跳过测试；验收须按实际配置意图修正预期并让三例通过。
+
+- **PURE-RL-RELIC-DECLINE** — 已确认真实局部策略退化，修复待受控消融。124领取84.1%降至554的0/2936；64相同合法宝箱状态49/134/525模型概率91.5%/55.9%/.029%，525全部选择离开；同map分支的critic拿后预测全部更低，正常393216动作未领取一次。监控分母/合法动作/房间回报28项通过；不把预测差当成真实回报或标签的因果证据。适用共享PPO的价值拟合、房间回报、探索/样本分布；验收须固定checkpoint/总工作量比较恢复领取及实际回报，不能仅提高曲线或强制拿取后宣称胜率改善。协议/证据见worklog/2026-11-09.md#pure-rl-relic-decline遗物领取策略退化诊断。
+- **PURE-RL-TRAIN-EVAL-NUMERICS** — 待核验。上述64奖励状态、已训练49/134/525权重在train/eval路径最大logit差.000204/.000578/.000945，超过诊断沿用的2e-5严格逐值条件；采样图/eager差仅约2e-6。尚无证据该差能解释四个数量级的拒领，但须分离attention内核数值与上层合批路径，量化合法动作概率和更新影响；不可将失败比较报告为通过。适用rl/policies/shared_wholerun.py、entity_combat.py及真实checkpoint资格。
