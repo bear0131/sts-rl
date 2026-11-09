@@ -2773,7 +2773,7 @@
     "pause_reason": "User requested fresh whole-run lambda1 first; consider anchor only after stability."
   },
   "shared_wholerun_lambda1_sequential": {
-    "status": "training-started-awaiting-production-acceptance",
+    "status": "training",
     "root": "/root/autodl-tmp/combat45-lambda1-sequential-20261109",
     "run_id": "combat45-no-search-shared256x4-lambda1-sequential-r1",
     "runtime_source": "c76a64d3",
@@ -2815,6 +2815,38 @@
     "initialization": "Fresh random weights and empty Adam; no COMBAT44 weights or game states reused",
     "comparison": "Whole-run lambda1 with sequential rewards; history comparison with 44 changes combat targets and the anchor observation contract.",
     "anchor_observation": false,
-    "automatic_anchor_switch": null
+    "automatic_anchor_switch": null,
+    "production_acceptance": {
+      "rounds": [
+        1,
+        2
+      ],
+      "global_steps": [
+        786432,
+        1572864
+      ],
+      "max_rollout_seconds": [
+        22.996936287730932,
+        21.807367495028302
+      ],
+      "max_update_seconds": [
+        24.659901945851743,
+        23.932346627116203
+      ],
+      "max_full_wall_seconds": [
+        47.64674504287541,
+        44.90712179103866
+      ],
+      "weights_and_adam_identical_across_ranks": true,
+      "optimizer_steps_each_round": 16,
+      "return_version": 1,
+      "anchor_metrics_absent": true,
+      "checkpoint_target": "whole-run",
+      "checkpoint_room_lambda": 1,
+      "oom_retries": 0,
+      "monitor_round_observed": 2,
+      "monitor_all_alive": true,
+      "evidence_sha256": "d024a1a654ac34537874b0dc3c49fa19b5f4b93ec2d202329c135bd917e66a0c"
+    }
   }
 }
