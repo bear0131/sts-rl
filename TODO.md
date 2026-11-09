@@ -647,7 +647,9 @@
 
 - **CFG-LEGACY-EXPECTATIONS** — 既存待修；tests/unit/test_experiment_configs.py 的 test_entity_runtime_matches_train24_except_requested_batch_settings 与 test_old90_worker_grouping_probes_only_change_grouping_and_duration 两个参数例，已在改动前冻结 qualified-phase-candidate 重现同三失败（旧30M预期与现50M等配置不同）。本次20秒性能优化不改旧训练预设/不跳过测试；验收须按实际配置意图修正预期并让三例通过。
 
-- **PURE-RL-RELIC-DECLINE** — 已确认真实局部策略退化，修复待受控消融。124领取84.1%降至554的0/2936；64相同合法宝箱状态49/134/525模型概率91.5%/55.9%/.029%，525全部选择离开；同map分支的critic拿后预测全部更低，正常393216动作未领取一次。监控分母/合法动作/房间回报28项通过；不把预测差当成真实回报或标签的因果证据。适用共享PPO的价值拟合、房间回报、探索/样本分布；验收须固定checkpoint/总工作量比较恢复领取及实际回报，不能仅提高曲线或强制拿取后宣称胜率改善。协议/证据见worklog/2026-11-09.md#pure-rl-relic-decline遗物领取策略退化诊断。
+- **PURE-RL-RELIC-DECLINE** — 已获得跨房间bootstrap偏差及更新方向的受控因果证据，长期修复未证实。134冻结模型128自然单遗物局面×4未来：拿取真实收益差+.01204，而λ.9标签差-.00163，二者偏差-.01367（聚类95%CI[-.01989,-.00746]）。同批196608动作、同权重/Adam/原归一化只替换遗物页λ标签即翻转一步更新；完整单rank16次PPO在λ.9/.95/.97/1下领取概率变化-6.60/-3.85/-2.16/+1.73个百分点。没有改变奖励，也非胜率实验；未证明唯一历史根因。用户新训先.95后指定.97，适用rl/algorithms/room_returns.py及shared PPO，长期验收仍需自然领取和实际回报，禁止强制拿取充当修复。协议、限制及3份证据见worklog/2026-11-09.md#pure-rl-relic-bootstrap跨房间lambda因果消融。
 - **PURE-RL-TRAIN-EVAL-NUMERICS** — 待核验。上述64奖励状态、已训练49/134/525权重在train/eval路径最大logit差.000204/.000578/.000945，超过诊断沿用的2e-5严格逐值条件；采样图/eager差仅约2e-6。尚无证据该差能解释四个数量级的拒领，但须分离attention内核数值与上层合批路径，量化合法动作概率和更新影响；不可将失败比较报告为通过。适用rl/policies/shared_wholerun.py、entity_combat.py及真实checkpoint资格。
 
-- **PURE-RL-FRESH-LAMBDA095** — 已按用户紧急指令直接启动四机COMBAT41；训练持续、效果待观察。跨房间λ=.95/房间内1，复用COMBAT40未训练随机初值而非成熟checkpoint，原奖励/模型/学习率/更新量保持；rl/training/distributed_sb3.py允许shared whole-run PPO使用现有continuous循环，监控声明见experiments/launchers/unified_upper_comparison.json#monitor。无总步数/轮数/时长上限，每轮恢复保存和故障超时保留。启动前未跑检查/测试（用户明确要求）；后续记录自然领取率和完整训练状态，不将新训练启动当修复成功。
+- **PURE-RL-FRESH-LAMBDA095** — 已按用户后续指令完整保存并停用COMBAT41，四rank正常exit0，旧数据保留；继任为PURE-RL-FRESH-LAMBDA097。紧急启动时未做预检/测试（明确用户要求），continuous支持提交f33b13bd，.95长期效果未下结论。
+
+- **PURE-RL-FRESH-LAMBDA097** — 远端顺序重启完成，四机COMBAT42持续无上限。用户“趁电脑还有电，向远端发送连续的指令重启训练，改成0.97”；远端控制器独立执行STOP→完整保存正常退出→同未训练随机初值、全新Adam/环境/计数重启。保持模型/奖励/学习率/采样更新设置，跨房间.97、房间内1；monitor声明为唯一活动任务来源。适用experiments/launchers/unified_upper_comparison.json#monitor与distributed continuous入口；已见54轮ROUND_COMPLETE，长期领取退化是否避免仍待观察，不把初期高领取率等同修好。
