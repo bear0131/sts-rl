@@ -99,3 +99,28 @@ seed 当作原始开场种子，也不能将留出失败筛选集的结果作为
 `ironclad-overworld-v3`（未知画面回退 checkpoint）；下层支持 checkpoint direct/NOSL
 搜索，或上述固定配置的 `ironclad-turn-v8-awakened-phase`。评测状态记录两项选择、版本和
 规划器配置；切换回合规划下层时 NOSL 参数不参与执行。
+
+
+### 私有云端训练监控
+
+`python -m apps.training_site_sync --config CONFIG --state STATE --credentials CREDENTIALS`
+在训练机运行，复用 Monitor 的 SSH/PID/日志增量读取，不启动模型、不修改训练。
+CONFIG 复用上面的 host/ports/ssh_key/root/run_id/iteration_steps，另设
+`discovery_root`（含 training-plan*.json 的训练根父目录）和 `site_url`（精确 HTTPS origin）。
+CREDENTIALS 为只在采集机保存、权限0600的 `{"service_token":"…"}`，
+不能提交或复制到前端。只向该 origin 发送 Sites 服务授权头，禁止跟随重定向。
+`--poll-seconds 30 --max-polls 0` 持续运行；验收可用 `--max-polls 2`。
+
+活动训练按 plan 对应真实 PID、cmdline、cwd、进程启动时间识别，
+不按文件修改日期推断；支持当前四机 continuous distributed_sb3。
+机器 SSH 地址改变须更新配置；仅 run 改变自动切换并归档旧曲线。
+没有运行中的新目标时继续展示原训练及其存活状态。
+STATE 保留私有日志游标；云端只接收曲线指标白名单、四机状态、最新资源。
+历史训练按 SHA256 存一次；页面勾选后加载，当前指标30秒更新。
+`STATE.publisher.json` 记录最近上传结果，`STATE.uploaded.json` 缓存历史对象摘要；
+连续失败时保留上次数据，网页90秒后显示过期。采集机关闭时不能产生新数据。
+
+网站源代码单独保存在 Sites 项目的源码仓库，项目ID/部署及验证见
+worklog/2026-11-10.md 的 TRAINING-SITES；其私有 R2 保存快照与历史。
+`/mcp` 的 training_status/list_training_runs/training_metrics 只读，
+指标缺失为 null；最多读取100轮、12项指标。不是远端控制或发 prompt 入口。

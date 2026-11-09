@@ -663,3 +663,5 @@
 - **PURE-RL-COMBAT-EXIT-ANCHOR** — 已完成实现及四机两轮生产验收；按新指令暂停锚点版，见PURE-RL-LAMBDA1-SEQUENTIAL。用户从头训练256×4、lambda=1、LR降低；胜利/逃跑后且奖励未揭示状态显式作为价值锚点，战斗目标使用采样旧V锚点，锚点自身/上层以lambda=1后续回报训练。奖励值/无搜索/16Adam保留，奖励流程改遗物→金币→药水/替换→卡牌并隐藏未来候选；原COMBAT43停在218保护。适用env/core/game_env、run_env、shared PPO/room_returns与launcher；116项边界/旧合同/真实生命周期通过；四机前两轮权重及Adam一致、0OOM，完整最慢46.394/45.499秒，首两轮完整恢复包保护；8773四alive/新锚点value及领取指标已上报，旧43历史218轮保留。长期学习质量尚待观察。见worklog/2026-11-09.md#pure-rl-combat-exit-anchor奖励揭示前的战斗价值锚点。
 
 - **PURE-RL-LAMBDA1-SEQUENTIAL** — 已完成从零重启及四机两轮验收；COMBAT45持续训练。前期战斗/上层统一lambda1，从头重新训练，保留遗物优先顺序奖励/256×4/LR5e-5/16Adam/FP32；后期锚点只作待考虑候选。适用configs/train/shared_wholerun_lambda1_sequential.args与launcher；旧44第13轮完整保护，新初值空Adam/无锚点观察已核；45前两轮参数及Adam一致、return_version1、16Adam/0OOM，最慢47.647/44.907秒，8773四alive并保留44历史。验收详见worklog/2026-11-10.md#pure-rl-lambda1-sequential四机生产验收。见worklog/2026-11-09.md同题小节。
+
+- **TRAINING-SITES** — 进行中。新建owner-only训练监控Site，复用曲线指标与历史，远端独立采集/自动跟随真实活动run，提供GPT只读状态/指标工具。适用apps/training_site_sync.py、Sites源码与部署声明；须两次新采样云端可读、保密/过期/手机UI/工具验证，保持COMBAT45不变。见worklog/2026-11-10.md#training-sites私有移动端与gpt训练监控。
