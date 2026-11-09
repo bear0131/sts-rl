@@ -877,3 +877,5 @@ inference_mode下采样；库调用中的任意用户callback保留原autograd�
 共享PPO的大型连续rollout buffer可并行清零既有存储，每块相互独立，reset后的
 公开字段与默认值不变。CUDA无梯度分类分布保留设备端finite检查，避免为重复
 校验同步主机；CPU和训练反向仍使用原校验路径。
+
+较大容量配置 configs/train/shared_wholerun_512x6.args 使用512宽、6个共享Pre-LN层、8头、FFN宽2048及跨房间lambda=.97；仍为同一观测/动作/奖励合同。该文件用于生成随机初值，实际分布式采样继续复用shared_wholerun_distributed.args。1536物理微批×8梯度累积×4rank维持49152有效batch和16次Adam；模型权重形状不同，不能当作256×4 checkpoint的普通恢复。现有trainer --steps 0输出位于--out下的时间戳子目录，分布式checkpoint路径应避免与同名目录冲突。

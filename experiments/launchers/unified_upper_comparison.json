@@ -1721,16 +1721,16 @@
     }
   },
   "monitor": {
-    "root": "/root/autodl-tmp/combat42-pure-rl-lambda097-20261109",
-    "run_id": "combat42-no-search-shared256x4-lambda097-r1",
-    "label": "COMBAT42 · 共享256×4 / 无搜索纯PPO / 跨房间λ=.97",
+    "root": "/root/autodl-tmp/combat43-scale512x6-20261109",
+    "run_id": "combat43-no-search-shared512x6-lambda097-r1",
+    "label": "COMBAT43 · 共享512×6 / 2723万参数 / λ=.97 / 无搜索",
     "branch_step": 0,
     "branch_round": 0,
     "iteration_steps": 786432,
     "rollout_mode": "fixed_steps",
     "status": "training",
-    "note": "按用户指令由远端后台顺序停止COMBAT41、完整保存后从同一未训练随机初值启动COMBAT42。跨房间λ=.97，房间内1；4台25核，256×768×4、微批6144/累积2/一遍/16次Adam/LR1e-4/FP32及奖励保持。continuous无总步数/轮数/时长上限，每轮恢复保存与故障超时保留。COMBAT40/41数据保留，诊断在11727隔离执行。",
-    "updated_at": "2026-11-09T02:49:41.398002+00:00"
+    "note": "COMBAT42在534轮/global419954688完整暂停并双机备份。43从随机初值新训512宽6层8头、27225652参数；跨房间λ.97/房内1、奖励/LR1e-4/16Adam/256×768×4/FP32保持。micro1536×accum8维持全局batch49152，continuous无总训练上限。两轮单机完整采样/更新/保存资格通过，尚不能证明大模型长期效果更好。",
+    "updated_at": "2026-11-09T08:40:48.120431+00:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
@@ -2551,5 +2551,64 @@
         "local"
       ]
     }
+  },
+  "shared_wholerun_scale512x6": {
+    "status": "training",
+    "baseline_run": "combat42-no-search-shared256x4-lambda097-r1",
+    "baseline_paused_round": 534,
+    "baseline_global_step": 419954688,
+    "run_id": "combat43-no-search-shared512x6-lambda097-r1",
+    "root": "/root/autodl-tmp/combat43-scale512x6-20261109",
+    "initial_config": "configs/train/shared_wholerun_512x6.args",
+    "configuration_commit": "ae54a756",
+    "runtime_source": "ce4c10fd plus f33b13bd continuous support",
+    "width": 512,
+    "layers": 6,
+    "heads": 8,
+    "ffn_width": 2048,
+    "parameters": 27225652,
+    "baseline_parameters": 5522740,
+    "room_lambda": 0.97,
+    "within_room_lambda": 1,
+    "gamma": 1,
+    "seed": 20261108,
+    "learning_rate": 0.0001,
+    "epochs": 1,
+    "physical_batch": 1536,
+    "gradient_accumulation": 8,
+    "effective_global_batch": 49152,
+    "optimizer_steps": 16,
+    "environment_count": 1024,
+    "steps_per_environment": 768,
+    "global_actions_per_round": 786432,
+    "precision": "FP32 highest",
+    "continuous": true,
+    "total_steps": null,
+    "total_rounds": null,
+    "total_seconds": null,
+    "qualification": {
+      "machine": "bjb1-11727",
+      "updates": 2,
+      "envs": 256,
+      "steps": 768,
+      "timeout_seconds": 900,
+      "exit_code": 0,
+      "rollout_seconds": [
+        30.88471468,
+        28.8939285
+      ],
+      "update_seconds": [
+        46.78159916,
+        46.10215388
+      ],
+      "wall_seconds": [
+        78.91811704,
+        76.25175721
+      ],
+      "oom_retries": 0
+    },
+    "comparison": "Compare natural outcomes and relic pickup at matched sampled actions and wall time. Historical baseline, one training seed; no demonstrated quality gain yet.",
+    "initialization": "Fresh random 512x6 model and empty Adam; no copied COMBAT42 weights.",
+    "architecture": "Existing shared pre-LN Transformer; width and depth change together. Same tokenizer/action/reward contracts."
   }
 }
