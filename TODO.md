@@ -639,6 +639,8 @@
 
 - **PURE-RL-SAMPLING-30S** — 已完成连续133/134轮生产验收（最慢29.409/29.312秒；早期有30–34秒波动，余量继续优化）。用户要求采样压缩到30秒以内；保持COMBAT40 4×256×768实际动作、FP32和学习目标。适用rl/policies、rl/algorithms、rl/training；同输入完整collection数值/轨迹与资源生命周期通过，四rank两轮正式最慢采样<30秒、完整保存恢复及8773连续。见worklog/2026-11-09.md#pure-rl-sampling-30s。
 
-- **PURE-RL-PHASES-20S** — 进行中，尚未四机达标。正式3881a367继续COMBAT40，430–436轮有最长完整更新约21秒，采样约20–23秒。11727数值地图+布局缓存+16行/query分档+直接根目的地view组合完整采样18.636–18.715秒，134项原生/地图/GPU生命周期/进程恢复检查通过；正在验收组合三轮连续训练及更大worker分组，尚未部署。保持共享256×4、四rank256×768实际动作、FP32、小LR和16Adam；完整更新计入取批/前后向/Adam/同步等待，保存单列，不以减少样本/更新或改变统计目标冒充加速。验收为同输入语义、完整生命周期通过及四机最慢采样/完整更新均<20秒。见worklog/2026-11-09.md#pure-rl-phases-20s。
+- **PURE-RL-PHASES-20S** — 进行中，尚未稳定四机达标。正式ce4c10fd从共同440续训，441–443模型/Adam/256env/指标资格通过；461–482三台25核采样均值18.47–18.65秒，16核rank3为20.22秒，完整更新偶发20.75秒。剩余重点为16核采样及同步等待；不使用单rank18秒冒充四机。保持共享256×4、四rank256×768实际动作、FP32、小LR和16Adam；完整更新包括取批/前后向/Adam/同步等待，保存单列，不以减少样本/更新冒充加速。验收为语义/生命周期与四机最慢采样和完整更新均<20秒。见worklog/2026-11-09.md#pure-rl-phases-20s。
+
+- **PURE-RL-HYPERPARAM-CHECK** — 进行中；检查COMBAT40现LR1e-4/1遍/16Adam是否偏大。11727固定443完整四rank快照和786432样本，比较LR1e-4/5e-5×16/8Adam；8次须有效batch翻倍而非漏样本，明确属于统计方法实验。验收为同样本/旧Adam/固定目标、独立新seed样本的更新后KL/clip/value误差/代理目标、资源与有界退出记录；不把单次离线误差当长期胜率。正式参数暂不改。见worklog/2026-11-09.md#pure-rl-hyperparam-check当前学习率更新次数是否偏大。
 
 - **CFG-LEGACY-EXPECTATIONS** — 既存待修；tests/unit/test_experiment_configs.py 的 test_entity_runtime_matches_train24_except_requested_batch_settings 与 test_old90_worker_grouping_probes_only_change_grouping_and_duration 两个参数例，已在改动前冻结 qualified-phase-candidate 重现同三失败（旧30M预期与现50M等配置不同）。本次20秒性能优化不改旧训练预设/不跳过测试；验收须按实际配置意图修正预期并让三例通过。
