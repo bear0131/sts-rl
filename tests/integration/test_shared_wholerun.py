@@ -81,10 +81,13 @@ def test_prefill_respects_callback_mutation_and_restores_environment_hooks(callb
 
 
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
-def test_real_ppo_two_rounds_and_resume(tmp_path, device):
+@pytest.mark.parametrize('normalization', ['group256', 'rollout'])
+def test_real_ppo_two_rounds_and_resume(tmp_path, device, normalization):
     assert device != 'cuda' or torch.cuda.is_available(), 'explicit CUDA qualification required'
     env = DummyVecEnv([make_env, make_env])
     model = make_model(env, device)
+    from rl.algorithms.ppo import configure_advantage_normalization
+    configure_advantage_normalization(model, normalization)
     model.set_logger(configure(folder=None, format_strings=[]))
     recorded = {}
     original_record = model.logger.record
@@ -118,6 +121,8 @@ def test_real_ppo_two_rounds_and_resume(tmp_path, device):
     assert bundle is not None
     model.save(tmp_path/'policy.zip')
     loaded = load_checkpoint(tmp_path/'policy.zip', device=device)
+    assert loaded.ppo_advantage_normalization == normalization
+    assert loaded._ppo_advantage_stats is None
     assert loaded.pure_rl_game_totals == totals
     assert not hasattr(loaded.policy.core, '_collection_graphs')
     assert not hasattr(loaded, '_shared_collection_graphs')
@@ -148,12 +153,13 @@ def test_real_ppo_two_rounds_and_resume(tmp_path, device):
 
 
 @pytest.mark.parametrize('grow', [False, True])
+@pytest.mark.parametrize('normalization', ['group256', 'rollout'])
 @pytest.mark.parametrize('scene,backend', [
     ('ordinary', 'native'), ('campfire', 'native'),
     ('ordinary', 'native-subproc'),
 ])
 def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, grow,
-                                              scene, backend, campfire_env_type):
+                                              scene, backend, campfire_env_type, normalization):
     import json
     import sys
     from types import SimpleNamespace
@@ -192,7 +198,8 @@ def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, gr
         '--remote-root', str(tmp_path/'transport'), '--ssh-control-dir', str(tmp_path/'ssh'),
         '--run-id', 'shared-pure-lifecycle', '--wandb', '--wandb-id', 'shared-pure-lifecycle',
         '--training-state-dir', str(tmp_path/'state'), '--save-every-updates', '1',
-        '--max-checkpoints', '2', '--seed', '20261108']
+        '--max-checkpoints', '2', '--seed', '20261108',
+        '--ppo-advantage-normalization', normalization]
     monkeypatch.setattr(sys, 'argv', argv)
     distributed_sb3.main()
     bundle = tmp_path/'state/rank0/step-000000000128'
@@ -200,6 +207,9 @@ def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, gr
     resumed = list(argv)
     resumed[resumed.index('--checkpoint')+1] = str(bundle/'model.zip')
     resumed += ['--resume-state', str(bundle)]
+    # The selected mode must persist without an explicit CLI override.
+    index = resumed.index('--ppo-advantage-normalization')
+    del resumed[index:index + 2]
     if grow:
         resumed[resumed.index('--n-envs')+1] = '4'
         resumed += ['--resume-grow-environments']
@@ -222,6 +232,11 @@ def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, gr
         assert row['pure_rl/search_simulations'] == 0
         assert row['pure_rl/room_lambda'] == .9
         count = 128 if grow and row['rollout_round'] > 2 else 64
+        assert row['pure_rl/advantage_normalization_rollout'] == int(normalization == 'rollout')
+        if normalization == 'rollout':
+            assert row['pure_rl/advantage_normalization/count'] == count
+            assert row['pure_rl/normalization_group_size'] == count
+            assert np.isfinite(row['pure_rl/advantage_normalization/std'])
         assert row['pure_rl/combat_samples'] + row['pure_rl/upper_samples'] == count
         assert row['optimizer_steps'] == count // 32
         assert row['pure_rl/update/count'] == count

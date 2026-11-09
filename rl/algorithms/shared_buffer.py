@@ -21,6 +21,7 @@ class SharedRolloutBuffer(MaskableDictRolloutBuffer):
     """
 
     def reset(self):
+        self.normalization_generation = getattr(self, 'normalization_generation', 0) + 1
         if not hasattr(self, 'observations'):
             super().reset()
         else:

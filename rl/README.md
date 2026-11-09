@@ -879,3 +879,11 @@ inference_mode下采样；库调用中的任意用户callback保留原autograd�
 校验同步主机；CPU和训练反向仍使用原校验路径。
 
 较大容量配置 configs/train/shared_wholerun_512x6.args 使用512宽、6个共享Pre-LN层、8头、FFN宽2048及跨房间lambda=.97；仍为同一观测/动作/奖励合同。该文件用于生成随机初值，实际分布式采样继续复用shared_wholerun_distributed.args。1536物理微批×8梯度累积×4rank维持49152有效batch和16次Adam；模型权重形状不同，不能当作256×4 checkpoint的普通恢复。现有trainer --steps 0输出位于--out下的时间戳子目录，分布式checkpoint路径应避免与同名目录冲突。
+
+共享纯PPO可用 `--ppo-advantage-normalization rollout` 对一次完整采样的所有rank
+统一计算优势均值与样本标准差，整个更新阶段固定使用；跨rank需要ssh-ring。
+本地以FP64累积，现有ring用FP32传输两次小统计量，按样本数加权。原始优势和
+lambda-return不改写，不按房间/phase分别归一化。该设置是统计方法实验，不是
+等价性能优化；与物理微批和Adam有效batch独立。默认保留checkpoint设置，旧
+checkpoint保持group256；统计量每轮重新计算，不保存缓存。监控记录全局
+count/mean/std及normalization_group_size，恢复后的模式由checkpoint继承。

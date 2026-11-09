@@ -4,6 +4,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 from gymnasium import spaces
+import numpy as np
 import pytest
 import torch
 
@@ -128,8 +129,9 @@ def test_oom_retry_preserves_prior_and_partial_backward_gradients(monkeypatch):
 
 
 @pytest.mark.parametrize('fail_after_combat', [False, True])
+@pytest.mark.parametrize('normalization', ['group256', 'rollout'])
 def test_phase_backward_keeps_original_advantage_groups_and_discards_failed_metrics(
-        monkeypatch, fail_after_combat):
+        monkeypatch, fail_after_combat, normalization):
     from rl.algorithms import updates
     from rl.algorithms.ppo_metrics import accumulate_update_metrics, update_moments, finalize_metrics
 
@@ -160,6 +162,14 @@ def test_phase_backward_keeps_original_advantage_groups_and_discards_failed_metr
         advantages=advantage, returns=x / 5, old_values=torch.zeros(16, dtype=torch.float64),
         old_log_prob=torch.full((16,), -1.1, dtype=torch.float64))
     for model in (original, routed):
+        if normalization == 'rollout':
+            from rl.algorithms.ppo import prepare_advantage_normalization
+            model.ppo_advantage_normalization = normalization
+            model.num_timesteps = 20
+            model.rollout_buffer = SimpleNamespace(full=True, normalization_generation=1,
+                advantages=np.concatenate([advantage.numpy(), [2000., 3000., 4000., 5000.]]))
+            model.logger = SimpleNamespace(record=lambda *args: None)
+            prepare_advantage_normalization(model)
         model.policy.weight.grad = torch.tensor([2., 3.], dtype=torch.float64)
     components, expected = updates.ppo_forward(original, batch, .2, None)
     expected.backward()

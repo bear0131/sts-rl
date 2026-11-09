@@ -29,7 +29,8 @@ from rl.search.native import (
     complete_searches_streaming,
     observation_as_tensor as _leaf_observation_as_tensor,
 )
-from rl.algorithms.ppo import PPOLossComponents, ppo_loss_components
+from rl.algorithms.ppo import (PPOLossComponents, ppo_loss_components,
+    configure_advantage_normalization, prepare_advantage_normalization)
 from rl.algorithms.updates import ppo_forward, optimizer_step, reasoning_microbatch_backward
 from rl.search.native import apply_strict_training_settings
 from rl.algorithms.hierarchical_returns import compute_hierarchical_returns
@@ -115,6 +116,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self,
         *args,
         gradient_accumulation_steps: int = 1,
+        ppo_advantage_normalization: str = 'group256',
         performance_profile: bool = False,
         amp_mode: str = "off",
         hierarchical_combat_hp: bool = False,
@@ -288,6 +290,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             master_nonce=int(rulebase_planner_nonce),
         )
         self.gradient_accumulation_steps = int(gradient_accumulation_steps)
+        self.ppo_advantage_normalization = ppo_advantage_normalization
         self.performance_profile = bool(performance_profile)
         self.amp_mode = amp_mode
         # Combat AZ targets are fight-local terminal-HP values.  Keep the
@@ -439,6 +442,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.nosl_action_group_contract = (CONTRACT if self.nosl_is_az and
             self.nosl_is_az_merge_equivalent_actions else 'individual-actions')
         self.nosl_supervision_contract = getattr(self.policy.core,'training_objective','scalar-hp-v1') if hasattr(self.policy,'core') else 'scalar-hp-v1'
+        configure_advantage_normalization(self)
         from rl.algorithms.combat_distribution import OUTCOME_CONTRACTS
         # Both heads share observed outcome labels and the combat replay pipeline.
         self._combat_distribution = self.nosl_supervision_contract in OUTCOME_CONTRACTS
@@ -486,6 +490,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         """
         return [
             *super()._excluded_save_params(),
+            "_ppo_advantage_stats",
             "_native_leaf_inference",
             "_shared_collection_graphs",
             "_rollout_inference",
@@ -2985,6 +2990,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
     def train(self) -> None:
         """Update the policy, accumulating gradients across micro-batches."""
+        prepare_advantage_normalization(self)
         if self.performance_profile:
             self._sync_device()
             train_started = time.perf_counter()

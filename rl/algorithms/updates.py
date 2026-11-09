@@ -5,12 +5,15 @@ import time
 import numpy as np
 import torch as th
 from gymnasium import spaces
-from rl.algorithms.ppo import ppo_loss_components, normalize_ppo_advantages
+from rl.algorithms.ppo import ppo_loss_components, model_normalized_advantages
 from rl.search.native import observation_as_tensor
 
 
 def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_forward=None,
                 pre_normalized_advantages=None):
+    if (pre_normalized_advantages is None and model.normalize_advantage
+            and getattr(model, 'ppo_advantage_normalization', 'group256') == 'rollout'):
+        pre_normalized_advantages = model_normalized_advantages(model, batch.advantages)
     def select(value):
         return value if indices is None else value.index_select(0, indices)
     observations = {key: select(value) for key, value in batch.observations.items()}
@@ -71,8 +74,8 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf):
                     and not getattr(model, 'hierarchical_combat_hp', False)):
                 from env.core import vocab
                 # Normalize BEFORE splitting combat/upper rows. Re-normalizing
-                # either subset would change the original 256-row objective.
-                advantages = (normalize_ppo_advantages(chunk.advantages, group)
+                # either subset would change the chosen statistical objective.
+                advantages = (model_normalized_advantages(model, chunk.advantages)
                               if model.normalize_advantage else chunk.advantages)
                 combat = chunk.observations['phase'].long().flatten() == vocab.PHASE_VOCAB_INDEX['combat']
                 pending_metrics, phase_losses = [], []

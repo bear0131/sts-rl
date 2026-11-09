@@ -1,5 +1,6 @@
 """PPO statistical objective, shared by local and synchronized updates."""
 from dataclasses import dataclass
+import numpy as np
 import torch as th
 import torch.nn.functional as F
 from env.core import vocab as V
@@ -42,6 +43,72 @@ def normalize_ppo_advantages(advantages, group_size=None):
         return ((groups - groups.mean(dim=1, keepdim=True)) /
                 (groups.std(dim=1, keepdim=True) + 1e-8)).reshape_as(advantages)
     return (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+
+def configure_advantage_normalization(model, mode=None):
+    """Keep legacy groups by default; whole-rollout statistics need pure PPO."""
+    mode = mode or getattr(model, 'ppo_advantage_normalization', 'group256')
+    if mode not in ('group256', 'rollout'):
+        raise ValueError('PPO advantage normalization must be group256 or rollout')
+    if mode == 'rollout' and (
+            getattr(model, 'nosl_supervision_contract', None) != 'shared-wholerun-ppo-room-v1'
+            or model.hierarchical_combat_hp or model.nosl_is_az
+            or not model.normalize_advantage):
+        raise ValueError('rollout advantage normalization requires normalized shared whole-run PPO')
+    model.ppo_advantage_normalization = mode
+    model._ppo_advantage_stats = None
+    return mode
+
+
+def rollout_advantage_moments(advantages, *, average=None, world_size=1):
+    """Two-pass, count-weighted global sample variance; no trajectory reweighting.
+
+    Local accumulation is float64. The supplied collective may use float32
+    transport, so center before the second pass instead of subtracting E[x]^2.
+    Every rank participates even if a rank contains invalid samples.
+    """
+    if world_size < 1 or (world_size > 1 and average is None):
+        raise ValueError('global rollout normalization requires a collective')
+    average = average or (lambda values: values)
+    values = np.asarray(advantages, dtype=np.float64).reshape(-1)
+    finite = np.isfinite(values)
+    first = average(dict(count=float(values.size), invalid=float((~finite).sum()),
+                         total=float(np.where(finite, values, 0).sum())))
+    count = first['count'] * world_size
+    if first['invalid'] or count < 2:
+        raise ValueError('rollout advantages must contain at least two finite samples')
+    mean = first['total'] / first['count']
+    second = average(dict(centered_sum=float(np.square(values - mean).sum())))
+    variance = second['centered_sum'] / (first['count'] - 1 / world_size)
+    if not np.isfinite(mean) or not np.isfinite(variance) or variance < 0:
+        raise ValueError('invalid global advantage moments')
+    return dict(count=int(round(count)), mean=float(mean), std=float(np.sqrt(variance)))
+
+
+def prepare_advantage_normalization(model, *, average=None, world_size=1):
+    """Freeze one statistic set for all epochs/microbatches of this collection."""
+    if getattr(model, 'ppo_advantage_normalization', 'group256') != 'rollout':
+        return
+    buffer = model.rollout_buffer
+    if not buffer.full:
+        raise ValueError('advantage statistics require a complete rollout')
+    stats = rollout_advantage_moments(buffer.advantages, average=average, world_size=world_size)
+    model._ppo_advantage_stats = dict(stats, buffer_id=id(buffer),
+        generation=buffer.normalization_generation, timesteps=model.num_timesteps)
+    for key, value in stats.items():
+        model.logger.record('pure_rl/advantage_normalization/' + key, value)
+
+
+def model_normalized_advantages(model, advantages):
+    if getattr(model, 'ppo_advantage_normalization', 'group256') == 'rollout':
+        stats = getattr(model, '_ppo_advantage_stats', None)
+        buffer = model.rollout_buffer
+        if (stats is None or stats['buffer_id'] != id(buffer)
+                or stats['generation'] != buffer.normalization_generation
+                or stats['timesteps'] != model.num_timesteps or not buffer.full):
+            raise RuntimeError('prepare global advantage statistics for this collection first')
+        return (advantages - stats['mean']) / (stats['std'] + 1e-8)
+    return normalize_ppo_advantages(advantages, getattr(model.policy, 'ppo_advantage_group_size', None))
 
 
 def ppo_loss_components(

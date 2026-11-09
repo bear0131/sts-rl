@@ -16,6 +16,7 @@ experiment targets.
 from __future__ import annotations
 
 from rl.algorithms.updates import ppo_forward, ppo_chunked_backward, optimizer_step, reasoning_microbatch_backward
+from rl.algorithms.ppo import configure_advantage_normalization, prepare_advantage_normalization
 from rl.algorithms.upper_ppo import enabled as joint_upper, combat_update, update_upper
 from rl.algorithms.update_schedule import parse_update_schedule
 from rl.search.native import NATIVE_TIMING_KEYS, WORKER_TIMING_KEYS, apply_strict_training_settings
@@ -546,6 +547,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
     parser.add_argument("--training-state-dir", type=Path, help="Per-rank policy/Adam/replay/RNG recovery generations")
     parser.add_argument("--resume-state", type=Path, help="Explicit complete per-rank recovery generation")
+    parser.add_argument('--ppo-advantage-normalization', choices=('group256', 'rollout'),
+        help='Shared PPO only: retain checkpoint setting, or choose legacy groups/global rollout moments')
     parser.add_argument('--fork-public-lower',choices=('root','turn','state'),default=None,
                         help='On a lower-only fork, add a public adapter refreshed per real root or simulated state')
     parser.add_argument('--fork-public-weights',type=Path,default=None,
@@ -2860,6 +2863,11 @@ def main() -> None:
     args.independent_rollout_config = configure_independent(
         model, independent_config, fork=args.fork_state is not None)
     configure_training_scope(model, args)
+    args.ppo_advantage_normalization = configure_advantage_normalization(
+        model, args.ppo_advantage_normalization)
+    if (args.ppo_advantage_normalization == 'rollout' and args.world_size > 1
+            and args.gradient_transport != 'ssh-ring'):
+        raise ValueError('global rollout advantage normalization requires ssh-ring transport')
     if args.independent_rollout_config is not None:
         if args.reasoning_updates or args.reasoning_coef or args.interactive_reasoning:
             raise ValueError('independent cohorts do not support reasoning training')
@@ -3408,6 +3416,9 @@ def main() -> None:
             optimizer_steps = 0
             cuda_memory_peak = None
             if pure_ppo:
+                prepare_advantage_normalization(model, world_size=args.world_size,
+                    average=(lambda values: average_scalar_dict(values, ring_transport))
+                    if ring_transport is not None else None)
                 model._ppo_microbatch_stats = dict(chunks=0, rows=0, oom_retries=0,
                                                   min_rows=args.batch_size, max_rows=0)
                 model._ppo_update_metric_sums = None
@@ -3833,7 +3844,10 @@ def main() -> None:
                     model.logger.record('pure_rl/backward_' + key, value)
                 for key, value in dict(learning_rate=model.policy.optimizer.param_groups[0]['lr'],
                         epochs=args.n_epochs, microbatch_rows_requested=args.batch_size,
-                        normalization_group_size=model.policy.ppo_advantage_group_size,
+                        normalization_group_size=(model._ppo_advantage_stats['count']
+                            if args.ppo_advantage_normalization == 'rollout'
+                            else model.policy.ppo_advantage_group_size),
+                        advantage_normalization_rollout=int(args.ppo_advantage_normalization == 'rollout'),
                         effective_batch_size_global=args.batch_size * args.gradient_accumulation_steps * args.world_size).items():
                     model.logger.record('pure_rl/' + key, value)
             callback_scalars = logger_scalars(model)
