@@ -1729,8 +1729,8 @@
     "iteration_steps": 786432,
     "rollout_mode": "fixed_steps",
     "status": "training",
-    "note": "COMBAT42在534轮/global419954688完整暂停并双机备份。43从随机初值新训512宽6层8头、27225652参数；跨房间λ.97/房内1、奖励/LR1e-4/16Adam/256×768×4/FP32保持。micro1536×accum8维持全局batch49152，continuous无总训练上限。两轮单机完整采样/更新/保存资格通过，尚不能证明大模型长期效果更好。",
-    "updated_at": "2026-11-09T08:40:48.120431+00:00"
+    "note": "COMBAT42在534轮/global419954688完整暂停并双机备份。43从随机初值新训512宽6层8头、27225652参数；跨房间λ.97/房内1、奖励/LR1e-4/16Adam/256×768×4/FP32保持。micro1536×accum8维持全局batch49152，continuous无总训练上限。两轮单机完整采样/更新/保存资格通过，尚不能证明大模型长期效果更好。 第165轮完整保存后改为整轮全4rank共786432样本统一优势归一化；同模型/Adam/在途游戏续训，其他学习参数不变。",
+    "updated_at": "2026-11-09T13:28:20.492670+00:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
@@ -2561,7 +2561,7 @@
     "root": "/root/autodl-tmp/combat43-scale512x6-20261109",
     "initial_config": "configs/train/shared_wholerun_512x6.args",
     "configuration_commit": "ae54a756",
-    "runtime_source": "ce4c10fd plus f33b13bd continuous support",
+    "runtime_source": "02f12fd5 normalization + c23278d5 finite scan; remaining source ce4c10fd/f33b13bd",
     "width": 512,
     "layers": 6,
     "heads": 8,
@@ -2637,6 +2637,48 @@
       "initial_sha256": "dace775f7f255d38eee50b7b2464446f2e9015ee04035aea19c12526df7a0391",
       "evidence_sha256": "0cd6c4b28d7540b670c50dc4c41f6ea7cb8246c930a0297306b31e62c9ecb084",
       "monitor_round_observed": 3
+    },
+    "advantage_normalization": {
+      "mode": "rollout",
+      "samples": 786432,
+      "start_round": 166,
+      "source_round": 165,
+      "global_step": 129761280,
+      "selection": "Remove random group-statistic noise; frozen single-rank heldout test showed similar MSE and controlled KL, not a proven win-rate improvement.",
+      "experiment_root": "/root/autodl-tmp/combat43-advantage-normalization-20261109",
+      "acceptance": {
+        "rounds": [
+          166,
+          167
+        ],
+        "global_steps": [
+          130547712,
+          131334144
+        ],
+        "checkpoint_modes": [
+          "rollout",
+          "rollout"
+        ],
+        "all_rank_weights_and_adam_equal": true,
+        "global_count": 786432,
+        "optimizer_steps": 16,
+        "max_update_seconds": [
+          70.22347338311374,
+          69.28768012416549
+        ],
+        "max_rollout_seconds": [
+          35.40309835411608,
+          33.20884692855179
+        ],
+        "approx_kl": [
+          0.0008114682665715615,
+          0.0008825173135846853
+        ],
+        "oom_retries": 0,
+        "monitor_round": 167,
+        "monitor_all_alive": true,
+        "experiment_evidence_sha256": "c3fa027063755e3525389feb95a479f073df03962dc9b5a33b44027836fe67e0"
+      }
     }
   }
 }

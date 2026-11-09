@@ -658,4 +658,4 @@
 
 - **PURE-RL-512-UPDATE-HALF** — 进行中。COMBAT43共享512×6更新阶段65–67秒目标减半到约33秒，冻结同输入/权重/Adam/排列比较，保持lambda.97/奖励/观测动作/FP32优先/LR1e-4/16Adam/有效batch49152。适用rl/policies训练内核、rl/algorithms/updates及分布式梯度路径；须同硬件资源与端到端测量、梯度/Adam数值验收、两轮完整四机更新保存和monitor再部署；不将微基准或减少工作量当达标。
 
-- **PURE-RL-ADV-NORMALIZATION** — 进行中。用户要求比较256以外配置、由agent选择并重启当前训练；独立比较统计范围，其他超参数和FP32保持，按完整状态续训同COMBAT43。适用rl/algorithms/ppo.py、updates.py、distributed_sb3与shared PPO保存配置；验收为固定当前数据的完整16Adam/留出诊断、全rank统计一致、两轮真实多机保存/监控，禁止把归一化范围变化算作等价速度优化。见worklog/2026-11-09.md#pure-rl-adv-normalization比较更大的优势统计范围并续训。
+- **PURE-RL-ADV-NORMALIZATION** — 已完成选择与四机续训验收；长期效果待观察。比较256/4096/全局每Adam49152/整轮786432，选择整轮统计，保持lambda.97/FP32/LR1e-4/16Adam/globalbatch49152，从同COMBAT43第165轮完整状态恢复，continuous无总限。166/167两轮真实采样更新保存、四rank权重/Adam一致、全局count/mean/std payload一致、0OOM、8773同曲线四alive，20项语义及生命周期回归通过。独立初期32768行留出短测仅证明更新健康，整轮MSE与256基本持平；不能声称胜率改善。适用rl/algorithms/ppo.py、updates.py、distributed_sb3与shared PPO保存配置。见worklog/2026-11-09.md#pure-rl-adv-normalization比较更大的优势统计范围并续训。
