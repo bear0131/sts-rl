@@ -76,6 +76,8 @@ class EntityEncoderLayer(nn.TransformerEncoderLayer):
 
 
 class EntityCombatNetwork(nn.Module):
+    encoder_type = nn.TransformerEncoder
+
     def __init__(self, space, config, *, card_embedding=None):
         super().__init__()
         self.config = config
@@ -121,7 +123,7 @@ class EntityCombatNetwork(nn.Module):
         self.role = nn.Embedding(8, width)
         layer = EntityEncoderLayer(width, config.heads, 4*width,
             dropout=0., activation='gelu', batch_first=True, norm_first=True)
-        self.transformer = nn.TransformerEncoder(layer, config.layers, enable_nested_tensor=False)
+        self.transformer = self.encoder_type(layer, config.layers, enable_nested_tensor=False)
         self.norm = nn.LayerNorm(width)
         self.pointer_query = nn.Linear(width, width)
         self.pointer_key = nn.Linear(width, width)
@@ -250,10 +252,13 @@ class EntityCombatNetwork(nn.Module):
         for role, (name, block, mask) in enumerate(blocks):
             tokens.append(block + self.role.weight[role]); masks.append(mask)
             spans[name] = (offset, offset+block.shape[1]); offset += block.shape[1]
-        encoded = self.norm(self.transformer(torch.cat(tokens,1),src_key_padding_mask=torch.cat(masks,1)))
+        encoded = self._encode_tokens(torch.cat(tokens, 1), torch.cat(masks, 1), spans, obs)
         result = {name:encoded[:,lo:hi] for name,(lo,hi) in spans.items()}
         result['select'] = choices
         return result['global'][:,0], result
+
+    def _encode_tokens(self, source, pad_mask, spans, obs):
+        return self.norm(self.transformer(source, src_key_padding_mask=pad_mask))
 
     def _pointer(self, state, entities):
         return torch.einsum('bd,bnd->bn',self.pointer_query(state),self.pointer_key(entities))*self.config.width**-.5

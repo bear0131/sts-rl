@@ -40,7 +40,8 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
     return components, loss
 
 
-def ppo_chunked_backward(model, batch, clip_range, clip_range_vf):
+def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
+                         pre_normalized_advantages=None, backward_scale=1.0):
     """Fuse statistical groups; retry smaller chunks without corrupting accumulation.
 
     Only the shared whole-run policy uses this path (no dropout/running stats).
@@ -49,7 +50,7 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf):
     """
     parameters = list(model.policy.parameters())
     total = len(batch.advantages)
-    group = model.policy.ppo_advantage_group_size
+    group = 1 if pre_normalized_advantages is not None else model.policy.ppo_advantage_group_size
     stats = model.__dict__.setdefault('_ppo_microbatch_stats',
         dict(chunks=0, rows=0, oom_retries=0, min_rows=total, max_rows=0))
     losses = []
@@ -75,8 +76,10 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf):
                 from env.core import vocab
                 # Normalize BEFORE splitting combat/upper rows. Re-normalizing
                 # either subset would change the chosen statistical objective.
-                advantages = (model_normalized_advantages(model, chunk.advantages)
-                              if model.normalize_advantage else chunk.advantages)
+                advantages = (pre_normalized_advantages[start:start + count]
+                    if pre_normalized_advantages is not None else
+                    model_normalized_advantages(model, chunk.advantages)
+                    if model.normalize_advantage else chunk.advantages)
                 combat = chunk.observations['phase'].long().flatten() == vocab.PHASE_VOCAB_INDEX['combat']
                 pending_metrics, phase_losses = [], []
                 for mask in (combat, ~combat):
@@ -86,7 +89,7 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf):
                         continue
                     components, phase_loss = ppo_forward(model, chunk, clip_range, clip_range_vf,
                         indices=indices, pre_normalized_advantages=advantages)
-                    (phase_loss * (rows / total)).backward()
+                    (phase_loss * (rows / total * backward_scale)).backward()
                     phase_losses.append(phase_loss.detach() * (rows / count))
                     # Retain only detached metrics until the entire chunk
                     # succeeds. A failed later phase must discard earlier
@@ -97,8 +100,10 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf):
                     components = phase_loss = None
                 loss = th.stack(phase_losses).sum()
             else:
-                components, loss = ppo_forward(model, chunk, clip_range, clip_range_vf)
-                (loss * (count / total)).backward()
+                kwargs = ({} if pre_normalized_advantages is None else
+                          dict(pre_normalized_advantages=pre_normalized_advantages[start:start + count]))
+                components, loss = ppo_forward(model, chunk, clip_range, clip_range_vf, **kwargs)
+                (loss * (count / total * backward_scale)).backward()
                 pending_metrics = [(components, count)]
         except th.OutOfMemoryError:
             failed = True

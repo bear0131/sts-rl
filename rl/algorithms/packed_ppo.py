@@ -1,0 +1,191 @@
+"""Shared PPO physical batches, preserving each original Adam sample group."""
+from dataclasses import asdict, dataclass
+import math
+import time
+
+import numpy as np
+import torch
+
+from env.core import vocab
+from rl.algorithms.ppo import model_normalized_advantages, normalize_ppo_advantages
+from rl.algorithms.updates import optimizer_step, ppo_chunked_backward
+from rl.policies.shared_wholerun import SharedWholeRunPolicy, SharedOverworldEncoder
+
+
+@dataclass(frozen=True)
+class PackedPPOConfig:
+    token_budget: int
+    max_rows: int
+    precision: str = 'fp32'
+
+    def __post_init__(self):
+        if (type(self.token_budget) is not int or type(self.max_rows) is not int
+                or min(self.token_budget, self.max_rows) < 1):
+            raise ValueError('packed PPO token budget and max rows must be positive integers')
+        if self.precision not in ('fp32', 'fp16'):
+            raise ValueError('packed PPO precision must be fp32 or fp16')
+
+
+def configure_packed_updates(model, configuration=None):
+    """Persist plain data; reconstruct encoder options on checkpoint loading."""
+    if configuration == 'off':
+        model.ppo_update_config = None
+        model.ppo_update_loss_scale = 1.
+        model.__dict__.pop('_ppo_microbatch_cap', None)
+    if configuration is None:
+        configuration = getattr(model, 'ppo_update_config', None)
+    if configuration is None or configuration == 'off':
+        model.ppo_update_config = None
+        if isinstance(model.policy, SharedWholeRunPolicy):
+            model.policy.core.combat.compact_training_tokens = False
+            model.policy.core.combat.transformer.update_precision = 'fp32'
+        return None
+    config = (configuration if isinstance(configuration, PackedPPOConfig)
+              else PackedPPOConfig(**configuration))
+    if (not isinstance(model.policy, SharedWholeRunPolicy)
+            or model.nosl_is_az or model.hierarchical_combat_hp
+            or getattr(model, 'reasoning_updates', 0) or model.target_kl is not None
+            or model.amp_mode != 'off'):
+        raise ValueError('packed updates require shared pure PPO without auxiliary updates, target KL or outer AMP')
+    previous = getattr(model, 'ppo_update_config', None)
+    model.ppo_update_config = asdict(config)
+    if (previous != model.ppo_update_config or not hasattr(model, 'ppo_update_loss_scale')):
+        model.ppo_update_loss_scale = 65536. if config.precision == 'fp16' else 1.
+        model.__dict__.pop('_ppo_microbatch_cap', None)
+    scale = model.ppo_update_loss_scale
+    if not math.isfinite(scale) or scale < 1 or (config.precision == 'fp32' and scale != 1):
+        raise ValueError('invalid saved packed PPO loss scale')
+    model.policy.core.combat.compact_training_tokens = True
+    model.policy.core.combat.transformer.update_precision = config.precision
+    return config
+
+
+def _select(batch, index):
+    data = batch._asdict() if hasattr(batch, '_asdict') else vars(batch)
+    return type(batch)(**{k: ({n: v[index] for n, v in x.items()}
+        if isinstance(x, dict) else x[index]) for k, x in data.items()})
+
+
+def packed_chunks(model, batch, config):
+    """Normalize original statistical groups BEFORE any permutation/splitting."""
+    if not model.normalize_advantage:
+        advantages = batch.advantages
+    elif model.ppo_advantage_normalization == 'group256':
+        advantages = normalize_ppo_advantages(batch.advantages,
+            min(model.batch_size, model.policy.ppo_advantage_group_size))
+    else:
+        advantages = model_normalized_advantages(model, batch.advantages)
+    obs = batch.observations
+    phase = obs['phase'].long().flatten()
+    combat = phase == vocab.PHASE_VOCAB_INDEX['combat']
+    selection = phase == vocab.PHASE_VOCAB_INDEX['card_select']
+    width = SharedOverworldEncoder.merged_token_counts(obs)
+    # Card selection retains its complete original candidate region. This is
+    # a physical memory estimate, never an action-mask or observation filter.
+    width = torch.where(selection, width + obs['select_card_ids'].shape[1], width)
+    width = torch.where(combat, model.policy.core.combat.training_token_counts(obs), width)
+    kind = torch.where(combat, 0, torch.where(selection, 1, 2))
+    host = torch.stack((kind, width)).cpu().numpy()
+    order = np.lexsort((host[1], host[0]))
+    index = torch.as_tensor(order, device=model.device)
+    ordered = _select(batch, index)
+    normalized = advantages[index]
+    lengths = host[:, order]
+    start, total = 0, len(advantages)
+    while start < total:
+        end = min(start + config.max_rows, total)
+        other = np.flatnonzero(lengths[0, start:end] != lengths[0, start])
+        if len(other):
+            end = start + int(other[0])
+        end = min(end, start + max(1, config.token_budget // int(lengths[1, end - 1])))
+        yield _select(ordered, slice(start, end)), normalized[start:end], (end - start) / total
+        start = end
+
+
+def _sync_device(model):
+    if model.device.type == 'cuda':
+        torch.cuda.synchronize(model.device)
+
+
+def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, average=None):
+    """Same Adam boundaries for local and distributed learners; retry overflow.
+
+    ``average`` must be the rank-wide scalar reduction whenever ``synchronize``
+    exchanges gradients. All ranks agree to retry before sending any gradients.
+    No optimizer steps or samples are silently skipped.
+    """
+    config = configure_packed_updates(model)
+    if config is None:
+        raise ValueError('packed PPO is not configured')
+    if config.precision == 'fp16' and model.device.type != 'cuda':
+        raise ValueError('packed FP16 updates require CUDA; CPU checkpoint inference is supported')
+    if (synchronize is None) != (average is None):
+        raise ValueError('distributed packed PPO needs both synchronization callbacks')
+    effective = model.batch_size * model.gradient_accumulation_steps
+    total = model.rollout_buffer.buffer_size * model.rollout_buffer.n_envs
+    if total % effective:
+        raise ValueError('packed PPO requires complete original optimizer batches')
+    scale = model.ppo_update_loss_scale
+    if average is not None:
+        moments = average(dict(scale=scale, scale_square=scale * scale))
+        if moments['scale'] != scale or moments['scale_square'] != scale * scale:
+            raise ValueError('packed PPO loss scale differs across ranks')
+    result = dict(losses=[],metrics=[],optimizer_steps=0,backward_sec=0.,optimizer_step_sec=0.,
+                  sync_sec=0.,gradient_pack_sec=0.,sync_mbps=[],grad_bytes=0,overflow_retries=0)
+    for batch in model.rollout_buffer.get(effective):
+        _sync_device(model)
+        started = time.perf_counter()
+        chunks = list(packed_chunks(model, batch, config))
+        previous = getattr(model, '_ppo_update_metric_sums', None)
+        previous = None if previous is None else previous.clone()
+        count = getattr(model, '_ppo_update_metric_count', 0)
+        stats = dict(getattr(model, '_ppo_microbatch_stats', {}))
+        for retry in range(17):
+            model.policy.optimizer.zero_grad()
+            loss = 0.
+            for chunk, advantages, weight in chunks:
+                loss += weight * ppo_chunked_backward(model, chunk, clip_range, clip_range_vf,
+                    pre_normalized_advantages=advantages, backward_scale=scale * weight)
+            grads = [p.grad for p in model.policy.parameters() if p.grad is not None]
+            if scale != 1:
+                torch._foreach_mul_(grads, 1 / scale)
+            finite = bool(torch.stack([torch.isfinite(g).all() for g in grads]).all().item())
+            finite = finite and math.isfinite(loss)
+            bad = float(not finite)
+            if average is not None:
+                bad = average(dict(nonfinite=bad))['nonfinite']
+            if not bad:
+                break
+            # Failed attempts may have committed several chunks' diagnostics.
+            # Restore sample metrics along with gradients; retain OOM counters.
+            model._ppo_update_metric_sums = None if previous is None else previous.clone()
+            model._ppo_update_metric_count = count
+            current = model._ppo_microbatch_stats
+            for name in ('chunks', 'rows', 'min_rows', 'max_rows'):
+                current[name] = stats.get(name, len(batch.advantages) if name == 'min_rows' else 0)
+            model.policy.optimizer.zero_grad()
+            if config.precision != 'fp16' or scale <= 1 or retry == 16:
+                raise FloatingPointError('packed PPO gradients remain nonfinite; Adam was not advanced')
+            scale = max(1., scale / 2)
+            model.ppo_update_loss_scale = scale
+            result['overflow_retries'] += 1
+        _sync_device(model)
+        result['backward_sec'] += time.perf_counter() - started
+        if synchronize is not None:
+            sync = synchronize(result['optimizer_steps'])
+            for name in ('sync_sec', 'gradient_pack_sec'):
+                result[name] += sync[name]
+            result['sync_mbps'].append(sync['sync_mbps'])
+            result['grad_bytes'] = int(sync['grad_bytes'])
+        _sync_device(model)
+        started = time.perf_counter()
+        optimizer_step(model)
+        _sync_device(model)
+        result['optimizer_step_sec'] += time.perf_counter() - started
+        sums = model._ppo_update_metric_sums
+        delta = sums if previous is None else sums - previous
+        result['metrics'].append((delta / (model._ppo_update_metric_count - count)).cpu().tolist())
+        result['losses'].append(loss)
+        result['optimizer_steps'] += 1
+        del chunks, batch
+    return result

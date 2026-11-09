@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from rl.algorithms.updates import ppo_forward, ppo_chunked_backward, optimizer_step, reasoning_microbatch_backward
 from rl.algorithms.ppo import configure_advantage_normalization, prepare_advantage_normalization
+from rl.algorithms.packed_ppo import configure_packed_updates, packed_ppo_epoch
 from rl.algorithms.upper_ppo import enabled as joint_upper, combat_update, update_upper
 from rl.algorithms.update_schedule import parse_update_schedule
 from rl.search.native import NATIVE_TIMING_KEYS, WORKER_TIMING_KEYS, apply_strict_training_settings
@@ -549,6 +550,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume-state", type=Path, help="Explicit complete per-rank recovery generation")
     parser.add_argument('--ppo-advantage-normalization', choices=('group256', 'rollout'),
         help='Shared PPO only: retain checkpoint setting, or choose legacy groups/global rollout moments')
+    parser.add_argument('--ppo-update-config', type=Path,
+        help='Shared pure PPO physical batching JSON: token_budget, max_rows, precision; omitted inherits checkpoint')
     parser.add_argument('--fork-public-lower',choices=('root','turn','state'),default=None,
                         help='On a lower-only fork, add a public adapter refreshed per real root or simulated state')
     parser.add_argument('--fork-public-weights',type=Path,default=None,
@@ -2865,6 +2868,11 @@ def main() -> None:
     configure_training_scope(model, args)
     args.ppo_advantage_normalization = configure_advantage_normalization(
         model, args.ppo_advantage_normalization)
+    configure_packed_updates(model, json.loads(args.ppo_update_config.read_text(encoding='utf-8'))
+        if args.ppo_update_config is not None else None)
+    args.ppo_update_config = model.ppo_update_config
+    if args.ppo_update_config is not None and args.world_size > 1 and args.gradient_transport != 'ssh-ring':
+        raise ValueError('packed multi-rank PPO requires ssh-ring scalar consensus')
     if (args.ppo_advantage_normalization == 'rollout' and args.world_size > 1
             and args.gradient_transport != 'ssh-ring'):
         raise ValueError('global rollout advantage normalization requires ssh-ring transport')
@@ -3461,6 +3469,29 @@ def main() -> None:
             # a fixed rulebase lower has no lower learner at all.  In both
             # cases the only strategic update is the macro-action PPO below.
             for epoch in range(0 if inner_only_nosl else args.n_epochs):
+                if model.ppo_update_config is not None:
+                    offset = optimizer_steps
+                    def sync_packed(step):
+                        return synchronize_gradient_step(
+                            model, rank=args.rank, world_size=args.world_size, peers=peers,
+                            key=key, control_dir=control_dir, local_root=local_root,
+                            remote_root=args.remote_root, run_id=run_id,
+                            tag=f'u{update:06d}_e{epoch:03d}_s{offset + step:06d}',
+                            ring_transport=ring_transport, barrier_timeout=args.barrier_timeout)
+                    packed = packed_ppo_epoch(model, clip_range, clip_range_vf,
+                        synchronize=sync_packed,
+                        average=lambda values: average_scalar_dict(values, ring_transport))
+                    losses.extend(packed['losses'])
+                    optimizer_steps += packed['optimizer_steps']
+                    backward_seconds += packed['backward_sec']
+                    gradient_pack_seconds += packed['gradient_pack_sec']
+                    sync_seconds += packed['sync_sec']
+                    sync_mbps.extend(packed['sync_mbps'])
+                    grad_bytes = packed['grad_bytes']
+                    step_seconds += packed['optimizer_step_sec']
+                    model.logger.record('pure_rl/update_loss_scale', model.ppo_update_loss_scale)
+                    model.logger.record('pure_rl/update_overflow_retries', packed['overflow_retries'])
+                    continue
                 accumulated = 0
                 model.policy.optimizer.zero_grad()
                 for rollout_data in model.rollout_buffer.get(args.batch_size):

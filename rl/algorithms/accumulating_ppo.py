@@ -117,6 +117,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         *args,
         gradient_accumulation_steps: int = 1,
         ppo_advantage_normalization: str = 'group256',
+        ppo_update_config: dict | None = None,
         performance_profile: bool = False,
         amp_mode: str = "off",
         hierarchical_combat_hp: bool = False,
@@ -293,6 +294,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.ppo_advantage_normalization = ppo_advantage_normalization
         self.performance_profile = bool(performance_profile)
         self.amp_mode = amp_mode
+        self.ppo_update_config = ppo_update_config
         # Combat AZ targets are fight-local terminal-HP values.  Keep the
         # overworld/combat return split enabled automatically so combat PPO can
         # be removed without changing the strategic return calculation.
@@ -443,6 +445,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             self.nosl_is_az_merge_equivalent_actions else 'individual-actions')
         self.nosl_supervision_contract = getattr(self.policy.core,'training_objective','scalar-hp-v1') if hasattr(self.policy,'core') else 'scalar-hp-v1'
         configure_advantage_normalization(self)
+        from rl.algorithms.packed_ppo import configure_packed_updates
+        configure_packed_updates(self)
         from rl.algorithms.combat_distribution import OUTCOME_CONTRACTS
         # Both heads share observed outcome labels and the combat replay pipeline.
         self._combat_distribution = self.nosl_supervision_contract in OUTCOME_CONTRACTS
@@ -3013,7 +3017,25 @@ class AccumulatingMaskablePPO(MaskablePPO):
         approx_kl_divs = []
 
         inner_only = bool(getattr(self, "nosl_is_az_inner_only", False))
-        ppo_epochs = 0 if inner_only else self.n_epochs
+        from rl.algorithms.packed_ppo import configure_packed_updates, packed_ppo_epoch
+        packed = configure_packed_updates(self)
+        if packed is not None:
+            self._ppo_update_metric_sums = None
+            self._ppo_update_metric_count = 0
+            self._ppo_microbatch_stats = dict(chunks=0, rows=0, oom_retries=0,
+                                              min_rows=self.batch_size, max_rows=0)
+            for epoch in range(self.n_epochs):
+                result = packed_ppo_epoch(self, clip_range,
+                    clip_range_vf if self.clip_range_vf is not None else None)
+                for policy, value, entropy, kl, clipped in result['metrics']:
+                    pg_losses.append(policy); value_losses.append(value)
+                    entropy_losses.append(-entropy); approx_kl_divs.append(kl)
+                    clip_fractions.append(clipped)
+                loss = th.as_tensor(result['losses'][-1], device=self.device)
+                optimizer_steps += result['optimizer_steps']
+                self._n_updates += 1
+            self.logger.record('pure_rl/update_loss_scale', self.ppo_update_loss_scale)
+        ppo_epochs = 0 if inner_only or packed is not None else self.n_epochs
         for epoch in range(ppo_epochs):
             approx_kl_divs = []
             accumulated = 0

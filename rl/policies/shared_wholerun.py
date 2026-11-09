@@ -36,8 +36,8 @@ class SharedOverworldEncoder(OverworldEncoder):
     """Remove only masked queries that no existing action/value head reads."""
 
     @staticmethod
-    def merged_width(obs, rows=None, *, multiple=32):
-        """Physical width for common upper screens; accepts host arrays or tensors."""
+    def merged_token_counts(obs, rows=None):
+        """Retained key/query counts for common upper screens, before padding."""
         def take(key):
             return obs[key] if rows is None else obs[key][rows]
         phase = take('phase').reshape(-1)
@@ -58,6 +58,12 @@ class SharedOverworldEncoder(OverworldEncoder):
         }
         for name, extra in counts.items():
             kept += (phase == vocab.PHASE_VOCAB_INDEX[name]) * extra
+        return kept
+
+    @classmethod
+    def merged_width(cls, obs, rows=None, *, multiple=32):
+        """Physical width for common upper screens; accepts host arrays or tensors."""
+        kept = cls.merged_token_counts(obs, rows)
         return (int(kept.max().item()) + multiple - 1) // multiple * multiple
 
     def forward(self, obs, shared, phase_id, active_widths=None, map_encoding=None):
@@ -137,7 +143,23 @@ class SharedOverworldEncoder(OverworldEncoder):
         return torch.zeros_like(source).scatter(1, gather, encoded)
 
 
+class SharedTrainingEncoder(nn.TransformerEncoder):
+    """Update-only autocast; master parameters and collection remain FP32."""
+    update_precision = 'fp32'
+
+    def forward(self, src, *args, **kwargs):
+        if self.training and self.update_precision == 'fp16':
+            if not src.is_cuda or src.dtype != torch.float32:
+                raise ValueError('shared FP16 updates require CUDA FP32 activations')
+            with torch.autocast('cuda', dtype=torch.float16):
+                return super().forward(src, *args, **kwargs).float()
+        return super().forward(src, *args, **kwargs)
+
+
 class ScalarCombatNetwork(EntityCombatNetwork):
+    encoder_type = SharedTrainingEncoder
+    compact_training_tokens = False
+
     def __init__(self, space, config, card_embedding):
         super().__init__(space, config, card_embedding=card_embedding)
         # The old distribution predicts fight-local HP. Whole-run PPO requires
@@ -148,6 +170,39 @@ class ScalarCombatNetwork(EntityCombatNetwork):
 
     def _value(self, state, obs):
         return self.value_head(state), {}
+
+    @staticmethod
+    def required_entity_queries(obs):
+        # A masked key can still be a legal query or a selected prefix member.
+        # Keep native slot identities; gather/scatter only inside attention.
+        legal = obs['combat_legal'].bool()
+        targeted = legal[:, 1:91].reshape(-1, 15, 6)
+        sources = targeted.any(-1)
+        multi = C.JOINT_MULTI - C.JOINT_END
+        return dict(
+            hand=(obs['hand_ids'] != 0) | sources[:, :10]
+                 | obs['select_hand_mask'].bool() | legal[:, multi:multi + 10],
+            monster=(obs['monster_id'] != 0) | targeted.any(1)[:, :5],
+            potion=(obs['potions'] != 0) | sources[:, 10:],
+            relic=obs['relics'] != 0)
+
+    def training_token_counts(self, obs):
+        return 1 + 4 * self.config.pile_queries + sum(
+            mask.sum(1) for mask in self.required_entity_queries(obs).values())
+
+    def _encode_tokens(self, source, pad_mask, spans, obs):
+        if not self.training or not self.compact_training_tokens:
+            return super()._encode_tokens(source, pad_mask, spans, obs)
+        keep = ~pad_mask
+        for name, mask in self.required_entity_queries(obs).items():
+            begin, end = spans[name]
+            keep[:, begin:end] |= mask[:, :end - begin]
+        width = int(keep.sum(1).max().item())
+        positions = torch.argsort((~keep).int(), dim=1, stable=True)[:, :width]
+        gather = positions[:, :, None].expand(-1, -1, source.shape[-1])
+        encoded = self.norm(self.transformer(source.gather(1, gather),
+            src_key_padding_mask=pad_mask.gather(1, positions)))
+        return torch.zeros_like(source).scatter(1, gather, encoded)
 
 
 class SharedWholeRunCore(EntityJointCore):

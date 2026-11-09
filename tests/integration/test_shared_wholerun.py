@@ -80,14 +80,18 @@ def test_prefill_respects_callback_mutation_and_restores_environment_hooks(callb
     env.close()
 
 
-@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+@pytest.mark.parametrize('device,precision', [
+    ('cpu', None), ('cuda', None), ('cpu', 'fp32'), ('cuda', 'fp16')])
 @pytest.mark.parametrize('normalization', ['group256', 'rollout'])
-def test_real_ppo_two_rounds_and_resume(tmp_path, device, normalization):
+def test_real_ppo_two_rounds_and_resume(tmp_path, device, precision, normalization):
     assert device != 'cuda' or torch.cuda.is_available(), 'explicit CUDA qualification required'
     env = DummyVecEnv([make_env, make_env])
     model = make_model(env, device)
     from rl.algorithms.ppo import configure_advantage_normalization
     configure_advantage_normalization(model, normalization)
+    if precision:
+        from rl.algorithms.packed_ppo import configure_packed_updates
+        configure_packed_updates(model, dict(token_budget=512, max_rows=7, precision=precision))
     model.set_logger(configure(folder=None, format_strings=[]))
     recorded = {}
     original_record = model.logger.record
@@ -122,6 +126,19 @@ def test_real_ppo_two_rounds_and_resume(tmp_path, device, normalization):
     model.save(tmp_path/'policy.zip')
     loaded = load_checkpoint(tmp_path/'policy.zip', device=device)
     assert loaded.ppo_advantage_normalization == normalization
+    assert loaded.ppo_update_config == model.ppo_update_config
+    if precision:
+        assert loaded.ppo_update_loss_scale == model.ppo_update_loss_scale
+        assert loaded.policy.core.combat.transformer.update_precision == precision
+        cpu = load_checkpoint(tmp_path/'policy.zip', device='cpu', inference_only=True)
+        action, _ = cpu.predict(model._last_obs,
+            action_masks=np.stack(env.env_method('action_masks')), deterministic=True)
+        assert len(action) == env.num_envs
+        assert all(p.dtype == torch.float32 for p in cpu.policy.parameters())
+        configure_packed_updates(cpu, 'off')
+        assert cpu.ppo_update_config is None
+        assert cpu.policy.core.combat.transformer.update_precision == 'fp32'
+        assert not cpu.policy.core.combat.compact_training_tokens
     assert loaded._ppo_advantage_stats is None
     assert loaded.pure_rl_game_totals == totals
     assert not hasattr(loaded.policy.core, '_collection_graphs')
@@ -160,6 +177,20 @@ def test_real_ppo_two_rounds_and_resume(tmp_path, device, normalization):
 ])
 def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, grow,
                                               scene, backend, campfire_env_type, normalization):
+    _check_native_distributed_lifecycle(tmp_path, monkeypatch, capsys, grow,
+        scene, backend, campfire_env_type, normalization)
+
+
+@pytest.mark.parametrize('precision', ['fp32', 'fp16'])
+def test_packed_distributed_payload_and_resume(tmp_path, monkeypatch, capsys,
+                                              campfire_env_type, precision):
+    _check_native_distributed_lifecycle(tmp_path, monkeypatch, capsys, False,
+        'ordinary', 'native', campfire_env_type, 'rollout', precision)
+
+
+def _check_native_distributed_lifecycle(tmp_path, monkeypatch, capsys, grow,
+                                       scene, backend, campfire_env_type, normalization,
+                                       precision=None):
     import json
     import sys
     from types import SimpleNamespace
@@ -200,6 +231,11 @@ def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, gr
         '--training-state-dir', str(tmp_path/'state'), '--save-every-updates', '1',
         '--max-checkpoints', '2', '--seed', '20261108',
         '--ppo-advantage-normalization', normalization]
+    if precision:
+        update_config = tmp_path/'packed.json'
+        update_config.write_text(json.dumps(dict(token_budget=512, max_rows=7, precision=precision)))
+        argv += ['--ppo-update-config', str(update_config)]
+        argv[argv.index('--device') + 1] = 'cuda' if precision == 'fp16' else 'cpu'
     monkeypatch.setattr(sys, 'argv', argv)
     distributed_sb3.main()
     bundle = tmp_path/'state/rank0/step-000000000128'
@@ -210,6 +246,9 @@ def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, gr
     # The selected mode must persist without an explicit CLI override.
     index = resumed.index('--ppo-advantage-normalization')
     del resumed[index:index + 2]
+    if precision:
+        index = resumed.index('--ppo-update-config')
+        del resumed[index:index + 2]
     if grow:
         resumed[resumed.index('--n-envs')+1] = '4'
         resumed += ['--resume-grow-environments']
@@ -240,6 +279,9 @@ def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, gr
         assert row['pure_rl/combat_samples'] + row['pure_rl/upper_samples'] == count
         assert row['optimizer_steps'] == count // 32
         assert row['pure_rl/update/count'] == count
+        if precision:
+            assert row['pure_rl/update_loss_scale'] >= 1
+            assert row['pure_rl/update_overflow_retries'] == 0
         assert row['pure_rl/value_pre/all/count'] == count
         for key in ('value_loss', 'policy_loss', 'entropy', 'approx_kl', 'clip_fraction',
                     'value_pre/all/mse', 'value_pre/combat/mse', 'value_pre/upper/mse'):
@@ -262,6 +304,77 @@ def test_native_distributed_payload_and_resume(tmp_path, monkeypatch, capsys, gr
         assert sum(r['upper/reward_potion_resolved'] for r in records) > 0
     assert [r['completed_full_games_global'] for r in records] == sorted(
         r['completed_full_games_global'] for r in records)
+
+
+@pytest.mark.parametrize('overflow_source', ['local', 'peer'])
+def test_packed_overflow_retries_same_adam_batch(tmp_path, overflow_source):
+    from rl.algorithms.packed_ppo import configure_packed_updates, packed_ppo_epoch
+    from rl.algorithms.ppo import configure_advantage_normalization, prepare_advantage_normalization
+    from rl.training.distributed_sb3 import NoopCallback
+    assert torch.cuda.is_available(), 'explicit CUDA qualification required'
+    env = DummyVecEnv([make_env, make_env])
+    model = make_model(env, 'cpu')
+    _, callback = model._setup_learn(64, callback=NoopCallback())
+    assert model.collect_rollouts(env, callback, model.rollout_buffer, 32)
+    model.save(tmp_path/'before.zip')
+    reference = AccumulatingMaskablePPO.load(tmp_path/'before.zip', device='cpu')
+    reference.rollout_buffer = deepcopy(model.rollout_buffer)
+    reference.set_logger(configure(folder=None, format_strings=[]))
+    for learner in (reference, model):
+        learner.device = torch.device('cuda')
+        learner.policy.to('cuda')
+        learner.rollout_buffer.device = learner.device
+        learner.policy.set_training_mode(True)
+        configure_advantage_normalization(learner, 'rollout')
+        prepare_advantage_normalization(learner)
+        configure_packed_updates(learner, dict(token_budget=512, max_rows=7, precision='fp16'))
+        learner._ppo_update_metric_sums = None
+        learner._ppo_update_metric_count = 0
+    reference.ppo_update_loss_scale = 32768.
+    rng = np.random.get_state()
+    baseline = packed_ppo_epoch(reference, .2, None)
+    np.random.set_state(rng)
+    failures = []
+    handle = None
+    if overflow_source == 'local':
+        parameter = model.policy.core.combat.transformer.layers[0].self_attn.in_proj_weight
+        def inject(gradient):
+            if not failures:
+                failures.append('local')
+                return torch.full_like(gradient, float('inf'))
+            return gradient
+        handle = parameter.register_hook(inject)
+    finite_checks, synchronizations = [], []
+    def average(values):
+        if 'nonfinite' in values:
+            finite_checks.append(values['nonfinite'])
+            if overflow_source == 'peer' and not failures:
+                failures.append('peer')
+                return dict(nonfinite=.25)
+        return values
+    def synchronize(step):
+        assert len(finite_checks) == step + 2
+        synchronizations.append(step)
+        return dict(sync_sec=0.,gradient_pack_sec=0.,sync_mbps=0.,grad_bytes=0)
+    try:
+        actual = packed_ppo_epoch(model, .2, None, synchronize=synchronize, average=average)
+    finally:
+        if handle is not None:
+            handle.remove()
+        env.close()
+    assert failures == [overflow_source]
+    assert synchronizations == [0, 1]
+    assert actual['overflow_retries'] == 1
+    assert actual['optimizer_steps'] == baseline['optimizer_steps'] == 2
+    assert model._ppo_update_metric_count == reference._ppo_update_metric_count == 64
+    assert model.ppo_update_loss_scale == 32768.
+    for (n, p), (m, q) in zip(model.policy.named_parameters(), reference.policy.named_parameters()):
+        assert n == m
+        torch.testing.assert_close(p, q, rtol=0, atol=0)
+        a, b = model.policy.optimizer.state.get(p, {}), reference.policy.optimizer.state.get(q, {})
+        assert a.keys() == b.keys()
+        for key in a:
+            torch.testing.assert_close(a[key], b[key], rtol=0, atol=0)
 
 
 def test_grow_live_pure_ppo_environments_without_resetting_source_slots(tmp_path):

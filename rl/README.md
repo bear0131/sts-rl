@@ -887,3 +887,19 @@ lambda-return不改写，不按房间/phase分别归一化。该设置是统计�
 等价性能优化；与物理微批和Adam有效batch独立。默认保留checkpoint设置，旧
 checkpoint保持group256；统计量每轮重新计算，不保存缓存。监控记录全局
 count/mean/std及normalization_group_size，恢复后的模式由checkpoint继承。
+
+共享纯PPO可用 `--ppo-update-config configs/train/shared_wholerun_packed_update.json`
+选择按token数量分块的更新路径。配置包含 `token_budget`、`max_rows` 与
+`precision`（fp32/fp16）；本地learner使用相同的 `ppo_update_config` 数据对象。
+每个原始Adam组内先按原统计范围归一化，再按phase/长度排序，所有块按真实样本数
+加权。原 `batch_size × gradient_accumulation_steps`、Adam成员与次数不变；只支持
+完整Adam组、无辅助监督/target-KL提前停止的共享纯PPO，多rank需要ssh-ring。
+战斗压紧仅移除没有消费者的masked query，保留合法PAD候选、目标槽与多选prefix。
+配置和当前梯度缩放随checkpoint保存；省略参数继承，JSON字符串 `"off"` 可显式
+恢复原更新路径并清除旧物理块上限。旧checkpoint默认保持原路径。
+
+fp16仅用于训练Transformer内部，master权重、Adam、输出头、loss和采样保持FP32。
+初始loss scale为65536，梯度在通信前还原FP32尺度；任一rank非有限时全部rank减半
+scale并重算相同Adam组，失败尝试的梯度与样本指标丢弃，不跳过更新。最多回退到1，
+仍失败则明确报错。该精度选择须独立评估数值/策略误差，不宣称逐位等价；FP16
+训练需要CUDA，但保存的模型仍可在CPU用FP32推理。更新记录loss scale和溢出重试数。
