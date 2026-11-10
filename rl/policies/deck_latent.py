@@ -197,6 +197,11 @@ class DeckLatentCore(SharedWholeRunCore):
         return result[inverse]
 
     def run_context(self, obs):
+        replay = getattr(self, '_context_gradient_batch', None)
+        if replay is not None:
+            if '_deck_context_index' not in obs:
+                raise RuntimeError('context gradient replay lost the original row mapping')
+            return replay.latents[obs['_deck_context_index'].long().flatten()]
         keys = self.context.key_tensor(obs)
         if self.training or torch.is_grad_enabled():
             self._context_cache = None

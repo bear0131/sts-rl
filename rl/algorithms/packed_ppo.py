@@ -17,6 +17,7 @@ class PackedPPOConfig:
     token_budget: int
     max_rows: int
     precision: str = 'fp32'
+    context_gradient_replay: bool = False
 
     def __post_init__(self):
         if (type(self.token_budget) is not int or type(self.max_rows) is not int
@@ -24,6 +25,8 @@ class PackedPPOConfig:
             raise ValueError('packed PPO token budget and max rows must be positive integers')
         if self.precision not in ('fp32', 'fp16'):
             raise ValueError('packed PPO precision must be fp32 or fp16')
+        if type(self.context_gradient_replay) is not bool:
+            raise ValueError('context_gradient_replay must be boolean')
 
 
 def configure_packed_updates(model, configuration=None):
@@ -43,6 +46,10 @@ def configure_packed_updates(model, configuration=None):
         return None
     config = (configuration if isinstance(configuration, PackedPPOConfig)
               else PackedPPOConfig(**configuration))
+    if config.context_gradient_replay:
+        from rl.policies.deck_latent import DeckLatentPolicy
+        if not isinstance(model.policy, DeckLatentPolicy) or config.precision != 'fp32':
+            raise ValueError('context gradient replay requires FP32 deck-latent PPO')
     if (not isinstance(model.policy, SharedWholeRunPolicy)
             or model.nosl_is_az or model.hierarchical_combat_hp
             or getattr(model, 'reasoning_updates', 0) or model.target_kl is not None
@@ -135,46 +142,57 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
         if moments['scale'] != scale or moments['scale_square'] != scale * scale:
             raise ValueError('packed PPO loss scale differs across ranks')
     result = dict(losses=[],metrics=[],optimizer_steps=0,backward_sec=0.,optimizer_step_sec=0.,
-                  sync_sec=0.,gradient_pack_sec=0.,sync_mbps=[],grad_bytes=0,overflow_retries=0)
+                  sync_sec=0.,gradient_pack_sec=0.,sync_mbps=[],grad_bytes=0,overflow_retries=0,
+                  context_input_rows=0,context_unique_rows=0,context_oom_retries=0)
     for batch in model.rollout_buffer.get(effective):
         from rl.algorithms.search_auxiliary import prepare_search_batch
         prepare_search_batch(model, batch, average)
         _sync_device(model)
         started = time.perf_counter()
-        chunks = list(packed_chunks(model, batch, config))
-        previous = getattr(model, '_ppo_update_metric_sums', None)
-        previous = None if previous is None else previous.clone()
-        count = getattr(model, '_ppo_update_metric_count', 0)
-        stats = dict(getattr(model, '_ppo_microbatch_stats', {}))
-        for retry in range(17):
-            model.policy.optimizer.zero_grad()
-            loss = 0.
-            for chunk, advantages, weight in chunks:
-                loss += weight * ppo_chunked_backward(model, chunk, clip_range, clip_range_vf,
-                    pre_normalized_advantages=advantages, backward_scale=scale * weight)
-            grads = [p.grad for p in model.policy.parameters() if p.grad is not None]
-            if scale != 1:
-                torch._foreach_mul_(grads, 1 / scale)
-            finite = bool(torch.stack([torch.isfinite(g).all() for g in grads]).all().item())
-            finite = finite and math.isfinite(loss)
-            bad = float(not finite)
-            if average is not None:
-                bad = average(dict(nonfinite=bad))['nonfinite']
-            if not bad:
-                break
-            # Failed attempts may have committed several chunks' diagnostics.
-            # Restore sample metrics along with gradients; retain OOM counters.
-            model._ppo_update_metric_sums = None if previous is None else previous.clone()
-            model._ppo_update_metric_count = count
-            current = model._ppo_microbatch_stats
-            for name in ('chunks', 'rows', 'min_rows', 'max_rows'):
-                current[name] = stats.get(name, len(batch.advantages) if name == 'min_rows' else 0)
-            model.policy.optimizer.zero_grad()
-            if config.precision != 'fp16' or scale <= 1 or retry == 16:
-                raise FloatingPointError('packed PPO gradients remain nonfinite; Adam was not advanced')
-            scale = max(1., scale / 2)
-            model.ppo_update_loss_scale = scale
-            result['overflow_retries'] += 1
+        from rl.algorithms.deck_context import context_gradient_batch
+        with context_gradient_batch(model, batch, config) as (context_batch, replay):
+            chunks = list(packed_chunks(model, context_batch, config))
+            previous = getattr(model, '_ppo_update_metric_sums', None)
+            previous = None if previous is None else previous.clone()
+            count = getattr(model, '_ppo_update_metric_count', 0)
+            stats = dict(getattr(model, '_ppo_microbatch_stats', {}))
+            for retry in range(17):
+                model.policy.optimizer.zero_grad()
+                if replay is not None:
+                    replay.reset_gradient()
+                loss = 0.
+                for chunk, advantages, weight in chunks:
+                    loss += weight * ppo_chunked_backward(model, chunk, clip_range, clip_range_vf,
+                        pre_normalized_advantages=advantages, backward_scale=scale * weight)
+                if replay is not None:
+                    replay.backward()
+                grads = [p.grad for p in model.policy.parameters() if p.grad is not None]
+                if scale != 1:
+                    torch._foreach_mul_(grads, 1 / scale)
+                finite = bool(torch.stack([torch.isfinite(g).all() for g in grads]).all().item())
+                finite = finite and math.isfinite(loss)
+                bad = float(not finite)
+                if average is not None:
+                    bad = average(dict(nonfinite=bad))['nonfinite']
+                if not bad:
+                    break
+                # Failed attempts may have committed several chunks' diagnostics.
+                # Restore sample metrics along with gradients; retain OOM counters.
+                model._ppo_update_metric_sums = None if previous is None else previous.clone()
+                model._ppo_update_metric_count = count
+                current = model._ppo_microbatch_stats
+                for name in ('chunks', 'rows', 'min_rows', 'max_rows'):
+                    current[name] = stats.get(name, len(batch.advantages) if name == 'min_rows' else 0)
+                model.policy.optimizer.zero_grad()
+                if config.precision != 'fp16' or scale <= 1 or retry == 16:
+                    raise FloatingPointError('packed PPO gradients remain nonfinite; Adam was not advanced')
+                scale = max(1., scale / 2)
+                model.ppo_update_loss_scale = scale
+                result['overflow_retries'] += 1
+        if replay is not None:
+            result['context_input_rows'] += replay.input_rows
+            result['context_unique_rows'] += replay.unique_rows
+            result['context_oom_retries'] += replay.oom_retries
         _sync_device(model)
         result['backward_sec'] += time.perf_counter() - started
         if synchronize is not None:
@@ -193,5 +211,5 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
         result['metrics'].append((delta / (model._ppo_update_metric_count - count)).cpu().tolist())
         result['losses'].append(loss)
         result['optimizer_steps'] += 1
-        del chunks, batch
+        del chunks, batch, context_batch, replay
     return result

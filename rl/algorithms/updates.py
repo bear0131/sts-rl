@@ -60,6 +60,11 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
     accumulation separate until an entire chunk succeeds, then add it once.
     """
     parameters = list(model.policy.parameters())
+    replay = getattr(getattr(model.policy, 'core', None), '_context_gradient_batch', None)
+    if replay is not None:
+        # The adjoint is transactional just like parameter gradients: a later
+        # failed phase must not double-count earlier phases on an OOM retry.
+        parameters.append(replay.latents)
     total = len(batch.advantages)
     group = 1 if pre_normalized_advantages is not None else model.policy.ppo_advantage_group_size
     stats = model.__dict__.setdefault('_ppo_microbatch_stats',

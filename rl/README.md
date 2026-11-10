@@ -935,3 +935,15 @@ fp16仅用于训练Transformer内部，master权重、Adam、输出头、loss和
 scale并重算相同Adam组，失败尝试的梯度与样本指标丢弃，不跳过更新。最多回退到1，
 仍失败则明确报错。该精度选择须独立评估数值/策略误差，不宣称逐位等价；FP16
 训练需要CUDA，但保存的模型仍可在CPU用FP32推理。更新记录loss scale和溢出重试数。
+
+
+### Deck latent 的整批上下文梯度重算
+FP32 packed PPO 配置 `context_gradient_replay=true` 仅支持 DeckLatentPolicy。
+在一个原始 Adam 样本组内按完整静态输入去重，先无梯度计算唯一 latent，
+各物理小批保留自己的动态动作/value 计算，将 latent 梯度按原行映射汇总；
+同步和 Adam 之前重新执行大编码器并反向传播汇总梯度。共享卡表同时接收两部分
+梯度，不冻结编码器，不跨 optimizer step 缓存，不改变 PPO 样本、优势或更新次数。
+编码器须确定性（dropout=0）；始终保持训练前向路径。异常清理批次缓存，
+前向/反向 OOM 缩块重试，失败的局部参数及 latent 梯度不重复计入。
+旧配置默认关闭，旧模型加载/推理不变。指标 context_input_rows/context_unique_rows
+为每轮实际 Adam 输入行与唯一构筑上下文行，不能当作环境 transition 或搜索叶子。

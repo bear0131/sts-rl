@@ -135,7 +135,8 @@ def test_duplicate_context_gradients_equal_full_recomputation(latent_env):
 
 @pytest.mark.parametrize('search', [False, True])
 @pytest.mark.parametrize('transport', ['dummy', 'native-subproc'])
-def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, transport):
+@pytest.mark.parametrize('context_replay', [False, True])
+def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, transport, context_replay):
     from gymnasium.wrappers import TimeLimit
     from stable_baselines3.common.vec_env import DummyVecEnv
     from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
@@ -160,7 +161,8 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         n_steps=32, batch_size=32, n_epochs=1, device='cpu', gamma=1., gae_lambda=1.,
         learning_rate=5e-5, reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
         policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=1., reward_flow='sequential-v1'))
-    configure_packed_updates(model, dict(token_budget=1024, max_rows=8, precision='fp32'))
+    configure_packed_updates(model, dict(token_budget=1024, max_rows=8, precision='fp32',
+                                        context_gradient_replay=context_replay))
     if search:
         from dataclasses import asdict
         from rl.algorithms.search_auxiliary import SearchTrainingConfig
@@ -180,6 +182,7 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
                          wandb_id=None, config={'ascension': 0})
     loaded = load_checkpoint(source/'model.zip', device='cpu')
     assert isinstance(loaded.policy, DeckLatentPolicy)
+    assert loaded.ppo_update_config['context_gradient_replay'] == context_replay
     if search:
         assert loaded.deck_search_config == model.deck_search_config
         assert loaded.deck_search_rng == model.deck_search_rng
@@ -327,3 +330,135 @@ def test_anchor_validation_uses_completed_natural_games_and_marks_limits(latent_
         EvaluationConfig(episodes=2, seed=20261111, num_envs=2, max_steps=6000, timeout=30.))
     assert natural['natural'] == 2 and natural['censored'] == 0
     assert natural['anchors'] > 0
+
+
+@pytest.mark.parametrize('failure', [None, 'encode', 'encoder_backward'])
+def test_context_replay_preserves_all_gradients_adam_and_failure_cleanup(latent_env, failure):
+    from types import SimpleNamespace
+    from rl.algorithms.deck_context import context_gradient_batch
+    from rl.algorithms.packed_ppo import PackedPPOConfig
+    env = latent_env
+    outer = env._obs()
+    enter_combat(env)
+    combat = env._obs()
+    anchor = deepcopy(combat); anchor['combat_exit_anchor'][0] = 1
+    # Repeated static contexts span physical chunks and all three heads.
+    observations = {k: torch.as_tensor(np.stack([x[k] for x in
+        [outer, combat, anchor, combat, outer, combat, combat, anchor, outer, combat, anchor, combat]]))
+        for k in outer}
+    observations['outer_deck_misc'][:8, 0] += torch.arange(8) / 10
+    observations['player_scalars'][3, 0] += .1
+    reference = policy_for(env); reference.set_training_mode(True)
+    candidate = deepcopy(reference)
+    flags = []
+    handle = None
+    if failure == 'encode':
+        def fail_forward(module, args):
+            if not torch.is_grad_enabled() and not flags:
+                flags.append(failure)
+                raise torch.OutOfMemoryError('injected context forward failure')
+        handle = candidate.core.context.register_forward_pre_hook(fail_forward)
+    elif failure == 'encoder_backward':
+        def fail_backward(gradient):
+            if not flags:
+                flags.append(failure)
+                raise torch.OutOfMemoryError('injected partial context backward failure')
+            return gradient
+        handle = candidate.core.context.card_projection.weight.register_hook(fail_backward)
+    config = PackedPPOConfig(1024, 8, context_gradient_replay=True)
+    def loss(policy, obs, start):
+        logits, values = policy.core.actor_critic(obs)
+        # Nonconstant readouts exercise shared card, actor, anchor and outer heads.
+        safe = logits.clamp(-20, 20)
+        coefficients = torch.linspace(-.3, .4, safe.shape[1])
+        return (safe * coefficients).sum() / 1200 + (
+            values.flatten() * torch.arange(start + 1, start + len(values) + 1)).sum() / 12
+    try:
+        for update in range(2):
+            for policy in (reference, candidate):
+                policy.optimizer.zero_grad()
+            for start in range(0, 12, 4):
+                loss(reference, {k: v[start:start+4] for k, v in observations.items()}, start).backward()
+            model = SimpleNamespace(policy=candidate)
+            with context_gradient_batch(model, SimpleNamespace(observations=observations), config) as (batch, replay):
+                assert replay.unique_rows < replay.input_rows
+                for start in range(0, 12, 4):
+                    loss(candidate, {k: v[start:start+4] for k, v in batch.observations.items()}, start).backward()
+                replay.backward()
+            assert candidate.core._context_gradient_batch is None
+            for (name, a), (other, b) in zip(reference.named_parameters(), candidate.named_parameters(), strict=True):
+                assert name == other and (a.grad is None) == (b.grad is None), name
+                if a.grad is not None:
+                    torch.testing.assert_close(a.grad, b.grad, rtol=3e-4, atol=3e-5, msg=name)
+            reference.optimizer.step(); candidate.optimizer.step()
+            for (name, a), (_, b) in zip(reference.named_parameters(), candidate.named_parameters(), strict=True):
+                torch.testing.assert_close(a, b, rtol=3e-4, atol=3e-6, msg=name)
+                sa, sb = reference.optimizer.state.get(a, {}), candidate.optimizer.state.get(b, {})
+                assert sa.keys() == sb.keys()
+                for key in sa:
+                    torch.testing.assert_close(sa[key], sb[key], rtol=4e-4, atol=4e-6, msg=name + '/' + key)
+        assert flags == ([] if failure is None else [failure])
+        with pytest.raises(RuntimeError, match='abort'):
+            with context_gradient_batch(model, SimpleNamespace(observations=observations), config):
+                raise RuntimeError('abort')
+        assert candidate.core._context_gradient_batch is None
+    finally:
+        if handle is not None:
+            handle.remove()
+
+
+def test_ppo_context_adjoint_retry_does_not_double_count_samples(latent_env, tmp_path, monkeypatch):
+    from stable_baselines3.common.vec_env import DummyVecEnv
+    from stable_baselines3.common.logger import configure
+    from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+    from rl.algorithms.packed_ppo import configure_packed_updates, packed_ppo_epoch
+    from rl.algorithms.ppo import configure_advantage_normalization, prepare_advantage_normalization
+    from rl.algorithms.deck_context import ContextGradientBatch
+    from rl.training.reward import StrategicRewardWrapper
+
+    env = DummyVecEnv([lambda: StrategicRewardWrapper(latent_env)])
+    source = AccumulatingMaskablePPO(DeckLatentPolicy, env, seed=20261111,
+        n_steps=32, batch_size=16, n_epochs=1, device='cpu', gamma=1., gae_lambda=1.,
+        learning_rate=5e-5, reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
+        policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=1., reward_flow='sequential-v1'))
+    _, callback = source._setup_learn(32, callback=lambda *_: True)
+    assert source.collect_rollouts(env, callback, source.rollout_buffer, 32)
+    source.save(tmp_path/'source.zip')
+    source_rng = np.random.get_state()
+    outputs = []
+    injected = []
+    original_init = ContextGradientBatch.__init__
+    for mode in ('reference', 'replay', 'retry'):
+        model = AccumulatingMaskablePPO.load(tmp_path/'source.zip', device='cpu')
+        model.rollout_buffer = deepcopy(source.rollout_buffer)
+        model.set_logger(configure(folder=None, format_strings=[]))
+        model.policy.set_training_mode(True)
+        configure_advantage_normalization(model, 'rollout'); prepare_advantage_normalization(model)
+        configure_packed_updates(model, dict(token_budget=1024, max_rows=8,
+                                            context_gradient_replay=mode != 'reference'))
+        model._ppo_update_metric_sums = None; model._ppo_update_metric_count = 0
+        np.random.set_state(source_rng)
+        if mode == 'retry':
+            def initialize(self, *args):
+                original_init(self, *args)
+                def fail(gradient):
+                    if not injected:
+                        injected.append(True)
+                        raise torch.OutOfMemoryError('injected adjoint accumulation failure')
+                    return gradient
+                self.latents.register_hook(fail)
+            monkeypatch.setattr(ContextGradientBatch, '__init__', initialize)
+        result = packed_ppo_epoch(model, .2, None)
+        assert result['optimizer_steps'] == 2
+        assert model._ppo_update_metric_count == 32
+        assert getattr(model.policy.core, '_context_gradient_batch', None) is None
+        if mode == 'retry':
+            assert injected == [True] and model._ppo_microbatch_stats['oom_retries'] == 1
+        outputs.append(model)
+    for candidate in outputs[1:]:
+        for (name, a), (_, b) in zip(outputs[0].policy.named_parameters(), candidate.policy.named_parameters(), strict=True):
+            torch.testing.assert_close(a, b, rtol=3e-4, atol=3e-6, msg=name)
+            sa, sb = outputs[0].policy.optimizer.state.get(a, {}), candidate.policy.optimizer.state.get(b, {})
+            assert sa.keys() == sb.keys()
+            for key in sa:
+                torch.testing.assert_close(sa[key], sb[key], rtol=4e-4, atol=4e-6, msg=name + '/' + key)

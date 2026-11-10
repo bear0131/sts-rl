@@ -3038,6 +3038,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             for epoch in range(self.n_epochs):
                 result = packed_ppo_epoch(self, clip_range,
                     clip_range_vf if self.clip_range_vf is not None else None)
+                for field in ('context_input_rows', 'context_unique_rows', 'context_oom_retries'):
+                    self.logger.record('pure_rl/' + field, result[field])
                 for policy, value, entropy, kl, clipped in result['metrics']:
                     pg_losses.append(policy); value_losses.append(value)
                     entropy_losses.append(-entropy); approx_kl_divs.append(kl)

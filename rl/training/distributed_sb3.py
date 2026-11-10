@@ -3503,6 +3503,8 @@ def main() -> None:
                     step_seconds += packed['optimizer_step_sec']
                     model.logger.record('pure_rl/update_loss_scale', model.ppo_update_loss_scale)
                     model.logger.record('pure_rl/update_overflow_retries', packed['overflow_retries'])
+                    for field in ('context_input_rows', 'context_unique_rows', 'context_oom_retries'):
+                        model.logger.record('pure_rl/' + field, packed[field])
                     continue
                 accumulated = 0
                 model.policy.optimizer.zero_grad()
