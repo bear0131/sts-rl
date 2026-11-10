@@ -1723,14 +1723,14 @@
   "monitor": {
     "root": "/root/autodl-tmp/combat45-lambda1-sequential-20261109",
     "run_id": "combat45-no-search-shared256x4-lambda1-sequential-r1",
-    "label": "COMBAT45 · 共享256×4 / 全程λ=1 / 无战斗锚点 / 遗物优先",
+    "label": "COMBAT45 · 共享256×4 / λ=1 / 636轮起战斗锚点 / 遗物优先",
     "branch_step": 0,
     "branch_round": 0,
     "iteration_steps": 786432,
     "rollout_mode": "fixed_steps",
     "status": "training",
-    "note": "COMBAT44锚点版完整保存于13轮。45随机从零训练，战斗/上层全用lambda1整局回报，取消锚点状态；遗物→金币→药水/替换→卡牌保留。256×4、LR5e-5、FP32、1024环境×768、16Adam、整轮优势归一化，continuous无总上限。锚点以后待稳定再考虑，不自动切换。",
-    "updated_at": "2026-11-09T15:57:58.508698+00:00"
+    "note": "635轮完整保存后开启战斗结束锚点续训：战斗内截到胜利/逃跑后、奖励揭示前的旧V；锚点自身及战斗外仍lambda1整局回报。保留模型/Adam/RNG/1024个live对局、轮次和自然局计数；256×4、LR5e-5、FP32、1024环境×768、16Adam、整轮优势归一化，continuous无总上限。",
+    "updated_at": "2026-11-10T00:18:08.139773+00:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
@@ -2776,15 +2776,15 @@
     "status": "training",
     "root": "/root/autodl-tmp/combat45-lambda1-sequential-20261109",
     "run_id": "combat45-no-search-shared256x4-lambda1-sequential-r1",
-    "runtime_source": "c76a64d3",
+    "runtime_source": "c76a64d3 runtime + 35d3f85c anchor continuation",
     "initial_config": "configs/train/shared_wholerun_lambda1_sequential.args",
     "update_config": "configs/train/shared_wholerun_packed_fp32.json",
     "width": 256,
     "layers": 4,
     "heads": 8,
-    "parameters": 5524532,
+    "parameters": 5525044,
     "room_lambda": 1,
-    "combat_value_target": "whole-run",
+    "combat_value_target": "pre-reward-anchor",
     "reward_flow": "sequential-v1",
     "reward_order": [
       "relic",
@@ -2813,8 +2813,8 @@
     "total_seconds": null,
     "initial_sha256": "62e46c2774d590707fb7da3d012ad9bf686475304398c0ed6ffb330b4c32c010",
     "initialization": "Fresh random weights and empty Adam; no COMBAT44 weights or game states reused",
-    "comparison": "Whole-run lambda1 with sequential rewards; history comparison with 44 changes combat targets and the anchor observation contract.",
-    "anchor_observation": false,
+    "comparison": "Rounds 1-635: whole-run lambda1. Starting round636: pre-reward anchor combat targets; same run, weights, Adam and live games continued.",
+    "anchor_observation": true,
     "automatic_anchor_switch": null,
     "production_acceptance": {
       "rounds": [
@@ -2847,6 +2847,77 @@
       "monitor_round_observed": 2,
       "monitor_all_alive": true,
       "evidence_sha256": "d024a1a654ac34537874b0dc3c49fa19b5f4b93ec2d202329c135bd917e66a0c"
+    },
+    "anchor_continuation": {
+      "after_round": 635,
+      "global_step": 499384320,
+      "source_commit": "35d3f85c",
+      "source_reference": "references/pre-anchor-20261110/rankN/step-000499384320",
+      "migrated_reference": "references/anchor-enabled-20261110/rankN/step-000499384320",
+      "full_state_preserved": true,
+      "zero_input_parameters_added": 512,
+      "initial_parameters": 5524532,
+      "per_rank_value_max_abs": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "per_rank_probability_max_abs": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "first_round": 636,
+      "production_acceptance": {
+        "status": "passed",
+        "rounds": [
+          {
+            "round": 636,
+            "global_step": 500170752,
+            "weights_and_adam_identical_across_ranks": true,
+            "weights_sha256": "d1c12c39753e75124f83e826f3ab349c81f4c887ec47a61d945657299a07e2f0",
+            "adam_sha256": "25db6c61466bec9f627d1e62a3c6f33391b44a15d616ecc46b462ac71457da99",
+            "max_rollout_seconds": 23.070235202088952,
+            "max_update_seconds": 28.390369600150734,
+            "max_wall_seconds": 51.092814170056954,
+            "global_anchor_rows": 24576.0,
+            "global_anchor_wins": 24385.0,
+            "global_anchor_escapes": 191.0,
+            "natural_games_global": 1910191,
+            "optimizer_steps": 16,
+            "adam_step": 10176.0,
+            "return_version": 2,
+            "room_lambda": 1,
+            "oom_retries": 0
+          },
+          {
+            "round": 637,
+            "global_step": 500957184,
+            "weights_and_adam_identical_across_ranks": true,
+            "weights_sha256": "d48bc4b5358442f58a0b2643922bcfdc41f2c093fcdc76e934b850d7781531ee",
+            "adam_sha256": "1a3cfda0c0adbbc17870a9e6ee0eb950aeca7bfe78caf1687e1e56af32b005eb",
+            "max_rollout_seconds": 20.126878643408418,
+            "max_update_seconds": 25.809812698047608,
+            "max_wall_seconds": 45.93879291601479,
+            "global_anchor_rows": 24518.0,
+            "global_anchor_wins": 24331.0,
+            "global_anchor_escapes": 187.0,
+            "natural_games_global": 1912578,
+            "optimizer_steps": 16,
+            "adam_step": 10192.0,
+            "return_version": 2,
+            "room_lambda": 1,
+            "oom_retries": 0
+          }
+        ],
+        "evidence": {
+          "path": "/root/autodl-tmp/combat45-lambda1-sequential-20261109/anchor-enable-evidence.tgz",
+          "sha256": "611d1eb2a4e490811bbc68b0910470ca17a2f0e594c5ed76562dc880280beec6",
+          "bytes": 25518
+        }
+      }
     }
   }
 }
