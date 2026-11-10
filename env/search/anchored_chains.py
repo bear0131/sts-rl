@@ -59,7 +59,7 @@ def paired_anchor_search(roots, budgets, scorer, *, seed, max_depth=200,
         raise ValueError('invalid anchored search batch limits')
     rng = np.random.default_rng(seed)
     start = time.monotonic()
-    results, jobs = [], []
+    results, jobs, root_metadata = [], [], []
     stats = dict(chains=0, atomic_steps=0, policy_rows=0, forced_rows=0, anchor_rows=0,
                  cutoff_rows=0, terminal_rows=0, max_active=0, budget_floor_overage=0)
     for root_index, (env, budget) in enumerate(zip(roots, budgets, strict=True)):
@@ -68,6 +68,7 @@ def paired_anchor_search(roots, budgets, scorer, *, seed, max_depth=200,
         legal = np.flatnonzero(env.action_masks())
         result = dict(actions=legal, values=np.zeros(len(legal)), visits=np.zeros(len(legal), np.int64))
         results.append(result)
+        root_metadata.append((dict(env._joint_policy_actions()), int(env._obs()['select_zone'].item()) == 2))
         relics = tuple(r['id'] for r in env.thick.gc.relic_state())
         if len(legal) <= 1 or 'Runic Dome' in relics:
             result['skipped'] = 'forced' if len(legal) <= 1 else 'hidden_current_intent'
@@ -89,9 +90,10 @@ def paired_anchor_search(roots, budgets, scorer, *, seed, max_depth=200,
             branch.thick.bc.nosl_redeterminize(world)
             branch._invalidate_backend_cache()
             action = int(results[root]['actions'][action_index])
-            bits = int(dict(source._joint_policy_actions())[action])
+            mapping, draw_selection = root_metadata[root]
+            bits = int(mapping[action])
             # Draw-pile candidate handles are execution metadata, not identity.
-            if bits >> 29 == 2:
+            if bits >> 29 == 2 and draw_selection:
                 bits = int(branch.thick.bc.remap_draw_selection_from(source.thick.bc, bits))
             inverse = {int(b): int(a) for a, b in branch._joint_policy_actions()}
             if bits not in inverse:

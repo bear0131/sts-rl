@@ -281,3 +281,23 @@ def test_shadow_teaching_preserves_real_actions_rewards_and_sampling_rng():
     np.testing.assert_array_equal(captures[0].actions, captures[1].actions)
     np.testing.assert_array_equal(captures[0].rewards, captures[1].rewards)
     torch.testing.assert_close(captures[0].rng, captures[1].rng, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize('card,zone', [('ARMAMENTS', 1), ('SECRET_TECHNIQUE', 2), ('HEADBUTT', 3)])
+def test_root_selection_identity_depends_on_candidate_zone(latent_env, card, zone):
+    import slaythespire as sts
+    from env.search.anchored_chains import paired_anchor_search
+    env = latent_env
+    enter_combat(env)
+    env.thick.bc.apply_custom_state(dict(hand=[card, 'DEFEND_RED', 'STRIKE_RED'],
+        draw=['DEFEND_RED', 'SHRUG_IT_OFF', 'STRIKE_RED'], discard=['BASH', 'ANGER']))
+    env.thick.bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    env._invalidate_backend_cache()
+    assert env._obs()['select_zone'].item() == zone
+    before = env._array_mapping_digest(env._obs())
+    legal = np.flatnonzero(env.action_masks())
+    result, stats = paired_anchor_search([env], [2 * len(legal)],
+        lambda requests: [(None, 0.) for r in requests], seed=20261111, max_depth=1,
+        max_active=16, timeout_seconds=10)
+    assert (result[0]['visits'] == 2).all()
+    assert env._array_mapping_digest(env._obs()) == before
