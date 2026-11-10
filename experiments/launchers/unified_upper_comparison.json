@@ -1728,7 +1728,7 @@
     "branch_round": 0,
     "iteration_steps": 786432,
     "rollout_mode": "fixed_steps",
-    "status": "training",
+    "status": "paused",
     "note": "635轮完整保存后开启战斗结束锚点续训：战斗内截到胜利/逃跑后、奖励揭示前的旧V；锚点自身及战斗外仍lambda1整局回报。保留模型/Adam/RNG/1024个live对局、轮次和自然局计数；256×4、LR5e-5、FP32、1024环境×768、16Adam、整轮优势归一化，continuous无总上限。",
     "updated_at": "2026-11-10T00:18:08.139773+00:00"
   },
@@ -2773,7 +2773,7 @@
     "pause_reason": "User requested fresh whole-run lambda1 first; consider anchor only after stability."
   },
   "shared_wholerun_lambda1_sequential": {
-    "status": "training",
+    "status": "paused-at-round-2157-for-deck-latent",
     "root": "/root/autodl-tmp/combat45-lambda1-sequential-20261109",
     "run_id": "combat45-no-search-shared256x4-lambda1-sequential-r1",
     "runtime_source": "c76a64d3 runtime + 35d3f85c anchor continuation",

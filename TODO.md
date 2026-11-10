@@ -684,6 +684,6 @@
 
 - **SHARED-CHAIN-STRENGTH** — 已按用户要求停止评测并归档。完成六臂各135同起点战斗、三臂各50整局与56单动作反事实；药水50局未完成，不报胜率。旧root关搜索20/50，对当前19/50无明确优势；同旧root开搜索30/50（救11损1），仅接管选牌目标30/50、仅END25/50。优势主要在在线选牌/时机纠错，门控收益不可相加。57成员证据三份SHA核验，生产未改。验收/局限见worklog/2026-11-10.md#shared-chain-strength-results；不再续跑本评测，后续转向用户要求的全卡组latent与轻型战斗模型设计。
 
-- **DECK-LATENT-COMBAT** — 模型及训练流程设计完成，尚未实现、未启动实验或更换训练。8×512全卡组编码器输出缓存latent，128/64宽战斗网络、独立两层256宽战后锚点头；预热新架构纯PPO→锚点适应→64/64/256旁路搜索辅助→正式250/250/1000搜索评测。真实动作仍π采样保持PPO行为来源，搜索仅教相对动作优劣，不拿虚拟链作PPO样本或搜索max作锚点真值；保留现役奖励、lambda1、1024×768、LR5e-5/一遍16Adam/有效batch49152。适用rl/policies、rl/algorithms、rl/search、env/search及evaluation；下一实施验收包括缓存/梯度/原子动作与锚点一致性、真实完整生命周期、同样本和同墙钟比较。设计规格见docs/2026-11-10/deck-latent-search-training.md，阶段记录见worklog/2026-11-10.md#deck-latent-low-budget-training。当前COMBAT45保持运行，本设计未部署。
+- **DECK-LATENT-COMBAT** — 实施中；用户已授权停止旧训练、实现并部署新训练。COMBAT45已于第2157轮四机正常停止，完整恢复状态双机备份并SHA256核验；新架构尚未启动。8×512全卡组编码器输出缓存latent，128/64宽战斗网络、独立两层256宽战后锚点头；预热新架构纯PPO→锚点适应→64/64/256旁路搜索辅助→正式250/250/1000搜索评测。真实动作仍π采样保持PPO行为来源，搜索仅教相对动作优劣，不拿虚拟链作PPO样本或搜索max作锚点真值；保留现役奖励、lambda1、1024×768、LR5e-5/一遍16Adam/有效batch49152。适用rl/policies、rl/algorithms、rl/search、env/search及evaluation；下一实施验收包括缓存/梯度/原子动作与锚点一致性、真实完整生命周期、同样本和同墙钟比较。设计规格见docs/2026-11-10/deck-latent-search-training.md，阶段记录见worklog/2026-11-10.md#deck-latent-low-budget-training。COMBAT45现已停止，新设计尚未部署。
 
   阅读参考：arXiv:2611.12088v1及官方代码已只读核对；重开课程与搜索标签资格均仅作候选，未修改上述方案或生产。来源、固定版本与未复现边界见worklog/2026-11-11.md#sts2-failure-restart-paper-review。
