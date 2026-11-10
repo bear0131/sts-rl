@@ -1,7 +1,7 @@
 """Replace split-policy combat, or export entity-joint initialization material.
 
 The entity-material mode exports tensors only, not a runnable training checkpoint.
-Neither mode resumes the source optimizer, replay or progress.
+Only the anchor-bundle mode preserves source optimizer, environments and progress.
 """
 
 import argparse
@@ -156,7 +156,7 @@ def main():
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--mode", choices=("mlp", "entity-material"), default="mlp")
+    parser.add_argument("--mode", choices=("mlp", "entity-material", "anchor-bundle"), default="mlp")
     parser.add_argument("--profile", type=Path)
     parser.add_argument("--card-vectors", type=Path)
     args = parser.parse_args()
@@ -169,6 +169,12 @@ def main():
         return
     if args.profile is not None or args.card_vectors is not None:
         parser.error("--profile and --card-vectors require --mode entity-material")
+    if args.mode == 'anchor-bundle':
+        from rl.training.anchor_resume import migrate_anchor_bundle
+        torch.set_num_threads(2)
+        manifest = migrate_anchor_bundle(args.source, args.out)
+        print(json.dumps(manifest['migration'], indent=2))
+        return
     from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
     from rl.policies.checkpoint import custom_objects
 

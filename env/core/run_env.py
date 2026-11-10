@@ -448,6 +448,7 @@ class SlayTheSpireEnv(gym.Env):
         self._emit_nosl_value_observations = True
         self._episode_backend_seed = None
         self._episode_action_journal = []
+        self._combat_exit_anchor_start_action = 0
 
         self.observation_space = encode.obs_space(
             global_map_view=global_map_view,
@@ -502,6 +503,7 @@ class SlayTheSpireEnv(gym.Env):
         self.thick.reset(seed=backend_seed)
         self._episode_backend_seed = int(backend_seed)
         self._episode_action_journal = []
+        self._combat_exit_anchor_start_action = 0
         self._pending = None
         self._multi = None
         self._nosl_is_az_session = None
@@ -530,6 +532,20 @@ class SlayTheSpireEnv(gym.Env):
             digest.update(value.tobytes())
         return digest.hexdigest()
 
+    def enable_combat_exit_anchor(self):
+        """Enable the boundary in a live episode without replaying its past differently."""
+        if (self.combat_exit_anchor or not self._autoregressive_actions
+                or type(self.thick) is not SimGameEnv or self.outer_return_context
+                or self.finite_curve_objective):
+            raise ValueError('anchor migration requires a live ordinary autoregressive environment')
+        self.combat_exit_anchor = True
+        self._combat_exit_anchor_start_action = len(self._episode_action_journal)
+        self.thick.combat_exit_anchor_enabled = True
+        self.observation_space.spaces['combat_exit_anchor'] = spaces.Box(
+            low=0, high=1, shape=(2,), dtype=np.float32)
+        self._invalidate_backend_cache()
+        return self._obs()
+
     def export_training_state(self):
         """Return a replayable snapshot of the current live episode.
 
@@ -551,6 +567,7 @@ class SlayTheSpireEnv(gym.Env):
             "terminal": bool(self.thick.is_over),
             "combat_action_contract": self.combat_action_contract,
             "combat_exit_anchor": self.combat_exit_anchor,
+            "combat_exit_anchor_start_action": self._combat_exit_anchor_start_action,
             "reward_flow": self.reward_flow,
             "outer_return_context": self.outer_return_context,
             "outer_return_objective": self.outer_return_objective,
@@ -586,6 +603,10 @@ class SlayTheSpireEnv(gym.Env):
             raise ValueError("environment combat action contract mismatch")
         if state.get('combat_exit_anchor', False) != self.combat_exit_anchor:
             raise ValueError('environment pre-reward anchor contract mismatch')
+        anchor_start = state.get('combat_exit_anchor_start_action', 0)
+        if (type(anchor_start) is not int or not 0 <= anchor_start <= len(state['actions'])
+                or (anchor_start and not self.combat_exit_anchor)):
+            raise ValueError('invalid anchor activation journal boundary')
         if state.get('reward_flow', 'full') != self.reward_flow:
             raise ValueError('environment reward flow contract mismatch')
         if state.get('outer_return_context', False) != self.outer_return_context:
@@ -604,11 +625,16 @@ class SlayTheSpireEnv(gym.Env):
         # Bypass subclass reset hooks: production state is defined by this
         # environment's backend seed and journal, not fixture/setup actions.
         SlayTheSpireEnv.reset(self, seed=int(state["backend_seed"]))
+        self._combat_exit_anchor_start_action = anchor_start
+        if self.combat_exit_anchor:
+            self.thick.combat_exit_anchor_enabled = anchor_start == 0
         identity = (self.thick.training_identity()
                     if hasattr(self.thick, 'training_identity') else None)
         if identity != state.get('backend_identity'):
             raise ValueError('environment backend/dataset identity mismatch')
         for position, record in enumerate(state["actions"]):
+            if self.combat_exit_anchor and position == anchor_start:
+                self.thick.combat_exit_anchor_enabled = True
             kind = record.get("kind")
             if kind == "thin":
                 pending = record.get("native_pending")
@@ -626,6 +652,8 @@ class SlayTheSpireEnv(gym.Env):
                     f"environment journal terminated before live state at {position}"
                 )
 
+        if self.combat_exit_anchor:
+            self.thick.combat_exit_anchor_enabled = True
         if bool(self.thick.is_over) != terminal:
             raise ValueError('environment journal terminal status mismatch')
 

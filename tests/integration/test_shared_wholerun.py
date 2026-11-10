@@ -36,6 +36,57 @@ def make_model(env, device, staged=False):
             reward_flow='sequential-v1' if staged else 'full'))
 
 
+def test_anchor_bundle_continues_weights_adam_rng_and_live_games(tmp_path):
+    from rl.training.anchor_resume import migrate_anchor_bundle
+    def factory(anchor=False):
+        return TrainingStateWrapper(TimeLimit(StrategicRewardWrapper(SlayTheSpireEnv(
+            card_language=True, global_map_view=True, combat_action_contract='autoregressive-v2',
+            combat_exit_anchor=anchor, reward_flow='sequential-v1')), max_episode_steps=6000))
+    env = DummyVecEnv([factory])
+    model = AccumulatingMaskablePPO(SharedWholeRunPolicy, env, seed=20261108,
+        n_steps=32, batch_size=32, n_epochs=1, device='cpu', gamma=1., gae_lambda=1.,
+        learning_rate=5e-5, reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
+        policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
+                           reward_flow='sequential-v1'))
+    model.learn(64)
+    source = save_bundle(model, tmp_path/'original', rank=0, world_size=1,
+        run_id='anchor-resume-test', wandb_id=None, config={'ascension': 0})
+    dest = tmp_path/'migrated'
+    report = migrate_anchor_bundle(source, dest)
+    assert report['global_step'] == 64
+    assert (source/'learner.pt').read_bytes() == (dest/'learner.pt').read_bytes()
+    before = torch.load(source/'environment.pt', weights_only=False)
+    after = torch.load(dest/'environment.pt', weights_only=False)
+    assert before['states'][0]['base']['actions'] == after['states'][0]['base']['actions']
+    assert before['states'][0]['wrappers'] == after['states'][0]['wrappers']
+    target_env = DummyVecEnv([lambda: factory(True)])
+    restored = AccumulatingMaskablePPO.load(dest/'model.zip', env=target_env, device='cpu')
+    restored._setup_learn(32, reset_num_timesteps=False)
+    restore_learner(restored, dest, rank=0, world_size=1)
+    assert restored._recovery_environment_restored
+    name = 'core.combat.player_projection.weight'
+    for (key, p), (new_key, q) in zip(model.policy.named_parameters(), restored.policy.named_parameters(), strict=True):
+        assert key == new_key
+        if key == name:
+            q_without_anchor = torch.cat((q[:, :-8], q[:, -6:]), 1)
+            torch.testing.assert_close(p, q_without_anchor, rtol=0, atol=0)
+            assert not q[:, -8:-6].any()
+        else:
+            torch.testing.assert_close(p, q, rtol=0, atol=0)
+        for field, value in model.policy.optimizer.state[p].items():
+            new_value = restored.policy.optimizer.state[q][field]
+            if key == name and torch.is_tensor(value) and value.ndim:
+                assert not new_value[:, -8:-6].any()
+                new_value = torch.cat((new_value[:, :-8], new_value[:, -6:]), 1)
+            torch.testing.assert_close(value, new_value, rtol=0, atol=0)
+    restored.learn(64, reset_num_timesteps=False)
+    assert restored.num_timesteps == 128
+    second = save_bundle(restored, tmp_path/'continued', rank=0, world_size=1,
+        run_id='anchor-resume-test', wandb_id=None, config={'ascension': 0})
+    assert second.exists()
+    env.close(); target_env.close()
+
+
 @pytest.mark.parametrize('callback_kind', ['read_only', 'unknown', 'subclass', 'abort'])
 def test_prefill_respects_callback_mutation_and_restores_environment_hooks(callback_kind):
     from stable_baselines3.common.callbacks import BaseCallback, CallbackList

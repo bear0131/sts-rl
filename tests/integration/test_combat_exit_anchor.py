@@ -97,3 +97,52 @@ def test_natural_anchor_and_sequential_stage_survive_action_journal_replay():
             SlayTheSpireEnv(combat_action_contract='autoregressive-v2').restore_training_state(state)
     finally:
         env.close(); restored.close()
+
+
+def test_enable_anchor_preserves_old_fights_and_replays_new_boundary():
+    env = SlayTheSpireEnv(global_map_view=True, upper_public_context=True,
+        event_option_observation=True, card_language=True,
+        combat_action_contract='autoregressive-v2', reward_flow='sequential-v1')
+    restored = make_env()
+    try:
+        env.reset(seed=42101)
+        for _ in range(500):
+            if env._phase() == 'combat_reward':
+                break
+            legal = np.flatnonzero(env.action_masks())
+            cards = legal[(legal > 0) & (legal < 91)] if env._phase() == 'combat' else []
+            result = env.step(int(cards[0] if len(cards) else legal[0]))
+            assert not result[2] and not result[3]
+        assert env._phase() == 'combat_reward'
+        before = deepcopy(env._obs())
+        boundary = len(env._episode_action_journal)
+        env.enable_combat_exit_anchor()
+        for key in before:
+            np.testing.assert_array_equal(before[key], env._obs()[key])
+        state = env.export_training_state()
+        assert state['combat_exit_anchor_start_action'] == boundary > 0
+        restored.restore_training_state(state)
+        # Continue past at least one new successful battle, then restore again.
+        for _ in range(700):
+            for key, value in env._obs().items():
+                np.testing.assert_array_equal(value, restored._obs()[key])
+            if env._at_combat_exit_anchor():
+                break
+            legal = np.flatnonzero(env.action_masks())
+            cards = legal[(legal > 0) & (legal < 91)] if env._phase() == 'combat' else []
+            action = int(cards[0] if len(cards) else legal[0])
+            left, right = env.step(action), restored.step(action)
+            assert left[1:4] == right[1:4]
+            assert not left[2] and not left[3]
+        assert env._at_combat_exit_anchor()
+        state = env.export_training_state()
+        restored.restore_training_state(state)
+        assert restored._at_combat_exit_anchor()
+        broken = deepcopy(state)
+        broken['combat_exit_anchor_start_action'] = len(state['actions']) + 1
+        with pytest.raises(ValueError, match='activation journal boundary'):
+            restored.restore_training_state(broken)
+        restored.reset(seed=42101)
+        assert restored.export_training_state()['combat_exit_anchor_start_action'] == 0
+    finally:
+        env.close(); restored.close()
