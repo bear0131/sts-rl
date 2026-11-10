@@ -957,3 +957,7 @@ FP32 packed PPO 配置 `context_gradient_replay=true` 仅支持 DeckLatentPolicy
 
 
 context行数指标按单rank统计，分布式聚合沿用rank平均口径。
+
+上下文分组路径按战斗、选牌、其他外层分别保存OOM缩块上限；某类局面显存不足
+不会降低其他类别后续整轮的批量。旧checkpoint的全局上限只用于旧非分组路径，
+分组路径按新类别重新适应；类别上限随checkpoint保存，改变打包配置时清除。

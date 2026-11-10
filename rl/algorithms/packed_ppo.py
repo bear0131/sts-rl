@@ -38,6 +38,7 @@ def configure_packed_updates(model, configuration=None):
         model.ppo_update_config = None
         model.ppo_update_loss_scale = 1.
         model.__dict__.pop('_ppo_microbatch_cap', None)
+        model.__dict__.pop('_ppo_microbatch_caps', None)
     if configuration is None:
         configuration = getattr(model, 'ppo_update_config', None)
     if configuration is None or configuration == 'off':
@@ -63,6 +64,7 @@ def configure_packed_updates(model, configuration=None):
     if (previous != model.ppo_update_config or not hasattr(model, 'ppo_update_loss_scale')):
         model.ppo_update_loss_scale = 65536. if config.precision == 'fp16' else 1.
         model.__dict__.pop('_ppo_microbatch_cap', None)
+        model.__dict__.pop('_ppo_microbatch_caps', None)
     scale = model.ppo_update_loss_scale
     if not math.isfinite(scale) or scale < 1 or (config.precision == 'fp32' and scale != 1):
         raise ValueError('invalid saved packed PPO loss scale')
@@ -116,7 +118,8 @@ def packed_chunks(model, batch, config):
         if len(other):
             end = start + int(other[0])
         end = min(end, start + max(1, config.token_budget // int(lengths[1, start:end].max())))
-        yield _select(ordered, slice(start, end)), normalized[start:end], (end - start) / total
+        oom_group = ('combat', 'selection', 'upper')[int(lengths[0, start])] if config.context_grouping else None
+        yield _select(ordered, slice(start, end)), normalized[start:end], (end - start) / total, oom_group
         start = end
 
 
@@ -168,9 +171,10 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
                 if replay is not None:
                     replay.reset_gradient()
                 loss = 0.
-                for chunk, advantages, weight in chunks:
+                for chunk, advantages, weight, oom_group in chunks:
                     loss += weight * ppo_chunked_backward(model, chunk, clip_range, clip_range_vf,
-                        pre_normalized_advantages=advantages, backward_scale=scale * weight)
+                        pre_normalized_advantages=advantages, backward_scale=scale * weight,
+                        oom_group=oom_group)
                 if replay is not None:
                     replay.backward()
                 grads = [p.grad for p in model.policy.parameters() if p.grad is not None]

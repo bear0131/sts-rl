@@ -1,5 +1,7 @@
 {
-  "token_budget": 32768,
-  "max_rows": 256,
-  "precision": "fp32"
+  "token_budget": 65536,
+  "max_rows": 384,
+  "precision": "fp32",
+  "context_gradient_replay": false,
+  "context_grouping": true
 }

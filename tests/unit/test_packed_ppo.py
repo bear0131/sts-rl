@@ -66,7 +66,8 @@ def test_compacted_combat_preserves_pad_queries_slots_and_gradients(combat_facto
 
 
 @pytest.mark.parametrize('normalization', ['group256', 'rollout'])
-def test_packed_batches_keep_original_normalization_and_adam(monkeypatch, normalization):
+@pytest.mark.parametrize('scoped_oom', [False, True])
+def test_packed_batches_keep_original_normalization_and_adam(monkeypatch, normalization, scoped_oom):
     from rl.algorithms.ppo_metrics import update_moments, finalize_metrics
     torch.manual_seed(20261109)
 
@@ -77,10 +78,18 @@ def test_packed_batches_keep_original_normalization_and_adam(monkeypatch, normal
             super().__init__()
             self.weight = torch.nn.Parameter(torch.randn(16, 3, dtype=torch.float64) * .1)
             self.core = SimpleNamespace(combat=SimpleNamespace(
-                training_token_counts=lambda obs: obs['width']))
+                training_token_counts=lambda obs: obs['width']),
+                context=SimpleNamespace(key_tensor=lambda obs: obs['row'][:, None]))
             self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
+            self.fail_upper = False
+            self.attempts = []
 
         def evaluate_actions(self, obs, actions, action_masks=None):
+            is_combat = bool((obs['phase'] == vocab.PHASE_VOCAB_INDEX['combat']).all())
+            self.attempts.append((is_combat, len(actions)))
+            if self.fail_upper and not is_combat and len(actions) == 4:
+                self.fail_upper = False
+                raise torch.OutOfMemoryError('injected upper-only allocation failure')
             x = self.weight[obs['row']]
             logp = x.log_softmax(-1)
             return x[:, :1], logp.gather(1, actions[:, None]).flatten(), -(logp.exp() * logp).sum(-1)
@@ -114,13 +123,22 @@ def test_packed_batches_keep_original_normalization_and_adam(monkeypatch, normal
             (loss / 2).backward()
         optimizer_step(expected)
     monkeypatch.setattr(packed_ppo, 'configure_packed_updates',
-        lambda m: packed_ppo.PackedPPOConfig(token_budget=7, max_rows=3))
+        lambda m: packed_ppo.PackedPPOConfig(token_budget=1000 if scoped_oom else 7,
+            max_rows=4 if scoped_oom else 3, context_grouping=scoped_oom))
     monkeypatch.setattr(packed_ppo.SharedOverworldEncoder, 'merged_token_counts',
         staticmethod(lambda obs: obs['width']))
+    if scoped_oom:
+        # A legacy saved global cap must not throttle the new grouped path.
+        model._ppo_microbatch_cap = 1
+        model.policy.fail_upper = True
     result = packed_ppo.packed_ppo_epoch(model, .2, None)
     assert result['optimizer_steps'] == 2 and result['overflow_retries'] == 0
     assert model._ppo_update_metric_count == 16
-    assert model._ppo_microbatch_stats['max_rows'] <= 3
+    assert model._ppo_microbatch_stats['max_rows'] <= (4 if scoped_oom else 3)
+    if scoped_oom:
+        assert model._ppo_microbatch_stats['oom_retries'] == 1
+        assert model._ppo_microbatch_caps == {'upper': 2}
+        assert [n for combat, n in model.policy.attempts if combat] == [4, 4]
     torch.testing.assert_close(model.policy.weight, expected.policy.weight, rtol=1e-12, atol=1e-12)
     a, b = model.policy.optimizer.state[model.policy.weight], expected.policy.optimizer.state[expected.policy.weight]
     for key in ('step', 'exp_avg', 'exp_avg_sq'):

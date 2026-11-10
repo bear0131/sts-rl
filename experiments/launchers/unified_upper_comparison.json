@@ -2989,7 +2989,7 @@
     "status": "training-warmup",
     "root": "/root/autodl-tmp/combat46-deck-latent-20261111",
     "run_id": "combat46-deck-latent-ppo-search-r1",
-    "runtime_source": "164852c9",
+    "runtime_source": "ce2c1f22",
     "initial_config": "configs/train/deck_latent_warmup.args",
     "update_config": "configs/train/deck_latent_packed_fp32.json",
     "model_contract": "deck-latent-combat-v1",
@@ -3037,7 +3037,7 @@
     },
     "schedule_config": "configs/train/deck_latent_schedule.json",
     "search_qualified": false,
-    "resumed_from_round": 12,
+    "resumed_from_round": 19,
     "combat_parameters_excluding_root_projection": 379443,
     "anchor_parameters_excluding_root_projection": 106113,
     "branch_accumulator_bytes": 1036,
@@ -3057,6 +3057,44 @@
       "stage": "warmup",
       "search_simulations": 0,
       "oom_retries": 0
+    },
+    "packed_token_budget": 65536,
+    "packed_max_rows": 384,
+    "context_grouping": true,
+    "context_gradient_replay": false,
+    "context_update_optimization": {
+      "source_paused_round": 17,
+      "accepted_rounds": [
+        18,
+        19
+      ],
+      "full_state_preserved": true,
+      "all_four_weights_and_adam_equal": true,
+      "policy_sha256": "daa6965e1a56df952865cd32c27c4c6e733adf5f0b02d5d0e9f254672b7d2ce8",
+      "adam_sha256": "5cdf381f696633c6c0b92ba13fa934c13df4d8730cd592795f4fbbef2c80b7a0",
+      "baseline_single_gpu_seconds": [
+        148.10116461664438,
+        148.95941139012575
+      ],
+      "selected_single_gpu_seconds": 119.89643364585936,
+      "gradient_relative_l2": 3.6696398706223364e-07,
+      "qualification_wall_seconds_max": [
+        229.48871178925037,
+        235.1437274820637
+      ],
+      "qualification_update_seconds_max": [
+        139.92766156606376,
+        146.04503876296803
+      ],
+      "recovered_oom_retries_total": 2,
+      "physical_caps_by_rank": {
+        "0": null,
+        "1": 96,
+        "2": null,
+        "3": null
+      },
+      "source_archive_sha256": "a9b2cd9a37935249d4b626f8c2782bcd46eb694a43f429ceb480b9977999df10",
+      "pending": "round20 exposed global OOM cap slowdown; phase-scoped cap fix awaits full production verification"
     }
   }
 }

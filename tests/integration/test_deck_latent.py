@@ -179,12 +179,16 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         assert len(model.rollout_buffer.search_targets) > 0
         assert model._deck_search_loss_normalization > 0
         assert model.deck_search_last_stats['atomic_steps'] > model.deck_search_last_stats['searched_roots']
+    if context_mode == 'grouped':
+        model._ppo_microbatch_caps = {'upper': 2}
     source = save_bundle(model, tmp_path/'first', rank=0, world_size=1, run_id='deck-latent-test',
                          wandb_id=None, config={'ascension': 0})
     loaded = load_checkpoint(source/'model.zip', device='cpu')
     assert isinstance(loaded.policy, DeckLatentPolicy)
     assert loaded.ppo_update_config['context_gradient_replay'] == (context_mode == 'replay')
     assert loaded.ppo_update_config['context_grouping'] == (context_mode == 'grouped')
+    if context_mode == 'grouped':
+        assert loaded._ppo_microbatch_caps == {'upper': 2}
     if search:
         assert loaded.deck_search_config == model.deck_search_config
         assert loaded.deck_search_rng == model.deck_search_rng

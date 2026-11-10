@@ -52,7 +52,7 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
 
 
 def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
-                         pre_normalized_advantages=None, backward_scale=1.0):
+                         pre_normalized_advantages=None, backward_scale=1.0, oom_group=None):
     """Fuse statistical groups; retry smaller chunks without corrupting accumulation.
 
     Only the shared whole-run policy uses this path (no dropout/running stats).
@@ -75,7 +75,11 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
         return type(batch)(**{k: ({n: v[start:start+count] for n, v in x.items()}
             if isinstance(x, dict) else x[start:start+count]) for k, x in data.items()})
     def backward(start, count):
-        cap = getattr(model, '_ppo_microbatch_cap', total)
+        # Packed phases have different memory costs. An expensive upper block
+        # must not permanently shrink every subsequent combat block/round.
+        caps = model.__dict__.setdefault('_ppo_microbatch_caps', {}) if oom_group is not None else None
+        cap = (caps.get(oom_group, total) if caps is not None else
+               getattr(model, '_ppo_microbatch_cap', total))
         if count > cap:
             backward(start, cap)
             backward(start + cap, count - cap)
@@ -139,7 +143,10 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
             if model.device.type == 'cuda':
                 th.cuda.empty_cache()
             cap = max(group, (count // group // 2) * group)
-            model._ppo_microbatch_cap = cap
+            if caps is None:
+                model._ppo_microbatch_cap = cap
+            else:
+                caps[oom_group] = cap
             stats['oom_retries'] += 1
             backward(start, cap)
             backward(start + cap, count - cap)
