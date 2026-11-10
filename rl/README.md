@@ -956,7 +956,4 @@ FP32 packed PPO 配置 `context_gradient_replay=true` 仅支持 DeckLatentPolicy
 可以独立比较；不能把重排/不同矩阵形状声称为逐位等价。
 
 
-构筑编码器会把地图网格的mask空槽压紧，仅删除room=PAD且全部公开特征为0的节点，
-保留有效节点的相对顺序、坐标和边信息。模型没有序列位置编码，此操作不修改
-观测ABI、参数形状或缓存key，旧checkpoint仍直接加载；浮点等价使用容差。
 context行数指标按单rank统计，分布式聚合沿用rank平均口径。
