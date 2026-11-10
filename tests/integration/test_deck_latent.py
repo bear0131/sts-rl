@@ -190,7 +190,15 @@ def test_paired_shadow_search_batches_real_anchors_without_mutating_root(latent_
     seen = []
     def score(requests):
         seen.extend(r.kind for r in requests)
-        return scorer(requests)
+        result = scorer(requests)
+        with torch.no_grad():
+            for request, (logit, value) in zip(requests, result, strict=True):
+                full = obs_as_tensor({k: v[None] for k, v in request.observation.items()}, 'cpu')
+                expected_logit, expected_value = policy.core.actor_critic(full)
+                np.testing.assert_allclose(value, expected_value.item(), rtol=3e-5, atol=3e-6)
+                if logit is not None:
+                    np.testing.assert_allclose(logit, expected_logit[0], rtol=3e-5, atol=3e-6)
+        return result
     count = np.count_nonzero(env.action_masks())
     result, stats = paired_anchor_search([env], [count * 2], score, seed=20261111,
         max_depth=12, max_active=16, timeout_seconds=30)

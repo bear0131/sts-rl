@@ -5,7 +5,7 @@ batch, never a callback from inside a single simulated transition. Exact thin
 action/prefix state remains owned by the existing environment. This is the
 semantic reference for a native resident implementation, not a speed claim.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import time
 
 import numpy as np
@@ -19,6 +19,7 @@ class ChainRequest:
     observation: dict
     action_mask: np.ndarray
     kind: str  # combat, cutoff, anchor
+    cache: dict = field(default_factory=dict)  # opaque, branch-owned scorer state
 
 
 @dataclass
@@ -31,6 +32,7 @@ class _Lane:
     reward: float
     observation: dict
     done: bool
+    cache: dict = field(default_factory=dict)
 
 
 def _step(lane, action):
@@ -110,7 +112,7 @@ def paired_anchor_search(roots, budgets, scorer, *, seed, max_depth=200,
             if kind == 'combat' and np.count_nonzero(mask) == 1:
                 _step(lane, np.flatnonzero(mask)[0]); stats['forced_rows'] += 1
                 continue
-            requests.append(ChainRequest(lane.root, lane.observation, mask, kind))
+            requests.append(ChainRequest(lane.root, lane.observation, mask, kind, lane.cache))
             requested_lanes.append(lane)
         scored = scorer(requests) if requests else []
         if len(scored) != len(requests):

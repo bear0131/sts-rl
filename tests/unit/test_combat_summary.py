@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 
 from rl.policies.combat_summary import AdditiveCombatInputs, CombatSummary
@@ -77,3 +78,40 @@ def test_long_update_stream_does_not_accumulate_large_fp32_error():
             state.move_cards(torch.tensor([0, 0]), torch.tensor([1, 2]), torch.tensor([0, 0]), terms)
         torch.testing.assert_close(state.piles, expected.piles, atol=1e-5, rtol=1e-5)
         torch.testing.assert_close(state.pile_counts, expected.pile_counts, rtol=0, atol=0)
+
+
+def test_frozen_cpu_tables_sparse_events_match_differentiable_reference():
+    net = make_inputs()
+    tables = net.export_inference_tables()
+    obs = {p + '_counts': np.zeros(12, np.float32) for p in ('draw', 'discard', 'exhaust')}
+    obs.update(pile_upgraded_counts=np.zeros((3, 12), np.float32),
+        pile_upgrade_sums=np.zeros((3, 12), np.float32), relics=np.array([1, 2, 0]),
+        relic_counters=np.array([.2, .9, 0.], np.float32))
+    obs['draw_counts'][2] = 2
+    obs['pile_upgraded_counts'][0, 2] = 2
+    obs['pile_upgrade_sums'][0, 2] = .8
+    state = tables.new_state(obs)
+    sibling = state.fork()
+    original = sibling.piles.copy()
+    rng = np.random.default_rng(20261111)
+    for step in range(2000):
+        source, dest = (0, 1) if step % 2 == 0 else (1, 0)
+        zones, ids = np.array([source, dest]), np.array([2, 2])
+        counts, upgrades = np.array([-2., 2.], np.float32), np.array([-.8, .8], np.float32)
+        state.card_events(zones, ids, counts, counts, upgrades)
+        old = obs['relic_counters'].copy()
+        obs['relic_counters'][1] = rng.integers(0, 10000) / 10
+        state.relic_events(obs['relics'][1:2], old[1:2], obs['relics'][1:2], obs['relic_counters'][1:2])
+    tensor = {k: torch.from_numpy(v[None]) for k, v in obs.items()}
+    with torch.no_grad():
+        expected = net.rebuild(tensor)
+    np.testing.assert_allclose(state.piles, expected.piles[0], rtol=1e-5, atol=1e-5)
+    # Repeated cancellation of large counters has FP32 roundoff; bound the
+    # absolute error rather than pretending algebraic equivalence is bitwise.
+    np.testing.assert_allclose(state.relics, expected.relics[0], rtol=2e-4, atol=.005)
+    np.testing.assert_array_equal(sibling.piles, original)
+    assert tables.card_base is sibling.tables.card_base
+    assert not tables.card_base.flags.writeable
+    events = sibling.events
+    sibling.update({**obs, 'relic_counters': np.array([.2, .9, 0.], np.float32)})
+    assert sibling.events == events  # unchanged observation performs no events

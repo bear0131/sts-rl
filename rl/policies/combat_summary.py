@@ -7,6 +7,7 @@ The simulator remains the owner of exact slots, legal actions and transitions.
 """
 from dataclasses import dataclass
 
+import numpy as np
 import torch
 from torch import nn
 
@@ -110,3 +111,108 @@ class AdditiveCombatInputs(nn.Module):
         # a move changes the denominator without requiring all cards to update.
         count = summary.pile_counts
         return torch.cat((summary.piles / count.clamp_min(1), count.log1p()), -1).flatten(1)
+
+    @torch.no_grad()
+    def export_inference_tables(self):
+        """One frozen export per weight version, shared by every CPU lane.
+
+        The same arrays can be consumed by a native event producer. No network
+        is evaluated when a card moves or a relic counter changes.
+        """
+        ids = torch.arange(self.card.num_embeddings, device=self.upgrade_projection.device)
+        base = self.card_terms(ids, torch.zeros_like(ids))
+        upgraded = self.card_projection(self.card.versioned_forward(ids, torch.ones_like(ids)))
+        arrays = [base, (upgraded - base) * ids.ne(0)[:, None], self.upgrade_projection,
+                  self.relic_identity.weight, self.relic_counter.weight]
+        return FrozenCombatTables(*(x.detach().float().cpu().numpy().copy() for x in arrays))
+
+
+@dataclass(frozen=True)
+class FrozenCombatTables:
+    card_base: np.ndarray
+    card_upgrade: np.ndarray
+    upgrade_magnitude: np.ndarray
+    relic_identity: np.ndarray
+    relic_counter: np.ndarray
+
+    def __post_init__(self):
+        for value in vars(self).values():
+            value.setflags(write=False)
+
+    def relic_terms(self, ids, counters):
+        x = np.asarray(counters, np.float32)
+        count = np.rint(x * encode.COUNTER_SCALE)
+        basis = np.stack((x, np.sign(x) * np.log1p(np.abs(x)),
+            *(np.remainder(count, p) / p for p in (2, 3, 4, 5, 6, 7, 8, 10))), -1)
+        gates = self.relic_counter[ids].reshape(*ids.shape, 10, -1)
+        return (self.relic_identity[ids] + (gates * basis[..., None]).sum(-2)) * (ids != 0)[..., None]
+
+    def new_state(self, observation):
+        state = ResidentCombatSummary(self)
+        state.update(observation)
+        return state
+
+
+class ResidentCombatSummary:
+    """Frozen inference accumulators; a card event costs O(summary width).
+
+    ``update`` is the reference adapter for full observations: it compares
+    integer-count metadata, then calls the sparse event API. Native producers
+    can call that API directly without building or transferring dense piles.
+    Normalization stays outside the accumulators. No training graph is cached.
+    """
+    def __init__(self, tables):
+        self.tables = tables
+        cards, width = tables.card_base.shape
+        self.piles = np.zeros((3, width), np.float32)
+        self.counts = np.zeros((3, 1), np.float32)
+        self.relics = np.zeros(width, np.float32)
+        self.metadata = np.zeros((3, 3, cards), np.float32)
+        self.relic_ids = self.relic_counters = None
+        self.events = 0
+
+    def fork(self):
+        child = ResidentCombatSummary(self.tables)
+        for key in ('piles', 'counts', 'relics', 'metadata', 'relic_ids', 'relic_counters'):
+            value = getattr(self, key)
+            setattr(child, key, None if value is None else value.copy())
+        return child
+
+    def card_events(self, zones, ids, counts, upgraded_counts, upgrade_sums):
+        """Signed per-ID deltas; upgrades use the observation's UPGRADE_SCALE.
+
+        A move is one removal plus one insertion. An upgrade/transform removes
+        the old entity and adds the new entity; no whole-pile recomputation.
+        Repeated IDs and zones are intentionally accumulated, never overwritten.
+        """
+        contribution = counts[:, None] * self.tables.card_base[ids]
+        contribution += upgraded_counts[:, None] * self.tables.card_upgrade[ids]
+        contribution += upgrade_sums[:, None] * self.tables.upgrade_magnitude
+        np.add.at(self.piles, zones, contribution)
+        np.add.at(self.counts[:, 0], zones, counts * (ids != 0))
+        for i, delta in enumerate((counts, upgraded_counts, upgrade_sums)):
+            np.add.at(self.metadata[i], (zones, ids), delta)
+        self.events += len(ids)
+
+    def relic_events(self, old_ids, old_counters, new_ids, new_counters):
+        self.relics += (self.tables.relic_terms(new_ids, new_counters)
+                       - self.tables.relic_terms(old_ids, old_counters)).sum(0)
+        self.events += len(new_ids)
+
+    def update(self, observation):
+        now = np.stack((np.stack([observation[p + '_counts'] for p in ('draw', 'discard', 'exhaust')]),
+                        observation['pile_upgraded_counts'], observation['pile_upgrade_sums']))
+        zones, ids = np.nonzero(np.any(now != self.metadata, axis=0))
+        delta = now[:, zones, ids] - self.metadata[:, zones, ids]
+        self.card_events(zones, ids, *delta)
+        # Retain exact encoded metadata, not accumulated float differences.
+        self.metadata[...] = now
+        ids, counters = observation['relics'], observation['relic_counters']
+        if self.relic_ids is None:
+            self.relic_ids = np.zeros_like(ids)
+            self.relic_counters = np.zeros_like(counters)
+        changed = (ids != self.relic_ids) | (counters != self.relic_counters)
+        if changed.any():
+            self.relic_events(self.relic_ids[changed], self.relic_counters[changed], ids[changed], counters[changed])
+            self.relic_ids, self.relic_counters = ids.copy(), counters.copy()
+        return self
