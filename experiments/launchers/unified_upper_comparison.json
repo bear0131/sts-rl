@@ -2778,7 +2778,7 @@
     "run_id": "combat45-no-search-shared256x4-lambda1-sequential-r1",
     "runtime_source": "c76a64d3 runtime + 35d3f85c anchor continuation",
     "initial_config": "configs/train/shared_wholerun_lambda1_sequential.args",
-    "update_config": "configs/train/shared_wholerun_packed_fp32.json",
+    "update_config": "configs/train/shared_wholerun_packed_fp32_130k.json",
     "width": 256,
     "layers": 4,
     "heads": 8,
@@ -2918,6 +2918,27 @@
           "bytes": 25518
         }
       }
+    },
+    "physical_batch_note": "1536 x 8 defines the unchanged local Adam group; packed physical chunks use token_budget=130000, max_rows=8192 from round1321.",
+    "microbatch_experiment": {
+      "paused_round": 1320,
+      "resume_global_step": 1038090240,
+      "reference": "references/microbatch-paused-20261110/rankN/step-001038090240",
+      "selected_token_budget": 130000,
+      "selected_max_rows": 8192,
+      "baseline_single_gpu_seconds": [
+        16.920086532831192,
+        18.783925514668226,
+        19.467356391251087
+      ],
+      "selected_single_gpu_seconds": [
+        14.437054866924882,
+        15.74986564181745,
+        14.962347945198417
+      ],
+      "max_parameter_difference": 1.1920928955078125e-07,
+      "production_acceptance": "pending",
+      "worklog": "worklog/2026-11-10.md#pure-rl-c45-microbatch固定有效批次扩大物理批并恢复训练"
     }
   }
 }
