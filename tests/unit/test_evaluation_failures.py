@@ -45,3 +45,24 @@ def test_dashboard_marks_strategy_initialization_failure():
     assert state.eval_status['state'] == 'error'
     assert 'simulations' in state.eval_status['error']
     assert state.eval_status['active_workers'] == 0
+
+
+@pytest.mark.parametrize('solver', ['small-playout', 'paired-worldlines'])
+def test_cli_accepts_separate_online_combat_checkpoint(tmp_path, monkeypatch, solver):
+    output = tmp_path/'hybrid.json'
+    monkeypatch.setattr(sys, 'argv', ['eval', 'upper.zip', '--combat-checkpoint', 'lower.zip',
+                                    '--solver', solver, '--episodes', '1', '--output', str(output)])
+    upper, lower = (SimpleNamespace(set_random_seed=lambda seed: None) for _ in range(2))
+    monkeypatch.setattr(cli, 'load_checkpoint', lambda path, **kw: upper if path.name == 'upper.zip' else lower)
+    seen = []
+    def compose(upper_model, args, combat_model, **kw):
+        seen.append((upper_model, combat_model))
+        return SimpleNamespace(name='hybrid', combat_action_contract='autoregressive-v2')
+    monkeypatch.setattr(cli, 'compose_strategy', compose)
+    monkeypatch.setattr(cli, 'make_scenario', lambda *a: None)
+    monkeypatch.setattr(cli, 'evaluate', lambda *a, **kw: iter([
+        dict(episode=0, seed=10000, result='win', floor=55, act=4, steps=3, raw_return=1.)]))
+    cli.main()
+    assert seen == [(upper, lower)]
+    payload = json.loads(output.read_text(encoding='utf-8'))
+    assert payload['state'] == 'complete' and payload['summary']['completed'] == 1

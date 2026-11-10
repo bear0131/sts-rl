@@ -724,7 +724,13 @@ def compose_strategy(upper_model, args, combat_model=None, *, trace=None):
     if args.solver == 'turn-planner':
         strategy.routes['combat'].trace = trace
     if combat_model is not None:
-        strategy = PhaseStrategy(policy_strategy(upper_model, args), {'combat': strategy})
+        # A pre-reward exit anchor is a forced settlement row, not a live
+        # battle for a separately loaded search policy to explore.
+        spaces = getattr(getattr(upper_model, 'observation_space', None), 'spaces', {})
+        predicates = ({'combat': lambda r: not np.any(r.observation.get('combat_exit_anchor', False))}
+                      if 'combat_exit_anchor' in spaces else None)
+        strategy = PhaseStrategy(policy_strategy(upper_model, args), {'combat': strategy},
+                                 predicates=predicates)
     combat_only_upper = getattr(getattr(getattr(upper_model,'policy',None),'core',None),'combat_only',False)
     if getattr(args, 'upper_strategy', 'model') == 'rules' or combat_only_upper:
         from rl.evaluation.baselines.overworld_rules import OverworldRuleStrategy

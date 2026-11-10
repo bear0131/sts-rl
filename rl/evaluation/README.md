@@ -26,6 +26,11 @@ actor动作、lower V、搜索动作/V；真实受控击杀后的奖励页另测
 
 统一 episode 入口：`python -m rl.evaluation.eval CHECKPOINT --task wholerun --solver native --search-mode strict --num-envs 4 --episodes 10 --timeout 1800 --output runs/local/eval.json`。
 
+独立上层也可通过 `--combat-checkpoint LOWER.zip --solver paired-worldlines`
+组合在线共享链下层（`small-playout` 同样支持），沿用下层 checkpoint 的搜索合同和预算。
+环境的顺序奖励与战后锚点合同由上层决定；锚点交回上层执行唯一的继续动作，
+不送入已结束战斗的搜索。该比较同时替换下层与搜索，不能解释为等算力模型容量消融。
+
 要保留可对照的局外历史（不记录战斗逐动作），加上
 `--trajectory-output runs/local/<run-dir>`。入口会写出 `report.json`、
 `episodes.jsonl`、`episodes.md`、`summary.md`；历史包含地图路线、问号事件的

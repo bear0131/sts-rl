@@ -223,7 +223,9 @@ def main():
         return
     combat_model = model
     if args.combat_checkpoint:
-        if args.task != 'wholerun' or args.solver not in ('policy', 'native', 'value', 'rules', 'turn-planner'):
+        if args.task != 'wholerun' or args.solver not in (
+                'policy', 'native', 'value', 'rules', 'turn-planner',
+                'small-playout', 'paired-worldlines'):
             raise ValueError('--combat-checkpoint requires a supported wholerun solver')
         combat_model = load_checkpoint(args.combat_checkpoint, device=args.device,
                                        card_vector_checkpoint=args.card_vector_checkpoint,
