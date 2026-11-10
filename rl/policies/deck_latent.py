@@ -59,13 +59,23 @@ class RunContextEncoder(nn.Module):
     def key_tensor(self, obs):
         return torch.cat([obs[k].reshape(len(obs['phase']), -1).float() for k in self.keys], 1)
 
+    @staticmethod
+    def map_inputs(rooms, features):
+        # Coordinates/edges are explicit features; there are no sequence
+        # position embeddings. Remove only masked grid holes, preserving every
+        # visible node (including room-PAD nodes with public feature values).
+        keep = rooms.ne(0) | features.bool().any(-1)
+        width = max(1, int(keep.sum(1).max().item()))
+        indices = torch.argsort(~keep, dim=1, stable=True)[:, :width]
+        return rooms.gather(1, indices), features.gather(1, indices[..., None].expand(-1, -1, features.shape[-1]))
+
     def forward(self, obs):
         width = _active_prefix_width(obs['deck_ids'])
         ids, upgrades = obs['deck_ids'][:, :width], obs['deck_upgrades'][:, :width]
         deck = self.card_projection(torch.cat((self.card.versioned_forward(ids, upgrades),
             upgrades[..., None], obs['outer_deck_misc'][:, :width, None]), -1))
         relic_ids = obs['relics'][:, :_active_prefix_width(obs['relics'])]
-        rooms, features = obs['map_full_rooms'], obs['map_full_features'].float()
+        rooms, features = self.map_inputs(obs['map_full_rooms'], obs['map_full_features'].float())
         maps = self.room(rooms.long()) + self.map_projection(features)
         global_token = self.global_projection(torch.cat([obs[k].float() for k in self.global_keys], -1))
         blocks = (global_token[:, None], deck, self.relic(relic_ids.long()), maps)

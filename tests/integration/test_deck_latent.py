@@ -465,3 +465,34 @@ def test_ppo_context_adjoint_retry_does_not_double_count_samples(latent_env, tmp
             assert sa.keys() == sb.keys()
             for key in sa:
                 torch.testing.assert_close(sa[key], sb[key], rtol=4e-4, atol=4e-6, msg=name + '/' + key)
+
+
+def test_context_map_compaction_retains_features_gradients_and_empty_maps(latent_env):
+    from rl.policies.deck_latent import RunContextEncoder
+    env=latent_env
+    enter_combat(env)
+    candidate=policy_for(env); reference=deepcopy(candidate)
+    reference.core.context.map_inputs=lambda rooms,features:(rooms,features)
+    obs=tensor_obs(env, 4)
+    obs['map_full_rooms'][1]=0; obs['map_full_features'][1]=0
+    # A PAD room with public features is not an absent node.
+    obs['map_full_rooms'][2]=0; obs['map_full_features'][2]=0
+    obs['map_full_features'][2, 50, 3]=1.
+    # Every slot valid is also supported; mixed length uses the exact mask.
+    obs['map_full_rooms'][3]=1
+    for training in (False, True):
+        candidate.set_training_mode(training); reference.set_training_mode(training)
+        for count in (1, 3, 4):
+            batch={k:v[:count] for k,v in obs.items()}
+            candidate.zero_grad(); reference.zero_grad()
+            a=candidate.core.context(batch); b=reference.core.context(batch)
+            torch.testing.assert_close(a,b,rtol=3e-5,atol=3e-6)
+            coefficients=torch.linspace(-.7,.3,a.shape[-1])
+            (a*coefficients).sum().backward(); (b*coefficients).sum().backward()
+            for (name,p),(_,q) in zip(candidate.core.context.named_parameters(),reference.core.context.named_parameters(),strict=True):
+                assert (p.grad is None)==(q.grad is None),name
+                if p.grad is not None:
+                    torch.testing.assert_close(p.grad,q.grad,rtol=4e-4,atol=4e-5,msg=name)
+    rooms, features=RunContextEncoder.map_inputs(obs['map_full_rooms'][:3],obs['map_full_features'][:3])
+    assert rooms.shape[1]<obs['map_full_rooms'].shape[1]
+    assert features[2,0,3]==1
