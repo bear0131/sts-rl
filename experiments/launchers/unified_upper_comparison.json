@@ -1729,8 +1729,8 @@
     "iteration_steps": 786432,
     "rollout_mode": "fixed_steps",
     "status": "training",
-    "note": "从零训练新架构；当前纯PPO整局lambda1预热，锚点观察存在但尚未截断战斗目标。搜索辅助与原生增量路径正在接入，当前search_simulations=0。保留原奖励和遗物优先顺序，LR5e-5、16Adam、FP32、1024×768、全轮优势归一化；无总步数/轮数上限。",
-    "updated_at": "2026-11-11T04:00:00+08:00"
+    "note": "COMBAT46从零的新架构持续训练；第12轮完整保存后接入阶段控制并原状态续训。当前整局lambda1纯PPO预热；100轮后每20轮做自然未来锚点评估，通过准备度才转锚点PPO。搜索辅助已通过小规模四机生命周期，正式预算及原生事件路径未资格，search_qualified=false，暂不自动启用搜索。原奖励、LR5e-5、16Adam、FP32、1024×768不变。",
+    "updated_at": "2026-11-11T04:43:56.395025+08:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
@@ -2989,7 +2989,7 @@
     "status": "training-warmup",
     "root": "/root/autodl-tmp/combat46-deck-latent-20261111",
     "run_id": "combat46-deck-latent-ppo-search-r1",
-    "runtime_source": "eb3ce78c + deck_latent_warmup config",
+    "runtime_source": "164852c9",
     "initial_config": "configs/train/deck_latent_warmup.args",
     "update_config": "configs/train/deck_latent_packed_fp32.json",
     "model_contract": "deck-latent-combat-v1",
@@ -3021,9 +3021,9 @@
     "total_steps": null,
     "total_rounds": null,
     "total_seconds": null,
-    "automatic_stage_switch": false,
+    "automatic_stage_switch": true,
     "search_auxiliary_active": false,
-    "pending": "search auxiliary integration, readiness controller and native incremental path; warmup is live",
+    "pending": "native event emission and production-budget search qualification; PPO warmup and guarded anchor scheduling are live",
     "initial_sha256": "d4ceabf50971e4903dcc0257e3070069c1c3595f318705480cae2723a33cd482",
     "production_acceptance": {
       "round": 2,
@@ -3033,6 +3033,29 @@
       "rollout_sec_max": 84.21363285998814,
       "update_sec_max": 164.87950757192448,
       "iteration_sec_max": 251.09588342905045,
+      "oom_retries": 0
+    },
+    "schedule_config": "configs/train/deck_latent_schedule.json",
+    "search_qualified": false,
+    "resumed_from_round": 12,
+    "combat_parameters_excluding_root_projection": 379443,
+    "anchor_parameters_excluding_root_projection": 106113,
+    "branch_accumulator_bytes": 1036,
+    "root_projection_bytes": 1536,
+    "stage_resume_acceptance": {
+      "rounds": [
+        13,
+        14
+      ],
+      "global_step": 11010048,
+      "source_commit": "164852c9",
+      "policy_sha256": "3eab29451da3e85b5efc1fd1b9977267a2b0d1483d13566f67de6f30cdbceba0",
+      "adam_sha256": "5cfbcb515aa682789a1a9c3043e27ce25d9ec1482f3672e0c2a5f5fbfbb5ee0f",
+      "rollout_sec_max": 93.1313836146146,
+      "update_sec_max": 177.03452337300405,
+      "iteration_sec_max": 266.3072084840387,
+      "stage": "warmup",
+      "search_simulations": 0,
       "oom_retries": 0
     }
   }
