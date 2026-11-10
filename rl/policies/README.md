@@ -86,5 +86,10 @@ actions/rewards/RNG are preserved, search targets stay in a separate buffer,
 and auxiliary KL is normalized over searched rows across the original global
 optimizer batch before physical splitting. No extra Adam steps or simulated
 PPO rows are introduced. Config and independent search RNG survive saving.
-Readiness-based stage scheduling is a separate deployment step; setting up a
-search-capable checkpoint does not itself authorize switching a live run.
+`--deck-training-schedule` on the distributed entry checkpoints stage readiness
+and applies changes only before a collection. Bounded validation uses the
+shared evaluation runner and actual future returns from natural completed
+games; incomplete games never provide anchor truth. All ranks reduce the
+same moments before deciding a phase. The checked-in schedule keeps
+`search_qualified=false`: it may enter anchor PPO after readiness, but cannot
+activate the reference search backend until its production workload is qualified.

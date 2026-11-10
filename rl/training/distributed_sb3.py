@@ -552,6 +552,8 @@ def build_parser() -> argparse.ArgumentParser:
         help='Shared PPO only: retain checkpoint setting, or choose legacy groups/global rollout moments')
     parser.add_argument('--ppo-update-config', type=Path,
         help='Shared pure PPO physical batching JSON: token_budget, max_rows, precision; omitted inherits checkpoint')
+    parser.add_argument('--deck-training-schedule', type=Path,
+        help='Deck latent preparation/anchor/search schedule JSON; omitted inherits checkpoint')
     parser.add_argument('--fork-public-lower',choices=('root','turn','state'),default=None,
                         help='On a lower-only fork, add a public adapter refreshed per real root or simulated state')
     parser.add_argument('--fork-public-weights',type=Path,default=None,
@@ -2871,6 +2873,11 @@ def main() -> None:
     configure_packed_updates(model, json.loads(args.ppo_update_config.read_text(encoding='utf-8'))
         if args.ppo_update_config is not None else None)
     args.ppo_update_config = model.ppo_update_config
+    from rl.algorithms.deck_schedule import configure as configure_deck_schedule
+    deck_schedule = configure_deck_schedule(model,
+        json.loads(args.deck_training_schedule.read_text(encoding='utf-8'))
+        if args.deck_training_schedule is not None else None)
+    args.deck_training_schedule = getattr(model, 'deck_training_schedule', None)
     if args.ppo_update_config is not None and args.world_size > 1 and args.gradient_transport != 'ssh-ring':
         raise ValueError('packed multi-rank PPO requires ssh-ring scalar consensus')
     if (args.ppo_advantage_normalization == 'rollout' and args.world_size > 1
@@ -3349,6 +3356,11 @@ def main() -> None:
     try:
         for update in (count() if args.continuous else range(args.updates)):
             iteration_budget.start(update)
+            if deck_schedule is not None:
+                from rl.training.deck_schedule import at_collection_boundary
+                at_collection_boundary(model, rank=args.rank, world_size=args.world_size,
+                    local_root=local_root, ascension=args.ascension,
+                    average=lambda values: average_scalar_dict(values, ring_transport))
             if model.device.type == "cuda":
                 th.cuda.synchronize(model.device)
             started = time.perf_counter()
@@ -3977,6 +3989,9 @@ def main() -> None:
                 if record['pure_rl/game_total/start_step'] == 0:
                     record['completed_full_games_global'] = record['pure_rl/natural_games_global']
             record['training_scope'] = args.training_scope
+            if deck_schedule is not None:
+                record['deck_training_state'] = model.deck_training_state
+                record['training_objective_contract'] = model.training_objective_contract
             record.update({'upper/' + key: value for key, value in upper_update.items()})
             record.update({'small_playout_train/' + key: value for key, value in small_update.items()})
             if combat_strategy == 'small-playout':

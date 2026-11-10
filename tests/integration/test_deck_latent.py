@@ -301,3 +301,29 @@ def test_root_selection_identity_depends_on_candidate_zone(latent_env, card, zon
         max_active=16, timeout_seconds=10)
     assert (result[0]['visits'] == 2).all()
     assert env._array_mapping_digest(env._obs()) == before
+
+
+def test_anchor_validation_uses_completed_natural_games_and_marks_limits(latent_env):
+    from types import SimpleNamespace
+    from rl.evaluation.anchor_readiness import anchor_readiness
+    from rl.evaluation.runner import EvaluationConfig, Scenario
+    policy = policy_for(latent_env)
+    model = SimpleNamespace(policy=policy, observation_space=latent_env.observation_space,
+        action_space=latent_env.action_space, device=torch.device('cpu'),
+        nosl_action_group_contract='individual-actions')
+    model.predict = policy.predict
+    def factory():
+        return SlayTheSpireEnv(card_language=True, global_map_view=True, upper_public_context=True,
+            event_option_observation=True, combat_action_contract='autoregressive-v2',
+            combat_exit_anchor=True, reward_flow='sequential-v1', deck_latent_context=True)
+    # Real environment lifecycle with a strict small cap: no incomplete future
+    # may become an anchor's "actual" return or a natural win/loss.
+    result = anchor_readiness(model, Scenario('latent-readiness', factory),
+                             EvaluationConfig(episodes=2, seed=20261111, num_envs=2, max_steps=8, timeout=10.))
+    assert result['natural'] == 0
+    assert result['censored'] == 2
+    assert result['anchors'] == 0
+    natural = anchor_readiness(model, Scenario('latent-readiness', factory),
+        EvaluationConfig(episodes=2, seed=20261111, num_envs=2, max_steps=6000, timeout=30.))
+    assert natural['natural'] == 2 and natural['censored'] == 0
+    assert natural['anchors'] > 0
