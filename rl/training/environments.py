@@ -434,6 +434,7 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
         else bool(args.interactive_reasoning)
     )
     env_args.arch = (
+        'deck-latent' if getattr(core, 'model_contract', None) == 'deck-latent-combat-v1' else
         'shared-wholerun' if env_args.strategic_reward and getattr(core, 'training_objective', None) == 'shared-wholerun-ppo-room-v1'
         else "semantic-reasoning" if interactive_reasoning else "split-pointer"
     )

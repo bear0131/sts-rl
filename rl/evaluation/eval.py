@@ -130,6 +130,7 @@ def make_scenario(model, args, combat_model=None, combat_action_contract='legacy
             combat_exit_anchor=('combat_exit_anchor' in model.observation_space.spaces
                                 if model is not None else False),
             reward_flow=getattr(model.policy, 'reward_flow', 'full'),
+            deck_latent_context='deck_latent_context' in model.observation_space.spaces,
             backend_factory=backend_factory,
             ascension=args.ascension,
             outer_return_context=any(getattr(getattr(m.policy, 'core', None), 'frozen_upper', False) for m in models),

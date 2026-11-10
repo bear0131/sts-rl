@@ -38,7 +38,8 @@ def configure_packed_updates(model, configuration=None):
         model.ppo_update_config = None
         if isinstance(model.policy, SharedWholeRunPolicy):
             model.policy.core.combat.compact_training_tokens = False
-            model.policy.core.combat.transformer.update_precision = 'fp32'
+            if hasattr(model.policy.core.combat, 'transformer'):
+                model.policy.core.combat.transformer.update_precision = 'fp32'
         return None
     config = (configuration if isinstance(configuration, PackedPPOConfig)
               else PackedPPOConfig(**configuration))
@@ -56,7 +57,10 @@ def configure_packed_updates(model, configuration=None):
     if not math.isfinite(scale) or scale < 1 or (config.precision == 'fp32' and scale != 1):
         raise ValueError('invalid saved packed PPO loss scale')
     model.policy.core.combat.compact_training_tokens = True
-    model.policy.core.combat.transformer.update_precision = config.precision
+    if hasattr(model.policy.core.combat, 'transformer'):
+        model.policy.core.combat.transformer.update_precision = config.precision
+    elif config.precision != 'fp32':
+        raise ValueError('deck latent updates currently require FP32')
     return config
 
 

@@ -37,3 +37,41 @@ The operation is CPU-only, accepts split-pointer inner-only NOSL sources, keeps
 their algorithm/search settings and frozen tensors, and resets combat weights,
 Adam, replay and progress. Do not resume an old learner bundle into this new
 architecture. Start a distinct run with the existing training preset/launcher.
+
+## Cached deck context and additive combat inputs
+
+`deck_latent.DeckLatentPolicy` / `--arch deck-latent` is a fresh architecture,
+not compatible geometry for SharedWholeRunPolicy weights. The first executable
+stage uses the same PPO objective/reward with lambda1; the observation includes
+pre-reward anchors even before combat returns are truncated there. The model
+requires `deck_latent_context` observation v1: public map during combat,
+permanent card growth, and all-ID upgrade counts/sums for draw/discard/exhaust.
+Old observation and checkpoint schemas stay unchanged. The current reference
+projection uses the canonical native state; native vector root packing and the
+old shared-Transformer CUDA graph are deliberately unavailable for this schema
+until their complete output contracts have passed parity tests.
+
+`RunContextEncoder` encodes deck, permanent metadata, static relic identities
+and public map/room context. HP, gold, potions and live relic counters are not
+cache keys. Inference caches only one bounded row batch and invalidates on input,
+parameter version, device or shape change. Training deduplicates equal contexts
+within the physical batch and recomputes with gradients. `SearchContext` stores
+128-wide combat and 256-wide anchor projections once per root; callers share or
+index those tensors instead of reapplying the large projections in every lane.
+Permanent branch changes require refreshing the corresponding context.
+
+`combat_summary.AdditiveCombatInputs` defines context-independent per-card and
+identity-conditioned counter contributions. `CombatSummary` stores unnormalized
+pile sums/counts and a relic sum. Moves subtract/add contributions; upgrades and
+counter changes replace old contributions; nonlinear context mixing and count
+normalization happen afterwards. A fork clones only the small accumulators.
+It does not serialize simulator state, masks, hidden order or pending actions.
+Exact entities/physical slots remain in the action head. Pooling is learned,
+lossy compression. Native event emission and CPU export are a subsequent
+integration boundary, not a demonstrated performance result of this reference.
+
+The initial tested path is FP32 eager collection/update, native Gym reference
+observations, packed PPO and full checkpoint/Adam/environment restoration.
+Anchor predictions consume branch player HP/maxHP (not stale run_hp), live
+resources and cached run context, and never reward-page offers. Search auxiliary
+training and the readiness stage controller are not yet connected here.

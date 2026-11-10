@@ -100,6 +100,9 @@ def _checkpoint_policy_arch(model: AccumulatingMaskablePPO) -> str | None:
 
     policy = model.policy
     from rl.policies.shared_wholerun import SharedWholeRunPolicy
+    from rl.policies.deck_latent import DeckLatentPolicy
+    if isinstance(policy, DeckLatentPolicy):
+        return 'deck-latent'
     if isinstance(policy, SharedWholeRunPolicy):
         return 'shared-wholerun'
     from rl.policies.entity_joint import EntityJointPolicy
@@ -598,14 +601,15 @@ def main() -> None:
             from rl.policies.entity_combat import EntityCombatPolicy
             from rl.policies.entity_joint import EntityJointPolicy
             from rl.policies.shared_wholerun import SharedWholeRunPolicy
-            if resume_settings.get('policy_class') is SharedWholeRunPolicy and args.arch == 'auto':
-                args.arch = 'shared-wholerun'
+            from rl.policies.deck_latent import DeckLatentPolicy
+            if resume_settings.get('policy_class') in (SharedWholeRunPolicy, DeckLatentPolicy) and args.arch == 'auto':
+                args.arch = ('deck-latent' if resume_settings['policy_class'] is DeckLatentPolicy else 'shared-wholerun')
             if resume_settings.get("policy_class") in (EntityCombatPolicy, EntityJointPolicy) and args.arch == "auto":
                 args.arch = "entity-joint" if resume_settings['policy_class'] is EntityJointPolicy else "entity-combat"
                 args.nosl_is_az_inner_only = resume_settings["nosl_is_az_inner_only"]
                 args.nosl_is_az_cpp = resume_settings["nosl_is_az_cpp"]
             saved_policy_kwargs = resume_settings.get("policy_kwargs") or {}
-            if resume_settings.get('policy_class') is SharedWholeRunPolicy:
+            if resume_settings.get('policy_class') in (SharedWholeRunPolicy, DeckLatentPolicy):
                 args.combat_value_target = saved_policy_kwargs.get('combat_value_target', 'whole-run')
                 args.reward_flow = saved_policy_kwargs.get('reward_flow', 'full')
             saved_entity_config = saved_policy_kwargs.get("entity_config") or {}
@@ -959,10 +963,10 @@ def main() -> None:
         args.combat_action_contract = args.combat_action_contract or source_contract
         if args.resume and args.combat_action_contract != source_contract:
             raise ValueError("combat action migration requires --init-from, not --resume")
-        if args.combat_action_contract == C.AUTOREGRESSIVE_CONTRACT and args.arch not in ('entity-combat', 'entity-joint', 'shared-wholerun'):
+        if args.combat_action_contract == C.AUTOREGRESSIVE_CONTRACT and args.arch not in ('entity-combat', 'entity-joint', 'shared-wholerun', 'deck-latent'):
             raise ValueError('autoregressive-v2 requires an entity or shared-wholerun policy')
         if args.combat_action_contract in C.NEURAL_CONTRACTS:
-            if args.arch not in ("split-pointer", "entity-combat", "entity-joint", "shared-wholerun") or getattr(args, "combat_arch", "transformer") != "transformer":
+            if args.arch not in ("split-pointer", "entity-combat", "entity-joint", "shared-wholerun", "deck-latent") or getattr(args, "combat_arch", "transformer") != "transformer":
                 raise ValueError("joint actions require a supported Transformer policy")
             if getattr(args, "nosl_is_az", False) and not args.nosl_is_az_cpp:
                 raise ValueError("joint-v2 NOSL requires --nosl-is-az-cpp")

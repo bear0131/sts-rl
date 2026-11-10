@@ -335,7 +335,8 @@ class SlayTheSpireEnv(gym.Env):
                  event_option_observation=False,
                  interactive_reasoning=False, combat_action_contract='legacy',
                  nosl_is_az_boss_transition_target=False, outer_return_context=False,
-                 combat_value_objective=None, combat_exit_anchor=False, reward_flow='full'):
+                 combat_value_objective=None, combat_exit_anchor=False, reward_flow='full',
+                 deck_latent_context=False):
         super().__init__()
         # Owned only by NativeSearchVecEnv during one synchronous step_wait.
         # Ordinary Gym/evaluation calls always construct their observation here.
@@ -343,6 +344,9 @@ class SlayTheSpireEnv(gym.Env):
         self._combat_observation_pending = False
         self._step_observation_buffer = None
         self._step_observation_buffer_used = False
+        self.deck_latent_context = bool(deck_latent_context)
+        if deck_latent_context and (not combat_exit_anchor or not global_map_view or outer_return_context):
+            raise ValueError('deck latent context requires anchors/public map and no legacy outer-return target')
         self.outer_return_context = bool(outer_return_context)
         from .outer_return import OBJECTIVE, SCALAR_OBJECTIVES, FINITE_OBJECTIVE, NORMALIZED_OBJECTIVE, MIXED_RAW_OBJECTIVE, MC_OBJECTIVE
         self.outer_return_monte_carlo = combat_value_objective == MC_OBJECTIVE
@@ -479,6 +483,10 @@ class SlayTheSpireEnv(gym.Env):
             self.observation_space.spaces['reward_stage'] = spaces.Box(
                 low=0, high=1, shape=(len(STAGES),), dtype=np.float32)
 
+        if self.deck_latent_context:
+            from .deck_context import extend_space
+            extend_space(self.observation_space)
+
     # ---------------------------------------------------------------- gym API
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
@@ -567,6 +575,7 @@ class SlayTheSpireEnv(gym.Env):
             "terminal": bool(self.thick.is_over),
             "combat_action_contract": self.combat_action_contract,
             "combat_exit_anchor": self.combat_exit_anchor,
+            "deck_latent_context": self.deck_latent_context,
             "combat_exit_anchor_start_action": self._combat_exit_anchor_start_action,
             "reward_flow": self.reward_flow,
             "outer_return_context": self.outer_return_context,
@@ -601,6 +610,8 @@ class SlayTheSpireEnv(gym.Env):
             raise ValueError('terminal environment schema requires an explicit terminal state')
         if state.get("combat_action_contract") != self.combat_action_contract:
             raise ValueError("environment combat action contract mismatch")
+        if state.get('deck_latent_context', False) != self.deck_latent_context:
+            raise ValueError('environment deck latent context mismatch')
         if state.get('combat_exit_anchor', False) != self.combat_exit_anchor:
             raise ValueError('environment pre-reward anchor contract mismatch')
         anchor_start = state.get('combat_exit_anchor_start_action', 0)
@@ -2914,6 +2925,9 @@ class SlayTheSpireEnv(gym.Env):
                 obs['combat_exit_anchor'][...] = marker
         if self._sequential_rewards is not None:
             self._sequential_rewards.project(self, obs)
+        if self.deck_latent_context:
+            from .deck_context import project
+            project(self, obs, canon)
         return obs
 
     def _at_combat_exit_anchor(self):

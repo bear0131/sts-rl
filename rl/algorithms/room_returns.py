@@ -103,14 +103,15 @@ def apply_room_returns(model, buffer):
         room_lambda=model.policy.room_lambda)
     phase = buffer.observations['phase'][..., 0]
     anchored = getattr(model.policy, 'combat_value_target', 'whole-run') == 'pre-reward-anchor'
-    anchors = None
+    anchors = (buffer.observations['combat_exit_anchor'].any(axis=-1)
+               if 'combat_exit_anchor' in buffer.observations else None)
     if anchored:
-        anchors = buffer.observations['combat_exit_anchor'].any(axis=-1)
         advantages, returns = combat_anchor_returns(
             buffer.rewards, buffer.values, buffer.episode_starts, phase, anchors, returns,
             last_values=last_values.flatten().cpu().numpy(), last_dones=model._last_episode_starts,
             last_phases=model._last_obs['phase'][:, 0],
             last_anchors=model._last_obs['combat_exit_anchor'].any(axis=-1))
+    if anchors is not None:
         model.logger.record('pure_rl/combat_anchor_samples', int(anchors.sum()))
         model.logger.record('pure_rl/combat_anchor_wins', int(buffer.observations['combat_exit_anchor'][..., 0].sum()))
         model.logger.record('pure_rl/combat_anchor_escapes', int(buffer.observations['combat_exit_anchor'][..., 1].sum()))

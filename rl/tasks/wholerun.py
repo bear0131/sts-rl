@@ -284,7 +284,7 @@ class WholeRunTask(Task):
         )
         parser.add_argument(
             "--arch",
-            choices=["auto", "split-pointer", "semantic-reasoning", "entity-combat", "entity-joint", "shared-wholerun"],
+            choices=["auto", "split-pointer", "semantic-reasoning", "entity-combat", "entity-joint", "shared-wholerun", "deck-latent"],
             default="auto",
             help="Independent combat and overworld Transformer actor-critics "
                  "with shared card/relic/potion tokenizers. --n-layers is the "
@@ -569,7 +569,7 @@ class WholeRunTask(Task):
         from rl.training.reward import ShapedRewardWrapper, StrategicRewardWrapper
 
         if (getattr(args, 'combat_value_target', 'whole-run') != 'whole-run'
-                or getattr(args, 'reward_flow', 'full') != 'full') and args.arch != 'shared-wholerun':
+                or getattr(args, 'reward_flow', 'full') != 'full') and args.arch not in ('shared-wholerun', 'deck-latent'):
             raise ValueError('anchor targets and sequential rewards support shared whole-run PPO only')
         ascension = args.ascension
         interactive_reasoning = (
@@ -592,7 +592,8 @@ class WholeRunTask(Task):
                 interactive_reasoning=interactive_reasoning,
                 outer_return_context=bool(getattr(args, 'outer_return_context', False)),
                 combat_value_objective=getattr(args, 'combat_value_objective', None),
-                combat_exit_anchor=(getattr(args, 'combat_value_target', 'whole-run') == 'pre-reward-anchor'),
+                combat_exit_anchor=(args.arch == 'deck-latent' or getattr(args, 'combat_value_target', 'whole-run') == 'pre-reward-anchor'),
+                deck_latent_context=args.arch == 'deck-latent',
                 reward_flow=getattr(args, 'reward_flow', 'full'),
                 combat_action_contract=getattr(args, "combat_action_contract", None) or "legacy",
                 nosl_is_az_boss_transition_target=bool(
@@ -600,7 +601,7 @@ class WholeRunTask(Task):
                 ),
             )
             if not env.outer_return_objective:
-                wrapper = (StrategicRewardWrapper if args.arch == 'shared-wholerun'
+                wrapper = (StrategicRewardWrapper if args.arch in ('shared-wholerun', 'deck-latent')
                            or getattr(args, 'strategic_reward', False) else ShapedRewardWrapper)
                 env = wrapper(env)
             # TimeLimit last so it sees the same steps the policy takes and its
@@ -623,13 +624,15 @@ class WholeRunTask(Task):
             raise RuntimeError(
                 "trainer must resolve --arch auto before building the policy"
             )
-        if args.arch == 'shared-wholerun':
+        if args.arch in ('shared-wholerun', 'deck-latent'):
             from rl.policies.shared_wholerun import SharedWholeRunPolicy
+            from rl.policies.deck_latent import DeckLatentPolicy
             if (args.nosl_is_az or args.hierarchical_combat_hp or args.interactive_reasoning
                     or args.card_vector_checkpoint or args.gamma != 1
                     or args.combat_action_contract != 'autoregressive-v2'):
                 raise ValueError('shared whole-run PPO requires gamma1, AR actions, no search/HP/reasoning/pretrained cards')
-            return SharedWholeRunPolicy, dict(d_model=args.d_model, n_layers=args.n_layers,
+            policy = DeckLatentPolicy if args.arch == 'deck-latent' else SharedWholeRunPolicy
+            return policy, dict(d_model=args.d_model, n_layers=args.n_layers,
                 n_heads=args.n_heads, card_language=args.card_language,
                 map_dag=True, room_lambda=args.room_lambda,
                 combat_value_target=getattr(args, 'combat_value_target', 'whole-run'),

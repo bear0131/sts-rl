@@ -1037,7 +1037,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
         host_observation_hook = None
         result = False
         try:
-            if pure_ppo and self.device.type == 'cuda' and self.amp_mode == 'off':
+            if (pure_ppo and self.device.type == 'cuda' and self.amp_mode == 'off'
+                    and getattr(self.policy.core, 'collection_graphs_supported', True)):
                 from rl.policies.collection_graphs import SharedCollectionGraphs
                 self.policy.set_training_mode(False)
                 collection_graphs = getattr(self, '_shared_collection_graphs', None)
