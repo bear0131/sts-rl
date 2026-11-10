@@ -172,3 +172,38 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path):
     assert save_bundle(restored, tmp_path/'resumed', rank=0, world_size=1,
         run_id='deck-latent-test', wandb_id=None, config={'ascension': 0}).is_dir()
     env.close(); target.close()
+
+
+def test_paired_shadow_search_batches_real_anchors_without_mutating_root(latent_env):
+    from env.search.anchored_chains import paired_anchor_search
+    from rl.search.deck_latent import DeckLatentScorer
+    env = latent_env
+    enter_combat(env)
+    env.thick.bc.set_player_strength(999)
+    env._invalidate_backend_cache()
+    obs = env._obs()
+    before = env._array_mapping_digest(obs)
+    root_key = env.thick.bc.nosl_future_key()
+    journal = deepcopy(env._episode_action_journal)
+    policy = policy_for(env); policy.set_training_mode(False)
+    scorer = DeckLatentScorer(policy, [obs])
+    seen = []
+    def score(requests):
+        seen.extend(r.kind for r in requests)
+        return scorer(requests)
+    count = np.count_nonzero(env.action_masks())
+    result, stats = paired_anchor_search([env], [count * 2], score, seed=20261111,
+        max_depth=12, max_active=16, timeout_seconds=30)
+    assert stats['chains'] == count * 2
+    assert stats['max_active'] > 1
+    assert (result[0]['visits'] == 2).all()
+    assert np.isfinite(result[0]['values']).all()
+    assert 'anchor' in seen
+    assert env._array_mapping_digest(env._obs()) == before
+    assert env.thick.bc.nosl_future_key() == root_key
+    assert env._episode_action_journal == journal
+    # Changing the frozen policy must invalidate the entire teacher.
+    with torch.no_grad():
+        policy.core.combat.end.bias.add_(.1)
+    with pytest.raises(RuntimeError, match='weights changed'):
+        scorer([])
