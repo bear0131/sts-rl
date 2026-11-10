@@ -1721,16 +1721,16 @@
     }
   },
   "monitor": {
-    "root": "/root/autodl-tmp/combat46-deck-latent-20261111",
-    "run_id": "combat46-deck-latent-ppo-search-r1",
-    "label": "COMBAT46 · 卡组512×8 / 轻量战斗 / λ=1预热",
+    "root": "/root/autodl-tmp/combat47-deck-latent256-20261111",
+    "run_id": "combat47-deck-latent256x4-ppo-search-r1",
+    "label": "COMBAT47 · 卡组256×4 / 轻量战斗 / λ=1预热",
     "branch_step": 0,
     "branch_round": 0,
     "iteration_steps": 786432,
     "rollout_mode": "fixed_steps",
-    "status": "training",
-    "note": "COMBAT46从零的新架构持续训练；第12轮完整保存后接入阶段控制并原状态续训。当前整局lambda1纯PPO预热；100轮后每20轮做自然未来锚点评估，通过准备度才转锚点PPO。搜索辅助已通过小规模四机生命周期，正式预算及原生事件路径未资格，search_qualified=false，暂不自动启用搜索。原奖励、LR5e-5、16Adam、FP32、1024×768不变。",
-    "updated_at": "2026-11-11T04:43:56.395025+08:00"
+    "status": "starting",
+    "note": "按TRAIN47的256宽4层规模缩小卡组编码器，从零训练；保留deck-latent架构、奖励、λ=1预热、预热LR1e-4、一遍16Adam、FP32、1024×768及准备度控制。静态上下文分组与按phase显存缩块已接入；search_qualified=false。",
+    "updated_at": "2026-11-11T06:00:04.267592+08:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
@@ -2986,7 +2986,7 @@
     }
   },
   "deck_latent_combat": {
-    "status": "training-warmup",
+    "status": "paused-at-round21-by-user-for-smaller-fresh-model",
     "root": "/root/autodl-tmp/combat46-deck-latent-20261111",
     "run_id": "combat46-deck-latent-ppo-search-r1",
     "runtime_source": "ce2c1f22",
@@ -3094,7 +3094,42 @@
         "3": null
       },
       "source_archive_sha256": "a9b2cd9a37935249d4b626f8c2782bcd46eb694a43f429ceb480b9977999df10",
-      "pending": "round20 exposed global OOM cap slowdown; phase-scoped cap fix awaits full production verification"
-    }
+      "pending": "large-model phase-cap GPU revalidation superseded by user smaller fresh training request"
+    },
+    "stopped_round": 21
+  },
+  "deck_latent_small": {
+    "status": "staged-not-yet-started",
+    "root": "/root/autodl-tmp/combat47-deck-latent256-20261111",
+    "run_id": "combat47-deck-latent256x4-ppo-search-r1",
+    "reference": "TRAIN47/876 checkpoint policy_kwargs: entity and upper both width256/layers4/heads8",
+    "initialization": "fresh random weights, empty optimizer, zero steps, new environments; no TRAIN47 or COMBAT46 weight transfer",
+    "initial_config": "configs/train/deck_latent_warmup.args",
+    "update_config": "configs/train/deck_latent_packed_fp32.json",
+    "schedule_config": "configs/train/deck_latent_schedule.json",
+    "context_width": 256,
+    "context_layers": 4,
+    "context_heads": 8,
+    "outer_layers": 2,
+    "combat_widths": [
+      128,
+      64
+    ],
+    "anchor_width": 256,
+    "world_size": 4,
+    "envs_per_rank": 256,
+    "steps_per_environment": 768,
+    "learning_rate": 0.0001,
+    "epochs": 1,
+    "optimizer_steps_per_round": 16,
+    "effective_batch_global": 49152,
+    "precision": "fp32-highest",
+    "lambda": 1,
+    "context_grouping": true,
+    "context_gradient_replay": false,
+    "oom_caps": "phase-scoped",
+    "search_qualified": false,
+    "continuous": true,
+    "later_stage_learning_rate": "not separately tuned; revisit after warmup"
   }
 }

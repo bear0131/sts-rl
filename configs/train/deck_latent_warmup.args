@@ -3,9 +3,9 @@ wholerun
 --arch
 deck-latent
 --d-model
-512
+256
 --n-layers
-8
+4
 --n-heads
 8
 --combat-action-contract
@@ -28,7 +28,7 @@ autoregressive-v2
 --room-lambda
 1
 --learning-rate
-0.00005
+0.0001
 --n-epochs
 1
 --ent-coef
