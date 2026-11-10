@@ -668,4 +668,4 @@
 
 - **PURE-RL-ENABLE-ANCHOR** — 已完成。635轮保存后开启锚点续训；636/637两轮四机全生命周期验收通过、参数/Adam一致、监控同曲线连续。用户要求当前训练开启战斗结束锚点继续，保留现有权重/Adam/环境与进度。适用shared PPO目标配置、distributed恢复入口、launcher及监控；验收四机同边界备份、配置切换、两轮完整生命周期、模型/Adam一致与曲线连续。见worklog/2026-11-10.md#pure-rl-enable-anchor现有训练开启战斗结束锚点续训。
 
-- **PURE-RL-POTION-AUDIT** — 行为审计完成、问题仍存在；正在追加战后锚点value药水敏感性诊断。检查当前COMBAT45真实训练中的药水浪费，固定904轮动作journal并严格回放/限定反事实，报告样本、明确案例与统计局限；不改训练。见worklog/2026-11-10.md#pure-rl-potion-audit当前模型局内药水使用。
+- **PURE-RL-POTION-AUDIT** — 行为及战后value诊断完成，浪费问题仍存在、未改训练。固定904轮256条journal发现195/998次单独跳药后战果与持久资源相同；96个配对锚点中速度药水904/937轮分别77.1%/70.8%为负边际value，2145个战斗出口无一次保留速度药水；小幅上层负值有跨轮波动，鲜血等仍为正，不能全部归因于critic。后续修复需验证真实保留收益与用药时机；适用env/core、rl/policies/shared_wholerun与room_returns。证据/限制见worklog/2026-11-10.md#pure-rl-potion-audit战后value药水敏感性。
