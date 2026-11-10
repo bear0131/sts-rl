@@ -676,4 +676,4 @@
 
 - **PURE-RL-C45-C40-TIMING** — 只读诊断完成。C40的571–600 vsC45的1268–1297，同786432行/16Adam/FP32/256×4：主rank整轮36.136→46.960秒，更新17.259→25.384贡献75%增量；sync反快3.526→2.529。旧6144×2 vs当前token65000分块，状态分布亦变；未做同buffer因果AB、不改训练。适用rl/training、packed_ppo；证据/计数口径见worklog/2026-11-10.md#pure-rl-c45-c40-timing当前训练为何比combat40慢。
 
-- **PURE-RL-C45-MICROBATCH** — 进行中。用户允许暂停，固定当前COMBAT45模型/Adam/buffer比较大microbatch/token预算，保持有效49152、16Adam、FP32/LR/目标不变；有收益即部署并续训。适用packed_ppo、distributed launcher；验收数值/Adam、完整更新资源/时间及四机两轮保存/监控，结果无效则原配置恢复。
+- **PURE-RL-C45-MICROBATCH** — 已完成并续训。固定1320模型/Adam/786432优势统计、同196608行10次更新：13万token比6.5万三次均值18.390→15.050秒，FP32权重差≤1.1921e-7；采用max8192配置。四机1321–1325完整通过，1321/1322权重+Adam一致、0OOM，49152/16Adam/LR5e-5不变；热态更新25.663→20.614秒，整轮47.825→44.369秒（前30轮vs后4轮）。原run无限续训，监控连续；适用packed_ppo/distributed launcher。证据见worklog/2026-11-10.md#pure-rl-c45-microbatch固定有效批次扩大物理批并恢复训练。

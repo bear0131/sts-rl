@@ -2937,8 +2937,52 @@
         14.962347945198417
       ],
       "max_parameter_difference": 1.1920928955078125e-07,
-      "production_acceptance": "pending",
-      "worklog": "worklog/2026-11-10.md#pure-rl-c45-microbatch固定有效批次扩大物理批并恢复训练"
+      "production_acceptance": {
+        "rounds": [
+          1321,
+          1322,
+          1323,
+          1324,
+          1325
+        ],
+        "protected_rounds": [
+          1321,
+          1322
+        ],
+        "all_four_weights_and_adam_equal": true,
+        "optimizer_steps_per_round": 16,
+        "global_rows_per_round": 786432,
+        "global_effective_batch": 49152,
+        "normalization_rows": 786432,
+        "oom_retries": 0,
+        "overflow_retries": 0,
+        "baseline_rounds": [
+          1291,
+          1320
+        ],
+        "warm_comparison_rounds": [
+          1322,
+          1325
+        ],
+        "primary_rank_before_update_seconds": 25.662919018417597,
+        "primary_rank_after_update_seconds": 20.614139221142977,
+        "primary_rank_before_wall_seconds": 47.82451432676365,
+        "primary_rank_after_wall_seconds": 44.36902120569721,
+        "update_reduction": 0.19673443202822105,
+        "wall_reduction": 0.07225359566553236,
+        "monitor_round_observed": 1324,
+        "monitor_all_alive": true,
+        "continuous": true
+      },
+      "worklog": "worklog/2026-11-10.md#pure-rl-c45-microbatch固定有效批次扩大物理批并恢复训练",
+      "evidence": {
+        "path": "/root/autodl-tmp/combat45-lambda1-sequential-20261109/microbatch-20261110/evidence.tgz",
+        "sha256": "b1736f639f33b53822a6c1d2cfcbd2235a8a1ccbbb5b8e3e2ff4cc6611b9d4f1",
+        "bytes": 3113858,
+        "members": 81,
+        "second_remote_copy_port": 13208,
+        "local_copy": "runs/local/combat45-microbatch-20261110/evidence.tgz"
+      }
     }
   }
 }
