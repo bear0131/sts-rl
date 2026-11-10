@@ -667,3 +667,5 @@
 - **TRAINING-SITES** — 已完成。独立owner-only监控Site v3、远端持续采集与受限SSH拉取、历史曲线勾选、GPT只读查询均已接通；电脑离线不影响读取。云端原生工具读到109→110→113轮，COMBAT44末两轮与远端逐值一致；四机原PID保持。适用apps/training_site_sync.py、experiments/launchers/training_site_monitor.json及Sites源码；Python5项/Node3项、手机/桌面布局、私有访问及部署通过。见worklog/2026-11-10.md#training-sites私有移动端与gpt训练监控。
 
 - **PURE-RL-ENABLE-ANCHOR** — 已完成。635轮保存后开启锚点续训；636/637两轮四机全生命周期验收通过、参数/Adam一致、监控同曲线连续。用户要求当前训练开启战斗结束锚点继续，保留现有权重/Adam/环境与进度。适用shared PPO目标配置、distributed恢复入口、launcher及监控；验收四机同边界备份、配置切换、两轮完整生命周期、模型/Adam一致与曲线连续。见worklog/2026-11-10.md#pure-rl-enable-anchor现有训练开启战斗结束锚点续训。
+
+- **PURE-RL-POTION-AUDIT** — 行为审计完成、问题仍存在；正在追加战后锚点value药水敏感性诊断。检查当前COMBAT45真实训练中的药水浪费，固定904轮动作journal并严格回放/限定反事实，报告样本、明确案例与统计局限；不改训练。见worklog/2026-11-10.md#pure-rl-potion-audit当前模型局内药水使用。
