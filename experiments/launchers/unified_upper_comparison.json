@@ -1728,9 +1728,9 @@
     "branch_round": 0,
     "iteration_steps": 786432,
     "rollout_mode": "fixed_steps",
-    "status": "starting",
+    "status": "training",
     "note": "按TRAIN47的256宽4层规模缩小卡组编码器，从零训练；保留deck-latent架构、奖励、λ=1预热、预热LR1e-4、一遍16Adam、FP32、1024×768及准备度控制。静态上下文分组与按phase显存缩块已接入；search_qualified=false。",
-    "updated_at": "2026-11-11T06:00:04.267592+08:00"
+    "updated_at": "2026-11-11T06:12:02.900563+08:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
@@ -3099,7 +3099,7 @@
     "stopped_round": 21
   },
   "deck_latent_small": {
-    "status": "staged-not-yet-started",
+    "status": "running-full-two-rounds-verified",
     "root": "/root/autodl-tmp/combat47-deck-latent256-20261111",
     "run_id": "combat47-deck-latent256x4-ppo-search-r1",
     "reference": "TRAIN47/876 checkpoint policy_kwargs: entity and upper both width256/layers4/heads8",
@@ -3130,6 +3130,47 @@
     "oom_caps": "phase-scoped",
     "search_qualified": false,
     "continuous": true,
-    "later_stage_learning_rate": "not separately tuned; revisit after warmup"
+    "later_stage_learning_rate": "not separately tuned; revisit after warmup",
+    "runtime_source": "0db1b160",
+    "source_archive_sha256": "209fb1172c3ef53c7f236c5d1b19e6ff981dd9f68ce2ab4d50a19b835d246eea",
+    "initial_model_sha256": "a894ecff82c0fc519048aa9e643b4d6f35c0c9f8a9436353314cbb58ed04718a",
+    "total_parameters": 7140597,
+    "context_parameters": 3285888,
+    "combat_parameters": 412339,
+    "anchor_parameters": 171649,
+    "production_acceptance": {
+      "rounds": [
+        1,
+        2
+      ],
+      "global_step": 1572864,
+      "all_four_policy_and_adam_equal": true,
+      "all_manifest_files_verified": true,
+      "all_four_alive_next_round": true,
+      "policy_sha256": "7c927796bc4e06600b193620102ee3a187a1f4ab022b4de2eeb7c76846471e02",
+      "adam_sha256": "f26c9b0285b0c2f3d964ed5b12ff49a8778ab03b8c45dc535d61828be240015e",
+      "rollout_sec_max": [
+        89.5854171756655,
+        89.32670942111872
+      ],
+      "update_sec_max": [
+        80.49422726035118,
+        77.24208707781509
+      ],
+      "iteration_wall_sec_max": [
+        165.39478095294908,
+        164.07273368537426
+      ],
+      "oom_retries": 0,
+      "learning_rate": 9.999999747378752e-05,
+      "approx_kl": [
+        0.0009223818002889553,
+        0.0007288663958509763
+      ],
+      "clip_fraction": [
+        0.006374359130859375,
+        0.005441029866536458
+      ]
+    }
   }
 }
