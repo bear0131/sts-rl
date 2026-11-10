@@ -437,6 +437,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
         if issubclass(self.policy_class, SharedWholeRunPolicy):
             from rl.algorithms.shared_buffer import SharedRolloutBuffer
             self.rollout_buffer_class = SharedRolloutBuffer
+        from rl.policies.deck_latent import DeckLatentPolicy
+        if issubclass(self.policy_class, DeckLatentPolicy):
+            from rl.algorithms.search_auxiliary import SearchRolloutBuffer
+            self.rollout_buffer_class = SearchRolloutBuffer
         super()._setup_model()
         from env.core.encode import OBS_VERSION
         self.observation_version = OBS_VERSION
@@ -1035,8 +1039,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
         collection_graphs = None
         host_observation_hook = None
+        shadow_search = None
         result = False
         try:
+            if getattr(self, 'deck_search_config', None) is not None:
+                from rl.algorithms.deck_search import ShadowSearchCollection
+                shadow_search = ShadowSearchCollection(self, env, rollout_buffer).start()
             if (pure_ppo and self.device.type == 'cuda' and self.amp_mode == 'off'
                     and getattr(self.policy.core, 'collection_graphs_supported', True)):
                 from rl.policies.collection_graphs import SharedCollectionGraphs
@@ -1073,6 +1081,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         env, callback, rollout_buffer, n_rollout_steps, use_masking
                     )
         finally:
+            if shadow_search is not None:
+                shadow_search.close()
             if host_observation_hook is not None:
                 host_observation_hook.remove()
             if collection_graphs is not None:

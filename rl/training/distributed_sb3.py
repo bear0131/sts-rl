@@ -1180,7 +1180,7 @@ def logger_scalars(model: AccumulatingMaskablePPO) -> dict[str, float]:
     scalars = {}
     for key, value in model.logger.name_to_value.items():
         if key.startswith((
-            "game/", "boss/", "upper/", "rollout/", "speed/", "hierarchical/", "nosl_is_az/", "outer_return/", "frozen_upper/", "pure_rl/"
+            "game/", "boss/", "upper/", "rollout/", "speed/", "hierarchical/", "nosl_is_az/", "outer_return/", "frozen_upper/", "pure_rl/", "deck_search/"
         )):
             if isinstance(value, np.generic):
                 value = value.item()
@@ -3939,7 +3939,7 @@ def main() -> None:
             })
             if model.nosl_supervision_contract == 'shared-wholerun-ppo-room-v1':
                 aggregate_scalars.update({key: value for key, value in callback_scalars.items()
-                                          if key.startswith('pure_rl/')})
+                                          if key.startswith(('pure_rl/', 'deck_search/'))})
             if getattr(model, '_frozen_upper', False):
                 model.policy.core.teacher.assert_integrity()
                 aggregate_scalars.update({key: value for key, value in callback_scalars.items()
@@ -4232,7 +4232,7 @@ def main() -> None:
                     for key in ('upper/effective_batch_size_global', 'upper/micro_batch_size'):
                         wandb_payload[key] = record[key]
                 wandb_payload.update({key: value for key, value in record.items()
-                                      if key.startswith(('outer_return/', 'frozen_upper/', 'pure_rl/'))})
+                                      if key.startswith(('outer_return/', 'frozen_upper/', 'pure_rl/', 'deck_search/'))})
                 if pure_ppo and 'completed_full_games_global' in record:
                     wandb_payload['game/completed_full_games_global'] = record['completed_full_games_global']
                 wandb_payload.update({

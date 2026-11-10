@@ -22,6 +22,7 @@ class _NativeStepPipe:
         self.native = None
         self.memory = None
         self.closed = False
+        self.deck_search = None
 
     def send(self, x):
         self.remote.send(x)
@@ -64,6 +65,11 @@ class _NativeStepPipe:
                 obs = self.native.reset()
                 self.write(obs)
                 self.remote.send([(None, i) for i in self.native.reset_infos])
+            elif cmd == 'deck_shadow_search':
+                if self.deck_search is None:
+                    from rl.training.deck_search_worker import DeckSearchWorker
+                    self.deck_search = DeckSearchWorker(self.envs)
+                self.remote.send(self.deck_search.run(data))
             else:
                 return (cmd, data)
 
@@ -117,6 +123,32 @@ class NativeSubprocVecEnv(cv.GroupedCachedMaskSubprocVecEnv):
         # SB3 retains the previous observation until after step_wait. Returning
         # views would silently overwrite its training sample on the next step.
         return {k: v.copy() for k, v in self.arrays.items()}
+
+    def deck_shadow_search(self, request):
+        """Search live roots before the already-sampled real actions advance."""
+        if self.waiting:
+            raise RuntimeError('cannot fork shadow roots while real transitions are in flight')
+        positions = {index: j for j, index in enumerate(request['indices'])}
+        pending, selected = {}, {}
+        for group_index, group in enumerate(self._groups):
+            local = [j for j, i in enumerate(group) if i in positions]
+            if not local:
+                continue
+            rows = [positions[group[j]] for j in local]
+            call = dict(request, indices=local, budgets=[request['budgets'][j] for j in rows],
+                context=tuple(array[rows] for array in request['context']),
+                seed=int(np.random.SeedSequence([request['seed'], group_index]).generate_state(1, dtype=np.uint64)[0]))
+            self.remotes[group_index].send(('deck_shadow_search', call))
+            pending[self.remotes[group_index]] = group_index
+            selected[group_index] = rows
+        responses = self._receive_groups(pending)
+        results, totals = [None] * len(positions), {}
+        for group_index, (group_results, stats) in responses.items():
+            for row, result in zip(selected[group_index], group_results, strict=True):
+                results[row] = result
+            for key, value in stats.items():
+                totals[key] = totals.get(key, 0.) + value
+        return results, totals
 
     def _receive_groups(self, pending):
         if os.name != 'posix':

@@ -128,5 +128,7 @@ def apply_room_returns(model, buffer):
     model.logger.record('pure_rl/room_lambda', model.policy.room_lambda)
     model.logger.record('pure_rl/in_room_edges', int((lambdas == 1).sum()))
     model.logger.record('pure_rl/boundary_edges', int(((lambdas > 0) & (lambdas < 1)).sum()))
-    model.logger.record('pure_rl/search_simulations', 0)
+    model.logger.record('pure_rl/search_simulations',
+        getattr(model, 'deck_search_last_stats', {}).get('chains', 0)
+        if getattr(model, 'deck_search_config', None) is not None else 0)
     model.logger.record('pure_rl/return_version', 2 if anchored else 1)

@@ -133,7 +133,9 @@ def test_duplicate_context_gradients_equal_full_recomputation(latent_env):
             torch.testing.assert_close(x, y, atol=3e-5, rtol=1e-3)
 
 
-def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path):
+@pytest.mark.parametrize('search', [False, True])
+@pytest.mark.parametrize('transport', ['dummy', 'native-subproc'])
+def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, transport):
     from gymnasium.wrappers import TimeLimit
     from stable_baselines3.common.vec_env import DummyVecEnv
     from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
@@ -148,19 +150,40 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path):
             card_language=True, global_map_view=True, upper_public_context=True,
             event_option_observation=True, combat_action_contract='autoregressive-v2',
             combat_exit_anchor=True, reward_flow='sequential-v1', deck_latent_context=True)), 6000))
-    env = DummyVecEnv([factory, factory])
+    def vector():
+        if transport == 'dummy':
+            return DummyVecEnv([factory, factory])
+        from rl.training.native_subproc_vec_env import NativeSubprocVecEnv
+        return NativeSubprocVecEnv([factory, factory], envs_per_worker=1, start_method='spawn')
+    env = vector()
     model = AccumulatingMaskablePPO(DeckLatentPolicy, env, seed=20261111,
         n_steps=32, batch_size=32, n_epochs=1, device='cpu', gamma=1., gae_lambda=1.,
         learning_rate=5e-5, reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
         policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=1., reward_flow='sequential-v1'))
     configure_packed_updates(model, dict(token_budget=1024, max_rows=8, precision='fp32'))
+    if search:
+        from dataclasses import asdict
+        from rl.algorithms.search_auxiliary import SearchTrainingConfig
+        model.policy.combat_value_target = 'pre-reward-anchor'
+        model.policy_kwargs['combat_value_target'] = 'pre-reward-anchor'
+        model.deck_search_config = asdict(SearchTrainingConfig(fraction=1., normal_budget=2,
+            boss_budget=2, max_depth=2, max_active=16, timeout_seconds=30.))
+        model.deck_search_snapshot_dir = str(tmp_path / 'weights')
     model.learn(128)
     assert model.num_timesteps == 128
+    if search:
+        assert model.deck_search_last_stats['searched_roots'] > 0
+        assert len(model.rollout_buffer.search_targets) > 0
+        assert model._deck_search_loss_normalization > 0
+        assert model.deck_search_last_stats['atomic_steps'] > model.deck_search_last_stats['searched_roots']
     source = save_bundle(model, tmp_path/'first', rank=0, world_size=1, run_id='deck-latent-test',
                          wandb_id=None, config={'ascension': 0})
     loaded = load_checkpoint(source/'model.zip', device='cpu')
     assert isinstance(loaded.policy, DeckLatentPolicy)
-    target = DummyVecEnv([factory, factory])
+    if search:
+        assert loaded.deck_search_config == model.deck_search_config
+        assert loaded.deck_search_rng == model.deck_search_rng
+    target = vector()
     restored = AccumulatingMaskablePPO.load(source/'model.zip', env=target, device='cpu')
     restored._setup_learn(64, reset_num_timesteps=False)
     restore_learner(restored, source, rank=0, world_size=1)
@@ -215,3 +238,46 @@ def test_paired_shadow_search_batches_real_anchors_without_mutating_root(latent_
         policy.core.combat.end.bias.add_(.1)
     with pytest.raises(RuntimeError, match='weights changed'):
         scorer([])
+
+
+def test_shadow_teaching_preserves_real_actions_rewards_and_sampling_rng():
+    from dataclasses import asdict
+    from stable_baselines3.common.vec_env import DummyVecEnv
+    from stable_baselines3.common.callbacks import BaseCallback
+    from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+    from rl.algorithms.packed_ppo import configure_packed_updates
+    from rl.algorithms.search_auxiliary import SearchTrainingConfig
+    from rl.training.reward import StrategicRewardWrapper
+
+    class Capture(BaseCallback):
+        def _on_step(self):
+            return True
+        def _on_rollout_end(self):
+            self.actions = self.model.rollout_buffer.actions.copy()
+            self.rewards = self.model.rollout_buffer.rewards.copy()
+            self.rng = torch.get_rng_state().clone()
+
+    captures = []
+    for searched in (False, True):
+        env = DummyVecEnv([lambda: StrategicRewardWrapper(SlayTheSpireEnv(
+            card_language=True, global_map_view=True, upper_public_context=True,
+            event_option_observation=True, combat_action_contract='autoregressive-v2',
+            combat_exit_anchor=True, reward_flow='sequential-v1', deck_latent_context=True))])
+        model = AccumulatingMaskablePPO(DeckLatentPolicy, env, seed=20261111,
+            n_steps=24, batch_size=24, n_epochs=1, device='cpu', gamma=1., gae_lambda=1.,
+            learning_rate=5e-5, reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
+            policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
+                reward_flow='sequential-v1', combat_value_target='pre-reward-anchor'))
+        configure_packed_updates(model, dict(token_budget=1024, max_rows=8, precision='fp32'))
+        if searched:
+            model.deck_search_config = asdict(SearchTrainingConfig(fraction=1., normal_budget=2,
+                boss_budget=2, max_depth=2, max_active=16, timeout_seconds=30.))
+        callback = Capture()
+        model.learn(24, callback=callback)
+        if searched:
+            assert model.deck_search_last_stats['searched_roots'] > 0
+        captures.append(callback)
+        env.close()
+    np.testing.assert_array_equal(captures[0].actions, captures[1].actions)
+    np.testing.assert_array_equal(captures[0].rewards, captures[1].rewards)
+    torch.testing.assert_close(captures[0].rng, captures[1].rng, rtol=0, atol=0)

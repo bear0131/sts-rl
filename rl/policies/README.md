@@ -67,11 +67,24 @@ counter changes replace old contributions; nonlinear context mixing and count
 normalization happen afterwards. A fork clones only the small accumulators.
 It does not serialize simulator state, masks, hidden order or pending actions.
 Exact entities/physical slots remain in the action head. Pooling is learned,
-lossy compression. Native event emission and CPU export are a subsequent
-integration boundary, not a demonstrated performance result of this reference.
+lossy compression. `export_inference_tables` exports frozen CPU contributions;
+`ResidentCombatSummary` consumes signed per-card/relic events. The search adapter
+currently detects changes from complete observations; direct native event
+emission remains a separate integration boundary, without a speed claim.
 
 The initial tested path is FP32 eager collection/update, native Gym reference
 observations, packed PPO and full checkpoint/Adam/environment restoration.
 Anchor predictions consume branch player HP/maxHP (not stale run_hp), live
-resources and cached run context, and never reward-page offers. Search auxiliary
-training and the readiness stage controller are not yet connected here.
+resources and cached run context, and never reward-page offers.
+
+`rl.algorithms.deck_search.ShadowSearchCollection` adds paired-chain teaching
+to the existing PPO collection/update lifecycle. It requires an explicit
+`SearchTrainingConfig`, pre-reward-anchor returns and packed FP32 PPO. Both
+resident Gym and native-subproc transports are supported; workers read one
+frozen mmap weight snapshot and receive preprojected root context. True PPO
+actions/rewards/RNG are preserved, search targets stay in a separate buffer,
+and auxiliary KL is normalized over searched rows across the original global
+optimizer batch before physical splitting. No extra Adam steps or simulated
+PPO rows are introduced. Config and independent search RNG survive saving.
+Readiness-based stage scheduling is a separate deployment step; setting up a
+search-capable checkpoint does not itself authorize switching a live run.

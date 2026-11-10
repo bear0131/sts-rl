@@ -137,6 +137,8 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
     result = dict(losses=[],metrics=[],optimizer_steps=0,backward_sec=0.,optimizer_step_sec=0.,
                   sync_sec=0.,gradient_pack_sec=0.,sync_mbps=[],grad_bytes=0,overflow_retries=0)
     for batch in model.rollout_buffer.get(effective):
+        from rl.algorithms.search_auxiliary import prepare_search_batch
+        prepare_search_batch(model, batch, average)
         _sync_device(model)
         started = time.perf_counter()
         chunks = list(packed_chunks(model, batch, config))

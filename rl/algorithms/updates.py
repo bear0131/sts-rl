@@ -22,7 +22,16 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
         actions = actions.long().flatten()
     with model.autocast_context():
         values, log_prob, entropy = model.policy.evaluate_actions(
-            observations, actions, action_masks=select(batch.action_masks))
+            {k: v for k, v in observations.items() if not k.startswith('_search_')},
+            actions, action_masks=select(batch.action_masks))
+        search_loss = None
+        if getattr(model, 'deck_search_config', None) is not None:
+            from rl.algorithms.search_auxiliary import auxiliary_loss
+            # evaluate_actions leaves the exact masked distribution; reuse its
+            # graph rather than forwarding the large context encoder twice.
+            search_loss = auxiliary_loss(model, observations,
+                model.policy.action_dist.distribution.logits,
+                select(batch.action_masks).bool())
     if after_forward is not None:
         after_forward(observations)
     components = ppo_loss_components(
@@ -37,6 +46,8 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
         skip_combat=bool(getattr(model, 'nosl_is_az', False)),
         normalization_group_size=getattr(model.policy, 'ppo_advantage_group_size', None))
     loss = components.policy_loss + model.ent_coef * components.entropy_loss + model.vf_coef * components.value_loss
+    if search_loss is not None:
+        loss = loss + search_loss
     return components, loss
 
 
