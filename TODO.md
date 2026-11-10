@@ -678,4 +678,4 @@
 
 - **PURE-RL-C45-MICROBATCH** — 已完成并续训。固定1320模型/Adam/786432优势统计、同196608行10次更新：13万token比6.5万三次均值18.390→15.050秒，FP32权重差≤1.1921e-7；采用max8192配置。四机1321–1325完整通过，1321/1322权重+Adam一致、0OOM，49152/16Adam/LR5e-5不变；热态更新25.663→20.614秒，整轮47.825→44.369秒（前30轮vs后4轮）。原run无限续训，监控连续；适用packed_ppo/distributed launcher。证据见worklog/2026-11-10.md#pure-rl-c45-microbatch固定有效批次扩大物理批并恢复训练。
 
-- **SEARCH-CHAIN-INTELLIGENCE** — 进行中。冻结COMBAT38共享链模型/固定战斗局面，消融网络直接决策、共享链与链内guide，独立未来验证及实例解释；不改COMBAT45训练。适用rl/evaluation、rl/search/paired_token_rollout、sim/sts_lightspeed搜索；验收固定预算/真实结果、随机性和统计局限、可复查动作实例。
+- **SEARCH-CHAIN-INTELLIGENCE** — 已完成本轮诊断。按用户追加问题优先验证Boss开局的胜利叶子供给：冻结COMBAT38第226轮，20固定游戏的58开局，各64次guide-only/均匀随机、16次1000链搜索、256独立世界/根动作及两个困难局1024次补测，四条完整胜链逐动作重放。多数开局guide足以提供胜利；11HP铜制机械人存在全零盲区，不能推出不可胜。适用rl/evaluation、rl/search/paired_token_rollout、sim/sts_lightspeed搜索；见worklog/2026-11-10.md的SEARCH-CHAIN-INTELLIGENCE小节与原始证据。仅开局条件能力和第一动作留出诊断，不声称全程闭环搜索的因果胜率收益；COMBAT45未修改。
