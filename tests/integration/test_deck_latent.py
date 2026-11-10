@@ -135,8 +135,8 @@ def test_duplicate_context_gradients_equal_full_recomputation(latent_env):
 
 @pytest.mark.parametrize('search', [False, True])
 @pytest.mark.parametrize('transport', ['dummy', 'native-subproc'])
-@pytest.mark.parametrize('context_replay', [False, True])
-def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, transport, context_replay):
+@pytest.mark.parametrize('context_mode', ['off', 'replay', 'grouped'])
+def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, transport, context_mode):
     from gymnasium.wrappers import TimeLimit
     from stable_baselines3.common.vec_env import DummyVecEnv
     from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
@@ -162,7 +162,8 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         learning_rate=5e-5, reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
         policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=1., reward_flow='sequential-v1'))
     configure_packed_updates(model, dict(token_budget=1024, max_rows=8, precision='fp32',
-                                        context_gradient_replay=context_replay))
+                                        context_gradient_replay=context_mode == 'replay',
+                                        context_grouping=context_mode == 'grouped'))
     if search:
         from dataclasses import asdict
         from rl.algorithms.search_auxiliary import SearchTrainingConfig
@@ -182,7 +183,8 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
                          wandb_id=None, config={'ascension': 0})
     loaded = load_checkpoint(source/'model.zip', device='cpu')
     assert isinstance(loaded.policy, DeckLatentPolicy)
-    assert loaded.ppo_update_config['context_gradient_replay'] == context_replay
+    assert loaded.ppo_update_config['context_gradient_replay'] == (context_mode == 'replay')
+    assert loaded.ppo_update_config['context_grouping'] == (context_mode == 'grouped')
     if search:
         assert loaded.deck_search_config == model.deck_search_config
         assert loaded.deck_search_rng == model.deck_search_rng
@@ -428,14 +430,15 @@ def test_ppo_context_adjoint_retry_does_not_double_count_samples(latent_env, tmp
     outputs = []
     injected = []
     original_init = ContextGradientBatch.__init__
-    for mode in ('reference', 'replay', 'retry'):
+    for mode in ('reference', 'replay', 'grouped', 'retry'):
         model = AccumulatingMaskablePPO.load(tmp_path/'source.zip', device='cpu')
         model.rollout_buffer = deepcopy(source.rollout_buffer)
         model.set_logger(configure(folder=None, format_strings=[]))
         model.policy.set_training_mode(True)
         configure_advantage_normalization(model, 'rollout'); prepare_advantage_normalization(model)
         configure_packed_updates(model, dict(token_budget=1024, max_rows=8,
-                                            context_gradient_replay=mode != 'reference'))
+                                            context_gradient_replay=mode in ('replay', 'retry'),
+                                            context_grouping=mode == 'grouped'))
         model._ppo_update_metric_sums = None; model._ppo_update_metric_count = 0
         np.random.set_state(source_rng)
         if mode == 'retry':

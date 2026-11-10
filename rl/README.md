@@ -947,3 +947,10 @@ FP32 packed PPO 配置 `context_gradient_replay=true` 仅支持 DeckLatentPolicy
 前向/反向 OOM 缩块重试，失败的局部参数及 latent 梯度不重复计入。
 旧配置默认关闭，旧模型加载/推理不变。指标 context_input_rows/context_unique_rows
 为每轮实际 Adam 输入行与唯一构筑上下文行，不能当作环境 transition 或搜索叶子。
+
+
+同一配置的context_grouping=true将相同静态上下文的样本尽量放在一起，
+先在原始Adam组上比较完整key，生成仅该组有效的整数ID。后续物理分块只需
+比较这些ID，大编码器在每块内保留普通可微去重；无需latent重算反向。
+分phase及原优势统计保持，长度上界取整块最大值。两个选项默认均关闭，
+可以独立比较；不能把重排/不同矩阵形状声称为逐位等价。

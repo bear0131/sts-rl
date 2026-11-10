@@ -18,6 +18,7 @@ class PackedPPOConfig:
     max_rows: int
     precision: str = 'fp32'
     context_gradient_replay: bool = False
+    context_grouping: bool = False
 
     def __post_init__(self):
         if (type(self.token_budget) is not int or type(self.max_rows) is not int
@@ -27,6 +28,8 @@ class PackedPPOConfig:
             raise ValueError('packed PPO precision must be fp32 or fp16')
         if type(self.context_gradient_replay) is not bool:
             raise ValueError('context_gradient_replay must be boolean')
+        if type(self.context_grouping) is not bool:
+            raise ValueError('context_grouping must be boolean')
 
 
 def configure_packed_updates(model, configuration=None):
@@ -46,10 +49,10 @@ def configure_packed_updates(model, configuration=None):
         return None
     config = (configuration if isinstance(configuration, PackedPPOConfig)
               else PackedPPOConfig(**configuration))
-    if config.context_gradient_replay:
+    if config.context_gradient_replay or config.context_grouping:
         from rl.policies.deck_latent import DeckLatentPolicy
         if not isinstance(model.policy, DeckLatentPolicy) or config.precision != 'fp32':
-            raise ValueError('context gradient replay requires FP32 deck-latent PPO')
+            raise ValueError('context batch optimization requires FP32 deck-latent PPO')
     if (not isinstance(model.policy, SharedWholeRunPolicy)
             or model.nosl_is_az or model.hierarchical_combat_hp
             or getattr(model, 'reasoning_updates', 0) or model.target_kl is not None
@@ -97,7 +100,11 @@ def packed_chunks(model, batch, config):
     width = torch.where(combat, model.policy.core.combat.training_token_counts(obs), width)
     kind = torch.where(combat, 0, torch.where(selection, 1, 2))
     host = torch.stack((kind, width)).cpu().numpy()
-    order = np.lexsort((host[1], host[0]))
+    if config.context_grouping:
+        context = obs['_deck_context_index'].cpu().numpy()
+        order = np.lexsort((host[1], context, host[0]))
+    else:
+        order = np.lexsort((host[1], host[0]))
     index = torch.as_tensor(order, device=model.device)
     ordered = _select(batch, index)
     normalized = advantages[index]
@@ -108,7 +115,7 @@ def packed_chunks(model, batch, config):
         other = np.flatnonzero(lengths[0, start:end] != lengths[0, start])
         if len(other):
             end = start + int(other[0])
-        end = min(end, start + max(1, config.token_budget // int(lengths[1, end - 1])))
+        end = min(end, start + max(1, config.token_budget // int(lengths[1, start:end].max())))
         yield _select(ordered, slice(start, end)), normalized[start:end], (end - start) / total
         start = end
 
@@ -193,6 +200,9 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
             result['context_input_rows'] += replay.input_rows
             result['context_unique_rows'] += replay.unique_rows
             result['context_oom_retries'] += replay.oom_retries
+        elif config.context_grouping:
+            result['context_input_rows'] += len(batch.advantages)
+            result['context_unique_rows'] += int(context_batch.observations['_deck_context_index'].max()) + 1
         _sync_device(model)
         result['backward_sec'] += time.perf_counter() - started
         if synchronize is not None:

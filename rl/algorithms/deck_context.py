@@ -118,7 +118,17 @@ class ContextGradientBatch:
 @contextmanager
 def context_gradient_batch(model, batch, config):
     if not config.context_gradient_replay:
-        yield batch, None
+        if config.context_grouping:
+            core = model.policy.core
+            # These integer identities are valid only inside this original
+            # optimizer batch, and travel with rows through every permutation.
+            keys = core.context.key_tensor(batch.observations)
+            _, inverse = torch.unique(keys, dim=0, return_inverse=True)
+            observations = dict(batch.observations, **{CONTEXT_INDEX: inverse})
+            data = batch._asdict() if hasattr(batch, '_asdict') else vars(batch)
+            yield type(batch)(**dict(data, observations=observations)), None
+        else:
+            yield batch, None
         return
     core = model.policy.core
     if getattr(core, '_context_gradient_batch', None) is not None:

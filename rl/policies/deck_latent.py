@@ -202,7 +202,11 @@ class DeckLatentCore(SharedWholeRunCore):
             if '_deck_context_index' not in obs:
                 raise RuntimeError('context gradient replay lost the original row mapping')
             return replay.latents[obs['_deck_context_index'].long().flatten()]
-        keys = self.context.key_tensor(obs)
+        # The learner has already compared complete static keys once for this
+        # Adam batch. Reuse its row identities instead of sorting wide keys in
+        # every physical chunk; never use these local IDs for inference caches.
+        keys = (obs['_deck_context_index'][:, None] if self.training and '_deck_context_index' in obs
+                else self.context.key_tensor(obs))
         if self.training or torch.is_grad_enabled():
             self._context_cache = None
             return self._encode_unique(obs, keys)
