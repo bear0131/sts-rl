@@ -3306,7 +3306,7 @@
     "restart_reference": "references/before-large-fast-restart/rankN/step-000014548992"
   },
   "deck_latent_fast_restart": {
-    "status": "paused-round11-for-bounded-512x8-update-study",
+    "status": "paused-round11-handed-off-update50",
     "plan": "docs/2026-11-11/deck-latent-fast-restart.md",
     "root": "/root/autodl-tmp/combat49-deck-latent512-t64x2-20261111",
     "run_id": "combat49-deck-latent512-t64x2-ppo-search-r1",
@@ -3527,7 +3527,7 @@
       "evidence": "runs/local/combat49-update-20261111/"
     },
     "update2_study": {
-      "status": "running-bounded-experiment",
+      "status": "finished-experiments-candidate-not-deployed-handoff",
       "protected_round": 11,
       "protected_global_step": 8650752,
       "reference": "references/before-update2-512/rankN/step-000008650752",
@@ -3544,7 +3544,34 @@
         "both",
         "both with upper screen physical rows384"
       ],
-      "promotion": "same-buffer gradient/parameter/Adam tolerances and complete-update speed; ordinary resume from protected state, never experiment weights"
+      "promotion": "same-buffer gradient/parameter/Adam tolerances and complete-update speed; ordinary resume from protected state, never experiment weights",
+      "handoff": "docs/2026-11-11/combat49-update-50s.md",
+      "target_update_seconds": 50,
+      "target_scope": "maximum full update_sec across four ranks, including sync and waits",
+      "runtime_unchanged": "a3ec30f8",
+      "all_experiment_processes_exited": true,
+      "exit_codes": [
+        1,
+        0,
+        0,
+        1
+      ],
+      "preserved_result": {
+        "rank": 2,
+        "baseline_seconds": 100.02160182967782,
+        "candidate_seconds": 79.51415844075382,
+        "baseline_repeat_seconds": 102.08488373085856,
+        "reduction_percent": 20.50301436268256,
+        "candidate": "compact masked context tokens plus final global query only",
+        "numeric_checks_passed": true,
+        "production_verified": false
+      },
+      "pending": [
+        "rank0/rank3 baseline-repeat parameter/Adam assertion diagnosis",
+        "committed candidate CUDA and complete update qualification",
+        "same-run protected round11 recovery and two four-rank production rounds",
+        "full update <=50s target"
+      ]
     }
   }
 }

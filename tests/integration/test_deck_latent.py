@@ -119,6 +119,53 @@ def test_anchor_uses_branch_hp_and_ignores_unrevealed_rewards(latent_env):
         assert not logits.any()
 
 
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+@pytest.mark.parametrize('pattern', ['holes', 'global_only', 'all_present'])
+def test_context_padding_compaction_preserves_output_and_gradients(latent_env, device, pattern):
+    if device == 'cuda':
+        assert torch.cuda.is_available(), 'explicit CUDA context qualification required'
+    torch.manual_seed(20261111)
+    policy = DeckLatentPolicy(latent_env.observation_space, latent_env.action_space, lambda _: 5e-5,
+        d_model=32, n_layers=2, n_heads=4, room_lambda=1., reward_flow='sequential-v1').to(device)
+    actual = policy.core.context.train()
+    reference = deepcopy(actual).train()
+    mask = torch.zeros(3, 24, dtype=torch.bool, device=device)
+    if pattern == 'holes':
+        mask[:, 16:] = True
+        mask[0, 1:15:2] = True
+        mask[1, 3:16:3] = True
+        mask[2, 1:] = True
+    elif pattern == 'global_only':
+        mask[:, 1:] = True
+    # Masked positions deliberately contain nonzero values; PAD identities
+    # alone must not be used to decide which queries can be removed.
+    x = torch.randn(3, 24, 32, device=device, requires_grad=True)
+    y = x.detach().clone().requires_grad_()
+    widths = []
+    hook = actual.transformer.layers[0].register_forward_pre_hook(
+        lambda _, args: widths.append(args[0].shape[1]))
+    try:
+        expected = reference.norm(reference.transformer(y, src_key_padding_mask=mask))[:, 0]
+        result = actual._pool_tokens(x, mask)
+        assert widths[-1] == int((~mask).sum(1).max())
+        torch.testing.assert_close(result, expected, rtol=2e-5, atol=2e-6)
+        weight = torch.randn_like(result)
+        (result * weight).mean().backward()
+        (expected * weight).mean().backward()
+        torch.testing.assert_close(x.grad, y.grad, rtol=3e-4, atol=2e-6)
+        for (name, parameter), (other_name, other) in zip(
+                actual.named_parameters(), reference.named_parameters(), strict=True):
+            assert name == other_name and (parameter.grad is None) == (other.grad is None)
+            if parameter.grad is not None:
+                torch.testing.assert_close(parameter.grad, other.grad, rtol=3e-4, atol=2e-6, msg=name)
+        actual.eval()
+        with torch.no_grad():
+            result = actual._pool_tokens(x.detach(), mask)
+        assert widths[-1] == 24  # fixed inference and collection-graph geometry
+    finally:
+        hook.remove()
+
+
 def test_duplicate_context_gradients_equal_full_recomputation(latent_env):
     core = policy_for(latent_env).core
     obs = tensor_obs(latent_env, 3)

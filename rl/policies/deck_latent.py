@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from env.core import encode, native_actions as C, vocab
 from rl.policies.combat_summary import AdditiveCombatInputs
@@ -75,7 +76,41 @@ class RunContextEncoder(nn.Module):
                           ids == 0, relic_ids == 0,
                           (rooms == 0) & ~features.any(-1)), 1)
         tokens = torch.cat([block + self.roles[i] for i, block in enumerate(blocks)], 1)
-        return self.norm(self.transformer(tokens, src_key_padding_mask=mask))[:, 0]
+        return self._pool_tokens(tokens, mask)
+
+    def _pool_tokens(self, tokens, mask):
+        if not self.training:
+            # Keep inference shapes and qualified collection graphs unchanged.
+            return self.norm(self.transformer(tokens, src_key_padding_mask=mask))[:, 0]
+        # Only the first (always present) query is consumed. Masked keys cannot
+        # affect it at any layer; their unused queries can be dropped. Public
+        # map coordinates stay in the features; retained role/order is stable.
+        width = int((~mask).sum(1).max().item())
+        positions = torch.argsort(mask.to(torch.int32), dim=1, stable=True)[:, :width]
+        tokens = tokens.gather(1, positions[:, :, None].expand(-1, -1, tokens.shape[-1]))
+        mask = mask.gather(1, positions)
+        bias = torch.zeros_like(mask, dtype=tokens.dtype).masked_fill(mask, float('-inf'))
+        x = tokens
+        for layer in self.transformer.layers[:-1]:
+            x = layer(x, src_key_padding_mask=bias)
+        # The final layer needs all keys/values, but only the global query and
+        # its feed-forward output. Parameter names, residuals and gradients stay
+        # those of the original pre-norm, zero-dropout Transformer.
+        layer = self.transformer.layers[-1]
+        attention = layer.self_attn
+        batch, length, width = x.shape
+        q, k, v = F.linear(layer.norm1(x), attention.in_proj_weight,
+            attention.in_proj_bias).reshape(batch, length, 3,
+                attention.num_heads, width // attention.num_heads).unbind(2)
+        attended = F.scaled_dot_product_attention(q[:, :1].transpose(1, 2),
+            k.transpose(1, 2), v.transpose(1, 2), attn_mask=bias[:, None, None, :], dropout_p=0.)
+        attended = attended.transpose(1, 2).reshape(batch, 1, width)
+        x = x[:, :1] + layer.dropout1(F.linear(attended, attention.out_proj.weight,
+                                               attention.out_proj.bias))
+        x = x + layer._ff_block(layer.norm2(x))
+        if self.transformer.norm is not None:
+            x = self.transformer.norm(x)
+        return self.norm(x)[:, 0]
 
 
 class ContextOverworldEncoder(SharedOverworldEncoder):
