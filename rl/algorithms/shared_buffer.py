@@ -80,12 +80,15 @@ class SharedRolloutBuffer(MaskableDictRolloutBuffer):
         self.pos += 1
         self.full = self.pos == self.buffer_size
 
-    def get(self, batch_size=None):
+    def get(self, batch_size=None, *, prefetch=False):
         assert self.full, 'rollout must be complete before updating'
         indices = np.random.permutation(self.buffer_size * self.n_envs)
         self.generator_ready = True
         if batch_size is None:
             batch_size = len(indices)
+        if prefetch and self.device.type == 'cuda':
+            yield from self._prefetched_samples(indices, batch_size)
+            return
         # Cache only this update's immutable dataset, never checkpoint or
         # cross-collection storage. Advanced-indexed samples still own data.
         arrays = [*self.observations.values(), self.actions, self.values,
@@ -106,6 +109,41 @@ class SharedRolloutBuffer(MaskableDictRolloutBuffer):
                 torch.cuda.empty_cache()
         for start in range(0, len(indices), batch_size):
             yield self._get_samples(indices[start:start + batch_size], device_storage=storage)
+
+    def _prefetched_samples(self, indices, batch_size):
+        """Overlap one host gather/transfer with consumption of the previous group."""
+        stream = torch.cuda.Stream(device=self.device)
+
+        def prepare(rows):
+            with torch.cuda.device(self.device), torch.cuda.stream(stream):
+                try:
+                    batch = self._get_samples(rows)
+                except torch.OutOfMemoryError:
+                    # Let the consumer finish its current group and release
+                    # activations before retrying these exact rows.
+                    return None
+                return batch, stream.record_event()
+
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix='ppo-prefetch') as worker:
+            pending = worker.submit(prepare, indices[:batch_size])
+            for start in range(0, len(indices), batch_size):
+                prepared = pending.result()
+                if prepared is None:
+                    for offset in range(start, len(indices), batch_size):
+                        yield self._get_samples(indices[offset:offset + batch_size])
+                    return
+                batch, ready = prepared
+                following = start + batch_size
+                if following < len(indices):
+                    pending = worker.submit(prepare, indices[following:following + batch_size])
+                consumer = torch.cuda.current_stream(self.device)
+                consumer.wait_event(ready)
+                for field in batch:
+                    tensors = field.values() if isinstance(field, dict) else (field,)
+                    for tensor in tensors:
+                        tensor.record_stream(consumer)
+                yield batch
+                del batch, prepared
 
     def _get_samples(self, batch_inds, env=None, *, device_storage=None):
         # SB3 swap_and_flatten enumerates environment first, then vector time.

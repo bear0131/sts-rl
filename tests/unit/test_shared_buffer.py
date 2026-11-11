@@ -1,4 +1,5 @@
 from copy import deepcopy
+from threading import current_thread
 
 import numpy as np
 import pytest
@@ -9,7 +10,8 @@ from sb3_contrib.common.maskable.buffers import MaskableDictRolloutBuffer
 from rl.algorithms.shared_buffer import SharedRolloutBuffer
 
 
-def assert_owned_storage_returns_and_env_major_shuffle(environments, batch_size, prefill, device='cpu'):
+def assert_owned_storage_returns_and_env_major_shuffle(environments, batch_size, prefill, device='cpu',
+                                                     prefetch=False):
     observation_space = spaces.Dict({
         'vector': spaces.Box(-10, 100, (2, 3), dtype=np.float32),
         'category': spaces.Discrete(9),
@@ -58,7 +60,8 @@ def assert_owned_storage_returns_and_env_major_shuffle(environments, batch_size,
         batches = []
         for buffer in buffers:
             np.random.seed(20261109 + iteration)
-            batches.append(list(buffer.get(batch_size)))
+            options = dict(prefetch=True) if buffer is fast and prefetch else {}
+            batches.append(list(buffer.get(batch_size, **options)))
         for expected, actual in zip(*batches, strict=True):
             for key in expected.observations:
                 torch.testing.assert_close(actual.observations[key], expected.observations[key],
@@ -82,6 +85,24 @@ def assert_owned_storage_returns_and_env_major_shuffle(environments, batch_size,
 @pytest.mark.parametrize('batch_size', [4, None])
 def test_owned_storage_returns_and_env_major_shuffle_match_sb3(environments, batch_size, prefill):
     assert_owned_storage_returns_and_env_major_shuffle(environments, batch_size, prefill)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='requires two CUDA streams')
+@pytest.mark.parametrize('fail_second_gather', [False, True])
+def test_prefetched_groups_preserve_shuffle_and_retry_the_unconsumed_group(monkeypatch, fail_second_gather):
+    original = SharedRolloutBuffer._get_samples
+    attempted = []
+
+    def get_samples(buffer, indices, *args, **kwargs):
+        if current_thread().name.startswith('ppo-prefetch'):
+            attempted.append(indices.copy())
+            if fail_second_gather and len(attempted) == 2:
+                raise torch.OutOfMemoryError('test pressure while preparing the second group')
+        return original(buffer, indices, *args, **kwargs)
+
+    monkeypatch.setattr(SharedRolloutBuffer, '_get_samples', get_samples)
+    assert_owned_storage_returns_and_env_major_shuffle(3, 4, True, 'cuda', prefetch=True)
+    assert len(attempted) >= 2
 
 
 def test_prefill_replacement_and_aborted_collection_do_not_reuse_old_observation():

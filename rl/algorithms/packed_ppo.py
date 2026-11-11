@@ -8,6 +8,7 @@ import torch
 
 from env.core import vocab
 from rl.algorithms.ppo import model_normalized_advantages, normalize_ppo_advantages
+from rl.algorithms.shared_buffer import SharedRolloutBuffer
 from rl.algorithms.updates import optimizer_step, ppo_chunked_backward
 from rl.policies.shared_wholerun import SharedWholeRunPolicy, SharedOverworldEncoder
 
@@ -22,6 +23,7 @@ class PackedPPOConfig:
     upper_screen_max_rows: int | None = None
     max_contexts_per_chunk: int | None = None
     direct_masked_categorical: bool = False
+    prefetch_groups: bool = False
 
     def __post_init__(self):
         if (type(self.token_budget) is not int or type(self.max_rows) is not int
@@ -43,6 +45,8 @@ class PackedPPOConfig:
             raise ValueError('context_grouping must be boolean')
         if type(self.direct_masked_categorical) is not bool:
             raise ValueError('direct_masked_categorical must be boolean')
+        if type(self.prefetch_groups) is not bool:
+            raise ValueError('prefetch_groups must be boolean')
 
 
 def configure_packed_updates(model, configuration=None):
@@ -76,6 +80,8 @@ def configure_packed_updates(model, configuration=None):
     model.ppo_update_config = asdict(config)
     if not config.direct_masked_categorical:
         model.ppo_update_config.pop('direct_masked_categorical')
+    if not config.prefetch_groups:
+        model.ppo_update_config.pop('prefetch_groups')
     if config.max_contexts_per_chunk is None:
         model.ppo_update_config.pop('max_contexts_per_chunk')
     if config.upper_screen_max_rows is None:
@@ -205,80 +211,90 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
     chunk_options = {} if after_physical_chunk is None else dict(after_physical_chunk=after_physical_chunk)
     if config.direct_masked_categorical:
         chunk_options['direct_masked_categorical'] = True
-    for batch in model.rollout_buffer.get(effective):
-        from rl.algorithms.search_auxiliary import prepare_search_batch
-        prepare_search_batch(model, batch, average)
-        _sync_device(model)
-        started = time.perf_counter()
-        from rl.algorithms.deck_context import context_gradient_batch
-        with context_gradient_batch(model, batch, config) as (context_batch, replay):
-            chunks = list(packed_chunks(model, context_batch, config))
-            previous = getattr(model, '_ppo_update_metric_sums', None)
-            previous = None if previous is None else previous.clone()
-            count = getattr(model, '_ppo_update_metric_count', 0)
-            stats = dict(getattr(model, '_ppo_microbatch_stats', {}))
-            for retry in range(17):
-                model.policy.optimizer.zero_grad()
-                if replay is not None:
-                    replay.reset_gradient()
-                loss = 0.
-                # Optional experimental scheduler sees only complete physical chunks
-                # inside this Adam group. Its iterator resumes after each successful
-                # transactional backward and must drain before the finite collective.
-                scheduled = chunks if schedule_chunks is None else schedule_chunks(chunks)
-                for chunk, advantages, weight, oom_group in scheduled:
-                    loss += weight * ppo_chunked_backward(model, chunk, clip_range, clip_range_vf,
-                        pre_normalized_advantages=advantages, backward_scale=scale * weight,
-                        oom_group=oom_group, **chunk_options)
-                if replay is not None:
-                    replay.backward()
-                grads = [p.grad for p in model.policy.parameters() if p.grad is not None]
-                if scale != 1:
-                    torch._foreach_mul_(grads, 1 / scale)
-                finite = bool(torch.stack([torch.isfinite(g).all() for g in grads]).all().item())
-                finite = finite and math.isfinite(loss)
-                bad = float(not finite)
-                if average is not None:
-                    bad = average(dict(nonfinite=bad))['nonfinite']
-                if not bad:
-                    break
-                # Failed attempts may have committed several chunks' diagnostics.
-                # Restore sample metrics along with gradients; retain OOM counters.
-                model._ppo_update_metric_sums = None if previous is None else previous.clone()
-                model._ppo_update_metric_count = count
-                current = model._ppo_microbatch_stats
-                for name in ('chunks', 'rows', 'min_rows', 'max_rows'):
-                    current[name] = stats.get(name, len(batch.advantages) if name == 'min_rows' else 0)
-                model.policy.optimizer.zero_grad()
-                if config.precision != 'fp16' or scale <= 1 or retry == 16:
-                    raise FloatingPointError('packed PPO gradients remain nonfinite; Adam was not advanced')
-                scale = max(1., scale / 2)
-                model.ppo_update_loss_scale = scale
-                result['overflow_retries'] += 1
-        if replay is not None:
-            result['context_input_rows'] += replay.input_rows
-            result['context_unique_rows'] += replay.unique_rows
-            result['context_oom_retries'] += replay.oom_retries
-        elif config.context_grouping:
-            result['context_input_rows'] += len(batch.advantages)
-            result['context_unique_rows'] += int(context_batch.observations['_deck_context_index'].max()) + 1
-        _sync_device(model)
-        result['backward_sec'] += time.perf_counter() - started
-        if synchronize is not None:
-            sync = synchronize(result['optimizer_steps'])
-            for name in ('sync_sec', 'gradient_pack_sec'):
-                result[name] += sync[name]
-            result['sync_mbps'].append(sync['sync_mbps'])
-            result['grad_bytes'] = int(sync['grad_bytes'])
-        _sync_device(model)
-        started = time.perf_counter()
-        optimizer_step(model)
-        _sync_device(model)
-        result['optimizer_step_sec'] += time.perf_counter() - started
-        sums = model._ppo_update_metric_sums
-        delta = sums if previous is None else sums - previous
-        result['metrics'].append((delta / (model._ppo_update_metric_count - count)).cpu().tolist())
-        result['losses'].append(loss)
-        result['optimizer_steps'] += 1
-        del chunks, batch, context_batch, replay
+    if config.prefetch_groups:
+        if not isinstance(model.rollout_buffer, SharedRolloutBuffer):
+            raise ValueError('packed group prefetch requires SharedRolloutBuffer')
+        batches = model.rollout_buffer.get(effective, prefetch=True)
+    else:
+        batches = model.rollout_buffer.get(effective)
+    try:
+        for batch in batches:
+            from rl.algorithms.search_auxiliary import prepare_search_batch
+            prepare_search_batch(model, batch, average)
+            _sync_device(model)
+            started = time.perf_counter()
+            from rl.algorithms.deck_context import context_gradient_batch
+            with context_gradient_batch(model, batch, config) as (context_batch, replay):
+                chunks = list(packed_chunks(model, context_batch, config))
+                previous = getattr(model, '_ppo_update_metric_sums', None)
+                previous = None if previous is None else previous.clone()
+                count = getattr(model, '_ppo_update_metric_count', 0)
+                stats = dict(getattr(model, '_ppo_microbatch_stats', {}))
+                for retry in range(17):
+                    model.policy.optimizer.zero_grad()
+                    if replay is not None:
+                        replay.reset_gradient()
+                    loss = 0.
+                    # Optional experimental scheduler sees only complete physical chunks
+                    # inside this Adam group. Its iterator resumes after each successful
+                    # transactional backward and must drain before the finite collective.
+                    scheduled = chunks if schedule_chunks is None else schedule_chunks(chunks)
+                    for chunk, advantages, weight, oom_group in scheduled:
+                        loss += weight * ppo_chunked_backward(model, chunk, clip_range, clip_range_vf,
+                            pre_normalized_advantages=advantages, backward_scale=scale * weight,
+                            oom_group=oom_group, **chunk_options)
+                    if replay is not None:
+                        replay.backward()
+                    grads = [p.grad for p in model.policy.parameters() if p.grad is not None]
+                    if scale != 1:
+                        torch._foreach_mul_(grads, 1 / scale)
+                    finite = bool(torch.stack([torch.isfinite(g).all() for g in grads]).all().item())
+                    finite = finite and math.isfinite(loss)
+                    bad = float(not finite)
+                    if average is not None:
+                        bad = average(dict(nonfinite=bad))['nonfinite']
+                    if not bad:
+                        break
+                    # Failed attempts may have committed several chunks' diagnostics.
+                    # Restore sample metrics along with gradients; retain OOM counters.
+                    model._ppo_update_metric_sums = None if previous is None else previous.clone()
+                    model._ppo_update_metric_count = count
+                    current = model._ppo_microbatch_stats
+                    for name in ('chunks', 'rows', 'min_rows', 'max_rows'):
+                        current[name] = stats.get(name, len(batch.advantages) if name == 'min_rows' else 0)
+                    model.policy.optimizer.zero_grad()
+                    if config.precision != 'fp16' or scale <= 1 or retry == 16:
+                        raise FloatingPointError('packed PPO gradients remain nonfinite; Adam was not advanced')
+                    scale = max(1., scale / 2)
+                    model.ppo_update_loss_scale = scale
+                    result['overflow_retries'] += 1
+            if replay is not None:
+                result['context_input_rows'] += replay.input_rows
+                result['context_unique_rows'] += replay.unique_rows
+                result['context_oom_retries'] += replay.oom_retries
+            elif config.context_grouping:
+                result['context_input_rows'] += len(batch.advantages)
+                result['context_unique_rows'] += int(context_batch.observations['_deck_context_index'].max()) + 1
+            _sync_device(model)
+            result['backward_sec'] += time.perf_counter() - started
+            if synchronize is not None:
+                sync = synchronize(result['optimizer_steps'])
+                for name in ('sync_sec', 'gradient_pack_sec'):
+                    result[name] += sync[name]
+                result['sync_mbps'].append(sync['sync_mbps'])
+                result['grad_bytes'] = int(sync['grad_bytes'])
+            _sync_device(model)
+            started = time.perf_counter()
+            optimizer_step(model)
+            _sync_device(model)
+            result['optimizer_step_sec'] += time.perf_counter() - started
+            sums = model._ppo_update_metric_sums
+            delta = sums if previous is None else sums - previous
+            result['metrics'].append((delta / (model._ppo_update_metric_count - count)).cpu().tolist())
+            result['losses'].append(loss)
+            result['optimizer_steps'] += 1
+            del chunks, batch, context_batch, replay
+    finally:
+        if config.prefetch_groups:
+            batches.close()
     return result

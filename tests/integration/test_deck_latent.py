@@ -184,7 +184,7 @@ def test_duplicate_context_gradients_equal_full_recomputation(latent_env):
 
 @pytest.mark.parametrize('search', [False, True])
 @pytest.mark.parametrize('transport', ['dummy', 'native-subproc'])
-@pytest.mark.parametrize('context_mode', ['off', 'replay', 'grouped', 'screens', 'context-limit', 'direct-mask'])
+@pytest.mark.parametrize('context_mode', ['off', 'replay', 'grouped', 'screens', 'context-limit', 'direct-mask', 'prefetch'])
 def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, transport, context_mode,
                                                        encoder='pooled-mlp'):
     from gymnasium.wrappers import TimeLimit
@@ -214,6 +214,7 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
                            deck_combat_encoder=encoder))
     configure_packed_updates(model, dict(token_budget=1024, max_rows=8, precision='fp32',
                                         direct_masked_categorical=context_mode == 'direct-mask',
+                                        prefetch_groups=context_mode == 'prefetch',
                                         context_gradient_replay=context_mode == 'replay',
                                         context_grouping=context_mode in ('grouped', 'screens', 'context-limit'),
                                         upper_screen_max_rows=4 if context_mode in ('screens', 'context-limit') else None,

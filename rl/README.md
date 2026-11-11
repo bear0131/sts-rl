@@ -977,6 +977,11 @@ FP32 DeckLatentPolicy 的 packed 配置可启用 `direct_masked_categorical`。�
 Adam 之前的全局有限值检查。带搜索监督的更新沿用策略分布对象，以便辅助损失
 读取同一组掩码 logits。该选项随 checkpoint 保存，旧配置默认关闭。
 
+使用 `SharedRolloutBuffer` 的 packed 更新可设置 `prefetch_groups`。CUDA
+学习器按原置换从主机提取下一组，在独立流上传输，消费流等待就绪后开始计算。
+这只需在显存中保留当前组和一个预取组。若预取遇到显存不足，学习器完成当前组后
+同步读取尚未消费的原组。CPU 使用原取批路径，旧配置默认关闭。
+
 Deck训练阶段配置可显式设置`anchor_start_round`，在指定已完成轮数后从预热切到
 战后锚点PPO。这是操作者决定，记录`configured-anchor-start`，不伪造准备度通过
 次数或覆盖验证结果；恢复后不重复重置适应期，也不能绕过搜索的资格开关。
