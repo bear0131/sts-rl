@@ -61,7 +61,22 @@ rank0/3均在最后基线复测完成16Adam后，于 `update2/bench.py:112` 的 
 
 ## 接续位置、恢复点和证据
 
-本次工作区是 `D:/sts-rl/runs/local/combat50-256x4-worktree`，本地分支 `codex/combat50-256x4` 名称来自被暂缓的缩模型要求；内容实际针对COMBAT49。已推送的接续分支为 `origin/codex/rollout-200s` 和 `origin/codex/upper-unified-420s`。原Windows rollout工作区仍有旧4008bbd7草稿，不要当作最新源。
+**接续不依赖Windows本机。** 候选固定提交为 `ea044ba0aaad52508c2db753266e18efb92ab294`，Git接续分支为 `origin/codex/rollout-200s` 和 `origin/codex/upper-unified-420s`。四台远端都保存同一套交接资料，连接用户为root、主机 `connect.bjb2.seetacloud.com`：
+
+| rank | SSH端口 | 资料目录 |
+| --- | --- | --- |
+| 0 | 53841 | 下述统一目录 |
+| 1 | 13208 | 下述统一目录 |
+| 2 | 15409 | 下述统一目录；100→79.5秒原实验机 |
+| 3 | 26162 | 下述统一目录 |
+
+统一入口：`/root/autodl-tmp/combat49-deck-latent512-t64x2-20261111/handoffs/update2-ea044ba0/README.md`。
+
+目录内 `source-ea044ba0.tgz` 及解压后的 `source/` 保存该提交的训练、环境、模拟器、测试、配置与工具源码；`candidate.patch` 是生产基线到候选的模型/测试差异；`update2-handoff.tgz` 及 `evidence/` 保存原始脚本、四rank完整结果、日志与退出记录；`inventory.json` 列出四机运行时和恢复点；`SHA256SUMS`、`source-sha256.json` 和 `verification.json` 用于校验。这里的源码是独立副本，未切换正式训练源。凭据及历史大checkpoint不放源码包；当前恢复点和Python/native运行时直接使用各远端已有路径。
+
+进入该目录后执行 `sha256sum -c SHA256SUMS` 可检查交接文件。先读README，再按后续工作顺序接续；原型 `supervisor.py` 会写原 `update2/`，不要直接重跑覆盖证据，应先复制到新的实验目录并修改输出路径。旧Windows工作区有4008bbd7草稿，不作为接续入口。
+
+2026-11-11 22:49（Asia/Shanghai）四机核验通过：每机6项资料文件、2090个解压源码文件、17个解压证据文件、各自manifest中的3个checkpoint文件逐一SHA一致，Python/site-packages/native路径存在，native仍为上文b40。源码归档10598321字节，SHA256 `21145821292f8ebe6d1595d0a7472c401ca959256bdaac4796e50c3d7e0680aa`。这仅是迁移完整性验收，未追加GPU性能或训练验收。其他会话已有 `update3/` 目录，接续前先核对当前运行进程；本次不操作该目录。
 
 四机都使用root `/root/autodl-tmp/combat49-deck-latent512-t64x2-20261111`，run `combat49-deck-latent512-t64x2-ppo-search-r1`；当前机器映射保存在现有launcher/SSH配置，此处不复制凭据。
 
@@ -71,8 +86,8 @@ rank0/3均在最后基线复测完成16Adam后，于 `update2/bench.py:112` 的 
 - Adam：`61f6edc7fecf141219865e7c924e7021a90b77c823b2a51faea67969dfc7866e`
 - 各机 `update2-protected.json`、`training-plan.json` 以及保护目录内旧计划足以普通resume；STOP/旧exit需归档后启动，同run保持曲线连续。
 - 各机 `update2/bench.py`、`candidates.py`、`supervisor.py`、`result.json`、`process.log`、`exit.json` 保留原型及原始结果，seed20261111、每rank1200秒上限。全部实验均已退出。
-- 本地原始文件：`runs/local/combat49-update2-20261111/`；rank2结果为 `rank2-result.json`，不是跨rank平均。
-- 17成员/22769字节归档 `update2-handoff.tgz` 在本地该目录及rank0的 `root/update2/`；SHA256 `51ddb4679d1f3d35587f92e901d245c28b8f02601373e00ac1fd816486f7b96c`，两端核对。包含四rank结果/退出/日志和原型脚本，无大checkpoint或凭据。
+- 四机交接目录中的 `evidence/rank2-result.json` 是重点结果，不是跨rank平均。本机原始目录仅作备份，不是接续前置条件。
+- 17成员/22769字节归档 `update2-handoff.tgz` 已在四台远端统一交接目录保存；SHA256 `51ddb4679d1f3d35587f92e901d245c28b8f02601373e00ac1fd816486f7b96c`。包含四rank结果/退出/日志和原型脚本，无大checkpoint或凭据。
 
 ## 后续工作顺序
 
