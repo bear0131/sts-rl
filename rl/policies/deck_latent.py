@@ -301,7 +301,7 @@ class DeckLatentCore(SharedWholeRunCore):
         unique, inverse = torch.unique(keys, dim=0, return_inverse=True)
         first = torch.full((len(unique),), len(keys), dtype=torch.long, device=keys.device)
         first.scatter_reduce_(0, inverse, torch.arange(len(keys), device=keys.device), reduce='amin')
-        result = self.context({k: v[first] for k, v in obs.items()})
+        result = self.context({k: obs[k][first] for k in self.context.keys})
         return result[inverse]
 
     def run_context(self, obs):
@@ -364,8 +364,9 @@ class DeckLatentCore(SharedWholeRunCore):
                 rows = ((phase == screen) & (anchored == anchor)).nonzero().flatten()
                 if not len(rows):
                     continue
-                batch = {key: value[rows] for key, value in obs.items()}
-                z = context[rows]
+                whole = len(rows) == len(phase)
+                batch = obs if whole else {key: value[rows] for key, value in obs.items()}
+                z = context if whole else context[rows]
                 if anchor:
                     out = z.new_zeros(len(rows), C.AUTOREGRESSIVE_SIZE)
                     value = self.anchor_with_context(batch, self.anchor.context_projection(z))
@@ -373,6 +374,8 @@ class DeckLatentCore(SharedWholeRunCore):
                     out, value = self.combat_with_context(batch, z)
                 else:
                     out, value = self.overworld(dict(batch, _run_context=z), self.upper_tokenizer, screen)
+                if whole:
+                    return out.float(), value.float()
                 indices.append(rows); logits.append(out.float()); values.append(value.float())
         order = torch.argsort(torch.cat(indices))
         return torch.cat(logits)[order], torch.cat(values)[order]

@@ -20,6 +20,7 @@ class PackedPPOConfig:
     context_gradient_replay: bool = False
     context_grouping: bool = False
     upper_screen_max_rows: int | None = None
+    max_contexts_per_chunk: int | None = None
 
     def __post_init__(self):
         if (type(self.token_budget) is not int or type(self.max_rows) is not int
@@ -33,6 +34,10 @@ class PackedPPOConfig:
                 type(self.upper_screen_max_rows) is not int or self.upper_screen_max_rows < 1
                 or not self.context_grouping):
             raise ValueError('upper screen max rows requires context grouping and a positive integer')
+        if self.max_contexts_per_chunk is not None and (
+                type(self.max_contexts_per_chunk) is not int or self.max_contexts_per_chunk < 1
+                or self.upper_screen_max_rows is None):
+            raise ValueError('context count limit requires upper screen grouping and a positive integer')
         if type(self.context_grouping) is not bool:
             raise ValueError('context_grouping must be boolean')
 
@@ -66,6 +71,8 @@ def configure_packed_updates(model, configuration=None):
         raise ValueError('packed updates require shared pure PPO without auxiliary updates, target KL or outer AMP')
     previous = getattr(model, 'ppo_update_config', None)
     model.ppo_update_config = asdict(config)
+    if config.max_contexts_per_chunk is None:
+        model.ppo_update_config.pop('max_contexts_per_chunk')
     if config.upper_screen_max_rows is None:
         # Keep the legacy configuration byte-for-byte compatible so an ordinary
         # resume preserves its learned OOM caps and old readers accept it.
@@ -116,7 +123,17 @@ def packed_chunks(model, batch, config):
     else:
         kind = torch.where(combat, 0, torch.where(selection, 1, 2))
     host = torch.stack((kind, width)).cpu().numpy()
-    if config.context_grouping:
+    context_boundaries = None
+    if config.max_contexts_per_chunk is not None:
+        # Count the same unmasked tokens that the context encoder pools.
+        # Bucket by eight before sorting exact context IDs to reduce padding.
+        context = obs['_deck_context_index'].flatten().cpu().numpy()
+        valid_map = (obs['map_full_rooms'] != 0) | obs['map_full_features'].bool().any(-1)
+        token_count = 1 + (obs['deck_ids'] != 0).sum(1) + (obs['relics'] != 0).sum(1) + valid_map.sum(1)
+        order = np.lexsort((context, (token_count.cpu().numpy() + 7) // 8, host[0]))
+        ids = context[order]
+        context_boundaries = np.flatnonzero(np.r_[True, ids[1:] != ids[:-1], True])
+    elif config.context_grouping:
         context = obs['_deck_context_index'].cpu().numpy()
         order = np.lexsort((host[1], context, host[0]))
     else:
@@ -132,6 +149,10 @@ def packed_chunks(model, batch, config):
         if config.upper_screen_max_rows is not None and group:
             limit = min(limit, config.upper_screen_max_rows)
         end = min(start + limit, total)
+        if context_boundaries is not None:
+            next_boundary = context_boundaries.searchsorted(start, side='right')
+            last = min(next_boundary + config.max_contexts_per_chunk - 1, len(context_boundaries) - 1)
+            end = min(end, int(context_boundaries[last]))
         other = np.flatnonzero(lengths[0, start:end] != lengths[0, start])
         if len(other):
             end = start + int(other[0])

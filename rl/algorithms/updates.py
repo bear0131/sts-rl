@@ -108,7 +108,7 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
                     if not rows:
                         continue
                     components, phase_loss = ppo_forward(model, chunk, clip_range, clip_range_vf,
-                        indices=indices, pre_normalized_advantages=advantages)
+                        indices=None if rows == count else indices, pre_normalized_advantages=advantages)
                     (phase_loss * (rows / total * backward_scale)).backward()
                     phase_losses.append(phase_loss.detach() * (rows / count))
                     # Retain only detached metrics until the entire chunk

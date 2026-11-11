@@ -184,7 +184,7 @@ def test_duplicate_context_gradients_equal_full_recomputation(latent_env):
 
 @pytest.mark.parametrize('search', [False, True])
 @pytest.mark.parametrize('transport', ['dummy', 'native-subproc'])
-@pytest.mark.parametrize('context_mode', ['off', 'replay', 'grouped', 'screens'])
+@pytest.mark.parametrize('context_mode', ['off', 'replay', 'grouped', 'screens', 'context-limit'])
 def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, transport, context_mode,
                                                        encoder='pooled-mlp'):
     from gymnasium.wrappers import TimeLimit
@@ -214,8 +214,9 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
                            deck_combat_encoder=encoder))
     configure_packed_updates(model, dict(token_budget=1024, max_rows=8, precision='fp32',
                                         context_gradient_replay=context_mode == 'replay',
-                                        context_grouping=context_mode in ('grouped', 'screens'),
-                                        upper_screen_max_rows=4 if context_mode == 'screens' else None))
+                                        context_grouping=context_mode in ('grouped', 'screens', 'context-limit'),
+                                        upper_screen_max_rows=4 if context_mode in ('screens', 'context-limit') else None,
+                                        max_contexts_per_chunk=2 if context_mode == 'context-limit' else None))
     if search:
         from dataclasses import asdict
         from rl.algorithms.search_auxiliary import SearchTrainingConfig
@@ -240,8 +241,9 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
     assert loaded.policy.deck_combat_encoder == encoder
     assert loaded.policy.core.combat_encoder == encoder
     assert loaded.ppo_update_config['context_gradient_replay'] == (context_mode == 'replay')
-    assert loaded.ppo_update_config['context_grouping'] == (context_mode in ('grouped', 'screens'))
-    assert loaded.ppo_update_config.get('upper_screen_max_rows') == (4 if context_mode == 'screens' else None)
+    assert loaded.ppo_update_config['context_grouping'] == (context_mode in ('grouped', 'screens', 'context-limit'))
+    assert loaded.ppo_update_config.get('upper_screen_max_rows') == (4 if context_mode in ('screens', 'context-limit') else None)
+    assert loaded.ppo_update_config.get('max_contexts_per_chunk') == (2 if context_mode == 'context-limit' else None)
     if context_mode == 'grouped':
         assert loaded._ppo_microbatch_caps == {'upper': 2}
     if search:
@@ -635,7 +637,8 @@ def test_cuda_collection_graphs_route_deck_context_and_replay_after_eviction(lat
         graphs.close()
 
 
-def test_upper_screen_chunks_keep_original_rows_advantages_and_weights(latent_env):
+@pytest.mark.parametrize('context_limit', [None, 1, 2])
+def test_upper_screen_chunks_keep_original_rows_advantages_and_weights(latent_env, context_limit):
     from types import SimpleNamespace
     from rl.algorithms.packed_ppo import PackedPPOConfig, packed_chunks
     names = ['shop', 'combat', 'event', 'map', 'shop', 'combat', 'card_select', 'shop', 'map']
@@ -646,10 +649,13 @@ def test_upper_screen_chunks_keep_original_rows_advantages_and_weights(latent_en
     adv = rows.float() - 3.25
     batch = SimpleNamespace(observations=obs, actions=rows, advantages=adv)
     model = SimpleNamespace(policy=policy_for(latent_env), normalize_advantage=False, device='cpu')
-    config = PackedPPOConfig(4096, 8, context_grouping=True, upper_screen_max_rows=2)
+    config = PackedPPOConfig(4096, 8, context_grouping=True, upper_screen_max_rows=2,
+                             max_contexts_per_chunk=context_limit)
     seen, groups = [], {}
     for chunk, advantages, weight, group in packed_chunks(model, batch, config):
         indices = chunk.actions
+        if context_limit is not None:
+            assert len(chunk.observations['_deck_context_index'].unique()) <= context_limit
         screen, = {names[i] for i in indices.tolist()}
         groups.setdefault(screen, set()).add(group)
         if screen != 'combat':
@@ -660,3 +666,24 @@ def test_upper_screen_chunks_keep_original_rows_advantages_and_weights(latent_en
     assert sorted(seen) == rows.tolist()
     assert all(len(ids) == 1 for ids in groups.values())
     assert len(set.union(*groups.values())) == len(set(names))
+
+
+def test_context_length_buckets_count_feature_only_map_nodes(latent_env):
+    from types import SimpleNamespace
+    from rl.algorithms.packed_ppo import PackedPPOConfig, packed_chunks
+    obs = tensor_obs(latent_env, 6)
+    obs['phase'].fill_(vocab.PHASE_VOCAB_INDEX['shop'])
+    obs['deck_ids'].zero_()
+    obs['relics'].zero_()
+    obs['map_full_rooms'].zero_()
+    obs['map_full_features'].zero_()
+    indices = [0, 1, 2, 3, 2, 0]
+    obs['_deck_context_index'] = torch.tensor(indices)
+    for row, width in enumerate([18, 1, 19, 2, 19, 18]):
+        obs['map_full_features'][row, :width, 0] = 1
+    batch = SimpleNamespace(observations=obs, actions=torch.arange(6), advantages=torch.ones(6))
+    model = SimpleNamespace(policy=policy_for(latent_env), normalize_advantage=False, device='cpu')
+    config = PackedPPOConfig(4096, 6, context_grouping=True, upper_screen_max_rows=6,
+                             max_contexts_per_chunk=2)
+    groups = [set(c.actions.tolist()) for c, _, _, _ in packed_chunks(model, batch, config)]
+    assert groups == [{1, 3}, {0, 2, 4, 5}]
