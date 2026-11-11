@@ -292,6 +292,8 @@ class WholeRunTask(Task):
         )
         parser.add_argument('--room-lambda', type=float, default=.9,
                             help='Shared whole-run PPO trace decay at an act/floor boundary; within-room lambda is 1.')
+        parser.add_argument('--deck-combat-encoder', choices=('pooled-mlp', 'transformer64x2'),
+                            default='pooled-mlp', help='Fresh deck-latent combat geometry; saved in checkpoint.')
         parser.add_argument('--combat-value-target', choices=('whole-run', 'pre-reward-anchor'),
                             default='whole-run', help='Shared PPO combat target; anchor mode requires room lambda=1.')
         parser.add_argument('--reward-flow', choices=('full', 'sequential-v1'), default='full',
@@ -636,7 +638,8 @@ class WholeRunTask(Task):
                 n_heads=args.n_heads, card_language=args.card_language,
                 map_dag=True, room_lambda=args.room_lambda,
                 combat_value_target=getattr(args, 'combat_value_target', 'whole-run'),
-                reward_flow=getattr(args, 'reward_flow', 'full'))
+                reward_flow=getattr(args, 'reward_flow', 'full'),
+                **(dict(deck_combat_encoder=args.deck_combat_encoder) if args.arch == 'deck-latent' else {}))
         if args.arch == "split-pointer":
             # The core owns both specialist encoders, policy heads, and value
             # heads, so no SB3 features_extractor/net_arch is needed here.

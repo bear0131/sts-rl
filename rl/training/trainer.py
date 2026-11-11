@@ -612,6 +612,8 @@ def main() -> None:
             if resume_settings.get('policy_class') in (SharedWholeRunPolicy, DeckLatentPolicy):
                 args.combat_value_target = saved_policy_kwargs.get('combat_value_target', 'whole-run')
                 args.reward_flow = saved_policy_kwargs.get('reward_flow', 'full')
+                if args.arch == 'deck-latent':
+                    args.deck_combat_encoder = saved_policy_kwargs.get('deck_combat_encoder', 'pooled-mlp')
             saved_entity_config = saved_policy_kwargs.get("entity_config") or {}
             if args.card_vector_checkpoint is None:
                 args.card_vector_checkpoint = (

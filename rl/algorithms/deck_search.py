@@ -51,7 +51,8 @@ class ShadowSearchCollection:
             self.snapshot = folder / 'frozen.pt'
             cfg = self.model.policy._core_cfg
             temporary = folder / 'frozen.tmp'
-            torch.save(dict(geometry=dict(width=cfg['d_model'], layers=cfg['n_layers'], heads=cfg['n_heads']),
+            torch.save(dict(geometry=dict(width=cfg['d_model'], layers=cfg['n_layers'], heads=cfg['n_heads'],
+                combat_encoder=self.model.policy.deck_combat_encoder),
                 state_dict={k: v.detach().cpu() for k, v in self.model.policy.core.state_dict().items()},
                 buffers={k: v.detach().cpu() for k, v in self.model.policy.core.named_buffers()}), temporary)
             os.replace(temporary, self.snapshot)

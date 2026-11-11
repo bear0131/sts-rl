@@ -14,6 +14,7 @@ from torch import nn
 from env.core import encode, native_actions as C, vocab
 from rl.policies.combat_summary import AdditiveCombatInputs
 from rl.policies.entity_combat import EntityCombatConfig, EntityEncoderLayer
+from rl.policies.entity_action_playout import EntityBlock
 from rl.policies.entity_joint import UpperConfig
 from rl.policies.shared_wholerun import (
     LearnedCardTable, ScalarCombatNetwork, SharedOverworldEncoder,
@@ -104,7 +105,7 @@ class FastCombatNetwork(ScalarCombatNetwork):
         # Conservative physical memory proxy, not an attention FLOP claim.
         return (obs['deck_ids'] != 0).sum(1) + (obs['relics'] != 0).sum(1) + 128
 
-    def encode(self, obs, active_relic_width=None, *, card_table=None):
+    def _dynamic_inputs(self, obs, card_table=None):
         table = (self._encode_card_table() if self.training or torch.is_grad_enabled()
                  else self.inference_card_table()) if card_table is None else card_table
         hp = obs['player_scalars'].float(); batch = len(hp)
@@ -130,6 +131,12 @@ class FastCombatNetwork(ScalarCombatNetwork):
         summary = obs.get('_combat_summary')
         if summary is None:
             summary = self.summaries.rebuild(obs)
+        return player, dict(hand=hand, monster=monsters, potion=potions, select=choices), summary
+
+    def encode(self, obs, active_relic_width=None, *, card_table=None):
+        player, entities, summary = self._dynamic_inputs(obs, card_table)
+        hand, monsters, potions, choices = (entities[k] for k in ('hand', 'monster', 'potion', 'select'))
+        valid = obs['select_native_indices'] > 0
         parts = (player, _mean(hand, obs['hand_ids'] != 0), _mean(monsters, obs['monster_id'] != 0),
                  _mean(potions, obs['potions'] != 0), _mean(choices, valid), summary.relics,
                  self.summaries.features(summary))
@@ -142,6 +149,65 @@ class FastCombatNetwork(ScalarCombatNetwork):
             return self.norm(entity * (1 + scale[:, None].tanh()) + bias[:, None])
         return state, dict(hand=condition(hand), monster=condition(monsters),
                            potion=condition(potions), select=condition(choices))
+
+
+class TransformerCombatNetwork(FastCombatNetwork):
+    """Two old 64-wide/4-head/128-FFN blocks over action-aligned entities.
+
+    Fixed hand/enemy/potion slots preserve native identities. Only trailing
+    absent choice queries are trimmed; larger pending screens expand in
+    multiples of eight, with no cap that could discard a legal candidate.
+    Pile/relic summaries and root context remain cheap branch inputs.
+    """
+    def __init__(self, space, cards, context_width):
+        super().__init__(space, cards, context_width)
+        del self.state_mlp, self.state_output, self.entity_film
+        self.config = EntityCombatConfig(width=64, layers=2, heads=4, pile_queries=1)
+        self.context_projection = nn.Linear(context_width, 64)
+        self.pile_projection = nn.Linear(65, 64)
+        self.roles = nn.Embedding(9, 64)
+        self.blocks = nn.ModuleList([EntityBlock(64, 4) for _ in range(2)])
+
+    def encode(self, obs, active_relic_width=None, *, card_table=None):
+        player, entities, summary = self._dynamic_inputs(obs, card_table)
+        context = obs.get('_combat_context')
+        if context is None:
+            context = self.context_projection(obs['_run_context'])
+        valid = obs['select_native_indices'] > 0
+        # Legal PAD-ID/handle-only candidates must retain their query slot.
+        pick = C.JOINT_PICK - C.JOINT_END
+        required = valid | obs['combat_legal'][:, pick:pick + valid.shape[1]].bool()
+        choice_width = _active_prefix_width(required)
+        piles = self.pile_projection(self.summaries.features(summary).reshape(len(player), 3, 65))
+        blocks = [
+            ('global', (player + context)[:, None], torch.ones_like(valid[:, :1])),
+            ('hand', entities['hand'], obs['hand_ids'] != 0),
+            ('monster', entities['monster'], obs['monster_id'] != 0),
+            ('potion', entities['potion'], obs['potions'] != 0),
+            ('relic', summary.relics[:, None], torch.ones_like(valid[:, :1])),
+            *[(f'pile{i}', piles[:, i:i+1], torch.ones_like(valid[:, :1])) for i in range(3)],
+            ('select', entities['select'][:, :choice_width], valid[:, :choice_width]),
+        ]
+        tokens, present, spans, offset = [], [], {}, 0
+        for role, (name, value, keep) in enumerate(blocks):
+            tokens.append(value + self.roles.weight[role])
+            present.append(keep)
+            spans[name] = (offset, offset + value.shape[1])
+            offset += value.shape[1]
+        x, mask = torch.cat(tokens, 1), torch.cat(present, 1)
+        padding = (-offset) % 8
+        if padding:
+            x = torch.nn.functional.pad(x, (0, 0, 0, padding))
+            mask = torch.nn.functional.pad(mask, (0, padding), value=False)
+        for block in self.blocks:
+            x = block(x, mask)
+        x = self.norm(x)
+        result = {name: x[:, lo:hi] for name, (lo, hi) in spans.items()}
+        # Heads still see the complete native candidate index space.
+        result['select'] = torch.nn.functional.pad(result['select'],
+            (0, 0, 0, valid.shape[1] - choice_width))
+        result['select'] = result['select'] * required[..., None]
+        return result['global'][:, 0], result
 
 
 class FastAnchorValue(nn.Module):
@@ -168,14 +234,19 @@ class DeckLatentCore(SharedWholeRunCore):
     model_contract = MODEL_CONTRACT
     collection_graphs_supported = False
 
-    def __init__(self, space, *, width=512, layers=8, heads=8):
+    def __init__(self, space, *, width=512, layers=8, heads=8, combat_encoder='pooled-mlp'):
         nn.Module.__init__(self)
         self.autoregressive_actions = True
         self.config = EntityCombatConfig(width=64, layers=1, heads=4, pile_queries=1)
         self.upper_config = UpperConfig(width=width, layers=2, heads=heads)
         cards = LearnedCardTable(int(space['hand_ids'].high.max()) + 1)
         self.context = RunContextEncoder(space, cards, width, layers, heads)
-        self.combat = FastCombatNetwork(space, cards, width)
+        if combat_encoder not in ('pooled-mlp', 'transformer64x2'):
+            raise ValueError('unknown deck combat encoder')
+        self.combat_encoder = combat_encoder
+        combat_type = TransformerCombatNetwork if combat_encoder == 'transformer64x2' else FastCombatNetwork
+        self.combat = combat_type(space, cards, width)
+        self.config = self.combat.config
         self.anchor = FastAnchorValue(space, width)
         self.upper_tokenizer = SharedSemanticTokenizer(space, width, card_language=False, card_embedding=cards)
         encoder = ContextOverworldEncoder(space, d_model=width, n_layers=2, n_heads=heads,
@@ -265,6 +336,13 @@ class DeckLatentCore(SharedWholeRunCore):
 
 
 class DeckLatentPolicy(SharedWholeRunPolicy):
+    def __init__(self, *args, deck_combat_encoder='pooled-mlp', **kwargs):
+        self.deck_combat_encoder = deck_combat_encoder
+        super().__init__(*args, **kwargs)
+
+    def _get_constructor_parameters(self):
+        return dict(super()._get_constructor_parameters(), deck_combat_encoder=self.deck_combat_encoder)
+
     def _build(self, lr_schedule):
         required = {'combat_exit_anchor', 'reward_stage', 'outer_deck_misc', 'map_full_features',
                     'pile_upgraded_counts', 'pile_upgrade_sums', 'deck_latent_context'}
@@ -279,5 +357,6 @@ class DeckLatentPolicy(SharedWholeRunPolicy):
             raise ValueError('deck latent geometry requires fresh learned cards and its own combat network')
         self.action_dist = _SharedCategoricalDistribution(self.action_space.n)
         self.core = DeckLatentCore(self.observation_space, width=cfg['d_model'],
-                                  layers=cfg['n_layers'], heads=cfg['n_heads'])
+                                  layers=cfg['n_layers'], heads=cfg['n_heads'],
+                                  combat_encoder=self.deck_combat_encoder)
         self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)

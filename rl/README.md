@@ -966,3 +966,13 @@ Deck训练阶段配置可显式设置`anchor_start_round`，在指定已完成�
 战后锚点PPO。这是操作者决定，记录`configured-anchor-start`，不伪造准备度通过
 次数或覆盖验证结果；恢复后不重复重置适应期，也不能绕过搜索的资格开关。
 省略此字段仍沿用连续准备度验证的自动门槛。
+
+Deck-latent新训练可用`--deck-combat-encoder transformer64x2`：复用旧实体
+`EntityBlock`的2层、64宽、4头、128宽ReLU前馈/合并QKV/SDPA，逐张手牌、
+逐个敌人/药水/候选做注意力；构筑latent投影加入玩家token，动态遗物和三个
+牌堆各一token。固定动作槽位不重排，只裁掉末尾无效候选，输入补齐8的倍数，
+普通战斗32token，大候选界面继续扩展。所有候选仍映射回完整动作头；不能把
+PAD卡ID等同于无效native候选。缓存、稀疏摘要接口、标量critic、独立战后锚点
+和原PPO/搜索辅助生命周期保持。现役新配置仍FP32，不直接加载旧专用Triton
+权重布局/内核。`pooled-mlp`是旧checkpoint缺省几何；新旧权重互不兼容，几何
+写入policy构造参数和搜索worker冻结快照，旧checkpoint仍按原MLP恢复。

@@ -2,6 +2,8 @@
 wholerun
 --arch
 deck-latent
+--deck-combat-encoder
+transformer64x2
 --d-model
 256
 --n-layers

@@ -23,10 +23,11 @@ def latent_env():
     env.close()
 
 
-def policy_for(env):
+def policy_for(env, encoder='pooled-mlp'):
     torch.manual_seed(20261111)
     return DeckLatentPolicy(env.observation_space, env.action_space, lambda _: 5e-5,
-        d_model=32, n_layers=1, n_heads=4, room_lambda=1., reward_flow='sequential-v1')
+        d_model=32, n_layers=1, n_heads=4, room_lambda=1., reward_flow='sequential-v1',
+        deck_combat_encoder=encoder)
 
 
 def tensor_obs(env, repeats=1):
@@ -59,9 +60,10 @@ def test_public_context_present_in_combat_and_checkpoint_replay(latent_env):
         env.restore_training_state(incompatible)
 
 
-def test_all_phases_gradients_cache_invalidation_and_direct_search_interface(latent_env):
+@pytest.mark.parametrize('encoder', ['pooled-mlp', 'transformer64x2'])
+def test_all_phases_gradients_cache_invalidation_and_direct_search_interface(latent_env, encoder):
     env = latent_env
-    policy = policy_for(env)
+    policy = policy_for(env, encoder)
     for combat in (False, True):
         if combat:
             enter_combat(env)
@@ -136,7 +138,8 @@ def test_duplicate_context_gradients_equal_full_recomputation(latent_env):
 @pytest.mark.parametrize('search', [False, True])
 @pytest.mark.parametrize('transport', ['dummy', 'native-subproc'])
 @pytest.mark.parametrize('context_mode', ['off', 'replay', 'grouped'])
-def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, transport, context_mode):
+def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, transport, context_mode,
+                                                       encoder='pooled-mlp'):
     from gymnasium.wrappers import TimeLimit
     from stable_baselines3.common.vec_env import DummyVecEnv
     from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
@@ -160,7 +163,8 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
     model = AccumulatingMaskablePPO(DeckLatentPolicy, env, seed=20261111,
         n_steps=32, batch_size=32, n_epochs=1, device='cpu', gamma=1., gae_lambda=1.,
         learning_rate=5e-5, reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
-        policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=1., reward_flow='sequential-v1'))
+        policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=1., reward_flow='sequential-v1',
+                           deck_combat_encoder=encoder))
     configure_packed_updates(model, dict(token_budget=1024, max_rows=8, precision='fp32',
                                         context_gradient_replay=context_mode == 'replay',
                                         context_grouping=context_mode == 'grouped'))
@@ -185,6 +189,8 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
                          wandb_id=None, config={'ascension': 0})
     loaded = load_checkpoint(source/'model.zip', device='cpu')
     assert isinstance(loaded.policy, DeckLatentPolicy)
+    assert loaded.policy.deck_combat_encoder == encoder
+    assert loaded.policy.core.combat_encoder == encoder
     assert loaded.ppo_update_config['context_gradient_replay'] == (context_mode == 'replay')
     assert loaded.ppo_update_config['context_grouping'] == (context_mode == 'grouped')
     if context_mode == 'grouped':
@@ -218,7 +224,8 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
     env.close(); target.close()
 
 
-def test_paired_shadow_search_batches_real_anchors_without_mutating_root(latent_env):
+@pytest.mark.parametrize('encoder', ['pooled-mlp', 'transformer64x2'])
+def test_paired_shadow_search_batches_real_anchors_without_mutating_root(latent_env, encoder):
     from env.search.anchored_chains import paired_anchor_search
     from rl.search.deck_latent import DeckLatentScorer
     env = latent_env
@@ -229,7 +236,7 @@ def test_paired_shadow_search_batches_real_anchors_without_mutating_root(latent_
     before = env._array_mapping_digest(obs)
     root_key = env.thick.bc.nosl_future_key()
     journal = deepcopy(env._episode_action_journal)
-    policy = policy_for(env); policy.set_training_mode(False)
+    policy = policy_for(env, encoder); policy.set_training_mode(False)
     scorer = DeckLatentScorer(policy, [obs])
     seen = []
     def score(requests):
@@ -491,3 +498,49 @@ def test_ppo_context_adjoint_retry_does_not_double_count_samples(latent_env, tmp
             assert sa.keys() == sb.keys()
             for key in sa:
                 torch.testing.assert_close(sa[key], sb[key], rtol=4e-4, atol=4e-6, msg=name + '/' + key)
+
+@pytest.mark.parametrize('search', [False, True])
+@pytest.mark.parametrize('transport', ['dummy', 'native-subproc'])
+def test_transformer_two_round_lifecycle(tmp_path, search, transport):
+    test_two_real_ppo_rounds_checkpoint_and_packed_resume(
+        tmp_path, search, transport, 'grouped', encoder='transformer64x2')
+
+
+def test_transformer_padding_candidates_and_card_interaction(latent_env, tmp_path):
+    env = latent_env
+    enter_combat(env)
+    policy = policy_for(env, 'transformer64x2')
+    policy.set_training_mode(False)
+    obs = tensor_obs(env)
+    # Same first row, but a second row with a far-end handle-only candidate
+    # expands the entire attention batch. The first row must be unchanged.
+    other = {k: v.clone() for k, v in obs.items()}
+    other['select_native_indices'][0, -1] = 123
+    other['select_card_ids'][0, -1] = 0
+    other['select_card_costs'][0, -1] = .3
+    mixed = {k: torch.cat((obs[k], other[k])) for k in obs}
+    with torch.no_grad():
+        reference = policy.core.actor_critic(obs)
+        expanded = policy.core.actor_critic(mixed)
+        for a, b in zip(reference, expanded):
+            torch.testing.assert_close(a, b[:1], atol=3e-6, rtol=3e-5)
+        z = policy.core.run_context(other)
+        _, blocks = policy.core.combat.encode(dict(other, _run_context=z))
+        assert blocks['select'].shape[1] == other['select_native_indices'].shape[1]
+        assert blocks['select'][:, -1].abs().sum() > 0
+        # Independent serialization must retain geometry, not silently load MLP.
+        policy.save(tmp_path/'policy.pt')
+        loaded = DeckLatentPolicy.load(tmp_path/'policy.pt', device='cpu')
+        loaded.set_training_mode(False)
+        for a, b in zip(policy.core.actor_critic(mixed), loaded.core.actor_critic(mixed)):
+            torch.testing.assert_close(a, b, rtol=0, atol=0)
+    # A card query must interact with another card through attention, rather
+    # than only its own lookup. Test the derivative on actual populated slots.
+    policy.set_training_mode(True)
+    obs['hand_damage'] = obs['hand_damage'].clone().requires_grad_(True)
+    z = policy.core.run_context(obs)
+    _, blocks = policy.core.combat.encode(dict(obs, _run_context=z))
+    present = (obs['hand_ids'][0] != 0).nonzero().flatten()
+    assert len(present) >= 2
+    grad, = torch.autograd.grad(blocks['hand'][0, present[0], 0], obs['hand_damage'])
+    assert grad[0, present[1]].abs() > 1e-9
