@@ -41,3 +41,12 @@ def project(env, observation, canonical):
         # its ordinary map view neither advances the run nor reveals rewards.
         view = env.thick.encoding_map_observation(dict(phase='map'))
         encode._encode_options(observation, dict(phase='map', options={}), _map_observation=view)
+
+
+def project_native_root(env, observation):
+    """Supplement the packed root using the retained extension's live pile data."""
+    from schemas.combat_state import _card, _sim_card_id
+    raw = env.thick.bc.to_dict()
+    piles = {pile: [_card(_sim_card_id(name), upgrades) for name, upgrades in raw[pile]]
+             for pile in ('draw', 'discard', 'exhaust')}
+    project(env, observation, piles)

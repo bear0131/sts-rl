@@ -135,6 +135,32 @@ def assert_roots(encoder, envs):
     return actual
 
 
+def test_deck_context_root_upgrades_map_and_direct_destination():
+    env = SlayTheSpireEnv(global_map_view=True, upper_public_context=True, card_language=True, event_option_observation=True,
+        combat_exit_anchor=True, reward_flow='sequential-v1', deck_latent_context=True,
+        combat_action_contract='autoregressive-v2')
+    try:
+        env.reset(seed=20261111)
+        for _ in range(64):
+            if env.thick.bc is not None:
+                break
+            env.step(int(np.flatnonzero(env.action_masks())[0]))
+        assert env.thick.bc is not None
+        env.thick.bc.apply_custom_state({'draw': [('SEARING_BLOW', 13), ('BASH', 1)],
+            'discard': [('BASH', 0), ('BASH', 1)], 'exhaust': [('ANGER', 1)]})
+        env._invalidate_backend_cache()
+        encoder = NativeRootObservationBatch(env)
+        owned = assert_roots(encoder, [env])
+        assert np.count_nonzero(owned['pile_upgraded_counts']) == 4
+        assert owned['map_full_rooms'].any()
+        target = {k: np.full_like(v, 99) for k, v in owned.items()}
+        encoder.encode([env], destination=target)
+        for k in owned:
+            assert target[k].tobytes() == owned[k].tobytes(), k
+    finally:
+        env.close()
+
+
 @pytest.mark.parametrize('language', [False, True])
 def test_root_batch_all_fields_mutable_globals_and_ownership(combat_factory, language):
     envs = [combat_factory(['STRIKE_RED']*5+['DEFEND_RED']*4+['BASH'],
@@ -306,31 +332,33 @@ def native_wrapper_factories():
     from rl.training.environments import CheckpointObservationCompat, TrainingStateWrapper
     from rl.training.reward import ShapedRewardWrapper, StrategicRewardWrapper
 
-    def factory(index, *, outer_return_context, strategic, hide_boundary):
+    def factory(index, *, outer_return_context, strategic, hide_boundary, deck_latent):
         def make():
             base = SlayTheSpireEnv(combat_action_contract='autoregressive-v2',
                  card_language=True, global_map_view=True, deck_size_observation=True,
                  neow_observation=True, event_option_observation=True, outer_return_context=outer_return_context,
-                 combat_value_objective='combat-outcome-means-v1')
+                 combat_value_objective='combat-outcome-means-v1', upper_public_context=deck_latent,
+                 combat_exit_anchor=deck_latent, deck_latent_context=deck_latent,
+                 reward_flow='sequential-v1' if deck_latent else 'full')
             expected = gym.spaces.Dict({key: space for key, space in base.observation_space.spaces.items()
                                        if not hide_boundary or key != 'post_enemy_turn_boundary'})
             wrapper = StrategicRewardWrapper if strategic else ShapedRewardWrapper
             env = gym.wrappers.TimeLimit(wrapper(base), max_episode_steps=41+index)
             return TrainingStateWrapper(CheckpointObservationCompat(env, expected))
         return make
-    return lambda count, outer_return_context=True, strategic=False, hide_boundary=True: [
+    return lambda count, outer_return_context=True, strategic=False, hide_boundary=True, deck_latent=False: [
         factory(i, outer_return_context=outer_return_context, strategic=strategic,
-                hide_boundary=hide_boundary) for i in range(count)]
+                hide_boundary=hide_boundary, deck_latent=deck_latent) for i in range(count)]
 
 
 @pytest.mark.parametrize('hide_boundary', [False, True])
-@pytest.mark.parametrize('strategic', [False, True])
+@pytest.mark.parametrize(('strategic', 'deck_latent'), [(False, False), (True, False), (True, True)])
 def test_vector_wrappers_autoreset_labels_journals_and_restore(
-        monkeypatch, native_wrapper_factories, strategic, hide_boundary):
+        monkeypatch, native_wrapper_factories, strategic, deck_latent, hide_boundary):
     from stable_baselines3.common.vec_env import DummyVecEnv
     from rl.training.native_vec_env import NativeSearchVecEnv
     factories = native_wrapper_factories(8, outer_return_context=not strategic, strategic=strategic,
-                                         hide_boundary=hide_boundary)
+                                         hide_boundary=hide_boundary, deck_latent=deck_latent)
     reference, candidate = DummyVecEnv(factories), NativeSearchVecEnv(factories, threads=2)
     rng = np.random.default_rng(9001000)
     try:

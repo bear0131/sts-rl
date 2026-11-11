@@ -199,6 +199,9 @@ class NativeRootObservationBatch:
                 count = max(0, int(payload['scalars'][row, select_start]) - len(env._multi))
                 result['pick_remaining'][row, 0] = count / encode.PICK_SCALE
             result['combat_legal'][row] = env.action_masks()[env._policy_offset:]
+            if env.deck_latent_context:
+                from .deck_context import project_native_root
+                project_native_root(env, {key: values[row] for key, values in result.items()})
             if env.outer_return_context:
                 env._nosl_current_context = {key: result[key][row].copy() for key in CONTEXT_KEYS}
         return result

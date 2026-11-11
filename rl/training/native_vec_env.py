@@ -94,7 +94,7 @@ class NativeSearchVecEnv(DummyVecEnv):
                 return False
             current = current.env
         return (type(current) is SlayTheSpireEnv and current._autoregressive_actions
-                and not current._combat_language and not current.deck_latent_context)
+                and not current._combat_language)
 
     def step_wait(self):
         if self._strategic_observation_keys is not None:
