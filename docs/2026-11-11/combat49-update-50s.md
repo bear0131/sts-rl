@@ -26,6 +26,12 @@
 
 D 对原序串行 A 减少 5.104s（5.9%），对相同本地顺序的串行 B 减少 4.454s。D 最慢rank的上层桶ring 8.383s中有7.555s位于战斗反向窗口内；战斗结束等上层桶0.845s，尾桶ring仍需10.862s。计时包含packing和传输方式变化，不能把端到端差全算成裸链路加速。无OOM。D距离50秒仍差31.24s，未部署。仅同一冻结rollout/每方案一次纯测速；其他数据分布和生产退避不在证明范围。远端各机训练root下 `overlap-proto2/abcd/result.json`、`overlap-proto2/log`、`overlap-proto2/exit`，四机全套回执 `overlap-proto2/receipts.tgz`。
 
+## 构筑计算与 Adam 误差复现
+
+四机 `global-fp32-1/def/result.json` 保存了相同 rollout 上的计算候选。最慢 rank 的冻结更新时间为严格 overlap 79.37s、只裁剪上层末层 query 79.62s、再合并相同卡牌 token 77.50s。后两项的最终 Adam 矩相对 L2 为 2.86e-4、3.11e-4，基线与各候选分别在四个 rank 上一致。精确上下文编号/同 screen 派发的另一组实验在 `global-fp32-2/dg/result.json`，16 步全部梯度和最终状态与基线逐位相同，候选/基线/候选为 81.08/80.99/79.93s。
+
+只裁剪 query 的单步重放可从每机 `global-fp32-diag/src/tools/benchmarks/diagnose.py` 复现。四机各自的 `global-fp32-diag/causes/diag.json` 含样本行、ReLU 跨零的层/实体 token/单元/上下游数值、PPO clip 分支、每步全梯度差、Adam 两个矩和逐参数归因。第12/16步从同一原版状态重放，只裁剪带来的直接梯度 max 差分别为 5.82e-10/6.98e-10；候选轨迹的步前权重即使用原版代码也产生 1.56e-6/1.92e-6 的跳变。还原候选后向的战斗 ReLU 门控，分别消除 99.79%/99.30% 的梯度 L2 差。细节和单样本干预见 [11月12日工作日志](../../worklog/2026-11-12.md)。此单项同批耗时略高于基线，保留其作为可复现的数值诊断样例；重复卡牌的独立贡献在 `global-fp32-cards` 测量。
+
 ## 第12/13轮的生产结果
 
 已从受保护的第11轮恢复原 COMBAT49，生产源 `d8c2e39d`。第12/13轮四机最慢完整 PPO 更新时间为 **92.19/90.66 秒**。每机每轮196608真实行、16次Adam，四机模型及Adam分别一致。≤50秒目标仍开放。四机的新交接是同一训练 root 下的 `handoffs/update3-d8c2e39d/README.md`，完整分rank计时、manifest验收及实验脚本保存在对应机器的 `update3/`。下文保留第11轮交接时的原始结果。
