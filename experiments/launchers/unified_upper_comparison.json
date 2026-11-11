@@ -3181,7 +3181,7 @@
     }
   },
   "deck_latent_transformer": {
-    "status": "running-full-two-rounds-verified",
+    "status": "stopped-round37-preserved-before-large-fast-restart",
     "root": "/root/autodl-tmp/combat48-deck-latent-t64x2-20261111",
     "run_id": "combat48-deck-latent-t64x2-ppo-search-r1",
     "initialization": "fresh random weights, empty optimizer, zero steps and new environments",
@@ -3300,6 +3300,58 @@
         "adam_sha256": "42e1e351c54cf12d20a8c22e150f5dfbede972d3d8fa95e015b15a1adf042e12",
         "iteration_wall_sec_max": 95.26298871613108
       }
-    }
+    },
+    "stop_round": 37,
+    "stop_global_step": 14548992,
+    "restart_reference": "references/before-large-fast-restart/rankN/step-000014548992"
+  },
+  "deck_latent_fast_restart": {
+    "status": "planned-not-started-acceleration-required-first",
+    "plan": "docs/2026-11-11/deck-latent-fast-restart.md",
+    "root": "/root/autodl-tmp/combat49-deck-latent512-t64x2-20261111",
+    "run_id": "combat49-deck-latent512-t64x2-ppo-search-r1",
+    "initialization": "fresh random weights, empty Adam, zero steps and new environments",
+    "context_width": 512,
+    "context_layers": 8,
+    "context_heads": 8,
+    "outer_width": 512,
+    "outer_layers": 2,
+    "combat_encoder": "transformer64x2",
+    "combat_width": 64,
+    "combat_layers": 2,
+    "combat_heads": 4,
+    "combat_ffn": 128,
+    "anchor_width": 256,
+    "world_size": 4,
+    "envs_per_rank": 256,
+    "steps_per_environment": 768,
+    "transitions_global": 786432,
+    "learning_rate": 5e-05,
+    "epochs": 1,
+    "effective_batch_global": 49152,
+    "optimizer_steps_per_round": 16,
+    "advantage_normalization": "rollout",
+    "precision": "fp32-highest",
+    "gamma": 1,
+    "gae_lambda": 1,
+    "room_lambda": 1,
+    "initial_combat_value_target": "whole-run",
+    "search_qualified": false,
+    "continuous": true,
+    "schedule_config": "configs/train/deck_latent_schedule.json",
+    "context_grouping": true,
+    "context_gradient_replay": false,
+    "physical_update_caps": "768/131072 candidate only; qualify memory for larger model before launch",
+    "required_sampling_paths": [
+      "geometry-compatible GPU graphs",
+      "host metadata and packed gathers",
+      "merged upper phases and map neural cache",
+      "complete deck-latent native root codec",
+      "direct native destinations"
+    ],
+    "qualification": "same-state complete 256x768 baseline/candidate; semantic and GPU cache lifecycle checks; then two full four-rank production rounds",
+    "runtime_source": null,
+    "initial_model_sha256": null,
+    "production_acceptance": null
   }
 }
