@@ -1728,9 +1728,9 @@
     "branch_round": 0,
     "iteration_steps": 786432,
     "rollout_mode": "fixed_steps",
-    "status": "training",
-    "note": "从零训练，四机各256×768，每轮16次Adam。采样启用CUDA图及原生批量观测。whole-run预热，搜索关闭。",
-    "updated_at": "2026-11-11T21:44:11+08:00"
+    "status": "paused",
+    "note": "第21轮/global16515072四机正常停止，恢复包校验通过。50秒更新门槛达成前保持暂停。冻结优化实验不写生产权重。",
+    "updated_at": "2026-11-11T23:39:00+08:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
@@ -3306,7 +3306,7 @@
     "restart_reference": "references/before-large-fast-restart/rankN/step-000014548992"
   },
   "deck_latent_fast_restart": {
-    "status": "paused-round11-handed-off-update50",
+    "status": "paused-round21-until-update50",
     "plan": "docs/2026-11-11/deck-latent-fast-restart.md",
     "root": "/root/autodl-tmp/combat49-deck-latent512-t64x2-20261111",
     "run_id": "combat49-deck-latent512-t64x2-ppo-search-r1",
@@ -3351,6 +3351,21 @@
     ],
     "qualification": "same-state complete 256x768 baseline/candidate; semantic and GPU cache lifecycle checks; then two full four-rank production rounds",
     "runtime_source": "d8c2e39d",
+    "overlap_prototype": {
+      "source": "fed93e8b",
+      "production_round_held": 21,
+      "production_step_held": 16515072,
+      "deployed": false,
+      "max_frozen_epoch_sec": {
+        "A": 86.339,
+        "B": 85.6899,
+        "C": 80.0311,
+        "D": 81.2355
+      },
+      "exact_variant": "D",
+      "all_16_gradient_vectors_and_final_adam_exact_in_deterministic_check": true,
+      "remote_results": "overlap-proto2/abcd/result.json"
+    },
     "initial_model_sha256": "ae6b2d41fdf4df0242030900220ae788e68655e585e6f1e336380f458d3362a0",
     "production_acceptance": [
       {
