@@ -977,6 +977,21 @@ FP32 DeckLatentPolicy 的 packed 配置可启用 `direct_masked_categorical`。�
 Adam 之前的全局有限值检查。带搜索监督的更新沿用策略分布对象，以便辅助损失
 读取同一组掩码 logits。该选项随 checkpoint 保存，旧配置默认关闭。
 
+使用 `SharedRolloutBuffer` 的 packed 更新可设置 `prefetch_groups`。CUDA
+学习器按原置换从主机提取下一组，在独立流上传输，消费流等待就绪后开始计算。
+这只需在显存中保留当前组和一个预取组。若预取遇到显存不足，学习器完成当前组后
+同步读取尚未消费的原组。CPU 使用原取批路径，旧配置默认关闭。
+
+四机 `transformer64x2` 的 FP32 预热阶段可用
+`--ppo-update-config configs/train/deck_latent_448_fp32.json`。每个原始 Adam 组内，
+战斗按构筑实际长度排序，每块最多 448 个不同构筑；上层每块最多 320 个构筑和
+384 行。上层专属梯度经 SSH 环归约时可以计算战斗梯度，共享参数仍按原块顺序
+累加。战斗头和奖励头各自最多使用一组 CUDA 前后向图，按实测形状重放，
+从当前块复制输入，权重与 Adam 共享存储。显存不足时先释放图、重试同一块，
+仍然不足才拆块。各 rank 的更新记录 `planned_ppo` 给出实际分块、图命中和
+退避次数。每轮更新结束释放这些图；checkpoint 保存配置和分块上限。
+CPU、没有 SSH 环及进入战后锚点或搜索阶段时沿用常规 packed 更新。
+
 Deck训练阶段配置可显式设置`anchor_start_round`，在指定已完成轮数后从预热切到
 战后锚点PPO。这是操作者决定，记录`configured-anchor-start`，不伪造准备度通过
 次数或覆盖验证结果；恢复后不重复重置适应期，也不能绕过搜索的资格开关。

@@ -118,7 +118,7 @@ class SharedOverworldEncoder(OverworldEncoder):
         contextual['__active_roles__'] = active_roles
         return output[:, 0], contextual
 
-    def _transform_tokens(self, source, pad_mask, spans, *, map_features=None):
+    def _transform_tokens(self, source, pad_mask, spans, *, map_features=None, packed_width=None):
         if not self.training:
             return super()._transform_tokens(source, pad_mask, spans, map_features=map_features)
         # A key mask does NOT imply an unused query: a PAD card may still be
@@ -133,7 +133,7 @@ class SharedOverworldEncoder(OverworldEncoder):
             # Map scores consume choice flags, not room IDs. Preserve a choice
             # even when its ID is PAD; never infer action validity from identity.
             discard[:, begin:end] = pad_mask[:, begin:end] & ~(map_features[..., 3] > .5)
-        width = int((~discard).sum(1).max().item())
+        width = int((~discard).sum(1).max().item()) if packed_width is None else packed_width
         positions = torch.argsort(discard.to(torch.int32), dim=1, stable=True)[:, :width]
         gather = positions[:, :, None].expand(-1, -1, source.shape[-1])
         packed = source.gather(1, gather)

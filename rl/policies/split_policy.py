@@ -274,7 +274,7 @@ class _SpecialistEncoder(nn.Module):
         self,
         batch_size: int,
         blocks: list[tuple[str, torch.Tensor, torch.Tensor]],
-        *, map_features=None,
+        *, map_features=None, packed_width=None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         device = self.cls.device
         tokens = [self._role(self.cls.expand(batch_size, -1, -1), "cls")]
@@ -289,11 +289,12 @@ class _SpecialistEncoder(nn.Module):
             offset += token.shape[1]
         source = torch.cat(tokens, dim=1)
         pad_mask = torch.cat(masks, dim=1)
-        out = self._transform_tokens(source, pad_mask, spans, map_features=map_features)
+        options = {} if packed_width is None else dict(packed_width=packed_width)
+        out = self._transform_tokens(source, pad_mask, spans, map_features=map_features, **options)
         contextual = {role: out[:, start:end] for role, (start, end) in spans.items()}
         return out[:, 0], contextual
 
-    def _transform_tokens(self, source, pad_mask, spans, *, map_features=None):
+    def _transform_tokens(self, source, pad_mask, spans, *, map_features=None, packed_width=None):
         return self.transformer(source, src_key_padding_mask=pad_mask)
 
 
@@ -747,7 +748,9 @@ class OverworldEncoder(_SpecialistEncoder):
         blocks = self._context_blocks(obs, shared, active_widths)
         blocks.extend(self._screen_blocks(obs, shared, phase_id))
         blocks.extend(self._map_blocks(obs, phase_id, map_encoding))
-        return self._run(len(obs["phase"]), blocks, map_features=obs.get("map_full_features"))
+        packed_width = active_widths[2] if self.training and active_widths is not None and len(active_widths) == 3 else None
+        return self._run(len(obs["phase"]), blocks, map_features=obs.get("map_full_features"),
+                         packed_width=packed_width)
 
     def _context_blocks(self, obs, shared, active_widths):
         batch_size = obs["phase"].shape[0]

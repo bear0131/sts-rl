@@ -184,7 +184,7 @@ def test_duplicate_context_gradients_equal_full_recomputation(latent_env):
 
 @pytest.mark.parametrize('search', [False, True])
 @pytest.mark.parametrize('transport', ['dummy', 'native-subproc'])
-@pytest.mark.parametrize('context_mode', ['off', 'replay', 'grouped', 'screens', 'context-limit', 'direct-mask'])
+@pytest.mark.parametrize('context_mode', ['off', 'replay', 'grouped', 'screens', 'context-limit', 'direct-mask', 'prefetch'])
 def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, transport, context_mode,
                                                        encoder='pooled-mlp'):
     from gymnasium.wrappers import TimeLimit
@@ -214,6 +214,7 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
                            deck_combat_encoder=encoder))
     configure_packed_updates(model, dict(token_budget=1024, max_rows=8, precision='fp32',
                                         direct_masked_categorical=context_mode == 'direct-mask',
+                                        prefetch_groups=context_mode == 'prefetch',
                                         context_gradient_replay=context_mode == 'replay',
                                         context_grouping=context_mode in ('grouped', 'screens', 'context-limit'),
                                         upper_screen_max_rows=4 if context_mode in ('screens', 'context-limit') else None,
@@ -692,7 +693,7 @@ def test_context_length_buckets_count_feature_only_map_nodes(latent_env):
 
 def test_combat_cannot_contribute_to_early_upper_ring_bucket(latent_env):
     """If the model starts sharing a head, staging it early would lose gradients."""
-    from tools.benchmarks.ppo_overlap import gradient_buckets
+    from rl.training.ppo_overlap import gradient_buckets
     policy = policy_for(latent_env, 'transformer64x2')
     early, tail = gradient_buckets(policy)
     policy.set_training_mode(True)

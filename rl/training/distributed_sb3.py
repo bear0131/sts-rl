@@ -17,7 +17,8 @@ from __future__ import annotations
 
 from rl.algorithms.updates import ppo_forward, ppo_chunked_backward, optimizer_step, reasoning_microbatch_backward
 from rl.algorithms.ppo import configure_advantage_normalization, prepare_advantage_normalization
-from rl.algorithms.packed_ppo import configure_packed_updates, packed_ppo_epoch
+from rl.algorithms.packed_ppo import configure_packed_updates
+from rl.training.ppo_overlap import distributed_packed_epoch
 from rl.algorithms.upper_ppo import enabled as joint_upper, combat_update, update_upper
 from rl.algorithms.update_schedule import parse_update_schedule
 from rl.search.native import NATIVE_TIMING_KEYS, WORKER_TIMING_KEYS, apply_strict_training_settings
@@ -3430,6 +3431,7 @@ def main() -> None:
             sync_seconds = 0.0
             sync_mbps = []
             gradient_pack_seconds = 0.0
+            planned_update_stats = {}
             step_seconds = 0.0
             backward_seconds = 0.0
             grad_bytes = 0
@@ -3490,9 +3492,13 @@ def main() -> None:
                             remote_root=args.remote_root, run_id=run_id,
                             tag=f'u{update:06d}_e{epoch:03d}_s{offset + step:06d}',
                             ring_transport=ring_transport, barrier_timeout=args.barrier_timeout)
-                    packed = packed_ppo_epoch(model, clip_range, clip_range_vf,
-                        synchronize=sync_packed,
+                    packed = distributed_packed_epoch(model, clip_range, clip_range_vf,
+                        ring=ring_transport, synchronize=sync_packed,
                         average=lambda values: average_scalar_dict(values, ring_transport))
+                    for name, value in packed.items():
+                        if name.startswith(('planned_', 'graph_')):
+                            planned_update_stats[name] = planned_update_stats.get(name, 0) + value
+                            model.logger.record('pure_rl/update_' + name, planned_update_stats[name])
                     losses.extend(packed['losses'])
                     optimizer_steps += packed['optimizer_steps']
                     backward_seconds += packed['backward_sec']
@@ -3983,6 +3989,8 @@ def main() -> None:
                 hp_order_fraction(aggregate_scalars) or 0.0
             )
             record.update(aggregate_scalars)
+            if planned_update_stats:
+                record['planned_ppo'] = planned_update_stats
             if pure_ppo:
                 record['pure_rl/natural_games_global'] = int(round(
                     record['pure_rl/game_total/natural'] * args.world_size))

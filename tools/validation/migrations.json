@@ -1944,6 +1944,7 @@
     "rl/run_campfire_longterm.sh": "experiments/launchers/run_campfire_longterm.sh"
   },
   "modules": {
+    "tools.benchmarks.ppo_overlap": "rl.training.ppo_overlap",
     "rl.accumulating_ppo": "rl.algorithms.accumulating_ppo",
     "rl.cached_mask_vec_env": "rl.training.cached_mask_vec_env",
     "rl.combat_value_search": "rl.search.combat_value_search",
