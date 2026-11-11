@@ -1,6 +1,6 @@
 # COMBAT49：大外层、256环境与采样加速恢复
 
-状态：部署计划，尚未启动。关联任务：`TODO.md` 的 `DECK-LATENT-FAST-RESTART`。实际进度与验证结果追加到 `worklog/2026-11-11.md`。
+状态：采样资格已通过，四机已使用 `427ddedb` 从零启动。关联任务：`TODO.md` 的 `DECK-LATENT-FAST-RESTART`。实际进度与验证结果追加到 `worklog/2026-11-11.md`。
 
 ## 用户意图与顺序
 
@@ -84,4 +84,4 @@ COMBAT48已在第37轮/global14548992完整停止，四机exit0、全部checkpoi
 - policy SHA256：`88217b752934ed7a5f53a59f733c838ae4123e57429c1b168ce71b16411c0ea5`
 - Adam SHA256：`e62fa00dab36a013b6b9f456c2eb7a97934cd5d088fe0212e3d97ee3a82cfd2d`
 
-尚无COMBAT49运行源、初始checkpoint或速度资格。本地原生观测适配只有未验证草稿，不属于已部署优化。
+COMBAT49 初始模型为 38,641,205 参数，SHA256 `ae6b2d41fdf4df0242030900220ae788e68655e585e6f1e336380f458d3362a0`，四机一致。原生适配在 `bd25d0dd`，图执行及构筑缓存适配在 `427ddedb`。最终运行源码在 rank 0 的固定种子、完整 196608 行冻结采样中用时 37.209 秒，两次未加速基线为 90.831 和 90.018 秒。完整四机验收见 [当日工作记录](../../worklog/2026-11-11.md) 的 DECK-LATENT-FAST-RESTART 小节。

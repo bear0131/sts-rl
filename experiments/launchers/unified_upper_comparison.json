@@ -1721,16 +1721,16 @@
     }
   },
   "monitor": {
-    "root": "/root/autodl-tmp/combat48-deck-latent-t64x2-20261111",
-    "run_id": "combat48-deck-latent-t64x2-ppo-search-r1",
-    "label": "COMBAT48 · 构筑256×4 / 战斗2×64 / λ=1预热",
+    "root": "/root/autodl-tmp/combat49-deck-latent512-t64x2-20261111",
+    "run_id": "combat49-deck-latent512-t64x2-ppo-search-r1",
+    "label": "COMBAT49 · 构筑512×8 / 战斗2×64 / λ=1预热",
     "branch_step": 0,
     "branch_round": 0,
-    "iteration_steps": 393216,
+    "iteration_steps": 786432,
     "rollout_mode": "fixed_steps",
     "status": "training",
-    "note": "内层2层64宽实体注意力从零训练；按用户要求LR5e-5、128环境/机×768、每轮8Adam/有效batch49152，FP32，原奖励及构筑缓存保持；准备度控制锚点，搜索尚未启用。",
-    "updated_at": "2026-11-11T19:48:05.172555+08:00"
+    "note": "从零训练，四机各256×768，每轮16次Adam。采样启用CUDA图及原生批量观测。whole-run预热，搜索关闭。",
+    "updated_at": "2026-11-11T21:44:11+08:00"
   },
   "large_critic_fresh_comparison": {
     "status": "stopped at user request after complete round 211; original COMBAT37 resumed",
@@ -3306,7 +3306,7 @@
     "restart_reference": "references/before-large-fast-restart/rankN/step-000014548992"
   },
   "deck_latent_fast_restart": {
-    "status": "planned-not-started-acceleration-required-first",
+    "status": "continuous-after-two-verified-four-rank-rounds",
     "plan": "docs/2026-11-11/deck-latent-fast-restart.md",
     "root": "/root/autodl-tmp/combat49-deck-latent512-t64x2-20261111",
     "run_id": "combat49-deck-latent512-t64x2-ppo-search-r1",
@@ -3341,7 +3341,7 @@
     "schedule_config": "configs/train/deck_latent_schedule.json",
     "context_grouping": true,
     "context_gradient_replay": false,
-    "physical_update_caps": "768/131072 candidate only; qualify memory for larger model before launch",
+    "physical_update_caps": "768 rows / 131072 tokens requested; per-phase OOM fallback, full effective batch preserved",
     "required_sampling_paths": [
       "geometry-compatible GPU graphs",
       "host metadata and packed gathers",
@@ -3350,8 +3350,100 @@
       "direct native destinations"
     ],
     "qualification": "same-state complete 256x768 baseline/candidate; semantic and GPU cache lifecycle checks; then two full four-rank production rounds",
-    "runtime_source": null,
-    "initial_model_sha256": null,
-    "production_acceptance": null
+    "runtime_source": "427ddedb",
+    "initial_model_sha256": "ae6b2d41fdf4df0242030900220ae788e68655e585e6f1e336380f458d3362a0",
+    "production_acceptance": [
+      {
+        "round": 1,
+        "step": 786432,
+        "policy_sha256": "975a51480cd6f81c3a18f46b3129bbfbe72cb39a30c3c817a58d7c6ad22810f9",
+        "adam_sha256": "43ca75dbc7a209db54ccb3ad17007d095ec26646d2e6cdfd3f22f7cefe5e00ef",
+        "rollout_sec": [
+          31.659775253385305,
+          33.47320544719696
+        ],
+        "update_sec": [
+          157.10876682028174,
+          160.1417452469468
+        ],
+        "iteration_wall_sec": [
+          192.41669206880033,
+          193.71377861709334
+        ],
+        "sync_sec": [
+          15.947128424188122,
+          16.23657163605094
+        ],
+        "save_sec": [
+          1.7170658758841455,
+          1.7182209696620703
+        ],
+        "backward_sec": [
+          135.4899591729045,
+          135.89041939843446
+        ],
+        "oom_retries_rank_mean": 2.5,
+        "rows_per_rank": 196608,
+        "adam_updates": 16,
+        "all_manifest_hashes_verified": true,
+        "graph_hits_rank_mean": 3705.5
+      },
+      {
+        "round": 2,
+        "step": 1572864,
+        "policy_sha256": "a0332559047e1f5bd8adbd7f1648782d6df108e844c2defce7bbefd1473be97b",
+        "adam_sha256": "9ba7c5ec7382c58522e3a5d89e6c33427115974f3e74571df4037c2a72497309",
+        "rollout_sec": [
+          29.713778651785105,
+          30.588200150057673
+        ],
+        "update_sec": [
+          236.1268429607153,
+          236.999821358826
+        ],
+        "iteration_wall_sec": [
+          268.99046488502063,
+          269.0292189992033
+        ],
+        "sync_sec": [
+          15.861801508814096,
+          16.19292641291395
+        ],
+        "save_sec": [
+          2.17823504190892,
+          2.1794797088950872
+        ],
+        "backward_sec": [
+          214.61463946150616,
+          214.68492860719562
+        ],
+        "oom_retries_rank_mean": 0.0,
+        "rows_per_rank": 196608,
+        "adam_updates": 16,
+        "all_manifest_hashes_verified": true,
+        "graph_hits_rank_mean": 3775.25
+      }
+    ],
+    "source_archive_sha256": "da42bbd6310dd5f4b67c7fefe92e1c5d967180a27d106ba0ae67ffaa360dae5e",
+    "qualification_result": {
+      "seed": 20261111,
+      "rows_per_arm": 196608,
+      "baseline_sec": [
+        90.8306982293725,
+        90.01788258180022
+      ],
+      "accepted_sec": 37.209326449781656,
+      "matched_observations_actions_rewards_episode_starts": true,
+      "float_atol": 2e-06,
+      "float_rtol": 2e-05,
+      "graph_stats": {
+        "captures": 71,
+        "hits": 3698,
+        "evictions": 0,
+        "capture_seconds": 2.1719977110624313,
+        "context_rows": 26753,
+        "map_rows": 12658
+      }
+    }
   }
 }
