@@ -29,7 +29,7 @@ from rl.algorithms.packed_ppo import configure_packed_updates, packed_ppo_epoch
 from rl.algorithms.ppo import configure_advantage_normalization, prepare_advantage_normalization
 from rl.training.checkpoints import restore_learner
 from rl.training.distributed_sb3 import (average_scalar_dict, pack_gradients, parse_peer,
-                                         synchronize_gradient_step, ssh_cmd, wait_for_sized_file)
+                                         synchronize_gradient_step, ssh_cmd)
 from rl.training.environments import make_env
 from rl.training.resource_monitor import ResourceMonitor
 from rl.training.ring_allreduce import ParallelRingAllReduce, SshRingAllReduce
@@ -75,19 +75,23 @@ def run(args, stack):
     run_dir = Path(plan['run'])
     assert (run_dir/'STOP').exists() and json.loads((run_dir/f'rank{rank}.exit.json').read_text())['exit_code'] == 0
     args.output.mkdir(parents=True, exist_ok=False)
-    prev = next(peer for peer in peers if peer.rank == (rank-1) % 4)
     control = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix='ppo-ol-')))
-    def listening(i):
-        marker = args.output.resolve()/f'next-ready-{i}'
-        ssh_cmd(prev, Path(arg('--ssh-key')), control, 'touch '+shlex.quote(str(marker)), timeout=15)
-        wait_for_sized_file(marker, timeout=120, expected_size=0)
+    def wait_for_neighbor(name):
+        # Publish locally so a slower neighbor can create its own output
+        # directory at any point. Each experiment requires a fresh directory.
+        marker = args.output.resolve()/name
+        marker.touch(exist_ok=False)
+        poll = 'until test -f "$1"; do sleep 0.2; done'
+        command = shlex.join(['timeout', '120', 'sh', '-c', poll, 'sh', str(marker)])
+        ssh_cmd(peer, Path(arg('--ssh-key')), control, command, timeout=125)
     links = []
     with ExitStack() as partial:
         for i in range(8):
             # Wait until our neighbor is listening, on a range separate from production.
             link = SshRingAllReduce(rank=rank, world_size=4, next_host=peer.host, next_user=peer.user,
                                     next_port=peer.port, ssh_key=Path(arg('--ssh-key')),
-                                    listen_port=args.ring_port+i, timeout=120, ready_barrier=lambda: listening(i))
+                                    listen_port=args.ring_port+i, timeout=120,
+                                    ready_barrier=lambda: wait_for_neighbor(f'listening-{i}'))
             partial.callback(link.close)
             links.append(link)
         ring = ParallelRingAllReduce(links)
@@ -206,6 +210,8 @@ def run(args, stack):
             print('END', qualify, label, round(wall, 3), arm.get('passed'),flush=True)
             if qualify and label in ('B','D') and not arm['passed']:
                 raise AssertionError('distributed qualification failed; see result.json')
+    # The local send can finish before the SSH tunnel delivers its last frame.
+    wait_for_neighbor('finished')
     print('DONE', flush=True)
 
 
