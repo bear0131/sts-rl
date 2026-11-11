@@ -6,7 +6,7 @@
 
 - **COMBAT49-FAILURE-SCENE** — 待修诊断：distributed_sb3失败捕获在NativeSubprocVecEnv访问不存在的envs，训练原始异常仍在log。范围失败现场捕获/原生子进程环境；验收支持该生产后端、保留原异常并导出可用状态，独立于已修scalar schema，不阻塞健康续训。
 
-- **COMBAT49-MAINT** — 半小时自主维护中。现役abfcb134/configs/train/deck_latent_packed_fp32.json普通更新；07:34从完整107恢复，108/109四机完整保存且1epoch/16Adam。原run/W&B offline不变；transport-standard107-20261112、ring31162，禁止重跑takeover/resume_scalar/resume_standard107。每轮查真实四进程、新完成轮、保存、学习/资源和阶段一致性；70污染统计null排除。109仍warmup/good_checks0/last_check100/qualified=false：100轮64自然局458锚点EV .021008<.05未通过，下次120；不强开。搜索CPU语义/原生恢复15项通过，onset/full隔离计划已准备，GPU资格未启动、固定70源target_std待实测/诊断输入待构建；见worklog的06:24/06:54节，首次anchor转换后完整边界安排剩余资格，不能永久忽略。普通更新两轮最慢95.993/91.493秒，整轮129.277/122.701秒；阶段切换后实测速度。rank0约1.80GB，追踪两代轮转；原21、69/70及107基准均保护。维护ID combat49，分支codex/combat49-maintenance。
+- **COMBAT49-MAINT** — 半小时自主维护中。现役abfcb134/configs/train/deck_latent_packed_fp32.json普通更新；07:34从完整107恢复，108/109四机完整保存且1epoch/16Adam。原run/W&B offline不变；transport-standard107-20261112、ring31162，禁止重跑takeover/resume_scalar/resume_standard107。每轮查真实四进程、新完成轮、保存、学习/资源和阶段一致性；70污染统计null排除。117轮四机完整保存/模型/Adam一致，108–117无新CUDA错误、OOM/overflow，117仍warmup/good_checks0/last_check100/qualified=false：100轮64自然局458锚点EV .021008<.05未通过，下次120；不强开。搜索CPU语义/原生恢复15项通过，onset/full隔离计划已准备，GPU资格未启动、固定70源target_std待实测/诊断输入待构建；见worklog的06:24/06:54节，首次anchor转换后完整边界安排剩余资格，不能永久忽略。普通更新109–117整轮121.24–123.63秒；阶段切换后实测速度。rank0约1.795GB，追踪两代轮转；原21、69/70及107基准均保护。维护ID combat49，分支codex/combat49-maintenance。
 
 | UPPER-POLICY-PRE | 已完成：四机180–183真实采集更新保存 | rl/algorithms/unified_upper.py及真实训练上报；新增全部更新前固定actor的policy loss并分析，测量不改变权重/Adam/RNG或目标，CPU/CUDA及两轮生产/保存恢复验收，监控合并COMBAT37。 |
 
