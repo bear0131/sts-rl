@@ -972,6 +972,11 @@ token 数按每八个一档分组，组内按精确上下文 ID 排序。牌、�
 均按构筑网络的掩码计入长度。物理块同时满足行数、token 预算及不同上下文数量上限。
 相同配置恢复时保留已学习的显存退避，旧模型默认沿用保存的分块顺序。
 
+FP32 DeckLatentPolicy 的 packed 配置可启用 `direct_masked_categorical`。纯 PPO
+更新在设备上按 SB3 的归一化顺序计算离散动作的 log-prob 和熵，非法输入进入
+Adam 之前的全局有限值检查。带搜索监督的更新沿用策略分布对象，以便辅助损失
+读取同一组掩码 logits。该选项随 checkpoint 保存，旧配置默认关闭。
+
 Deck训练阶段配置可显式设置`anchor_start_round`，在指定已完成轮数后从预热切到
 战后锚点PPO。这是操作者决定，记录`configured-anchor-start`，不伪造准备度通过
 次数或覆盖验证结果；恢复后不重复重置适应期，也不能绕过搜索的资格开关。

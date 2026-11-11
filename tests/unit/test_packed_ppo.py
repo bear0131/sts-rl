@@ -10,10 +10,45 @@ from gymnasium import spaces
 
 from env.core import native_actions as C, vocab
 from rl.algorithms import packed_ppo
-from rl.algorithms.ppo import prepare_advantage_normalization
+from rl.algorithms.ppo import masked_categorical_statistics, prepare_advantage_normalization
 from rl.algorithms.updates import ppo_forward, optimizer_step
 from rl.policies.entity_combat import EntityCombatConfig
 from rl.policies.shared_wholerun import LearnedCardTable, ScalarCombatNetwork
+
+
+def test_direct_masked_categorical_matches_sb3_values_and_gradients():
+    from sb3_contrib.common.maskable.distributions import MaskableCategorical
+
+    rng = torch.Generator().manual_seed(31)
+    logits = torch.randn(21, 198, generator=rng)
+    mask = torch.rand(logits.shape, generator=rng) > .4
+    mask[0] = False
+    mask[1] = False
+    mask[1, 13] = True
+    actions = torch.randint(198, (21,), generator=rng)
+    outputs = []
+    upstream = (torch.randn(21, generator=rng), torch.randn(21, generator=rng))
+    for direct in (False, True):
+        x = logits.clone().requires_grad_()
+        if direct:
+            log_prob, entropy, valid = masked_categorical_statistics(x, actions, mask)
+            assert valid
+        else:
+            distribution = MaskableCategorical(logits=x)
+            distribution.apply_masking(mask)
+            log_prob, entropy = distribution.log_prob(actions), distribution.entropy()
+        grad, = torch.autograd.grad((log_prob, entropy), x, upstream)
+        outputs.append((log_prob, entropy, grad))
+    for reference, actual in zip(*outputs, strict=True):
+        torch.testing.assert_close(actual, reference, atol=0, rtol=0)
+
+    # A nonfinite unmasked distribution remains invalid even if masking hides it.
+    for invalid_action in (-1, 198):
+        actions[1] = invalid_action
+        assert not masked_categorical_statistics(logits, actions, mask)[2]
+    actions[1] = 13
+    logits[0, 0] = float('nan')
+    assert not masked_categorical_statistics(logits, actions, mask)[2]
 
 
 def test_compacted_combat_preserves_pad_queries_slots_and_gradients(combat_factory):

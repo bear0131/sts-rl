@@ -5,12 +5,12 @@ import time
 import numpy as np
 import torch as th
 from gymnasium import spaces
-from rl.algorithms.ppo import ppo_loss_components, model_normalized_advantages
+from rl.algorithms.ppo import masked_categorical_statistics, ppo_loss_components, model_normalized_advantages
 from rl.search.native import observation_as_tensor
 
 
 def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_forward=None,
-                pre_normalized_advantages=None):
+                pre_normalized_advantages=None, direct_masked_categorical=False):
     if (pre_normalized_advantages is None and model.normalize_advantage
             and getattr(model, 'ppo_advantage_normalization', 'group256') == 'rollout'):
         pre_normalized_advantages = model_normalized_advantages(model, batch.advantages)
@@ -20,10 +20,15 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
     actions = select(batch.actions)
     if isinstance(model.action_space, spaces.Discrete):
         actions = actions.long().flatten()
+    categorical_valid = None
     with model.autocast_context():
-        values, log_prob, entropy = model.policy.evaluate_actions(
-            {k: v for k, v in observations.items() if not k.startswith('_search_')},
-            actions, action_masks=select(batch.action_masks))
+        policy_obs = {k: v for k, v in observations.items() if not k.startswith('_search_')}
+        masks = select(batch.action_masks)
+        if direct_masked_categorical and getattr(model, 'deck_search_config', None) is None:
+            logits, values = model.policy.core.actor_critic(policy_obs)
+            log_prob, entropy, categorical_valid = masked_categorical_statistics(logits.float(), actions, masks)
+        else:
+            values, log_prob, entropy = model.policy.evaluate_actions(policy_obs, actions, action_masks=masks)
         search_loss = None
         if getattr(model, 'deck_search_config', None) is not None:
             from rl.algorithms.search_auxiliary import auxiliary_loss
@@ -48,12 +53,14 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
     loss = components.policy_loss + model.ent_coef * components.entropy_loss + model.vf_coef * components.value_loss
     if search_loss is not None:
         loss = loss + search_loss
+    if categorical_valid is not None:
+        loss = loss.masked_fill(~categorical_valid, float('nan'))
     return components, loss
 
 
 def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
                          pre_normalized_advantages=None, backward_scale=1.0, oom_group=None,
-                         after_physical_chunk=None):
+                         after_physical_chunk=None, direct_masked_categorical=False):
     """Fuse statistical groups; retry smaller chunks without corrupting accumulation.
 
     Only the shared whole-run policy uses this path (no dropout/running stats).
@@ -61,6 +68,7 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
     accumulation separate until an entire chunk succeeds, then add it once.
     The optional observer sees only these committed pieces, including OOM splits.
     """
+    evaluate_options = dict(direct_masked_categorical=True) if direct_masked_categorical else {}
     parameters = list(model.policy.parameters())
     replay = getattr(getattr(model.policy, 'core', None), '_context_gradient_batch', None)
     if replay is not None:
@@ -110,7 +118,8 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
                     if not rows:
                         continue
                     components, phase_loss = ppo_forward(model, chunk, clip_range, clip_range_vf,
-                        indices=None if rows == count else indices, pre_normalized_advantages=advantages)
+                        indices=None if rows == count else indices, pre_normalized_advantages=advantages,
+                        **evaluate_options)
                     (phase_loss * (rows / total * backward_scale)).backward()
                     phase_losses.append(phase_loss.detach() * (rows / count))
                     # Retain only detached metrics until the entire chunk
@@ -124,7 +133,7 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
             else:
                 kwargs = ({} if pre_normalized_advantages is None else
                           dict(pre_normalized_advantages=pre_normalized_advantages[start:start + count]))
-                components, loss = ppo_forward(model, chunk, clip_range, clip_range_vf, **kwargs)
+                components, loss = ppo_forward(model, chunk, clip_range, clip_range_vf, **kwargs, **evaluate_options)
                 (loss * (count / total * backward_scale)).backward()
                 pending_metrics = [(components, count)]
         except th.OutOfMemoryError:

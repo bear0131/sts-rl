@@ -5,6 +5,22 @@ import torch as th
 import torch.nn.functional as F
 from env.core import vocab as V
 
+
+def masked_categorical_statistics(logits, actions, masks):
+    """SB3 masked categorical log probability and entropy on the learner device."""
+    original = logits - logits.logsumexp(dim=-1, keepdim=True)
+    allowed = masks.bool().reshape_as(logits)
+    masked = th.where(allowed, original, -1e8)
+    log_probs = masked - masked.logsumexp(dim=-1, keepdim=True)
+    indices = actions.long().reshape(-1, 1)
+    selected = log_probs.gather(1, indices.clamp(0, logits.shape[1] - 1)).flatten()
+    entropy = -th.where(allowed, log_probs * log_probs.softmax(dim=-1), 0.).sum(dim=-1)
+    # SB3 validates the original distribution before applying the mask. Carry
+    # invalid rows to the packed learner's collective finite vote before Adam.
+    valid = (~original.isnan().any() & ~log_probs.isnan().any()
+             & (indices >= 0).all() & (indices < logits.shape[1]).all())
+    return selected, entropy, valid
+
 @dataclass(frozen=True)
 class PPOLossComponents:
     policy_loss: th.Tensor

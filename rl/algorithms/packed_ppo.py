@@ -21,6 +21,7 @@ class PackedPPOConfig:
     context_grouping: bool = False
     upper_screen_max_rows: int | None = None
     max_contexts_per_chunk: int | None = None
+    direct_masked_categorical: bool = False
 
     def __post_init__(self):
         if (type(self.token_budget) is not int or type(self.max_rows) is not int
@@ -40,6 +41,8 @@ class PackedPPOConfig:
             raise ValueError('context count limit requires upper screen grouping and a positive integer')
         if type(self.context_grouping) is not bool:
             raise ValueError('context_grouping must be boolean')
+        if type(self.direct_masked_categorical) is not bool:
+            raise ValueError('direct_masked_categorical must be boolean')
 
 
 def configure_packed_updates(model, configuration=None):
@@ -60,10 +63,10 @@ def configure_packed_updates(model, configuration=None):
         return None
     config = (configuration if isinstance(configuration, PackedPPOConfig)
               else PackedPPOConfig(**configuration))
-    if config.context_gradient_replay or config.context_grouping:
+    if config.context_gradient_replay or config.context_grouping or config.direct_masked_categorical:
         from rl.policies.deck_latent import DeckLatentPolicy
         if not isinstance(model.policy, DeckLatentPolicy) or config.precision != 'fp32':
-            raise ValueError('context batch optimization requires FP32 deck-latent PPO')
+            raise ValueError('deck batch optimization requires FP32 deck-latent PPO')
     if (not isinstance(model.policy, SharedWholeRunPolicy)
             or model.nosl_is_az or model.hierarchical_combat_hp
             or getattr(model, 'reasoning_updates', 0) or model.target_kl is not None
@@ -71,6 +74,8 @@ def configure_packed_updates(model, configuration=None):
         raise ValueError('packed updates require shared pure PPO without auxiliary updates, target KL or outer AMP')
     previous = getattr(model, 'ppo_update_config', None)
     model.ppo_update_config = asdict(config)
+    if not config.direct_masked_categorical:
+        model.ppo_update_config.pop('direct_masked_categorical')
     if config.max_contexts_per_chunk is None:
         model.ppo_update_config.pop('max_contexts_per_chunk')
     if config.upper_screen_max_rows is None:
@@ -197,7 +202,9 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
     result = dict(losses=[],metrics=[],optimizer_steps=0,backward_sec=0.,optimizer_step_sec=0.,
                   sync_sec=0.,gradient_pack_sec=0.,sync_mbps=[],grad_bytes=0,overflow_retries=0,
                   context_input_rows=0,context_unique_rows=0,context_oom_retries=0)
-    commit_hook = {} if after_physical_chunk is None else dict(after_physical_chunk=after_physical_chunk)
+    chunk_options = {} if after_physical_chunk is None else dict(after_physical_chunk=after_physical_chunk)
+    if config.direct_masked_categorical:
+        chunk_options['direct_masked_categorical'] = True
     for batch in model.rollout_buffer.get(effective):
         from rl.algorithms.search_auxiliary import prepare_search_batch
         prepare_search_batch(model, batch, average)
@@ -222,7 +229,7 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
                 for chunk, advantages, weight, oom_group in scheduled:
                     loss += weight * ppo_chunked_backward(model, chunk, clip_range, clip_range_vf,
                         pre_normalized_advantages=advantages, backward_scale=scale * weight,
-                        oom_group=oom_group, **commit_hook)
+                        oom_group=oom_group, **chunk_options)
                 if replay is not None:
                     replay.backward()
                 grads = [p.grad for p in model.policy.parameters() if p.grad is not None]
