@@ -170,7 +170,8 @@ def run(args, stack):
                     result = packed_ppo_epoch(model, model.clip_range(model._current_progress_remaining),
                         None if model.clip_range_vf is None else model.clip_range_vf(model._current_progress_remaining),
                         synchronize=sync, average=avg,
-                        schedule_chunks=scheduler.schedule if scheduler else None)
+                        schedule_chunks=scheduler.schedule if scheduler else None,
+                        after_physical_chunk=scheduler.after_physical_chunk if scheduler else None)
                     torch.cuda.synchronize()
                     wall = perf_counter()-started
                 finally:

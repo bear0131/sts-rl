@@ -52,12 +52,14 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
 
 
 def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
-                         pre_normalized_advantages=None, backward_scale=1.0, oom_group=None):
+                         pre_normalized_advantages=None, backward_scale=1.0, oom_group=None,
+                         after_physical_chunk=None):
     """Fuse statistical groups; retry smaller chunks without corrupting accumulation.
 
     Only the shared whole-run policy uses this path (no dropout/running stats).
     A failed backward may already have written some gradients. Keep prior
     accumulation separate until an entire chunk succeeds, then add it once.
+    The optional observer sees only these committed pieces, including OOM splits.
     """
     parameters = list(model.policy.parameters())
     replay = getattr(getattr(model.policy, 'core', None), '_context_gradient_batch', None)
@@ -168,6 +170,8 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
         stats['rows'] += count
         stats['min_rows'] = min(stats['min_rows'], count)
         stats['max_rows'] = max(stats['max_rows'], count)
+        if after_physical_chunk is not None:
+            after_physical_chunk(oom_group, count, total)
     backward(0, total)
     return float(th.stack(losses).sum().cpu())
 

@@ -35,39 +35,53 @@ class UpperFirstSchedule:
         self.model = model
         self.groups = gradient_buckets(model.policy)
 
+    def after_physical_chunk(self, phase, count, total):
+        if phase == 'combat':
+            return
+        partial = []
+        for parameter in self.groups[1]:
+            grad = parameter.grad
+            if grad is not None:
+                # A long OOM subdivision must not retain all its new partials
+                # in VRAM. CPU copies preserve the FP32 values and ordering.
+                partial.append((parameter, grad.cpu() if count < total else grad))
+                parameter.grad = None
+        self.deferred.append(partial)
+
     def schedule(self, chunks):
-        # Detached upper partials stay on the GPU. Fail closed on subdivision:
-        # a combined partial cannot reproduce the original sequence of adds.
-        deferred = []
-        for it in chunks:
-            if it[3] == 'combat':
-                continue
-            before = self.model._ppo_microbatch_stats['chunks']
-            yield it
-            if self.model._ppo_microbatch_stats['chunks'] != before+1:
-                raise RuntimeError('prototype cannot replay a subdivided upper chunk')
-            partial = []
-            for p in self.groups[1]:
-                if p.grad is not None:
-                    partial.append((p, p.grad))
-                    p.grad = None
-            deferred.append(partial)
-        self.upper_ready()
-        for it in chunks:
-            if it[3] == 'combat':
-                yield it
-        self.combat_done()
-        for partial in deferred:
-            dest, src = [], []
-            for p, grad in partial:
-                if p.grad is None:
-                    p.grad = grad
-                else:
-                    dest.append(p.grad)
-                    src.append(grad)
-            if dest:
-                torch._foreach_add_(dest, src)
-            partial.clear()
+        self.deferred = []
+        try:
+            for chunk in chunks:
+                if chunk[3] == 'combat':
+                    continue
+                before = len(self.deferred)
+                committed = self.model._ppo_microbatch_stats['chunks']
+                yield chunk
+                if len(self.deferred) == before:
+                    # Older benchmark callers only supplied schedule_chunks.
+                    if self.model._ppo_microbatch_stats['chunks'] != committed + 1:
+                        raise RuntimeError('subdivided upper chunk requires the commit hook')
+                    rows = len(chunk[0].advantages)
+                    self.after_physical_chunk(chunk[3], rows, rows)
+            self.upper_ready()
+            for chunk in chunks:
+                if chunk[3] == 'combat':
+                    yield chunk
+            self.combat_done()
+            for partial in self.deferred:
+                dest, src = [], []
+                for parameter, grad in partial:
+                    grad = grad.to(parameter.device)
+                    if parameter.grad is None:
+                        parameter.grad = grad
+                    else:
+                        dest.append(parameter.grad)
+                        src.append(grad)
+                if dest:
+                    torch._foreach_add_(dest, src)
+                partial.clear()
+        finally:
+            self.deferred.clear()
 
     def upper_ready(self):
         pass

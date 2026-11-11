@@ -170,7 +170,8 @@ def _sync_device(model):
         torch.cuda.synchronize(model.device)
 
 
-def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, average=None, schedule_chunks=None):
+def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, average=None, schedule_chunks=None,
+                     after_physical_chunk=None):
     """Same Adam boundaries for local and distributed learners; retry overflow.
 
     ``average`` must be the rank-wide scalar reduction whenever ``synchronize``
@@ -196,6 +197,7 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
     result = dict(losses=[],metrics=[],optimizer_steps=0,backward_sec=0.,optimizer_step_sec=0.,
                   sync_sec=0.,gradient_pack_sec=0.,sync_mbps=[],grad_bytes=0,overflow_retries=0,
                   context_input_rows=0,context_unique_rows=0,context_oom_retries=0)
+    commit_hook = {} if after_physical_chunk is None else dict(after_physical_chunk=after_physical_chunk)
     for batch in model.rollout_buffer.get(effective):
         from rl.algorithms.search_auxiliary import prepare_search_batch
         prepare_search_batch(model, batch, average)
@@ -220,7 +222,7 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
                 for chunk, advantages, weight, oom_group in scheduled:
                     loss += weight * ppo_chunked_backward(model, chunk, clip_range, clip_range_vf,
                         pre_normalized_advantages=advantages, backward_scale=scale * weight,
-                        oom_group=oom_group)
+                        oom_group=oom_group, **commit_hook)
                 if replay is not None:
                     replay.backward()
                 grads = [p.grad for p in model.policy.parameters() if p.grad is not None]
