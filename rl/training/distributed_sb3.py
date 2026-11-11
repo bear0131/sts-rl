@@ -1481,11 +1481,11 @@ def average_scalar_dict(
     values: dict[str, float], ring_transport,
 ) -> dict[str, float]:
     """Average a fixed scalar schema over ranks when the SSH ring is active."""
-    if ring_transport is None or not values:
+    if ring_transport is None:
         return values
     keys = tuple(sorted(values))
     tensor = th.tensor([values[key] for key in keys], dtype=th.float32)
-    averaged, _bytes = ring_transport.average(tensor)
+    averaged, _bytes = ring_transport.average(tensor, schema=keys)
     return {key: float(value) for key, value in zip(keys, averaged.tolist())}
 
 

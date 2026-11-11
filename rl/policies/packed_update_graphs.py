@@ -136,7 +136,11 @@ class PackedHeadGraphs:
         self.reward = _RewardHead(core)
         self.entries = {}
         self.retired = set()
-        self.stats = Counter()
+        # A rank-local OOM/shape miss must never change the distributed metric
+        # schema. Zero counts are meaningful even when a head is never used.
+        self.stats = Counter({head + '_' + event: 0
+                              for head in ('combat', 'upper')
+                              for event in ('captures', 'replays', 'retired')})
         self.capturing = None
 
     def _entry(self, name, module, obs, z, rows, widths):

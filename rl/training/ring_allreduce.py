@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import socket
+import hashlib
+import json
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -57,11 +59,28 @@ class RingAllReduce:
         self._recv_exact(self.incoming, receive)
         future.result()
 
-    def average(self, flat: torch.Tensor, *, chunk_sizes=None) -> tuple[torch.Tensor, int]:
+    def _check_scalar_schema(self, schema, size):
+        # Fixed-size headers cannot spill a rank-local extra metric into the
+        # next collective (notably the stop vote). Forward every header before
+        # raising so all ranks reject the same call and leave sockets aligned.
+        encoded = json.dumps([size, schema], separators=(',', ':')).encode()
+        own = np.frombuffer(hashlib.sha256(encoded).digest(), dtype=np.uint8).copy()
+        send, mismatch = own, False
+        for _ in range(self.world_size - 1):
+            received = np.empty_like(own)
+            self._exchange(send, received)
+            mismatch |= not np.array_equal(received, own)
+            send = received
+        if mismatch:
+            raise ValueError('scalar schema differs across ranks; payload was not reduced')
+
+    def average(self, flat: torch.Tensor, *, chunk_sizes=None, schema=None) -> tuple[torch.Tensor, int]:
         if flat.device.type != "cpu" or flat.dtype != torch.float32:
             raise TypeError("ring input must be a CPU float32 tensor")
         if not flat.is_contiguous():
             raise ValueError("ring input must be contiguous")
+        if schema is not None:
+            self._check_scalar_schema(schema, flat.numel())
 
         values = flat.numpy()
         if chunk_sizes is None:
@@ -127,7 +146,12 @@ class ParallelRingAllReduce(RingAllReduce):
                                             thread_name_prefix=f"ring-stripe-{self.rank}")
         self._parallel = False
 
-    def average(self, flat, *, chunk_sizes=None):
+    def average(self, flat, *, chunk_sizes=None, schema=None):
+        # Validate on a fixed link before tensor length selects striping: a
+        # mismatched schema may itself straddle the parallel threshold.
+        self._parallel = False
+        if schema is not None:
+            self._check_scalar_schema(schema, flat.numel())
         # Every rank has the same tensor length; decide once per collective,
         # never from individual uneven chunks at a threshold boundary.
         self._parallel = flat.numel() >= 65536

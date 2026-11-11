@@ -106,6 +106,9 @@ def test_failed_first_graph_capture_retries_eagerly(monkeypatch):
 
     core = SimpleNamespace(overworld=torch.nn.Identity(), upper_tokenizer=torch.nn.Identity())
     cache = graphs.PackedHeadGraphs(core)
+    untouched = dict(cache.stats)
+    assert untouched == {head + '_' + event: 0 for head in ('combat', 'upper')
+                         for event in ('captures', 'replays', 'retired')}
 
     def fail(*args):
         raise torch.OutOfMemoryError('injected during first capture')
@@ -116,6 +119,7 @@ def test_failed_first_graph_capture_retries_eagerly(monkeypatch):
     assert cache.recover_oom()
     assert cache._entry('upper', None, {}, None, 256, (32, 16, 128)) is None
     assert cache.stats['upper_retired'] == 1
+    assert set(cache.stats) == set(untouched)
     assert not cache.recover_oom()
 
 

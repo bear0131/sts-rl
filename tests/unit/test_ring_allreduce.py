@@ -9,6 +9,43 @@ import torch
 from rl.training.ring_allreduce import RingAllReduce, ParallelRingAllReduce
 
 
+@pytest.mark.parametrize('different', ['extra', 'renamed', 'empty'])
+@pytest.mark.parametrize('streams', [1, 8])
+def test_scalar_schema_mismatch_rejects_all_ranks_without_corrupting_stop(different, streams):
+    from rl.training.distributed_sb3 import average_scalar_dict
+
+    lanes = []
+    for _ in range(streams):
+        links = [socket.socketpair() for _ in range(4)]
+        lanes.append([RingAllReduce(rank=r, world_size=4, outgoing=links[r][0],
+            incoming=links[(r-1) % 4][1], timeout=5.) for r in range(4)])
+    rings = lanes[0] if streams == 1 else [ParallelRingAllReduce([lane[r] for lane in lanes]) for r in range(4)]
+    try:
+        def reduce(rank):
+            values = {'epochs': 1., 'rows': 196608.}
+            if rank == 0:
+                if different == 'extra':
+                    values['graph_upper_retired'] = 1.
+                elif different == 'renamed':
+                    values['other_rows'] = values.pop('rows')
+                else:
+                    values.clear()
+            with pytest.raises(ValueError, match='scalar schema differs'):
+                average_scalar_dict(values, rings[rank])
+            # All headers were drained, and no unvalidated payload was sent.
+            assert average_scalar_dict({'stop_requested': 0.}, rings[rank]) == {'stop_requested': 0.}
+            fixed = {'epochs': 1., 'rows': 196608., 'graph_upper_retired': float(rank == 0)}
+            assert average_scalar_dict(fixed, rings[rank]) == {'epochs': 1., 'rows': 196608., 'graph_upper_retired': .25}
+            with pytest.raises(ValueError, match='scalar schema differs'):
+                rings[rank].average(torch.zeros(65535 + (rank == 0)), schema=('boundary',))
+            assert average_scalar_dict({'stop_requested': 0.}, rings[rank]) == {'stop_requested': 0.}
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            list(pool.map(reduce, range(4)))
+    finally:
+        for ring in rings:
+            ring.close()
+
+
 def test_ring_allreduce_averages_uneven_flat_tensors():
     world_size = 4
     links = [socket.socketpair() for _ in range(world_size)]
