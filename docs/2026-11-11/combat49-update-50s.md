@@ -30,7 +30,9 @@ D 对原序串行 A 减少 5.104s（5.9%），对相同本地顺序的串行 B �
 
 四机 `global-fp32-1/def/result.json` 保存了相同 rollout 上的计算候选。最慢 rank 的冻结更新时间为严格 overlap 79.37s、只裁剪上层末层 query 79.62s、再合并相同卡牌 token 77.50s。后两项的最终 Adam 矩相对 L2 为 2.86e-4、3.11e-4，基线与各候选分别在四个 rank 上一致。精确上下文编号/同 screen 派发的另一组实验在 `global-fp32-2/dg/result.json`，16 步全部梯度和最终状态与基线逐位相同，候选/基线/候选为 81.08/80.99/79.93s。
 
-只裁剪 query 的单步重放可从每机 `global-fp32-diag/src/tools/benchmarks/diagnose.py` 复现。四机各自的 `global-fp32-diag/causes/diag.json` 含样本行、ReLU 跨零的层/实体 token/单元/上下游数值、PPO clip 分支、每步全梯度差、Adam 两个矩和逐参数归因。第12/16步从同一原版状态重放，只裁剪带来的直接梯度 max 差分别为 5.82e-10/6.98e-10；候选轨迹的步前权重即使用原版代码也产生 1.56e-6/1.92e-6 的跳变。还原候选后向的战斗 ReLU 门控，分别消除 99.79%/99.30% 的梯度 L2 差。细节和单样本干预见 [11月12日工作日志](../../worklog/2026-11-12.md)。此单项同批耗时略高于基线，保留其作为可复现的数值诊断样例；重复卡牌的独立贡献在 `global-fp32-cards` 测量。
+只裁剪 query 的单步重放可从每机 `global-fp32-diag/src/tools/benchmarks/diagnose.py` 复现。四机各自的 `global-fp32-diag/causes/diag.json` 含样本行、ReLU 跨零的层/实体 token/单元/上下游数值、PPO clip 分支、每步全梯度差、Adam 两个矩和逐参数归因。第12/16步从同一原版状态重放，只裁剪带来的直接梯度 max 差分别为 5.82e-10/6.98e-10；候选轨迹的步前权重即使用原版代码也产生 1.56e-6/1.92e-6 的跳变。还原候选后向的战斗 ReLU 门控，分别消除 99.79%/99.30% 的梯度 L2 差。细节和单样本干预见 [11月12日工作日志](../../worklog/2026-11-12.md)。此单项同批耗时略高于基线，保留其作为可复现的数值诊断样例；重复卡牌单项在 `global-fp32-cards` 的交错计时为81.46/79.79/80.43s（候选/原版/候选）。保留原 attention 槽位顺序的修法，将第12步同状态梯度最大差从3.45e-7降至5.82e-10，整轮交错计时81.34/79.75/80.83s。该步只减少5.23%的构筑token槽，两种实现的计时均不支持合入。正式训练保持第21轮暂停，当前总目标为四机最慢完整 `update_sec < 50s`。
+
+以后验证数值变通可直接进入每个训练机的COMBAT49根目录，使用 `global-fp32-repair/src` 运行 `python -m tools.benchmarks.single --plan training-plan.json --packet global-fp32-repair/causes/step12-frozen.pt --output <新的四机同名目录> --ring-port <未占用端口段的起点>`。四机各用自己的packet和既有运行时，设置 `CUBLAS_WORKSPACE_CONFIG=:4096:8`；外部硬限140秒。新进程已逐位复现参考梯度。跨机回执与脚本在每机 `global-fp32-repair/global-fp32-receipts.tgz`，含各rank大包的SHA；大包保留在原机。
 
 ## 第12/13轮的生产结果
 
