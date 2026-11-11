@@ -30,7 +30,7 @@ autoregressive-v2
 --room-lambda
 1
 --learning-rate
-0.0001
+0.00005
 --n-epochs
 1
 --ent-coef
