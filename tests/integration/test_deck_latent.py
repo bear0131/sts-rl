@@ -544,3 +544,43 @@ def test_transformer_padding_candidates_and_card_interaction(latent_env, tmp_pat
     assert len(present) >= 2
     grad, = torch.autograd.grad(blocks['hand'][0, present[0], 0], obs['hand_damage'])
     assert grad[0, present[1]].abs() > 1e-9
+
+
+@pytest.mark.parametrize('encoder', ['pooled-mlp', 'transformer64x2'])
+def test_cuda_collection_graphs_route_deck_context_and_replay_after_eviction(latent_env, encoder):
+    from rl.policies.collection_graphs import SharedCollectionGraphs
+    assert torch.cuda.is_available(), 'explicit CUDA graph qualification required'
+    torch.set_float32_matmul_precision('highest')
+    core = policy_for(latent_env, encoder).core.cuda().eval()
+    upper = latent_env._obs()
+    enter_combat(latent_env)
+    combat = latent_env._obs()
+    anchor = deepcopy(combat)
+    anchor['combat_exit_anchor'][0] = 1
+    long_choice = deepcopy(combat)
+    long_choice['select_native_indices'][47] = 48
+    graphs = SharedCollectionGraphs(core, capacity=2)
+    retained = []
+    try:
+        with torch.no_grad():
+            for index, rows in enumerate(((upper, combat, anchor), (long_choice,), (upper,),
+                                          (combat, anchor, upper), (combat, anchor, upper))):
+                if index == 3:
+                    core.context.roles.add_(.1)
+                    core.combat.value_head[-1].bias.add_(.11)
+                    torch._C._cuda_clearCublasWorkspaces()
+                    torch.cuda.empty_cache()
+                host = {k: np.stack([r[k] for r in rows]) for k in combat}
+                batch = obs_as_tensor(host, 'cuda')
+                expected = core.actor_critic(batch)
+                graphs.bind_host_observations(batch, host)
+                actual = graphs(batch)
+                for x, y in zip(actual, expected, strict=True):
+                    torch.testing.assert_close(x, y, rtol=2e-5, atol=2e-5)
+                retained.append((actual, tuple(x.clone() for x in actual)))
+            assert graphs.stats['evictions'] and graphs.stats['hits']
+            for actual, original in retained:
+                for x, y in zip(actual, original, strict=True):
+                    torch.testing.assert_close(x, y, rtol=0, atol=0)
+    finally:
+        graphs.close()

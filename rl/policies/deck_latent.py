@@ -60,12 +60,13 @@ class RunContextEncoder(nn.Module):
     def key_tensor(self, obs):
         return torch.cat([obs[k].reshape(len(obs['phase']), -1).float() for k in self.keys], 1)
 
-    def forward(self, obs):
-        width = _active_prefix_width(obs['deck_ids'])
+    def forward(self, obs, active_widths=None):
+        width, relic_width = (active_widths if active_widths is not None else
+                              (_active_prefix_width(obs['deck_ids']), _active_prefix_width(obs['relics'])))
         ids, upgrades = obs['deck_ids'][:, :width], obs['deck_upgrades'][:, :width]
         deck = self.card_projection(torch.cat((self.card.versioned_forward(ids, upgrades),
             upgrades[..., None], obs['outer_deck_misc'][:, :width, None]), -1))
-        relic_ids = obs['relics'][:, :_active_prefix_width(obs['relics'])]
+        relic_ids = obs['relics'][:, :relic_width]
         rooms, features = obs['map_full_rooms'], obs['map_full_features'].float()
         maps = self.room(rooms.long()) + self.map_projection(features)
         global_token = self.global_projection(torch.cat([obs[k].float() for k in self.global_keys], -1))
@@ -177,7 +178,9 @@ class TransformerCombatNetwork(FastCombatNetwork):
         # Legal PAD-ID/handle-only candidates must retain their query slot.
         pick = C.JOINT_PICK - C.JOINT_END
         required = valid | obs['combat_legal'][:, pick:pick + valid.shape[1]].bool()
-        choice_width = _active_prefix_width(required)
+        choice_width = obs.get('_choice_width')
+        if choice_width is None:
+            choice_width = _active_prefix_width(required)
         piles = self.pile_projection(self.summaries.features(summary).reshape(len(player), 3, 65))
         blocks = [
             ('global', (player + context)[:, None], torch.ones_like(valid[:, :1])),
@@ -232,7 +235,6 @@ class FastAnchorValue(nn.Module):
 
 class DeckLatentCore(SharedWholeRunCore):
     model_contract = MODEL_CONTRACT
-    collection_graphs_supported = False
 
     def __init__(self, space, *, width=512, layers=8, heads=8, combat_encoder='pooled-mlp'):
         nn.Module.__init__(self)
@@ -312,6 +314,12 @@ class DeckLatentCore(SharedWholeRunCore):
         return SearchContext(self.combat.context_projection(z), self.anchor.context_projection(z))
 
     def actor_critic(self, obs, **kwargs):
+        runtime = getattr(self, '_collection_graphs', None)
+        if runtime is not None:
+            return runtime(obs)
+        return self.eager_actor_critic(obs)
+
+    def eager_actor_critic(self, obs):
         context = self.run_context(obs)
         phase = obs['phase'].long().flatten()
         anchored = obs['combat_exit_anchor'].bool().any(1)

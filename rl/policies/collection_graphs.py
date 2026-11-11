@@ -10,9 +10,13 @@ import time
 import numpy as np
 import torch
 
-from env.core import encode, vocab
+from env.core import encode, native_actions as C, vocab
 from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS
 from rl.policies.shared_wholerun import MERGED_UPPER_PHASE
+
+
+# Synthetic collection route, separate from real screen IDs and MERGED_UPPER_PHASE.
+_ANCHOR_PHASE = -2
 
 
 class SharedCollectionGraphs:
@@ -36,6 +40,7 @@ class SharedCollectionGraphs:
         self.host_map_cache = None
         self.host_inputs = None
         self.map_entries = OrderedDict()
+        self.context_cache = None
         self.weight_versions = None
         self.begin_collection()
 
@@ -149,6 +154,43 @@ class SharedCollectionGraphs:
                             device=rooms.device))
             self.map_valid = torch.zeros(len(rooms), dtype=torch.bool, device=rooms.device)
 
+    def _run_context(self, observations, host):
+        encoder = self.core.context
+        versions = tuple(p._version for p in encoder.parameters())
+        cached = self.context_cache
+        count = len(host['phase'])
+        if cached is None or cached[0] != versions or any(
+                cached[1][k].shape != host[k].shape for k in encoder.keys):
+            previous = {k: host[k].copy() for k in encoder.keys}
+            with torch.inference_mode(False), torch.no_grad():
+                latent = torch.empty(count, self.core.upper_config.width, device=self.device)
+            dirty = np.ones(count, dtype=bool)
+        else:
+            _, previous, latent = cached
+            dirty = np.zeros(count, dtype=bool)
+            for k in encoder.keys:
+                dirty |= (host[k] != previous[k]).reshape(count, -1).any(1)
+        rows = np.flatnonzero(dirty)
+        if len(rows):
+            # Only the expensive attention is deduplicated. Identity includes
+            # every public key byte and cache entries are owned by this runtime.
+            keys = np.concatenate([np.ascontiguousarray(host[k][rows]).view(np.uint8)
+                                   .reshape(len(rows), -1) for k in encoder.keys], axis=1)
+            records = keys.view(np.dtype((np.void, keys.shape[1]))).ravel()
+            _, first, inverse = np.unique(records, return_index=True, return_inverse=True)
+            selected = rows[first]
+            indices = torch.as_tensor(selected, device=self.device)
+            batch = {k: observations[k][indices] for k in encoder.keys}
+            widths = tuple(self._width(host[k][selected], 1) for k in ('deck_ids', 'relics'))
+            encoded = encoder(batch, active_widths=widths)
+            latent[torch.as_tensor(rows, device=self.device)] = encoded[
+                torch.as_tensor(inverse, device=self.device)]
+            for k in encoder.keys:
+                previous[k][rows] = host[k][rows]
+            self.stats['context_rows'] = self.stats.get('context_rows', 0) + len(selected)
+        self.context_cache = versions, previous, latent
+        return latent
+
     def _forward(self, observations, host=None):
         if self.closed or self.core.training or torch.is_grad_enabled():
             raise RuntimeError('collection graphs require a live eval/no-grad scope')
@@ -158,6 +200,10 @@ class SharedCollectionGraphs:
         # parameter writes/Adam updates are visible; replacing parameters needs
         # a fresh collection runtime.
         self.core.prepare_inference_cache()
+        deck_model = getattr(self.core, 'model_contract', None) == 'deck-latent-combat-v1'
+        if deck_model and host is None:
+            return self.core.eager_actor_critic(observations)
+        context = self._run_context(observations, host) if deck_model else None
         phase = observations['phase'].long().flatten()
         use_map = self.core.map_dag_enabled and 'upper_public_context' in observations
         if host is not None:
@@ -260,31 +306,40 @@ class SharedCollectionGraphs:
         combat_id = vocab.PHASE_VOCAB_INDEX['combat']
         selection_id = vocab.PHASE_VOCAB_INDEX['card_select']
         ordinary_upper = (meta[:, 0] != combat_id) & (meta[:, 0] != selection_id)
-        phases = np.unique(meta[:, 0]).tolist()
+        routes = meta[:, 0].copy()
+        if deck_model:
+            routes[(routes == combat_id) & host['combat_exit_anchor'].any(1)] = _ANCHOR_PHASE
         if host is not None and use_map:
-            phases = [pid for pid in phases if pid in (combat_id, selection_id)]
-            if ordinary_upper.any():
-                phases.append(MERGED_UPPER_PHASE)
-        for phase_id in phases:
-            rows = np.flatnonzero(ordinary_upper if phase_id == MERGED_UPPER_PHASE
-                                 else meta[:, 0] == phase_id)
+            routes[ordinary_upper] = MERGED_UPPER_PHASE
+        for phase_id in np.unique(routes).tolist():
+            rows = np.flatnonzero(routes == phase_id)
             selected = torch.from_numpy(rows).to(device=phase.device, non_blocking=True)
-            combat = phase_id == vocab.PHASE_VOCAB_INDEX['combat']
+            combat = phase_id in (combat_id, _ANCHOR_PHASE)
             keys = (COMBAT_OBSERVATION_KEYS if combat
                     else observations if phase_id == MERGED_UPPER_PHASE
                     else encode.upper_observation_keys(phase_id, observations))
+            if combat and deck_model:
+                keys = keys | {'pile_upgraded_counts', 'pile_upgrade_sums'}
             keys = tuple(key for key in observations if key in keys)
             needed = {layout[key][0] for key in keys}
             batch = {group: value[selected] for group, value in packed.items() if group in needed}
             relic = self._width(meta[rows, 1:relic_end], 4)
             deck = None if combat else self._width(meta[rows, relic_end:-1], 16)
+            choice_width = None
+            if deck_model:
+                batch['_run_context'] = context[selected]
+                if phase_id == combat_id:
+                    choices = host['select_native_indices'][rows] > 0
+                    pick = C.JOINT_PICK - C.JOINT_END
+                    choices |= host['combat_legal'][rows, pick:pick + choices.shape[1]].astype(bool)
+                    choice_width = self._width(choices, 1)
             if use_map and not combat:
                 batch['_map_encoding'] = encoded_map[selected]
             union_width = (self.core.overworld.encoder.merged_width(host, rows, multiple=16)
                 if phase_id == MERGED_UPPER_PHASE else None)
             count = len(selected)
             padded = (1 << (count - 1).bit_length()) if count <= 16 else ((count + 15) // 16) * 16
-            signature = (phase_id, padded, deck, relic, union_width, schema,
+            signature = (phase_id, padded, deck, relic, union_width, choice_width, schema,
                          tuple((key, tuple(value.shape[1:]), value.dtype) for key, value in batch.items()))
 
             def forward(packed_batch):
@@ -297,6 +352,14 @@ class SharedCollectionGraphs:
                 if deck is not None:
                     for key in ('deck_ids', 'deck_upgrades'):
                         tensors[key] = tensors[key][:, :deck]
+                if deck_model:
+                    tensors['_run_context'] = packed_batch['_run_context']
+                    if phase_id == _ANCHOR_PHASE:
+                        z = tensors['_run_context']
+                        return (z.new_zeros(padded, C.AUTOREGRESSIVE_SIZE),
+                                self.core.anchor_with_context(tensors, self.core.anchor.context_projection(z)))
+                    if combat:
+                        tensors['_choice_width'] = choice_width
                 if '_map_encoding' in packed_batch:
                     tensors['_map_encoding'] = packed_batch['_map_encoding']
                 if combat:
@@ -322,6 +385,7 @@ class SharedCollectionGraphs:
         if not self.closed:
             torch.cuda.synchronize(self.device)
             self.entries.clear()
+            self.context_cache = None
             self.map_entries.clear()
             self.map_cache = None
             self.host_map_cache = None
