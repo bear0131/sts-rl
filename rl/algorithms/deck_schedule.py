@@ -21,6 +21,7 @@ class DeckTrainingSchedule:
     minimum_anchors: int = 64
     minimum_ev: float = .05
     search_qualified: bool = False
+    anchor_start_round: int | None = None
 
     def __post_init__(self):
         if min(self.check_interval, self.consecutive_checks, self.anchor_rounds, self.ramp_rounds,
@@ -30,6 +31,9 @@ class DeckTrainingSchedule:
             raise ValueError('invalid deck readiness validation budget')
         if self.minimum_natural > self.validation_games:
             raise ValueError('readiness cannot require more natural games than its budget')
+        if self.anchor_start_round is not None and (type(self.anchor_start_round) is not int
+                                                  or self.anchor_start_round < 0):
+            raise ValueError('explicit anchor start must be a non-negative completed round')
 
 
 def configure(model, config=None):
@@ -82,6 +86,12 @@ def advance(state, schedule, completed_rounds, moments):
 
 def apply_stage(model, schedule, completed_rounds, *, rank=0):
     state = model.deck_training_state
+    if (state['stage'] == 'warmup' and schedule.anchor_start_round is not None
+            and completed_rounds >= schedule.anchor_start_round):
+        # An explicit operator decision is distinct from passed validation.
+        # Do not invent good_checks, replace its evidence, or reset on resume.
+        state.update(stage='anchor', stage_start=completed_rounds,
+                     transition_reason='configured-anchor-start')
     target = 'whole-run' if state['stage'] == 'warmup' else 'pre-reward-anchor'
     model.policy.combat_value_target = target
     model.policy_kwargs['combat_value_target'] = target

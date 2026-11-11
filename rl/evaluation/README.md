@@ -145,6 +145,12 @@ JSON suite schema=2 包含 checkpoint/corpus SHA-256、每条完整曲线、局�
 native search 对终局本来就直接返回精确 HP，所以网络的 terminal 误差反映监督/校准情况，不能单独当作搜索返回值错误。
 # 评测轨迹显示约定
 
+Deck latent 的 `--anchor-readiness --anchor-hp-response` 在固定种子的自然游戏中，
+对真实奖励前战后锚点扫描当前HP。保持maxHP、卡组、遗物、计数及药水不变，
+同步修改player/run的HP和派生比例；仅自然完成游戏的样本写入JSON的
+`hp_response.rows`，包含原HP预测和实际未来战略回报。它衡量模型输入响应，
+不是不同HP下重新模拟的胜率，也不强制所有遗物组合单调。
+
 轨迹 Markdown 使用中文时间线排版：地图、问号事件、战斗摘要、战斗奖励、商店、宝箱和首领遗物按发生顺序混排；战斗不展开逐动作，只记录战斗前后生命与资源变化。生命和金币使用颜色标记，牌名、遗物和药水使用不同颜色。显示名称在报告层维护，特别保证 `Combust` 显示为“自燃”，`Inflame` 显示为“燃烧”。
 
 

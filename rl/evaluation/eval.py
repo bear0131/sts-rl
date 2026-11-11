@@ -30,6 +30,8 @@ def build_parser():
                         help='Audit frozen-upper HP/potion/gold responses and exit; requires --output')
     parser.add_argument('--anchor-readiness', action='store_true',
                         help='Validate deck-latent anchors against actual natural-game future returns')
+    parser.add_argument('--anchor-hp-response', action='store_true',
+                        help='With --anchor-readiness, audit fixed-anchor current-HP response curves')
     parser.add_argument('--trace', type=Path, help='Combat states, chosen actions and rule explanations as JSONL')
     parser.add_argument('--card-vector-checkpoint', type=Path)
     parser.add_argument('--task', choices=['wholerun', 'combat'], default='wholerun')
@@ -208,13 +210,15 @@ def main():
     if args.budget_dataset and (args.search_cost_price is not None or args.solver == 'fixed-budget-token'):
         raise ValueError('budget audit collection cannot also override its allocation')
     model.set_random_seed(args.seed)
+    if args.anchor_hp_response and not args.anchor_readiness:
+        raise ValueError('--anchor-hp-response requires --anchor-readiness')
     if args.anchor_readiness:
         from env.core.native_actions import policy_contract
         from rl.evaluation.anchor_readiness import anchor_readiness, readiness_metrics
         if not args.output or args.task != 'wholerun' or args.solver != 'policy' or args.combat_checkpoint:
             raise ValueError('anchor readiness requires output and one whole-run policy checkpoint')
         scenario = make_scenario(model, args, combat_action_contract=policy_contract(model.observation_space))
-        result = anchor_readiness(model, scenario, config)
+        result = anchor_readiness(model, scenario, config, hp_response=args.anchor_hp_response)
         result['metrics'] = readiness_metrics(result)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, indent=2), encoding='utf-8')

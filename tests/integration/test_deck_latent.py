@@ -199,10 +199,22 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
     assert restored._recovery_environment_restored
     for a, b in zip(model.policy.parameters(), restored.policy.parameters(), strict=True):
         torch.testing.assert_close(a, b, rtol=0, atol=0)
+    if context_mode == 'grouped' and not search:
+        from rl.algorithms.deck_schedule import configure, apply_stage
+        schedule = configure(restored, dict(anchor_start_round=2))
+        apply_stage(restored, schedule, 2)
+        assert restored.policy.combat_value_target == 'pre-reward-anchor'
     restored.learn(128, reset_num_timesteps=False)
     assert restored.num_timesteps == 256
-    assert save_bundle(restored, tmp_path/'resumed', rank=0, world_size=1,
-        run_id='deck-latent-test', wandb_id=None, config={'ascension': 0}).is_dir()
+    resumed = save_bundle(restored, tmp_path/'resumed', rank=0, world_size=1,
+        run_id='deck-latent-test', wandb_id=None, config={'ascension': 0})
+    assert resumed.is_dir()
+    if context_mode == 'grouped' and not search:
+        again = load_checkpoint(resumed/'model.zip', device='cpu')
+        assert again.policy.combat_value_target == 'pre-reward-anchor'
+        assert again.deck_training_state['stage'] == 'anchor'
+        assert again.deck_training_state['stage_start'] == 2
+        assert again.deck_training_state['good_checks'] == 0
     env.close(); target.close()
 
 
@@ -332,10 +344,20 @@ def test_anchor_validation_uses_completed_natural_games_and_marks_limits(latent_
     assert result['natural'] == 0
     assert result['censored'] == 2
     assert result['anchors'] == 0
+    rng = torch.get_rng_state()
     natural = anchor_readiness(model, Scenario('latent-readiness', factory),
         EvaluationConfig(episodes=2, seed=20261111, num_envs=2, max_steps=6000, timeout=30.))
     assert natural['natural'] == 2 and natural['censored'] == 0
     assert natural['anchors'] > 0
+    torch.set_rng_state(rng)
+    response = anchor_readiness(model, Scenario('latent-readiness', factory),
+        EvaluationConfig(episodes=2, seed=20261111, num_envs=2, max_steps=6000, timeout=30.), hp_response=True)
+    for key in natural:
+        assert response[key] == pytest.approx(natural[key], rel=1e-5, abs=1e-6), key
+    rows = response['hp_response']['rows']
+    assert len(rows) == response['anchors']
+    assert all(row['outcome'] in ('death', 'win') for row in rows)
+    assert all(row['hp_levels'][0] == 1 and row['hp_levels'][-1] == row['max_hp'] for row in rows)
 
 
 @pytest.mark.parametrize('failure', [None, 'encode', 'encoder_backward'])

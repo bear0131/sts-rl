@@ -1,6 +1,7 @@
 from copy import deepcopy
 from types import SimpleNamespace
 from dataclasses import asdict
+import pytest
 
 from rl.algorithms.deck_schedule import DeckTrainingSchedule, configure, check_due, advance, apply_stage
 
@@ -48,3 +49,25 @@ def test_censored_or_constant_future_targets_cannot_pass_anchor_gate():
     bad = healthy_moments(); bad.update(censored=10., natural=54.)
     state = advance(state, schedule, 140, bad)
     assert state['good_checks'] == 0 and state['stage'] == 'warmup'
+
+
+def test_explicit_anchor_start_preserves_evidence_and_resume_adaptation():
+    model = SimpleNamespace(policy=SimpleNamespace(core=SimpleNamespace(model_contract='deck-latent-combat-v1'),
+        combat_value_target='whole-run'), policy_kwargs={})
+    schedule = configure(model, asdict(DeckTrainingSchedule(anchor_start_round=101)))
+    state = model.deck_training_state
+    state['validation'] = {'passed': False, 'reason': 'operator decision remains separate'}
+    evidence = deepcopy(state['validation'])
+    apply_stage(model, schedule, 100)
+    assert state['stage'] == 'warmup'
+    apply_stage(model, schedule, 101)
+    assert state['stage'] == 'anchor' and state['stage_start'] == 101
+    assert model.policy.combat_value_target == 'pre-reward-anchor'
+    assert state['good_checks'] == 0 and state['last_check'] == -1
+    assert state['validation'] == evidence and state['transition_reason'] == 'configured-anchor-start'
+    restored = deepcopy(model)
+    apply_stage(restored, configure(restored), 140)
+    assert restored.deck_training_state == state
+    assert restored.deck_search_config is None
+    with pytest.raises(ValueError, match='non-negative'):
+        DeckTrainingSchedule(anchor_start_round=-1)
