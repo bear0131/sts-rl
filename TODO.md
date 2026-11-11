@@ -4,7 +4,7 @@
 
 - **COMBAT49-FAILURE-SCENE** — 待修诊断：distributed_sb3失败捕获在NativeSubprocVecEnv访问不存在的envs，训练原始异常仍在log。范围失败现场捕获/原生子进程环境；验收支持该生产后端、保留原异常并导出可用状态，独立于已修scalar schema，不阻塞健康续训。
 
-- **COMBAT49-MAINT** — 半小时自主维护中。现役abfcb134已修第70轮标量错位停训，06:16从完整70恢复并验71/72四机保存/1epoch/16Adam，原run不变。适用training-plan、deck_schedule及搜索资格/监控/恢复；每半小时查真实四进程、新完成轮、保存、学习/资源及阶段一致性；70轮污染统计null排除。仍warmup/good_checks0/last_check-1/search_qualified=false，80轮附近准备搜索资格，100轮起独立准备度检查；anchor/search会回普通packed，切换后实测速度优化。rank0约2.28GB，追踪两代轮转；原21和69/70恢复基准保护，不重跑旧启动脚本。维护ID combat49，分支codex/combat49-maintenance；细节worklog/2026-11-12.md的COMBAT49-SCALAR-SCHEMA恢复验收节。
+- **COMBAT49-MAINT** — 半小时自主维护中。现役abfcb134已修第70轮标量错位停训，06:16从完整70恢复并验71/72四机保存/1epoch/16Adam，原run不变。适用training-plan、deck_schedule及搜索资格/监控/恢复；每半小时查真实四进程、新完成轮、保存、学习/资源及阶段一致性；70轮污染统计null排除。仍warmup/good_checks0/last_check-1/search_qualified=false，搜索资格缺项与预算已预登记在worklog/2026-11-12.md的06:24巡检节，下一步准备隔离资格入口，100轮起独立准备度检查；anchor/search会回普通packed，切换后实测速度优化。rank0约2.28GB，追踪两代轮转；原21和69/70恢复基准保护，不重跑旧启动脚本。维护ID combat49，分支codex/combat49-maintenance；细节worklog/2026-11-12.md的COMBAT49-SCALAR-SCHEMA恢复验收节。
 
 | UPPER-POLICY-PRE | 已完成：四机180–183真实采集更新保存 | rl/algorithms/unified_upper.py及真实训练上报；新增全部更新前固定actor的policy loss并分析，测量不改变权重/Adam/RNG或目标，CPU/CUDA及两轮生产/保存恢复验收，监控合并COMBAT37。 |
 
