@@ -1,8 +1,10 @@
 # 仓库总 TODO
 
-- **COMBAT49-SCALAR-SCHEMA** — 修复验证中。第70轮rank0图显存回退新增graph_upper_retired字段，跨rank标量schema不等导致PPO遍数/样本等指标错位并污染停止投票。范围rl/training/ring_allreduce.py、distributed_sb3.py、packed_update_graphs.py；验收固定图计数schema、不同键/长度全rank拒绝且不污染下一collective、真实PPO/NOSL生命周期和四机两轮完整生产恢复。69/70完整保存与跨rank模型/Adam一致；保留现场，从核验70轮恢复，不改1epoch/16Adam/预算。
+- **COMBAT49-SCALAR-SCHEMA** — 已修复并恢复：abfcb134固定图计数schema及标量传输前全rank验证；CPU/CUDA与真实PPO/NOSL生命周期43项通过。06:16从完整70普通续训，四机71/72各196608行/1epoch/16Adam，模型/Adam一致、0OOM；69–72实读Adam步1104/1120/1136/1152有限。70轮污染指标已标null，原日志及69/70保存保护，源与证据见worklog对应节。
 
-- **COMBAT49-MAINT** — 接管启动及两轮生产验收完成，半小时持续维护中。04:32:49等待到期后，04:35使用dffc1b79/448组合从正式21轮全状态普通恢复；22/23轮四机模型/Adam一致、256环境/卡恢复、每机196608行/16Adam/0OOM，最慢更新70.130/69.105s、整轮101.828/98.926s，原run和监控连续。适用现役training-plan、rl/algorithms/deck_schedule.py及搜索资格/监控/恢复入口。后续验收：每半小时检查学习趋势/资源/保存与锚点及搜索切换；search_qualified当前false，切搜索前补齐资格；快速更新在anchor/search阶段回普通路径，切换后实测速度并按需优化；持续异常先诊断再修正。维护ID combat49，分支codex/combat49-maintenance；原21轮已独立保护，细节见worklog/2026-11-12.md#combat49-maint正式续训与两轮生产验收。
+- **COMBAT49-FAILURE-SCENE** — 待修诊断：distributed_sb3失败捕获在NativeSubprocVecEnv访问不存在的envs，训练原始异常仍在log。范围失败现场捕获/原生子进程环境；验收支持该生产后端、保留原异常并导出可用状态，独立于已修scalar schema，不阻塞健康续训。
+
+- **COMBAT49-MAINT** — 半小时自主维护中。现役abfcb134已修第70轮标量错位停训，06:16从完整70恢复并验71/72四机保存/1epoch/16Adam，原run不变。适用training-plan、deck_schedule及搜索资格/监控/恢复；每半小时查真实四进程、新完成轮、保存、学习/资源及阶段一致性；70轮污染统计null排除。仍warmup/good_checks0/last_check-1/search_qualified=false，80轮附近准备搜索资格，100轮起独立准备度检查；anchor/search会回普通packed，切换后实测速度优化。rank0约2.28GB，追踪两代轮转；原21和69/70恢复基准保护，不重跑旧启动脚本。维护ID combat49，分支codex/combat49-maintenance；细节worklog/2026-11-12.md的COMBAT49-SCALAR-SCHEMA恢复验收节。
 
 | UPPER-POLICY-PRE | 已完成：四机180–183真实采集更新保存 | rl/algorithms/unified_upper.py及真实训练上报；新增全部更新前固定actor的policy loss并分析，测量不改变权重/Adam/RNG或目标，CPU/CUDA及两轮生产/保存恢复验收，监控合并COMBAT37。 |
 

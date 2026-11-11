@@ -3306,7 +3306,7 @@
     "restart_reference": "references/before-large-fast-restart/rankN/step-000014548992"
   },
   "deck_latent_fast_restart": {
-    "status": "continuous-qualified-448-resumed-round21",
+    "status": "continuous-scalar-schema-fixed-resumed-round70",
     "plan": "docs/2026-11-11/deck-latent-fast-restart.md",
     "root": "/root/autodl-tmp/combat49-deck-latent512-t64x2-20261111",
     "run_id": "combat49-deck-latent512-t64x2-ppo-search-r1",
@@ -3350,7 +3350,7 @@
       "direct native destinations"
     ],
     "qualification": "same-state complete 256x768 baseline/candidate; semantic and GPU cache lifecycle checks; then two full four-rank production rounds",
-    "runtime_source": "dffc1b79",
+    "runtime_source": "abfcb134",
     "overlap_prototype": {
       "source": "fed93e8b",
       "production_round_held": 21,
@@ -3439,7 +3439,7 @@
         "graph_hits_rank_mean": 3775.25
       }
     ],
-    "source_archive_sha256": "55b789239cdd825c83ede679b672b662cb26b18c7fc31037fdc943751ee1f75f",
+    "source_archive_sha256": "a9f84fa273899463b6332824bb16068183352be44b26347d91f72a9eda397c4b",
     "qualification_result": {
       "seed": 20261111,
       "rows_per_arm": 196608,
@@ -3690,6 +3690,50 @@
         }
       ],
       "worklog": "worklog/2026-11-12.md#combat49-maint正式续训与两轮生产验收"
+    },
+    "scalar_schema_recovery": {
+      "issue": "COMBAT49-SCALAR-SCHEMA",
+      "source": "abfcb134",
+      "started_at": "2026-11-12T06:16:03+08:00",
+      "resume_round": 70,
+      "resume_step": 55050240,
+      "protected_reference": "references/maintenance-scalar-20261112/rank{rank}/step-000055050240",
+      "transport_root": "transport-scalar-abfcb134",
+      "ring_port": 30862,
+      "invalid_metrics_rounds": [
+        70
+      ],
+      "regression_tests_passed": 43,
+      "acceptance": [
+        {
+          "round": 71,
+          "step": 55836672,
+          "policy_sha256": "62add0f55bef6d11ecdb269499bb3d8c393bae378a100a7972c41c272d2ccfb8",
+          "adam_sha256": "a835379f29cdf55bc9173289129a38f501e0c462be43033696c80c90f6ca3d3e",
+          "max_update_sec": 69.57195397117175,
+          "max_iteration_wall_sec": 101.81687637604773,
+          "all_manifest_hashes_verified": true,
+          "rows_per_rank": 196608,
+          "epochs": 1,
+          "adam_updates": 16,
+          "adam_step": 1136,
+          "oom_retries": 0
+        },
+        {
+          "round": 72,
+          "step": 56623104,
+          "policy_sha256": "ced089960e6423b2a61d6bf0030491a5473c16d589eee07b3a34e6ad06902f48",
+          "adam_sha256": "1f6b8d47f9f873014f62292877325f9f70269a250f5211a2350bf5aedae030d2",
+          "max_update_sec": 70.32132803788409,
+          "max_iteration_wall_sec": 100.39318153588101,
+          "all_manifest_hashes_verified": true,
+          "rows_per_rank": 196608,
+          "epochs": 1,
+          "adam_updates": 16,
+          "adam_step": 1152,
+          "oom_retries": 0
+        }
+      ]
     }
   }
 }
