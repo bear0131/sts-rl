@@ -3306,7 +3306,7 @@
     "restart_reference": "references/before-large-fast-restart/rankN/step-000014548992"
   },
   "deck_latent_fast_restart": {
-    "status": "continuous-after-two-verified-four-rank-rounds",
+    "status": "paused-round11-for-bounded-512x8-update-study",
     "plan": "docs/2026-11-11/deck-latent-fast-restart.md",
     "root": "/root/autodl-tmp/combat49-deck-latent512-t64x2-20261111",
     "run_id": "combat49-deck-latent512-t64x2-ppo-search-r1",
@@ -3525,6 +3525,26 @@
       ],
       "worklog": "worklog/2026-11-11.md",
       "evidence": "runs/local/combat49-update-20261111/"
+    },
+    "update2_study": {
+      "status": "running-bounded-experiment",
+      "protected_round": 11,
+      "protected_global_step": 8650752,
+      "reference": "references/before-update2-512/rankN/step-000008650752",
+      "architecture_unchanged": "512x8 context / 512x2 outer / 64x2 combat",
+      "planned_256_restart": "deferred by latest user instruction",
+      "seed": 20261111,
+      "timeout_seconds_per_rank": 1200,
+      "transitions_per_arm": 196608,
+      "adam_steps_per_arm": 16,
+      "precision": "fp32-highest",
+      "candidates": [
+        "compact masked context tokens",
+        "final layer global query only",
+        "both",
+        "both with upper screen physical rows384"
+      ],
+      "promotion": "same-buffer gradient/parameter/Adam tolerances and complete-update speed; ordinary resume from protected state, never experiment weights"
     }
   }
 }
