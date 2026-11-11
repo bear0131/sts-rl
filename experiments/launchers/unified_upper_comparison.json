@@ -3306,7 +3306,7 @@
     "restart_reference": "references/before-large-fast-restart/rankN/step-000014548992"
   },
   "deck_latent_fast_restart": {
-    "status": "paused-round21-until-update50",
+    "status": "continuous-qualified-448-resumed-round21",
     "plan": "docs/2026-11-11/deck-latent-fast-restart.md",
     "root": "/root/autodl-tmp/combat49-deck-latent512-t64x2-20261111",
     "run_id": "combat49-deck-latent512-t64x2-ppo-search-r1",
@@ -3341,7 +3341,7 @@
     "schedule_config": "configs/train/deck_latent_schedule.json",
     "context_grouping": true,
     "context_gradient_replay": false,
-    "physical_update_caps": "1024 rows / 196608 tokens, upper screen maximum 384 rows, at most 320 distinct contexts per physical chunk",
+    "physical_update_caps": "deck_latent_448_fp32.json: warmup exact-length combat 448 contexts; upper 320 contexts / 384 rows; anchor/search use ordinary packed update",
     "required_sampling_paths": [
       "geometry-compatible GPU graphs",
       "host metadata and packed gathers",
@@ -3350,7 +3350,7 @@
       "direct native destinations"
     ],
     "qualification": "same-state complete 256x768 baseline/candidate; semantic and GPU cache lifecycle checks; then two full four-rank production rounds",
-    "runtime_source": "d8c2e39d",
+    "runtime_source": "dffc1b79",
     "overlap_prototype": {
       "source": "fed93e8b",
       "production_round_held": 21,
@@ -3439,7 +3439,7 @@
         "graph_hits_rank_mean": 3775.25
       }
     ],
-    "source_archive_sha256": "aa54fa64c8416339ac73f40b9967b18f18c11d35d926e6d80b162143034a9128",
+    "source_archive_sha256": "55b789239cdd825c83ede679b672b662cb26b18c7fc31037fdc943751ee1f75f",
     "qualification_result": {
       "seed": 20261111,
       "rows_per_arm": 196608,
@@ -3653,6 +3653,43 @@
           }
         ]
       }
+    },
+    "maintenance_resume": {
+      "started_at": "2026-11-12T04:35:20+08:00",
+      "source": "dffc1b79",
+      "resume_round": 21,
+      "resume_step": 16515072,
+      "protected_reference": "references/maintenance-448-20261112-0433/rank{rank}/step-000016515072",
+      "config": "configs/train/deck_latent_448_fp32.json",
+      "transport_root": "transport-maint448-20261112",
+      "automation_id": "combat49",
+      "acceptance": [
+        {
+          "round": 22,
+          "step": 17301504,
+          "policy_sha256": "7614eef816c360b97255557d88988abfdf105361644186202e034c241f93f94e",
+          "adam_sha256": "0de8d5e0581bf070115233ae3dc7f36a0719f6614f2658403974baa14e7aa652",
+          "max_update_sec": 70.13024683855474,
+          "max_iteration_wall_sec": 101.82772513688542,
+          "all_manifest_hashes_verified": true,
+          "rows_per_rank": 196608,
+          "adam_updates": 16,
+          "oom_retries": 0
+        },
+        {
+          "round": 23,
+          "step": 18087936,
+          "policy_sha256": "eb5c1334f9de280df7cfdfe6dd4291e981395bec3fab0213425ee15087d7a700",
+          "adam_sha256": "8b8e9e806bdaeb24a49c56823a3af385641518323747a1490fd393b8cbf94525",
+          "max_update_sec": 69.10511727910489,
+          "max_iteration_wall_sec": 98.92562247999012,
+          "all_manifest_hashes_verified": true,
+          "rows_per_rank": 196608,
+          "adam_updates": 16,
+          "oom_retries": 0
+        }
+      ],
+      "worklog": "worklog/2026-11-12.md#combat49-maint正式续训与两轮生产验收"
     }
   }
 }
