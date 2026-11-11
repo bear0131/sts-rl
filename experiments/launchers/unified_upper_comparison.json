@@ -3341,7 +3341,7 @@
     "schedule_config": "configs/train/deck_latent_schedule.json",
     "context_grouping": true,
     "context_gradient_replay": false,
-    "physical_update_caps": "768 rows / 131072 tokens requested; per-phase OOM fallback, full effective batch preserved",
+    "physical_update_caps": "768 rows / 131072 tokens; each upper screen <=192 rows, adaptive OOM caps per screen",
     "required_sampling_paths": [
       "geometry-compatible GPU graphs",
       "host metadata and packed gathers",
@@ -3350,7 +3350,7 @@
       "direct native destinations"
     ],
     "qualification": "same-state complete 256x768 baseline/candidate; semantic and GPU cache lifecycle checks; then two full four-rank production rounds",
-    "runtime_source": "427ddedb",
+    "runtime_source": "a3ec30f8",
     "initial_model_sha256": "ae6b2d41fdf4df0242030900220ae788e68655e585e6f1e336380f458d3362a0",
     "production_acceptance": [
       {
@@ -3424,7 +3424,7 @@
         "graph_hits_rank_mean": 3775.25
       }
     ],
-    "source_archive_sha256": "da42bbd6310dd5f4b67c7fefe92e1c5d967180a27d106ba0ae67ffaa360dae5e",
+    "source_archive_sha256": "b961029f2e7f696ba3a28bd3721b645bd4fd1efa2f74db963cd43b7b0be42447",
     "qualification_result": {
       "seed": 20261111,
       "rows_per_arm": 196608,
@@ -3444,6 +3444,87 @@
         "context_rows": 26753,
         "map_rows": 12658
       }
+    },
+    "update_screen_grouping": {
+      "resume_round": 4,
+      "resume_step": 3145728,
+      "original_source": "427ddedb",
+      "frozen_seed": 20261111,
+      "local_rows_per_arm": 196608,
+      "optimizer_steps_per_arm": 16,
+      "effective_global_batch": 49152,
+      "comparisons": [
+        {
+          "rank": 0,
+          "arms": [
+            "baseline",
+            "screen192"
+          ],
+          "seconds": [
+            230.6981237642467,
+            91.53842472657561
+          ]
+        },
+        {
+          "rank": 1,
+          "arms": [
+            "baseline",
+            "screen192"
+          ],
+          "seconds": [
+            126.49374293000437,
+            92.75322008994408
+          ]
+        },
+        {
+          "rank": 2,
+          "arms": [
+            "mixed48",
+            "mixed192"
+          ],
+          "seconds": [
+            235.0539414677769,
+            121.58741100877523
+          ]
+        },
+        {
+          "rank": 3,
+          "arms": [
+            "mixed48",
+            "screen48"
+          ],
+          "seconds": [
+            225.99452662374824,
+            148.42705610906705
+          ]
+        }
+      ],
+      "production": [
+        {
+          "round": 5,
+          "global_step": 3932160,
+          "max_update_sec": 115.60636647883803,
+          "max_iteration_sec": 148.28912957687862,
+          "rows_local": 196608,
+          "optimizer_steps": 16,
+          "backward_oom_retries_rank_mean": 0.0,
+          "policy.pth": "6d5c86a8d3d36697e9fdae63a629ebe3d5d0960dda2452a5e38044c0c606d0ad",
+          "policy.optimizer.pth": "8f6e8f606767d66f717e968760fde0fbcc5fbaa08bd841d24aef729b70f41994"
+        },
+        {
+          "round": 6,
+          "global_step": 4718592,
+          "max_update_sec": 116.59968923521228,
+          "max_iteration_sec": 147.10488698910922,
+          "rows_local": 196608,
+          "optimizer_steps": 16,
+          "backward_oom_retries_rank_mean": 0.0,
+          "policy.pth": "d28290b53e92e77b955e3864de259e91651d967cfdc07a53e3f4adc245c5d004",
+          "policy.optimizer.pth": "9af319c04c9c5e5fd756bf07ce0ff239926b2b758931c3d72c912e89b115e8b2"
+        }
+      ],
+      "worklog": "worklog/2026-11-11.md",
+      "evidence": "runs/local/combat49-update-20261111/"
     }
   }
 }
