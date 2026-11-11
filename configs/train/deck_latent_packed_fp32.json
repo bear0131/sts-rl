@@ -3,5 +3,6 @@
   "max_rows": 768,
   "precision": "fp32",
   "context_gradient_replay": false,
-  "context_grouping": true
+  "context_grouping": true,
+  "upper_screen_max_rows": 192
 }

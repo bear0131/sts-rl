@@ -19,6 +19,7 @@ class PackedPPOConfig:
     precision: str = 'fp32'
     context_gradient_replay: bool = False
     context_grouping: bool = False
+    upper_screen_max_rows: int | None = None
 
     def __post_init__(self):
         if (type(self.token_budget) is not int or type(self.max_rows) is not int
@@ -28,6 +29,10 @@ class PackedPPOConfig:
             raise ValueError('packed PPO precision must be fp32 or fp16')
         if type(self.context_gradient_replay) is not bool:
             raise ValueError('context_gradient_replay must be boolean')
+        if self.upper_screen_max_rows is not None and (
+                type(self.upper_screen_max_rows) is not int or self.upper_screen_max_rows < 1
+                or not self.context_grouping):
+            raise ValueError('upper screen max rows requires context grouping and a positive integer')
         if type(self.context_grouping) is not bool:
             raise ValueError('context_grouping must be boolean')
 
@@ -61,6 +66,10 @@ def configure_packed_updates(model, configuration=None):
         raise ValueError('packed updates require shared pure PPO without auxiliary updates, target KL or outer AMP')
     previous = getattr(model, 'ppo_update_config', None)
     model.ppo_update_config = asdict(config)
+    if config.upper_screen_max_rows is None:
+        # Keep the legacy configuration byte-for-byte compatible so an ordinary
+        # resume preserves its learned OOM caps and old readers accept it.
+        model.ppo_update_config.pop('upper_screen_max_rows')
     if (previous != model.ppo_update_config or not hasattr(model, 'ppo_update_loss_scale')):
         model.ppo_update_loss_scale = 65536. if config.precision == 'fp16' else 1.
         model.__dict__.pop('_ppo_microbatch_cap', None)
@@ -100,7 +109,12 @@ def packed_chunks(model, batch, config):
     # a physical memory estimate, never an action-mask or observation filter.
     width = torch.where(selection, width + obs['select_card_ids'].shape[1], width)
     width = torch.where(combat, model.policy.core.combat.training_token_counts(obs), width)
-    kind = torch.where(combat, 0, torch.where(selection, 1, 2))
+    # A deck policy evaluates each upper screen separately. Keep that screen's
+    # rows together before context sorting, preserving the original Adam batch.
+    if config.upper_screen_max_rows is not None:
+        kind = torch.where(combat, 0, phase + 1)
+    else:
+        kind = torch.where(combat, 0, torch.where(selection, 1, 2))
     host = torch.stack((kind, width)).cpu().numpy()
     if config.context_grouping:
         context = obs['_deck_context_index'].cpu().numpy()
@@ -113,12 +127,19 @@ def packed_chunks(model, batch, config):
     lengths = host[:, order]
     start, total = 0, len(advantages)
     while start < total:
-        end = min(start + config.max_rows, total)
+        group = int(lengths[0, start])
+        limit = config.max_rows
+        if config.upper_screen_max_rows is not None and group:
+            limit = min(limit, config.upper_screen_max_rows)
+        end = min(start + limit, total)
         other = np.flatnonzero(lengths[0, start:end] != lengths[0, start])
         if len(other):
             end = start + int(other[0])
         end = min(end, start + max(1, config.token_budget // int(lengths[1, start:end].max())))
-        oom_group = ('combat', 'selection', 'upper')[int(lengths[0, start])] if config.context_grouping else None
+        if config.upper_screen_max_rows is not None:
+            oom_group = 'combat' if group == 0 else vocab.PHASE_VOCAB[group - 1]
+        else:
+            oom_group = ('combat', 'selection', 'upper')[group] if config.context_grouping else None
         yield _select(ordered, slice(start, end)), normalized[start:end], (end - start) / total, oom_group
         start = end
 
