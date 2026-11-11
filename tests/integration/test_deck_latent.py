@@ -687,3 +687,23 @@ def test_context_length_buckets_count_feature_only_map_nodes(latent_env):
                              max_contexts_per_chunk=2)
     groups = [set(c.actions.tolist()) for c, _, _, _ in packed_chunks(model, batch, config)]
     assert groups == [{1, 3}, {0, 2, 4, 5}]
+
+
+def test_combat_cannot_contribute_to_early_upper_ring_bucket(latent_env):
+    """If the model starts sharing a head, staging it early would lose gradients."""
+    from tools.benchmarks.ppo_overlap import gradient_buckets
+    policy = policy_for(latent_env, 'transformer64x2')
+    early, tail = gradient_buckets(policy)
+    policy.set_training_mode(True)
+    def backward():
+        logits, values = policy.core.actor_critic(tensor_obs(latent_env, 2))
+        (values.square().sum() + logits[logits > -1e8].square().mean()).backward()
+    backward()
+    assert any(p.grad is not None and p.grad.any() for p in early)
+    policy.zero_grad(set_to_none=True)
+    enter_combat(latent_env)
+    backward()
+    assert all(p.grad is None for p in early)
+    assert any(p.grad is not None and p.grad.any() for p in tail)
+    assert {id(p) for p in early + tail} == {id(p) for p in policy.parameters() if p.requires_grad}
+    assert len(early) + len(tail) == len({id(p) for p in early + tail})

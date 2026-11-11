@@ -57,17 +57,19 @@ class RingAllReduce:
         self._recv_exact(self.incoming, receive)
         future.result()
 
-    def average(self, flat: torch.Tensor) -> tuple[torch.Tensor, int]:
+    def average(self, flat: torch.Tensor, *, chunk_sizes=None) -> tuple[torch.Tensor, int]:
         if flat.device.type != "cpu" or flat.dtype != torch.float32:
             raise TypeError("ring input must be a CPU float32 tensor")
         if not flat.is_contiguous():
             raise ValueError("ring input must be contiguous")
 
         values = flat.numpy()
-        chunk_sizes = [
-            (values.size + self.world_size - index - 1) // self.world_size
-            for index in range(self.world_size)
-        ]
+        if chunk_sizes is None:
+            chunk_sizes = [(values.size + self.world_size - i - 1) // self.world_size
+                           for i in range(self.world_size)]
+        elif (len(chunk_sizes) != self.world_size or sum(chunk_sizes) != values.size
+              or any(type(s) is not int or s < 0 for s in chunk_sizes)):
+            raise ValueError("ring chunk sizes must partition the flat input")
         offsets = np.cumsum([0, *chunk_sizes], dtype=np.int64)
         receive_buffer = np.empty(max(chunk_sizes), dtype=np.float32)
         bytes_sent = 0
@@ -125,11 +127,11 @@ class ParallelRingAllReduce(RingAllReduce):
                                             thread_name_prefix=f"ring-stripe-{self.rank}")
         self._parallel = False
 
-    def average(self, flat):
+    def average(self, flat, *, chunk_sizes=None):
         # Every rank has the same tensor length; decide once per collective,
         # never from individual uneven chunks at a threshold boundary.
         self._parallel = flat.numel() >= 65536
-        return super().average(flat)
+        return super().average(flat, chunk_sizes=chunk_sizes)
 
     def _exchange(self, send, receive):
         if not self._parallel:

@@ -72,3 +72,41 @@ def test_parallel_ring_preserves_float32_order_across_large_and_small_collective
     finally:
         for ring in [*baseline, *striped]:
             ring.close()
+
+
+def test_sparse_buckets_keep_original_fp32_addition_order():
+    """Mixed magnitudes make a reassigned reduction owner observable."""
+    from types import SimpleNamespace
+    from tools.benchmarks.ppo_overlap import bucket_partitions
+
+    sizes = [11, 3, 5, 24, 9]
+    params = [torch.nn.Parameter(torch.empty(n)) for n in sizes]
+    groups = [[params[1], params[3]], [params[0], params[2], params[4]]]
+    schema = bucket_partitions(SimpleNamespace(parameters=lambda: iter(params)), groups, 4)
+    pids = {id(p):i for i,p in enumerate(params)}
+    ranks = range(4)
+    links = [socket.socketpair() for _ in ranks]
+    rings = [RingAllReduce(rank=r, world_size=4, outgoing=links[r][0],
+                          incoming=links[(r-1)%4][1], timeout=5) for r in ranks]
+    rng = torch.Generator().manual_seed(123)
+    values = [torch.randn(sum(sizes), generator=rng) for _ in ranks]
+    values[0].mul_(1e5)
+    values[2] = -values[0]
+    try:
+        with ThreadPoolExecutor(max_workers=4) as worker:
+            def reduce(r):
+                full, _ = rings[r].average(values[r].clone())
+                source = values[r].split(sizes)
+                out = torch.empty_like(full)
+                dest = out.split(sizes)
+                for group, counts in zip(groups, schema, strict=True):
+                    ids = [pids[id(p)] for p in group]
+                    small = torch.cat([source[i] for i in ids])
+                    rings[r].average(small, chunk_sizes=counts)
+                    for i,x in zip(ids, small.split([sizes[i] for i in ids]), strict=True):
+                        dest[i].copy_(x)
+                assert torch.equal(full, out)
+            list(worker.map(reduce, ranks))
+    finally:
+        for ring in rings:
+            ring.close()

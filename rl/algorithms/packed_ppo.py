@@ -170,7 +170,7 @@ def _sync_device(model):
         torch.cuda.synchronize(model.device)
 
 
-def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, average=None):
+def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, average=None, schedule_chunks=None):
     """Same Adam boundaries for local and distributed learners; retry overflow.
 
     ``average`` must be the rank-wide scalar reduction whenever ``synchronize``
@@ -213,7 +213,11 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
                 if replay is not None:
                     replay.reset_gradient()
                 loss = 0.
-                for chunk, advantages, weight, oom_group in chunks:
+                # Optional experimental scheduler sees only complete physical chunks
+                # inside this Adam group. Its iterator resumes after each successful
+                # transactional backward and must drain before the finite collective.
+                scheduled = chunks if schedule_chunks is None else schedule_chunks(chunks)
+                for chunk, advantages, weight, oom_group in scheduled:
                     loss += weight * ppo_chunked_backward(model, chunk, clip_range, clip_range_vf,
                         pre_normalized_advantages=advantages, backward_scale=scale * weight,
                         oom_group=oom_group)
