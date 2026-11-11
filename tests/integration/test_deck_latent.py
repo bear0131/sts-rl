@@ -693,7 +693,7 @@ def test_context_length_buckets_count_feature_only_map_nodes(latent_env):
 
 def test_combat_cannot_contribute_to_early_upper_ring_bucket(latent_env):
     """If the model starts sharing a head, staging it early would lose gradients."""
-    from tools.benchmarks.ppo_overlap import gradient_buckets
+    from rl.training.ppo_overlap import gradient_buckets
     policy = policy_for(latent_env, 'transformer64x2')
     early, tail = gradient_buckets(policy)
     policy.set_training_mode(True)

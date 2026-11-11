@@ -10,7 +10,7 @@ from rl.search.native import observation_as_tensor
 
 
 def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_forward=None,
-                pre_normalized_advantages=None, direct_masked_categorical=False):
+                pre_normalized_advantages=None, direct_masked_categorical=False, update_plan=None):
     if (pre_normalized_advantages is None and model.normalize_advantage
             and getattr(model, 'ppo_advantage_normalization', 'group256') == 'rollout'):
         pre_normalized_advantages = model_normalized_advantages(model, batch.advantages)
@@ -25,7 +25,8 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
         policy_obs = {k: v for k, v in observations.items() if not k.startswith('_search_')}
         masks = select(batch.action_masks)
         if direct_masked_categorical and getattr(model, 'deck_search_config', None) is None:
-            logits, values = model.policy.core.actor_critic(policy_obs)
+            actor_critic = model.policy.core.actor_critic if update_plan is None else update_plan.actor_critic
+            logits, values = actor_critic(policy_obs)
             log_prob, entropy, categorical_valid = masked_categorical_statistics(logits.float(), actions, masks)
         else:
             values, log_prob, entropy = model.policy.evaluate_actions(policy_obs, actions, action_masks=masks)
@@ -60,7 +61,7 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
 
 def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
                          pre_normalized_advantages=None, backward_scale=1.0, oom_group=None,
-                         after_physical_chunk=None, direct_masked_categorical=False):
+                         after_physical_chunk=None, direct_masked_categorical=False, update_plan=None):
     """Fuse statistical groups; retry smaller chunks without corrupting accumulation.
 
     Only the shared whole-run policy uses this path (no dropout/running stats).
@@ -69,6 +70,8 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
     The optional observer sees only these committed pieces, including OOM splits.
     """
     evaluate_options = dict(direct_masked_categorical=True) if direct_masked_categorical else {}
+    if update_plan is not None:
+        evaluate_options['update_plan'] = update_plan
     parameters = list(model.policy.parameters())
     replay = getattr(getattr(model.policy, 'core', None), '_context_gradient_batch', None)
     if replay is not None:
@@ -88,7 +91,8 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
         # Packed phases have different memory costs. An expensive upper block
         # must not permanently shrink every subsequent combat block/round.
         caps = model.__dict__.setdefault('_ppo_microbatch_caps', {}) if oom_group is not None else None
-        cap = (caps.get(oom_group, total) if caps is not None else
+        cap_key = oom_group if update_plan is None else update_plan.cap_key(oom_group, batch.observations)
+        cap = (caps.get(cap_key, total) if caps is not None else
                getattr(model, '_ppo_microbatch_cap', total))
         if count > cap:
             backward(start, cap)
@@ -101,7 +105,7 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
         failed = False
         try:
             chunk = part(start, count)
-            if ('phase' in getattr(chunk, 'observations', {})
+            if (update_plan is None and 'phase' in getattr(chunk, 'observations', {})
                     and not getattr(model, 'hierarchical_combat_hp', False)):
                 from env.core import vocab
                 # Normalize BEFORE splitting combat/upper rows. Re-normalizing
@@ -138,26 +142,35 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
                 pending_metrics = [(components, count)]
         except th.OutOfMemoryError:
             failed = True
-        except BaseException:
-            for p, old in zip(parameters, previous, strict=True):
-                p.grad = old
-            raise
+        except BaseException as exc:
+            if (update_plan is not None and isinstance(exc, getattr(th, 'AcceleratorError', ()))
+                    and 'out of memory' in str(exc).lower()):
+                failed = True
+            else:
+                for p, old in zip(parameters, previous, strict=True):
+                    p.grad = old
+                raise
         if failed:
             components = loss = phase_loss = pending_metrics = phase_losses = None
             for p, old in zip(parameters, previous, strict=True):
                 p.grad = old
-            if count <= group:
+            retired = update_plan is not None and update_plan.graphs.recover_oom()
+            if count <= group and not retired:
                 raise th.OutOfMemoryError('PPO minimum statistical group does not fit device memory')
             # Leave the exception scope before clearing its failed autograd graph.
             import gc
             gc.collect()
             if model.device.type == 'cuda':
                 th.cuda.empty_cache()
+            if retired:
+                stats['oom_retries'] += 1
+                backward(start, count)
+                return
             cap = max(group, (count // group // 2) * group)
             if caps is None:
                 model._ppo_microbatch_cap = cap
             else:
-                caps[oom_group] = cap
+                caps[cap_key] = cap
             stats['oom_retries'] += 1
             backward(start, cap)
             backward(start + cap, count - cap)
@@ -182,7 +195,8 @@ def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
         if after_physical_chunk is not None:
             after_physical_chunk(oom_group, count, total)
     backward(0, total)
-    return float(th.stack(losses).sum().cpu())
+    total_loss = th.stack(losses).sum()
+    return total_loss.double() if update_plan is not None else float(total_loss.cpu())
 
 
 def optimizer_step(model, micro_batches=1, *, value_only=False, optimizer=None, max_grad_norm=None,

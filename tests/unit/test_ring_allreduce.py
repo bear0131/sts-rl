@@ -77,7 +77,7 @@ def test_parallel_ring_preserves_float32_order_across_large_and_small_collective
 def test_sparse_buckets_keep_original_fp32_addition_order():
     """Mixed magnitudes make a reassigned reduction owner observable."""
     from types import SimpleNamespace
-    from tools.benchmarks.ppo_overlap import bucket_partitions
+    from rl.training.ppo_overlap import bucket_partitions
 
     sizes = [11, 3, 5, 24, 9]
     params = [torch.nn.Parameter(torch.empty(n)) for n in sizes]

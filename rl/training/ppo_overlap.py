@@ -1,4 +1,4 @@
-"""Benchmark-only phase scheduler for deck-latent FP32 PPO over the existing ring."""
+"""Phase scheduling and asynchronous gradient reduction for deck-latent FP32 PPO."""
 from concurrent.futures import ThreadPoolExecutor
 from time import perf_counter
 
@@ -91,7 +91,7 @@ class UpperFirstSchedule:
 
 
 class EarlyUpperReduction(UpperFirstSchedule):
-    """Only the frozen experiment uses this. One outstanding ring call at a time."""
+    """Reduce upper-only gradients while combat runs, with one outstanding ring call at a time."""
     def __init__(self, model, ring, *, exact_ring=False):
         cfg = model.ppo_update_config
         if (model.device.type != 'cuda' or cfg['precision'] != 'fp32'
@@ -168,3 +168,38 @@ class EarlyUpperReduction(UpperFirstSchedule):
 
     def close(self):
         self.worker.shutdown(wait=True)
+
+
+def distributed_packed_epoch(model, clip_range, clip_range_vf, *, ring, synchronize, average):
+    """Use the qualified deck plan only for its FP32, pre-search training stage."""
+    from rl.algorithms.packed_ppo import packed_ppo_epoch
+
+    planned = (model.ppo_update_config.get('execution') == 'deck-latent-448'
+               and model.device.type == 'cuda' and ring is not None
+               and getattr(model.policy, 'combat_value_target', None) == 'whole-run'
+               and getattr(model, 'deck_search_config', None) is None)
+    if not planned:
+        return packed_ppo_epoch(model, clip_range, clip_range_vf, synchronize=synchronize, average=average)
+
+    from rl.algorithms.deck_update_plan import DeckUpdatePlan
+
+    previous = torch.cuda.current_stream(model.device)
+    stream = torch.cuda.Stream(device=model.device)
+    stream.wait_stream(previous)
+    try:
+        with torch.cuda.stream(stream):
+            reducer = EarlyUpperReduction(model, ring, exact_ring=True)
+            plan = DeckUpdatePlan(model, reducer)
+            try:
+                result = packed_ppo_epoch(model, clip_range, clip_range_vf, synchronize=reducer.synchronize,
+                                          average=average, schedule_chunks=plan.schedule,
+                                          after_physical_chunk=reducer.after_physical_chunk, update_plan=plan)
+                result['planned_chunks'] = plan.chunk_count
+                result['planned_eager_retries'] = plan.eager_retries
+                result.update({'graph_' + k: v for k, v in plan.graphs.stats.items()})
+                return result
+            finally:
+                reducer.close()
+                plan.graphs.entries.clear()
+    finally:
+        previous.wait_stream(stream)

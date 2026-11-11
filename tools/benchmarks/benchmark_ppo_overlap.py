@@ -33,7 +33,7 @@ from rl.training.distributed_sb3 import (average_scalar_dict, pack_gradients, pa
 from rl.training.environments import make_env
 from rl.training.resource_monitor import ResourceMonitor
 from rl.training.ring_allreduce import ParallelRingAllReduce, SshRingAllReduce
-from tools.benchmarks.ppo_overlap import EarlyUpperReduction, UpperFirstSchedule
+from rl.training.ppo_overlap import EarlyUpperReduction, UpperFirstSchedule
 
 
 def clone_state(x):

@@ -61,7 +61,7 @@ class RunContextEncoder(nn.Module):
     def key_tensor(self, obs):
         return torch.cat([obs[k].reshape(len(obs['phase']), -1).float() for k in self.keys], 1)
 
-    def forward(self, obs, active_widths=None):
+    def forward(self, obs, active_widths=None, *, packed_width=None):
         width, relic_width = (active_widths if active_widths is not None else
                               (_active_prefix_width(obs['deck_ids']), _active_prefix_width(obs['relics'])))
         ids, upgrades = obs['deck_ids'][:, :width], obs['deck_upgrades'][:, :width]
@@ -76,16 +76,18 @@ class RunContextEncoder(nn.Module):
                           ids == 0, relic_ids == 0,
                           (rooms == 0) & ~features.any(-1)), 1)
         tokens = torch.cat([block + self.roles[i] for i, block in enumerate(blocks)], 1)
+        if packed_width is not None:
+            return self._pool_tokens(tokens, mask, packed_width=packed_width)
         return self._pool_tokens(tokens, mask)
 
-    def _pool_tokens(self, tokens, mask):
+    def _pool_tokens(self, tokens, mask, *, packed_width=None):
         if not self.training:
             # Keep inference shapes and qualified collection graphs unchanged.
             return self.norm(self.transformer(tokens, src_key_padding_mask=mask))[:, 0]
         # Only the first (always present) query is consumed. Masked keys cannot
         # affect it at any layer; their unused queries can be dropped. Public
         # map coordinates stay in the features; retained role/order is stable.
-        width = int((~mask).sum(1).max().item())
+        width = int((~mask).sum(1).max().item()) if packed_width is None else packed_width
         positions = torch.argsort(mask.to(torch.int32), dim=1, stable=True)[:, :width]
         tokens = tokens.gather(1, positions[:, :, None].expand(-1, -1, tokens.shape[-1]))
         mask = mask.gather(1, positions)

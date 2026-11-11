@@ -24,6 +24,7 @@ class PackedPPOConfig:
     max_contexts_per_chunk: int | None = None
     direct_masked_categorical: bool = False
     prefetch_groups: bool = False
+    execution: str = 'standard'
 
     def __post_init__(self):
         if (type(self.token_budget) is not int or type(self.max_rows) is not int
@@ -47,6 +48,13 @@ class PackedPPOConfig:
             raise ValueError('direct_masked_categorical must be boolean')
         if type(self.prefetch_groups) is not bool:
             raise ValueError('prefetch_groups must be boolean')
+        if self.execution not in ('standard', 'deck-latent-448'):
+            raise ValueError('unknown packed PPO execution mode')
+        if self.execution == 'deck-latent-448' and (
+                self.precision != 'fp32' or self.context_gradient_replay or not self.context_grouping
+                or self.upper_screen_max_rows != 384 or self.max_contexts_per_chunk != 320
+                or not self.direct_masked_categorical or not self.prefetch_groups):
+            raise ValueError('deck-latent-448 requires FP32 grouped contexts, 384/320 caps, prefetch and direct masking')
 
 
 def configure_packed_updates(model, configuration=None):
@@ -71,6 +79,8 @@ def configure_packed_updates(model, configuration=None):
         from rl.policies.deck_latent import DeckLatentPolicy
         if not isinstance(model.policy, DeckLatentPolicy) or config.precision != 'fp32':
             raise ValueError('deck batch optimization requires FP32 deck-latent PPO')
+        if config.execution == 'deck-latent-448' and model.policy.core.combat_encoder != 'transformer64x2':
+            raise ValueError('deck-latent-448 requires the transformer64x2 combat encoder')
     if (not isinstance(model.policy, SharedWholeRunPolicy)
             or model.nosl_is_az or model.hierarchical_combat_hp
             or getattr(model, 'reasoning_updates', 0) or model.target_kl is not None
@@ -82,6 +92,8 @@ def configure_packed_updates(model, configuration=None):
         model.ppo_update_config.pop('direct_masked_categorical')
     if not config.prefetch_groups:
         model.ppo_update_config.pop('prefetch_groups')
+    if config.execution == 'standard':
+        model.ppo_update_config.pop('execution')
     if config.max_contexts_per_chunk is None:
         model.ppo_update_config.pop('max_contexts_per_chunk')
     if config.upper_screen_max_rows is None:
@@ -109,7 +121,7 @@ def _select(batch, index):
         if isinstance(x, dict) else x[index]) for k, x in data.items()})
 
 
-def packed_chunks(model, batch, config):
+def packed_chunks(model, batch, config, *, planned=False):
     """Normalize original statistical groups BEFORE any permutation/splitting."""
     if not model.normalize_advantage:
         advantages = batch.advantages
@@ -141,7 +153,8 @@ def packed_chunks(model, batch, config):
         context = obs['_deck_context_index'].flatten().cpu().numpy()
         valid_map = (obs['map_full_rooms'] != 0) | obs['map_full_features'].bool().any(-1)
         token_count = 1 + (obs['deck_ids'] != 0).sum(1) + (obs['relics'] != 0).sum(1) + valid_map.sum(1)
-        order = np.lexsort((context, (token_count.cpu().numpy() + 7) // 8, host[0]))
+        bin_size = np.where(host[0] == 0, 1, 8) if planned else 8
+        order = np.lexsort((context, (token_count.cpu().numpy() + bin_size - 1) // bin_size, host[0]))
         ids = context[order]
         context_boundaries = np.flatnonzero(np.r_[True, ids[1:] != ids[:-1], True])
     elif config.context_grouping:
@@ -162,7 +175,8 @@ def packed_chunks(model, batch, config):
         end = min(start + limit, total)
         if context_boundaries is not None:
             next_boundary = context_boundaries.searchsorted(start, side='right')
-            last = min(next_boundary + config.max_contexts_per_chunk - 1, len(context_boundaries) - 1)
+            max_contexts = 448 if planned and group == 0 else config.max_contexts_per_chunk
+            last = min(next_boundary + max_contexts - 1, len(context_boundaries) - 1)
             end = min(end, int(context_boundaries[last]))
         other = np.flatnonzero(lengths[0, start:end] != lengths[0, start])
         if len(other):
@@ -182,7 +196,7 @@ def _sync_device(model):
 
 
 def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, average=None, schedule_chunks=None,
-                     after_physical_chunk=None):
+                     after_physical_chunk=None, update_plan=None):
     """Same Adam boundaries for local and distributed learners; retry overflow.
 
     ``average`` must be the rank-wide scalar reduction whenever ``synchronize``
@@ -211,6 +225,8 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
     chunk_options = {} if after_physical_chunk is None else dict(after_physical_chunk=after_physical_chunk)
     if config.direct_masked_categorical:
         chunk_options['direct_masked_categorical'] = True
+    if update_plan is not None:
+        chunk_options['update_plan'] = update_plan
     if config.prefetch_groups:
         if not isinstance(model.rollout_buffer, SharedRolloutBuffer):
             raise ValueError('packed group prefetch requires SharedRolloutBuffer')
@@ -225,7 +241,8 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
             started = time.perf_counter()
             from rl.algorithms.deck_context import context_gradient_batch
             with context_gradient_batch(model, batch, config) as (context_batch, replay):
-                chunks = list(packed_chunks(model, context_batch, config))
+                chunks = list(packed_chunks(model, context_batch, config, planned=True) if update_plan is not None
+                              else packed_chunks(model, context_batch, config))
                 previous = getattr(model, '_ppo_update_metric_sums', None)
                 previous = None if previous is None else previous.clone()
                 count = getattr(model, '_ppo_update_metric_count', 0)
@@ -243,6 +260,8 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
                         loss += weight * ppo_chunked_backward(model, chunk, clip_range, clip_range_vf,
                             pre_normalized_advantages=advantages, backward_scale=scale * weight,
                             oom_group=oom_group, **chunk_options)
+                    if update_plan is not None:
+                        loss = float(loss)
                     if replay is not None:
                         replay.backward()
                     grads = [p.grad for p in model.policy.parameters() if p.grad is not None]
