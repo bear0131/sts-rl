@@ -3341,7 +3341,7 @@
     "schedule_config": "configs/train/deck_latent_schedule.json",
     "context_grouping": true,
     "context_gradient_replay": false,
-    "physical_update_caps": "768 rows / 131072 tokens; each upper screen <=192 rows, adaptive OOM caps per screen",
+    "physical_update_caps": "1024 rows / 196608 tokens, upper screen maximum 384 rows, at most 320 distinct contexts per physical chunk",
     "required_sampling_paths": [
       "geometry-compatible GPU graphs",
       "host metadata and packed gathers",
@@ -3350,7 +3350,7 @@
       "direct native destinations"
     ],
     "qualification": "same-state complete 256x768 baseline/candidate; semantic and GPU cache lifecycle checks; then two full four-rank production rounds",
-    "runtime_source": "a3ec30f8",
+    "runtime_source": "d8c2e39d",
     "initial_model_sha256": "ae6b2d41fdf4df0242030900220ae788e68655e585e6f1e336380f458d3362a0",
     "production_acceptance": [
       {
@@ -3424,7 +3424,7 @@
         "graph_hits_rank_mean": 3775.25
       }
     ],
-    "source_archive_sha256": "b961029f2e7f696ba3a28bd3721b645bd4fd1efa2f74db963cd43b7b0be42447",
+    "source_archive_sha256": "aa54fa64c8416339ac73f40b9967b18f18c11d35d926e6d80b162143034a9128",
     "qualification_result": {
       "seed": 20261111,
       "rows_per_arm": 196608,
@@ -3564,7 +3564,6 @@
       },
       "target_update_seconds": 50,
       "target_scope": "maximum full update_sec across four ranks, including sync and waits",
-      "runtime_unchanged": "a3ec30f8",
       "all_experiment_processes_exited": true,
       "exit_codes": [
         1,
@@ -3583,11 +3582,62 @@
         "production_verified": false
       },
       "pending": [
-        "rank0/rank3 baseline-repeat parameter/Adam assertion diagnosis",
-        "committed candidate CUDA and complete update qualification",
-        "same-run protected round11 recovery and two four-rank production rounds",
         "full update <=50s target"
-      ]
+      ],
+      "runtime_unchanged_at_update2_handoff": "a3ec30f8",
+      "update3": {
+        "source": "d8c2e39d",
+        "archive_sha256": "aa54fa64c8416339ac73f40b9967b18f18c11d35d926e6d80b162143034a9128",
+        "resume_round": 11,
+        "resume_step": 8650752,
+        "target_max_four_rank_update_sec": 50,
+        "target_met": false,
+        "frozen_same_rank_seconds": {
+          "baseline": [
+            103.685,
+            110.534,
+            106.428,
+            106.242
+          ],
+          "candidate": [
+            69.808,
+            72.577,
+            71.417,
+            70.784
+          ]
+        },
+        "upper_screen_max_rows": 384,
+        "max_contexts_per_chunk": 320,
+        "token_budget": 196608,
+        "max_rows": 1024,
+        "deterministic_update_qualification": true,
+        "live_determinism": "unchanged from previous production",
+        "proof": "handoffs/update3-d8c2e39d/README.md",
+        "production": [
+          {
+            "round": "12",
+            "step": 9437184,
+            "max_update_sec": 92.19358773902059,
+            "max_iteration_sec": 124.36917430348694,
+            "rows_per_rank": 196608,
+            "adam_steps": 16,
+            "all_manifest_members_verified": true,
+            "model_sha256": "fb63ae4f1612a63d26921249aa9a7e7a37d6a89ba2801d63ce78b8825e425578",
+            "adam_sha256": "84f5f84d02a603dfb91d529014a7567a8e5959cb222edf96425c9ec3e6f81b18"
+          },
+          {
+            "round": "13",
+            "step": 10223616,
+            "max_update_sec": 90.65780036523938,
+            "max_iteration_sec": 120.77489829808474,
+            "rows_per_rank": 196608,
+            "adam_steps": 16,
+            "all_manifest_members_verified": true,
+            "model_sha256": "f0643e30317a12e5a16deb3fac88ef67130fb6c54ba180b7a352d9ac8a2412cf",
+            "adam_sha256": "f507fb81676f41a008acdb491db317523b39b03764ca1a32f44479154a964774"
+          }
+        ]
+      }
     }
   }
 }
