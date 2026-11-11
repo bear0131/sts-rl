@@ -55,7 +55,7 @@ class UpperFirstSchedule:
                 if chunk[3] == 'combat':
                     continue
                 before = len(self.deferred)
-                committed = self.model._ppo_microbatch_stats['chunks']
+                committed = getattr(self.model, '_ppo_microbatch_stats', {}).get('chunks', 0)
                 yield chunk
                 if len(self.deferred) == before:
                     # Older benchmark callers only supplied schedule_chunks.
