@@ -1,5 +1,7 @@
 # 仓库总 TODO
 
+- **COMBAT49-MAINT** — 已建立半小时持续维护，当前等原优化会话落地并恢复训练。用户最新授权：北京时间2026-11-12 04:32:49仍未启动则本维护会话接管启动；此时限优先于旧DECK-LATENT-UPDATE512的“不达50s不恢复”，但不放宽数值/恢复正确性。适用COMBAT49现役training-plan、rl/algorithms/deck_schedule.py、搜索资格及监控/恢复入口。验收：确认四rank真实启动和完整轮/保存连续；之后每半小时检查学习趋势、资源、战斗锚点/搜索阶段及跨rank一致性；搜索启用后做有预算的真实生产长度速度评估，明显异常先定位再修正。原优化在截止前不接管、不重复实验。记录分支codex/combat49-maintenance，自动维护ID combat49，详细范围见worklog/2026-11-12.md#combat49-maint等待启动与持续维护授权。
+
 | UPPER-POLICY-PRE | 已完成：四机180–183真实采集更新保存 | rl/algorithms/unified_upper.py及真实训练上报；新增全部更新前固定actor的policy loss并分析，测量不改变权重/Adam/RNG或目标，CPU/CUDA及两轮生产/保存恢复验收，监控合并COMBAT37。 |
 
 | UPPER-ROLLOUT-200S | 已完成：170/171/172真实采样190.93/188.92/187.96s；普通恢复与保存通过，旧四机continuous运行；25核比较完成 | 接管 COMBAT37 continuous，1920自然局/原搜索预算不变，目标四rank最大完整rollout<200s。用户取消整体恢复deadline，优先事件驱动线程调度；先同轨迹语义/完整采集，再两轮真实更新保存恢复。不以删局/少搜索达标；协议 post_screen.rollout_200s_and_large_critic。 |
