@@ -1,10 +1,12 @@
 # 仓库总 TODO
 
+- **COMBAT49-UPDATE-ILLEGAL-ADDRESS** — 已回退恢复，根因待定位。第108轮rank1快速packed更新CUDA非法地址导致四机退出；固定107/原seed/全生产工作量同步诊断一轮未复现，不证明长生命周期安全。07:34用同abfcb134源码的已验普通deck_latent_packed_fp32.json从完整107恢复，108/109四机保存/模型/Adam一致、196608行/1epoch/16Adam、0OOM；实读Adam1712→1728→1744有限。保护references/maintenance-illegal108-20261112及故障日志；禁直接重启快速路径，须定位并过同源数值/释放重放/完整生产生命周期和长时验收。无学习超参/预算改变；详见worklog/2026-11-12.md同ID。
+
 - **COMBAT49-SCALAR-SCHEMA** — 已修复并恢复：abfcb134固定图计数schema及标量传输前全rank验证；CPU/CUDA与真实PPO/NOSL生命周期43项通过。06:16从完整70普通续训，四机71/72各196608行/1epoch/16Adam，模型/Adam一致、0OOM；69–72实读Adam步1104/1120/1136/1152有限。70轮污染指标已标null，原日志及69/70保存保护，源与证据见worklog对应节。
 
 - **COMBAT49-FAILURE-SCENE** — 待修诊断：distributed_sb3失败捕获在NativeSubprocVecEnv访问不存在的envs，训练原始异常仍在log。范围失败现场捕获/原生子进程环境；验收支持该生产后端、保留原异常并导出可用状态，独立于已修scalar schema，不阻塞健康续训。
 
-- **COMBAT49-MAINT** — 半小时自主维护中。现役abfcb134已修第70轮标量错位停训，06:16从完整70恢复并验71/72四机保存/1epoch/16Adam，原run不变。适用training-plan、deck_schedule及搜索资格/监控/恢复；每半小时查真实四进程、新完成轮、保存、学习/资源及阶段一致性；70轮污染统计null排除。93轮仍warmup/good_checks0/last_check-1/search_qualified=false，100轮起独立准备度检查。搜索CPU语义/原生子进程两轮恢复15项通过，四机onset/full隔离计划及原trainer参数解析完成；GPU未启动、target_std待实测、诊断输入待构建，资格预算/路径/下一步见worklog/2026-11-12.md的06:24和06:54节。首次anchor转换后核对资源与完整边界安排剩余GPU资格，不能等qualified=true才测试。anchor/search回普通packed，切换后实测速度优化。rank0约2.28GB，追踪两代轮转；原21和69/70恢复基准保护，不重跑旧启动脚本。维护ID combat49，分支codex/combat49-maintenance。
+- **COMBAT49-MAINT** — 半小时自主维护中。现役abfcb134/configs/train/deck_latent_packed_fp32.json普通更新；07:34从完整107恢复，108/109四机完整保存且1epoch/16Adam。原run/W&B offline不变；transport-standard107-20261112、ring31162，禁止重跑takeover/resume_scalar/resume_standard107。每轮查真实四进程、新完成轮、保存、学习/资源和阶段一致性；70污染统计null排除。109仍warmup/good_checks0/last_check100/qualified=false：100轮64自然局458锚点EV .021008<.05未通过，下次120；不强开。搜索CPU语义/原生恢复15项通过，onset/full隔离计划已准备，GPU资格未启动、固定70源target_std待实测/诊断输入待构建；见worklog的06:24/06:54节，首次anchor转换后完整边界安排剩余资格，不能永久忽略。普通更新两轮最慢95.993/91.493秒，整轮129.277/122.701秒；阶段切换后实测速度。rank0约1.80GB，追踪两代轮转；原21、69/70及107基准均保护。维护ID combat49，分支codex/combat49-maintenance。
 
 | UPPER-POLICY-PRE | 已完成：四机180–183真实采集更新保存 | rl/algorithms/unified_upper.py及真实训练上报；新增全部更新前固定actor的policy loss并分析，测量不改变权重/Adam/RNG或目标，CPU/CUDA及两轮生产/保存恢复验收，监控合并COMBAT37。 |
 

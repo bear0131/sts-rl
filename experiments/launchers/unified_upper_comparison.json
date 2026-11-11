@@ -3306,7 +3306,7 @@
     "restart_reference": "references/before-large-fast-restart/rankN/step-000014548992"
   },
   "deck_latent_fast_restart": {
-    "status": "continuous-scalar-schema-fixed-resumed-round70",
+    "status": "continuous-standard-packed-recovered-round107",
     "plan": "docs/2026-11-11/deck-latent-fast-restart.md",
     "root": "/root/autodl-tmp/combat49-deck-latent512-t64x2-20261111",
     "run_id": "combat49-deck-latent512-t64x2-ppo-search-r1",
@@ -3341,7 +3341,7 @@
     "schedule_config": "configs/train/deck_latent_schedule.json",
     "context_grouping": true,
     "context_gradient_replay": false,
-    "physical_update_caps": "deck_latent_448_fp32.json: warmup exact-length combat 448 contexts; upper 320 contexts / 384 rows; anchor/search use ordinary packed update",
+    "physical_update_caps": "deck_latent_packed_fp32.json: standard packed, token budget 196608, max rows 1024, upper 384 rows / 320 contexts; optimized update graphs/overlap disabled after round108 CUDA fault",
     "required_sampling_paths": [
       "geometry-compatible GPU graphs",
       "host metadata and packed gathers",
@@ -3731,6 +3731,94 @@
           "epochs": 1,
           "adam_updates": 16,
           "adam_step": 1152,
+          "oom_retries": 0
+        }
+      ]
+    },
+    "illegal_address_recovery": {
+      "issue": "COMBAT49-UPDATE-ILLEGAL-ADDRESS",
+      "source": "abfcb134",
+      "started_at": "2026-11-12T07:34:45+08:00",
+      "resume_round": 107,
+      "resume_step": 84148224,
+      "protected_reference": "references/maintenance-illegal108-20261112/rank{rank}/step-000084148224",
+      "config": "configs/train/deck_latent_packed_fp32.json",
+      "transport_root": "transport-standard107-20261112",
+      "ring_port": 31162,
+      "mitigation": "Revert to previously qualified standard packed execution; same learning hyperparameters and full optimizer/sample budgets. Exact illegal-address kernel not yet localized.",
+      "bounded_diagnostic": {
+        "source_round": 107,
+        "seed": 20261111,
+        "world_size": 4,
+        "envs_per_rank": 256,
+        "n_steps": 768,
+        "rounds": 1,
+        "cuda_launch_blocking": true,
+        "external_timeout_seconds": 720,
+        "exit_codes": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "conclusion": "Not reproduced in one fresh-process round; does not qualify long-lived fast update."
+      },
+      "readiness_round100": {
+        "contract": "deck-latent-stages-v1",
+        "stage": "warmup",
+        "stage_start": 0,
+        "good_checks": 0,
+        "last_check": 100,
+        "previous_floor": 15.8125,
+        "validation": {
+          "moments": {
+            "anchors": 458.0,
+            "censored": 0.0,
+            "error_sq_sum": 1.2607860565185547,
+            "error_sum": -0.10389977693557739,
+            "failed": 0.0,
+            "floor_sum": 1012.0,
+            "natural": 64.0,
+            "relic_offered": 121.0,
+            "relic_taken": 120.0,
+            "target_sq_sum": 2.346315860748291,
+            "target_sum": 22.01799774169922,
+            "timeout": 0.0,
+            "wins": 0.0
+          },
+          "explained_variance": 0.02100846310843907,
+          "target_std": 0.05302667932489126,
+          "mse": 0.0027528079836649667,
+          "passed": false
+        }
+      },
+      "acceptance": [
+        {
+          "round": 108,
+          "step": 84934656,
+          "policy_sha256": "37562068d4039594a7f7b3c0bdadec687dacc3ac46dec0a5db0a4a07e0e19824",
+          "adam_sha256": "0406fa8ca6ebe852d16e2771e2262c811d0b9d8cd517e4512dd0eabf90fa0221",
+          "max_update_sec": 95.99305583536625,
+          "max_iteration_wall_sec": 129.276808478171,
+          "all_manifest_hashes_verified": true,
+          "rows_per_rank": 196608,
+          "epochs": 1,
+          "adam_updates": 16,
+          "adam_step": 1728,
+          "oom_retries": 0
+        },
+        {
+          "round": 109,
+          "step": 85721088,
+          "policy_sha256": "d9df6110420c446a5f420e7d15fc9659b6fc23226e013310f7c545e936e10acd",
+          "adam_sha256": "6c1ac0c9d36bee496a3a13d69e73cf88d50eef6f2c62450c28b60366132c691a",
+          "max_update_sec": 91.49280664883554,
+          "max_iteration_wall_sec": 122.7006129627116,
+          "all_manifest_hashes_verified": true,
+          "rows_per_rank": 196608,
+          "epochs": 1,
+          "adam_updates": 16,
+          "adam_step": 1744,
           "oom_retries": 0
         }
       ]
