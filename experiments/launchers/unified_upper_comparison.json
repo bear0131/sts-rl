@@ -3246,6 +3246,60 @@
       ],
       "oom_retries": 0,
       "learning_rate": 5e-05
+    },
+    "envs_per_worker": 3,
+    "sampling_group_comparison": {
+      "completed_round": 7,
+      "preserved_hashes": {
+        "policy.pth": "175c937d51f115bc34768e94b9251477c44d3d56446e22ab308f3281326ede3a",
+        "policy.optimizer.pth": "502fe81c05f0c60426484d039d5c08ca8df7f896b80d923f65060521ce68842f"
+      },
+      "envs_per_worker": 3,
+      "reason": "Both fewer-process candidates regress against the repeated baseline; retain original grouping.",
+      "baseline_mean_seconds": 78.59626457374543,
+      "arms": [
+        {
+          "label": "baseline",
+          "group": 3,
+          "seconds": 80.92317863553762
+        },
+        {
+          "label": "group8",
+          "group": 8,
+          "seconds": 93.24990589544177
+        },
+        {
+          "label": "group16",
+          "group": 16,
+          "seconds": 109.7699684035033
+        },
+        {
+          "label": "baseline_repeat",
+          "group": 3,
+          "seconds": 76.26935051195323
+        }
+      ],
+      "transition_hashes_equal": true,
+      "float_tolerance": {
+        "rtol": 2e-05,
+        "atol": 2e-06
+      },
+      "benchmark_exit": {
+        "exit_code": 0,
+        "seconds": 405.9806607365608,
+        "timeout": false
+      },
+      "resume_acceptance": {
+        "round": 8,
+        "global_step": 3145728,
+        "all_four_policy_adam_equal": true,
+        "all_manifest_files_verified": true,
+        "stage": "warmup",
+        "target": "whole-run",
+        "policy_sha256": "d5cba0f6e24346d5fcc2041094b5d1b808e354f01524ae04460ae38929219cf5",
+        "adam_sha256": "42e1e351c54cf12d20a8c22e150f5dfbede972d3d8fa95e015b15a1adf042e12",
+        "iteration_wall_sec_max": 95.26298871613108
+      }
     }
   }
 }
