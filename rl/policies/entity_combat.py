@@ -279,8 +279,14 @@ class EntityCombatNetwork(nn.Module):
                 card_table=None):
         state, blocks = self.encode(obs, active_relic_width, card_table=card_table)
         if self.autoregressive_actions:
-            source = torch.cat((self.end(state), *(self._pointer(state, blocks[role])
-                for role in ('hand', 'potion', 'select'))), -1)
+            pointers = [self._pointer(state, blocks[role]) for role in ('hand', 'potion', 'select')]
+            if '_resident_rows' in obs and blocks['select'].shape[1] < 96:
+                # Old packed heads score real queries before restoring native
+                # action slots. A zero entity still has pointer_key's bias;
+                # preserve even masked logits without expanding 96x64 tokens.
+                padding = self._pointer(state, state.new_zeros((len(state), 1, state.shape[-1])))
+                pointers[-1] = torch.cat((pointers[-1], padding.expand(-1, 96-pointers[-1].shape[1])), -1)
+            source = torch.cat((self.end(state), *pointers), -1)
         else:
             source = state.new_zeros((state.shape[0], C.JOINT_END))
             source[:, A.END_TURN] = self.end(state).flatten()

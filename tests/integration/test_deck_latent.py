@@ -43,6 +43,33 @@ def enter_combat(env):
 
 
 @pytest.mark.cuda
+def test_resident_frozen_pile_projection_preserves_large_counts(latent_env):
+    from rl.search.resident_deck import ResidentDeckScorer
+    from rl.policies.resident_ragged import frozen_pile_summary
+    policy = policy_for(latent_env, 'transformer64x2').cuda().eval()
+    scorer = ResidentDeckScorer(policy)
+    try:
+        torch.manual_seed(20261111)
+        counts = torch.randint(0, 334, (17,3,len(scorer.card_base)),device='cuda').float()
+        counts *= torch.rand_like(counts) > .9
+        counts[0].zero_()
+        upgraded = counts * (torch.rand_like(counts) > .5)
+        magnitudes = upgraded * torch.randint(0, 16, upgraded.shape,device='cuda') / 4
+        with torch.no_grad():
+            want = counts@scorer.card_base + upgraded@scorer.card_delta
+            want += magnitudes.sum(2,keepdim=True)*policy.core.combat.summaries.upgrade_projection
+            got,sizes = frozen_pile_summary(counts,upgraded,magnitudes,scorer.card_base,
+                scorer.card_delta,policy.core.combat.summaries.upgrade_projection)
+            # Large counts amplify sums; compare normalized learned summaries
+            # in the units consumed by the network, not relative to near zero.
+            normalizer=counts[:,:,1:].sum(2,keepdim=True).clamp_min(1)
+            torch.testing.assert_close(got/normalizer,want/normalizer,rtol=3e-5,atol=3e-6)
+            torch.testing.assert_close(sizes,counts[:,:,1:].sum(2,keepdim=True),rtol=0,atol=0)
+    finally:
+        scorer.close()
+
+
+@pytest.mark.cuda
 def test_resident_frozen_entity_projection_preserves_unbounded_upgrades(latent_env):
     from rl.search.resident_deck import ResidentDeckScorer
     policy = policy_for(latent_env, 'transformer64x2').cuda()

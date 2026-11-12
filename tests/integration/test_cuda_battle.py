@@ -216,11 +216,17 @@ def test_resident_ragged_blocks_preserve_selected_queries_and_empty_padding():
             queries = torch.rand(batch, length, device='cuda') > .7
             queries[:, 0] = True
             expected = blocks[1](blocks[0](x, present), present)
-            actual = frozen_ragged_blocks(blocks, x, present, queries,
+            actual = frozen_ragged_blocks(blocks, x.clone(), present, queries,
                 torch.tensor([count], device='cuda', dtype=torch.int32))
             selected = queries & (torch.arange(batch, device='cuda') < count)[:, None]
             torch.testing.assert_close(actual[selected], expected[selected], rtol=3e-5, atol=3e-6)
             assert torch.count_nonzero(actual[~selected]) == 0
+            norm = torch.nn.LayerNorm(64).cuda().eval()
+            norm.weight.uniform_(.5, 1.5)
+            norm.bias.uniform_(-.1, .1)
+            normalized = frozen_ragged_blocks(blocks, x, present, queries,
+                torch.tensor([count], device='cuda', dtype=torch.int32), norm=norm)
+            torch.testing.assert_close(normalized, norm(actual), rtol=3e-5, atol=3e-6)
 
 
 def test_resident_ragged_capacity_retry_preserves_selected_outputs():

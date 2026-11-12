@@ -292,7 +292,7 @@ class TransformerCombatNetwork(FastCombatNetwork):
             lo, hi = spans['select']
             queries[:, lo:hi] |= required[:, :choice_width]
             x = frozen_ragged_blocks(self.blocks, x, mask, queries, obs['_resident_rows'],
-                                     obs.get('_resident_workspace'))
+                                     obs.get('_resident_workspace'), norm=self.norm)
         else:
             for block in self.blocks:
                 if obs.get('_resident_fused_blocks', False):
@@ -300,12 +300,16 @@ class TransformerCombatNetwork(FastCombatNetwork):
                     x = frozen_block(block, x, mask)
                 else:
                     x = block(x, mask)
-        x = self.norm(x)
+        if '_resident_rows' not in obs:
+            x = self.norm(x)
         result = {name: x[:, lo:hi] for name, (lo, hi) in spans.items()}
         # Heads still see the complete native candidate index space.
-        result['select'] = torch.nn.functional.pad(result['select'],
-            (0, 0, 0, valid.shape[1] - choice_width))
-        result['select'] = result['select'] * required[..., None]
+        if '_resident_rows' in obs:
+            result['select'] = result['select'] * required[:, :choice_width, None]
+        else:
+            result['select'] = torch.nn.functional.pad(result['select'],
+                (0, 0, 0, valid.shape[1] - choice_width))
+            result['select'] = result['select'] * required[..., None]
         return result['global'][:, 0], result
 
 

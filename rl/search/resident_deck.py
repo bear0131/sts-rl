@@ -247,10 +247,16 @@ class ResidentDeckScorer:
             o['_resident_workspace'] = batch['workspace']
         context = SearchContext(batch['context'], None)
         counts = torch.stack([o[k+'_counts'] for k in ('draw', 'discard', 'exhaust')], 1)
-        piles = counts @ self.card_base + o['pile_upgraded_counts'] @ self.card_delta
-        piles = piles + o['pile_upgrade_sums'].sum(2, keepdim=True)*self.core.combat.summaries.upgrade_projection
+        if 'row_count' in batch:
+            from rl.policies.resident_ragged import frozen_pile_summary
+            piles, sizes = frozen_pile_summary(counts, o['pile_upgraded_counts'], o['pile_upgrade_sums'],
+                self.card_base, self.card_delta, self.core.combat.summaries.upgrade_projection)
+        else:
+            piles = counts @ self.card_base + o['pile_upgraded_counts'] @ self.card_delta
+            piles = piles + o['pile_upgrade_sums'].sum(2, keepdim=True)*self.core.combat.summaries.upgrade_projection
+            sizes = counts[:, :, 1:].sum(2, keepdim=True)
         relics = self.core.combat.summaries.relic_terms(o['relics'], o['relic_counters']).sum(1)
-        summary = CombatSummary(piles, counts[:, :, 1:].sum(2, keepdim=True), relics)
+        summary = CombatSummary(piles, sizes, relics)
         return self.core.combat_with_context(o, context, summary)
 
     @torch.no_grad()

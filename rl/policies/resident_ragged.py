@@ -7,6 +7,45 @@ import torch
 import triton
 import triton.language as tl
 
+
+@triton.jit
+def pile_projection(COUNT, UPGRADED, MAGNITUDES, BASE, DELTA, UPGRADE, OUT, SIZES,
+                    M: tl.constexpr, K: tl.constexpr):
+ r=tl.program_id(0)*32+tl.arange(0,32)
+ k=tl.arange(0,32);d=tl.arange(0,64)
+ base_sum=tl.zeros((32,64),tl.float32)
+ upgraded_sum=tl.zeros((32,64),tl.float32)
+ magnitude=tl.zeros((32,),tl.float32);size=tl.zeros((32,),tl.float32)
+ for block in range(tl.cdiv(K,32)):
+  cols=block*32+k
+  valid=(r[:,None]<M)&(cols[None,:]<K)
+  count=tl.load(COUNT+r[:,None]*K+cols[None,:],valid,0.)
+  upgraded=tl.load(UPGRADED+r[:,None]*K+cols[None,:],valid,0.)
+  amounts=tl.load(MAGNITUDES+r[:,None]*K+cols[None,:],valid,0.)
+  base=tl.load(BASE+cols[:,None]*64+d[None,:],cols[:,None]<K,0.)
+  delta=tl.load(DELTA+cols[:,None]*64+d[None,:],cols[:,None]<K,0.)
+  base_sum+=tl.dot(count,base,input_precision='tf32x3')
+  upgraded_sum+=tl.dot(upgraded,delta,input_precision='tf32x3')
+  magnitude+=tl.sum(amounts,1)
+  size+=tl.sum(tl.where(cols[None,:]!=0,count,0.),1)
+ value=base_sum+upgraded_sum+magnitude[:,None]*tl.load(UPGRADE+d)[None,:]
+ tl.store(OUT+r[:,None]*64+d[None,:],value,r[:,None]<M)
+ tl.store(SIZES+r,size,r<M)
+
+
+@torch.compiler.disable
+def frozen_pile_summary(counts, upgraded, magnitudes, base, delta, upgrade):
+    """Old FP32/tf32x3 frozen projections, with current exact pile counts."""
+    if torch.is_grad_enabled() or counts.dtype != torch.float32 or not counts.is_cuda:
+        raise ValueError('frozen pile projection requires CUDA FP32 inference')
+    batch, piles, cards = counts.shape
+    result = torch.empty((batch,piles,64),device=counts.device,dtype=torch.float32)
+    sizes = torch.empty((batch,piles,1),device=counts.device,dtype=torch.float32)
+    pile_projection[(triton.cdiv(batch*piles,32),)](counts.contiguous(),upgraded.contiguous(),
+        magnitudes.contiguous(),base,delta,upgrade,result,sizes,batch*piles,cards,num_warps=4)
+    return result,sizes
+
+
 @triton.jit
 def norm64(x,W,B,EPS:tl.constexpr):
  d=tl.arange(0,64);u=x-tl.sum(x,1)[:,None]/64.
@@ -147,16 +186,19 @@ def pack_slots(X, PRESENT, KEEP, QUERIES, STARTS, LENS, PACKED, KEYS,
 
 
 @triton.jit
-def unpack_queries(X, SLOTS, OUT, COUNTS, CAP: tl.constexpr, B: tl.constexpr):
+def unpack_queries(X, SLOTS, OUT, COUNTS, NW, NB, EPS: tl.constexpr,
+                   NORMALIZE: tl.constexpr, CAP: tl.constexpr, B: tl.constexpr):
  i=tl.program_id(0)*B+tl.arange(0,B);d=tl.arange(0,64)
  valid=(i<CAP)&(i<tl.load(COUNTS+1))
  slot=tl.load(SLOTS+i,valid,0)
  value=tl.load(X+i[:,None]*64+d[None,:],valid[:,None],0.)
+ if NORMALIZE:
+  value=norm64(value,NW,NB,EPS)
  tl.store(OUT+slot[:,None]*64+d[None,:],value,valid[:,None])
 
 
 @torch.compiler.disable
-def frozen_ragged_blocks(blocks, x, present, queries, row_count=None, workspace=None):
+def frozen_ragged_blocks(blocks, x, present, queries, row_count=None, workspace=None, norm=None):
     """Current entities packed into the original dynamic 2x64 kernel ABI."""
     if (torch.is_grad_enabled() or any(b.training for b in blocks) or len(blocks)!=2
             or not x.is_cuda or x.dtype!=torch.float32 or x.shape[-1]!=64):
@@ -198,6 +240,8 @@ def frozen_ragged_blocks(blocks, x, present, queries, row_count=None, workspace=
             packed if i==0 else attention,counts,i==1,b.norm2.eps,num_warps=4,num_stages=1)
     # Input entities died at pack_slots; the second mix consumes each compact
     # attention row once. Reuse both stores as in the original frame workspace.
-    dense=x.zero_()
-    unpack_queries[(triton.cdiv(qcap,32),)](attention,slots,dense,counts,qcap,32,num_warps=4)
+    dense=x.zero_() if norm is None else x.copy_(norm.bias)
+    unpack_queries[(triton.cdiv(qcap,32),)](attention,slots,dense,counts,
+        counts if norm is None else norm.weight, counts if norm is None else norm.bias,
+        0.0 if norm is None else norm.eps, norm is not None,qcap,32,num_warps=4)
     return dense
