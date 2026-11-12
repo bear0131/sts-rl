@@ -69,6 +69,24 @@ def compact_scatter(NEED, PREFIX, TOTALS, IDS, STATUS, N: tl.constexpr,
 
 
 @triton.jit
+def frame_members(IDS, COUNT, FRAME_LIVE, FRAME_COUNT, CAP: tl.constexpr, B: tl.constexpr):
+    i = tl.program_id(0)*B + tl.arange(0, B)
+    count = tl.minimum(tl.load(COUNT), CAP)
+    valid = (i < CAP) & (i < count)
+    row = tl.load(IDS+i, valid, 0)
+    tl.store(FRAME_LIVE+row, 1, valid)
+    if tl.program_id(0) == 0:
+        tl.store(FRAME_COUNT, count)
+
+
+@triton.jit
+def remaining_live(LIVE, STATUS, N: tl.constexpr, B: tl.constexpr):
+    i = tl.program_id(0)*B + tl.arange(0, B)
+    live = tl.load(LIVE+i, i < N, 0)
+    tl.atomic_add(STATUS+4, tl.sum(live, 0))
+
+
+@triton.jit
 def prepare(IDS, ROWS, RANDOM, CURSOR, UNIFORMS, STATUS, F: tl.constexpr,
             MAX_DEPTH: tl.constexpr, B: tl.constexpr):
     i = tl.program_id(0)*B + tl.arange(0, B)
@@ -117,7 +135,9 @@ def commit(KIND, FORCED, LIVE, DEPTH, CURSOR, ANCHORS, FINAL, SELECTED,
         offset = tl.load(OFFSET)
         kind = tl.load(KIND+i, i < N, 0)
         live = (kind == 5) | (kind == 6)
-        tl.store(LIVE+i, live.to(tl.int32), i < N)
+        # Rows waiting outside this physical frame retain their state. A zero
+        # kind is either already finished or has not been observed this tick.
+        tl.store(LIVE+i, live.to(tl.int32), (i < N) & (kind != 0))
         depth = tl.load(DEPTH+i, i < N, 0)
         tl.store(DEPTH+i, depth + live.to(tl.int32), i < N)
         cursor = tl.load(CURSOR+i, i < N, 0)

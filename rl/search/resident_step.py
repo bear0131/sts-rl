@@ -16,6 +16,8 @@ from env.search import resident_step_kernels as K
 
 
 class ResidentStepPipeline:
+    frame_capacity = 16384
+
     def __init__(self, scorer, arena, max_depth, capacity=128):
         if 'observe_live' not in arena.functions:
             raise ValueError('resident step graphs require observe_live simulator artifacts')
@@ -31,6 +33,9 @@ class ResidentStepPipeline:
             empty((self.n,)) for _ in range(8))
         self.anchors = empty((self.n,))
         self.active_ids, self.active_count = empty((self.n,)), empty((1,))
+        self.frame_live, self.frame_count = empty((self.n,)), empty((1,))
+        self.frame_capacity = min(self.n, type(self).frame_capacity)
+        self.depth_limit = empty((1,)).fill_(max_depth)
         self.compact_simulator = all(k in arena.functions for k in ('observe_indexed', 'apply_compact'))
         self.final = empty((self.n,), torch.float64)
         self.totals = empty((triton.cdiv(self.n, 1024),))
@@ -59,20 +64,26 @@ class ResidentStepPipeline:
         s, a, n, F = self.scorer, self.arena, self.n, len(rows)
         a.selected.fill_(-1)
         nb = triton.cdiv(n, 1024)
+        # Port the old pool/frame split: completed lanes immediately admit
+        # waiting jobs into a bounded neural frame. More queued chains must
+        # not allocate a worst-case neural workspace for every waiting job.
+        K.compact_local[(nb,)](self.live, self.prefix, self.totals, n, 1024)
+        K.compact_scatter[(nb,)](self.live, self.prefix, self.totals,
+            self.active_ids, self.active_count, n, 1024, nb, triton.next_power_of_2(nb))
+        self.frame_live.zero_()
+        K.frame_members[(triton.cdiv(self.frame_capacity, 256),)](self.active_ids,
+            self.active_count, self.frame_live, self.frame_count, self.frame_capacity, 256)
         if self.compact_simulator:
-            # The old StepPipeline packs simulator threads too, so completed
-            # branches no longer leave holes in the active warps. Stable ids
-            # keep every state, depth and random stream at its original slot.
-            K.compact_local[(nb,)](self.live, self.prefix, self.totals, n, 1024)
-            K.compact_scatter[(nb,)](self.live, self.prefix, self.totals,
-                self.active_ids, self.active_count, n, 1024, nb, triton.next_power_of_2(nb))
-            a._launch('observe_indexed', a.observe_args+[
-                self.active_ids, self.active_count, s.wave_offset], n)
+            observation_args = a.observe_args+[self.active_ids, self.frame_count, s.wave_offset]
+            if 'observe_search' in a.functions:
+                a._launch('observe_search', observation_args+[self.depth, self.depth_limit], n)
+            else:
+                a._launch('observe_indexed', observation_args, n)
         else:
-            a._launch('observe_live', a.observe_args+[self.live, s.wave_offset], n)
+            a._launch('observe_live', a.observe_args+[self.frame_live, s.wave_offset], n)
         self.status.zero_()
         K.classify[(triton.cdiv(n, 32),)](a.outcome, a.mask, a.categorical, a.misc,
-            self.expected, self.deck, s.wave_owners, self.live, self.depth,
+            self.expected, self.deck, s.wave_owners, self.frame_live, self.depth,
             self.kind, self.forced, self.need, self.status, s.wave_offset,
             n, self.max_depth, MISC_SCALE, 32, num_warps=4)
         K.compact_local[(nb,)](self.need, self.prefix, self.totals, n, 1024)
@@ -93,15 +104,17 @@ class ResidentStepPipeline:
             self.final, a.selected, self.status, self.enabled, s.wave_offset, F, width, 256)
         if self.compact_simulator:
             a._launch('apply_compact', a.apply_args+[
-                self.active_ids, self.active_count, s.wave_offset], n)
+                self.active_ids, self.frame_count, s.wave_offset], n)
         else:
             a._launch('apply', a.apply_args, n)
+        self.status[4:5].zero_()
+        K.remaining_live[(nb,)](self.live, self.status, n, 1024)
 
     def graph(self, count, width):
         # Persistent kernels consume device counts. Bounded physical buckets
         # also keep the current head adapter from projecting a huge PAD tail.
         # Ragged blocks skip the remaining padded rows/tokens on device.
-        F = max(32, triton.next_power_of_2(max(1, count)))
+        F = max(32, triton.next_power_of_2(max(1, min(count, self.frame_capacity))))
         width = next(w for w in (1, 4, 16, 96) if width <= w)
         base = F, width, self.scorer.bank_key
         ct,cq = self.workspace_capacities.get(base, (F*32, F*16))

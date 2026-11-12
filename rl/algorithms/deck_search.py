@@ -61,8 +61,13 @@ class ShadowSearchCollection:
             from env.core.run_env import _nosl_compact_lut
             from rl.search.resident_deck import ResidentDeckScorer
             folder, manifest, _ = load_artifacts(self.config.cuda_artifacts)
+            # Match the old queued root pool to the physical chain frame.
+            # A larger device wave must receive enough frozen roots to fill
+            # it; the number of real environments is not its queue capacity.
+            self.resident_frame_roots = max(self.env.num_envs,
+                self.config.cuda_wave_capacity // self.config.normal_budget)
             self.resident_arena = CudaBattleArena(folder/'deck.cubin', manifest['sha256']['deck.cubin'],
-                2*self.env.num_envs+self.config.cuda_wave_capacity,
+                self.resident_frame_roots+self.env.num_envs+self.config.cuda_wave_capacity,
                 card_count=_nosl_compact_lut()['layout']['card_count'])
             self.resident_scorer = ResidentDeckScorer(self.model.policy, self.config.inference_cache_bytes)
         elif self.config.backend == 'cuda-batched-native':
@@ -168,7 +173,7 @@ class ShadowSearchCollection:
                 roots=roots, groups=groups, budgets=budgets, seed=seed))
             self.resident_pending_roots += len(roots)
             self.stats['selected_roots'] += len(indices)
-        if (self.resident_pending_roots >= self.env.num_envs
+        if (self.resident_pending_roots >= self.resident_frame_roots
                 or self.buffer.pos == self.buffer.buffer_size-1):
             self._flush_resident()
         self.stats['search_seconds'] += time.monotonic()-started

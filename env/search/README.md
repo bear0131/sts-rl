@@ -31,6 +31,7 @@ CPU 待执行回调不能跨设备导入。`load` 拒绝这类根；在 GPU 中�
 重放。PCG64 流仍按 world 生成，只有真正的策略动作前移 cursor，强制动作及深度
 截断不消耗随机数。旧不含此符号的模块继续使用已支持的逐步调度，不虚报整步图。
 同时含`deck_apply_compact`与`deck_observe_indexed_block`的构建使用稳定live索引压缩模拟器线程，状态本身不搬移，分支随机流和原始槽位不变。它是可选构建能力，是否有端到端收益仍须同机完整负载实测。
+搜索整步将等待分支池与最大16384行评分帧分开；已结束行即时补入等待分支，等待行保持状态/深度/随机cursor。`deck_observe_search_block`支持先生成动作mask/outcome，再只为策略选择及深度截断行编码完整特征；终局锚点在最终评分时仍完整观察。物理波容量只改变汇批，不改变每根预算、真实环境数或搜索目标位置。
 `rl/policies/resident_ragged.py` 迁入旧2×64的融合QKV、分桶attention、mix/FFN及
 动态计数路径；第二层只查询动作实体及global，牌堆/遗物仍参与两层的key/value。
 仅冻结FP32推理使用该路径，训练及checkpoint参数布局不变。

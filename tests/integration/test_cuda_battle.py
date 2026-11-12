@@ -147,7 +147,7 @@ def test_resident_fused_fp64_sampling_preserves_masked_actions_and_padding():
     assert torch.count_nonzero(result) == 0
 
 
-def test_resident_frame_preserves_separate_worker_random_streams(complete_combat_factory, cuda_battle_artifacts):
+def test_resident_frame_preserves_separate_worker_random_streams(complete_combat_factory, cuda_battle_artifacts, monkeypatch):
     from env.search.resident_chains import root_payload, resident_anchor_search
     from rl.search.resident_deck import ResidentDeckScorer
     from rl.policies.deck_latent import DeckLatentPolicy
@@ -172,6 +172,10 @@ def test_resident_frame_preserves_separate_worker_random_streams(complete_combat
             values, counts = resident_anchor_search([payload], [64], score, arena,
                 seed=20261111, groups=[0], max_depth=32, wave_capacity=256)
             serial.extend(values); work.append(counts)
+        score.close()
+        from rl.search.resident_step import ResidentStepPipeline
+        monkeypatch.setattr(ResidentStepPipeline, 'frame_capacity', 32)
+        score = ResidentDeckScorer(policy)
         score.roots([r._obs() for r in roots])
         seed = int(np.random.SeedSequence([20261111, 0]).generate_state(1, dtype=np.uint64)[0])
         merged, counts = resident_anchor_search(payloads, [64, 64], score, arena, seed=0,
@@ -281,7 +285,7 @@ def test_resident_forks_atomic_masks_rng_and_graph_lifetime(complete_combat_fact
         decoder = CudaObservationDecoder(roots[0].observation_space)
         battle_refs = [e.thick.bc for e in envs]
         rng = np.random.default_rng(20261111)
-        atomic_steps, queued_rows = 0, 0
+        atomic_steps, queued_rows, skipped_features = 0, 0, 0
         for turn in range(200):
             # Alternate shapes against capacity one, including a live queued
             # continuation. Graph retirement must not destroy simulator state.
@@ -298,6 +302,27 @@ def test_resident_forks_atomic_masks_rng_and_graph_lifetime(complete_combat_fact
                     torch.zeros((), device='cuda', dtype=torch.int64)], 6)
                 for key in raw:
                     torch.testing.assert_close(raw[key], expected_raw[key], rtol=0, atol=0)
+                torch.testing.assert_close(arena.bits[:6], expected_bits, rtol=0, atol=0)
+            if 'observe_search' in arena.functions:
+                for at_cutoff in (False, True):
+                    for key, value in raw.items():
+                        if key not in ('prefix', 'mask', 'outcome'):
+                            value.fill_(99)
+                    arena._launch('observe_search', arena.observe_args+[
+                        arena._upload(np.arange(6)), arena._upload([6]),
+                        arena._upload([0], np.int64), arena._upload([200 if at_cutoff else 0]*6),
+                        arena._upload([200])], 6)
+                    need = (expected_raw['outcome'] == 0) & (
+                        at_cutoff | (expected_raw['mask'].sum(1) > 1))
+                    skipped_features += int((~need).sum())
+                    for key, value in raw.items():
+                        if key in ('prefix', 'mask', 'outcome'):
+                            torch.testing.assert_close(value, expected_raw[key], rtol=0, atol=0)
+                        else:
+                            torch.testing.assert_close(value[need], expected_raw[key][need], rtol=0, atol=0)
+                            assert torch.all(value[~need] == 99)
+                for key, value in raw.items():
+                    value.copy_(expected_raw[key])
                 torch.testing.assert_close(arena.bits[:6], expected_bits, rtol=0, atol=0)
             if 'observe_indexed' in arena.functions:
                 # Nonzero offset and holes: indexed observation must neither
@@ -367,6 +392,8 @@ def test_resident_forks_atomic_masks_rng_and_graph_lifetime(complete_combat_fact
         else:
             pytest.fail('resident parity exceeded the fixed 200-action depth')
         assert atomic_steps > 10 and queued_rows > 0
+        if 'observe_search' in arena.functions:
+            assert skipped_features > 0
         if graph_capacity:
             assert arena.counts['graph_evictions'] > 2 and arena.counts['graph_replays'] > 10
         else:
