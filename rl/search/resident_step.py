@@ -193,12 +193,13 @@ class ResidentStepPipeline:
                     self.workspace_capacities[(F,W,self.scorer.bank_key)] = (
                         max(F*32,triton.next_power_of_2(status[5])),
                         max(F*16,triton.next_power_of_2(status[6])))
-                count, width = status[:2]
+                count, width = max(count,status[0]), max(width,status[1])
                 continue
             if status[4] == 0:
                 break
             remaining = status[4]
-            count, width = status[:2]
+            count = min(count,remaining)
+            width = max(width,status[1])
         counts = self.counters.cpu().tolist()
         return (self.final[:self.wave_n].cpu().numpy(),
                 self.anchors[:self.wave_n].cpu().numpy().astype(bool),

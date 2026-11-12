@@ -279,13 +279,17 @@ class EntityCombatNetwork(nn.Module):
                 card_table=None):
         state, blocks = self.encode(obs, active_relic_width, card_table=card_table)
         if self.autoregressive_actions:
-            pointers = [self._pointer(state, blocks[role]) for role in ('hand', 'potion', 'select')]
-            if '_resident_rows' in obs and blocks['select'].shape[1] < 96:
-                # Old packed heads score real queries before restoring native
-                # action slots. A zero entity still has pointer_key's bias;
-                # preserve even masked logits without expanding 96x64 tokens.
+            if '_resident_selection' in blocks:
+                from rl.policies.resident_ragged import frozen_selection_pointer
+                selection = frozen_selection_pointer(self,state,blocks['_resident_selection'])
+            else:
+                selection = self._pointer(state, blocks['select'])
+            if '_resident_rows' in obs and selection.shape[1] < 96:
+                # Only scalar logits need the native 96-slot tail. The packed
+                # output path never scatters a padded 96 x 64 entity tensor.
                 padding = self._pointer(state, state.new_zeros((len(state), 1, state.shape[-1])))
-                pointers[-1] = torch.cat((pointers[-1], padding.expand(-1, 96-pointers[-1].shape[1])), -1)
+                selection = torch.cat((selection, padding.expand(-1, 96-selection.shape[1])), -1)
+            pointers = (self._pointer(state, blocks['hand']), self._pointer(state, blocks['potion']), selection)
             source = torch.cat((self.end(state), *pointers), -1)
         else:
             source = state.new_zeros((state.shape[0], C.JOINT_END))

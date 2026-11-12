@@ -399,15 +399,41 @@ def entity_input_tokens(FEATURES, META, CARD, UPGRADE, HW, HB, CW, CB, ZONES,
 
 @triton.jit
 def unpack_entities(X, MAP, OUT, NW, NB, STATUS, EPS: tl.constexpr,
-                    C: tl.constexpr, SELECT: tl.constexpr, N: tl.constexpr, B: tl.constexpr):
+                    C: tl.constexpr, OUTC: tl.constexpr, SELECT: tl.constexpr, N: tl.constexpr, B: tl.constexpr):
  i=tl.program_id(0)*B+tl.arange(0,B);d=tl.arange(0,64)
- index=tl.load(MAP+i,(i<N)&(tl.load(STATUS+7)==0),-1)
+ index=tl.load(MAP+(i//OUTC)*C+i%OUTC,(i<N)&(tl.load(STATUS+7)==0),-1)
  value=tl.load(X+index[:,None]*64+d[None,:],(i[:,None]<N)&(index[:,None]>=0),0.)
  value=norm64(value,NW,NB,EPS)
  # Absent fixed native slots keep norm(0); absent selection queries are zero,
  # matching the original pointer-key bias and required-candidate mask.
- value=tl.where(((i%C>=SELECT)&(index<0))[:,None],0.,value)
+ value=tl.where(((i%OUTC>=SELECT)&(index<0))[:,None],0.,value)
  tl.store(OUT+i[:,None]*64+d[None,:],value,i[:,None]<N)
+
+
+@triton.jit
+def selection_pointer(X, MAP, QUERY, KW, KB, NW, NB, STATUS, OUT, EPS: tl.constexpr,
+                       C: tl.constexpr, W: tl.constexpr, N: tl.constexpr):
+ r=tl.program_id(0)*32+tl.arange(0,32);d=tl.arange(0,64)
+ index=tl.load(MAP+(r//W)*C+(C-W)+r%W,(r<N)&(tl.load(STATUS+7)==0),-1)
+ x=tl.load(X+index[:,None]*64+d[None,:],(r[:,None]<N)&(index[:,None]>=0),0.)
+ x=norm64(x,NW,NB,EPS)
+ x=tl.where((index>=0)[:,None],x,0.)
+ weight=tl.load(KW+d[:,None]+d[None,:]*64)
+ key=tl.dot(x,weight,input_precision='tf32x3')+tl.load(KB+d)[None,:]
+ query=tl.load(QUERY+(r[:,None]//W)*64+d[None,:],r[:,None]<N,0.)
+ score=tl.sum(query*key,1)*.125
+ tl.store(OUT+r,score,r<N)
+
+
+@torch.compiler.disable
+def frozen_selection_pointer(net, state, packed):
+    attention,mapping,status,consumers,width=packed
+    query=net.pointer_query(state).contiguous()
+    result=torch.empty((len(state),width),device=state.device,dtype=torch.float32)
+    selection_pointer[(triton.cdiv(len(state)*width,32),)](attention,mapping,query,
+        net.pointer_key.weight,net.pointer_key.bias,net.norm.weight,net.norm.bias,status,result,
+        net.norm.eps,consumers,width,len(state)*width,num_warps=4,enable_fp_fusion=False)
+    return result
 
 
 def _packed_blocks(blocks, packed, keys, query, starts, lens, first, second, counts, cap, bcap, qkv=None):
@@ -476,11 +502,16 @@ def frozen_entity_blocks(net, obs, global_token, relics, piles, valid, required,
         num_warps=4,num_stages=1,enable_fp_fusion=False)
     # input_tokens consumed every feature before QKV overwrites the same store.
     attention=_packed_blocks(net.blocks,packed,keys,query,starts,lens,first,second,counts,cap,bcap,qkv)
-    output=arr((batch,consumers,64))
-    unpack_entities[(triton.cdiv(batch*consumers,32),)](attention,mapping,output,net.norm.weight,
-        net.norm.bias,status,net.norm.eps,consumers,consumers-w,batch*consumers,32,num_warps=4)
-    return output[:,0],dict(hand=output[:,1:1+h],monster=output[:,1+h:1+h+m],
+    pointer_only=obs.get('_resident_project_selection',False)
+    outc=consumers-w if pointer_only else consumers
+    output=arr((batch,outc,64))
+    unpack_entities[(triton.cdiv(batch*outc,32),)](attention,mapping,output,net.norm.weight,
+        net.norm.bias,status,net.norm.eps,consumers,outc,consumers-w,batch*outc,32,num_warps=4)
+    entities=dict(hand=output[:,1:1+h],monster=output[:,1+h:1+h+m],
         potion=output[:,1+h+m:1+h+m+p],select=output[:,1+h+m+p:])
+    if pointer_only:
+        entities['_resident_selection']=(attention,mapping,status,consumers,w)
+    return output[:,0],entities
 
 
 @torch.compiler.disable

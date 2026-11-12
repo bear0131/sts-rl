@@ -174,7 +174,9 @@ hand/enemy/potion slots and required PAD-ID choices; relic and pile tokens remai
 attention keys. Indexed pile projection reads the owned arena histograms directly.
 Inactive rows and capacity retries cannot advance environments or random cursors.
 `ResidentStepPipeline` traverses every row of a stable compacted pass before
-rebuilding the live queue, and submits bounded frames before a host status read.
+rebuilding the live queue, retains grown geometry within that wave, and submits
+bounded frames before a host status read. Resident selection queries project
+directly to scalar pointer logits instead of expanding padded entity outputs.
 Anchor cache transfers batch fields by dtype while retaining their exact schema
 and bytes. These inference changes do not alter checkpoint parameters or the
 training decoder. The legacy token-regret hash-feature encoder, action head,

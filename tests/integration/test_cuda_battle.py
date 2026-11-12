@@ -355,6 +355,12 @@ def test_resident_compact_features_preserve_slots_queries_and_retry(complete_com
                 mask = required[:active, :width]
                 torch.testing.assert_close(blocks['select'][:active][mask],
                     entities['select'][:active, :width][mask], rtol=3e-5, atol=3e-6)
+                from rl.policies.resident_ragged import frozen_selection_pointer
+                state, compact = net.encode(dict(resident, _resident_project_selection=True))
+                assert compact['select'].shape[1] == 0
+                pointer = frozen_selection_pointer(net,state,compact['_resident_selection'])
+                expected_pointer = net._pointer(actual,blocks['select'])
+                torch.testing.assert_close(pointer[:active],expected_pointer[:active],rtol=3e-5,atol=3e-6)
             gc.collect();torch.cuda.empty_cache()
     finally:
         scorer.close()

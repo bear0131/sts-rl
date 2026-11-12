@@ -267,6 +267,7 @@ class ResidentDeckScorer:
         o['_resident_fused_blocks'] = True
         if 'row_count' in batch:
             o['_resident_rows'] = batch['row_count']
+            o['_resident_project_selection'] = True
             o['_resident_card_table'] = self.card_table
             o['_resident_card_projection'] = (self.projected_cards, self.card_upgrade)
             o['_resident_monster_projection'] = self.monster_tables
