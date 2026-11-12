@@ -92,6 +92,11 @@ class CudaBattleArena:
                 f = p()
                 if self.driver.cuModuleGetFunction(c.byref(f), self.module, b'deck_observe_live_block') == 0:
                     self.functions['observe_live'] = f
+                for name, symbol in (('observe_indexed', 'deck_observe_indexed_block'),
+                                     ('apply_compact', 'deck_apply_compact')):
+                    f = p()
+                    if self.driver.cuModuleGetFunction(c.byref(f), self.module, symbol.encode()) == 0:
+                        self.functions[name] = f
                 layout = self._empty((8,), torch.int64)
                 self._launch('layout', [layout])
                 self.battle_bytes, cats, floats, self.actions, cards, deck, version, words = layout.cpu().tolist()
@@ -173,7 +178,7 @@ class CudaBattleArena:
         if n is not None:
             values.append(c.c_int(n))
         arguments = (c.c_void_p * len(values))(*(c.cast(c.byref(v), c.c_void_p) for v in values))
-        grid, threads = (n, 64) if name == 'observe_live' else (((n or 1) + 31) // 32, 32)
+        grid, threads = (n, 64) if name in ('observe_live', 'observe_indexed') else (((n or 1) + 31) // 32, 32)
         self._check(self.driver.cuLaunchKernel(self.functions[name], grid,
             1, 1, threads, 1, 1, 0, c.c_void_p(torch.cuda.current_stream(self.device).cuda_stream), arguments, None))
 

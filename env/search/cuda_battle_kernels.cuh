@@ -74,9 +74,8 @@ extern "C" __global__ void deck_observe(unsigned char*arena,int*constructed,int*
 // Port the old normal_features split: one warp shares the canonical row
 // codec, the other owns legal-action assembly and pile metadata.
 struct DeckOutputView {int*categorical;float*scalars;int selectionCount=0;};
-extern "C" __global__ void deck_observe_live_block(unsigned char*arena,int*constructed,int*prefix,int*cat,float*scalars,unsigned*bits,int*mask,int*status,float*upgrades,int*misc,int*live,long long*offset,int n){
- int lane=blockIdx.x;if(lane>=n||!live[lane])return;
- int i=int(*offset)+lane,t=threadIdx.x;
+__device__ __forceinline__ void deck_observe_block(unsigned char*arena,int*constructed,int*prefix,int*cat,float*scalars,unsigned*bits,int*mask,int*status,float*upgrades,int*misc,int i){
+ int t=threadIdx.x;
  constexpr int A=sts::search::kAutoregressiveSize,C=compact_leaf::kCardIds,D=sts::Deck::MAX_SIZE;
  for(int k=t;k<compact_leaf::kCatSize;k+=blockDim.x)cat[i*compact_leaf::kCatSize+k]=0;
  for(int k=t;k<compact_leaf::kFloatSize;k+=blockDim.x)scalars[i*compact_leaf::kFloatSize+k]=0;
@@ -92,11 +91,27 @@ extern "C" __global__ void deck_observe_live_block(unsigned char*arena,int*const
   else deck_observe_extras<false>(b,prefix,bits,mask,status,upgrades,misc,i);
  }
 }
-extern "C" __global__ void deck_apply(unsigned char*arena,int*constructed,int*prefix,int*selected,unsigned*bits,int*mask,int n){
- int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n||selected[i]<0)return;
+extern "C" __global__ void deck_observe_live_block(unsigned char*arena,int*constructed,int*prefix,int*cat,float*scalars,unsigned*bits,int*mask,int*status,float*upgrades,int*misc,int*live,long long*offset,int n){
+ int lane=blockIdx.x;if(lane>=n||!live[lane])return;
+ deck_observe_block(arena,constructed,prefix,cat,scalars,bits,mask,status,upgrades,misc,int(*offset)+lane);
+}
+extern "C" __global__ void deck_observe_indexed_block(unsigned char*arena,int*constructed,int*prefix,int*cat,float*scalars,unsigned*bits,int*mask,int*status,float*upgrades,int*misc,int*indices,int*count,long long*offset,int n){
+ int row=blockIdx.x;if(row>=n||row>=*count)return;
+ deck_observe_block(arena,constructed,prefix,cat,scalars,bits,mask,status,upgrades,misc,int(*offset)+indices[row]);
+}
+__device__ __forceinline__ void deck_apply_row(unsigned char*arena,int*constructed,int*prefix,int*selected,unsigned*bits,int*mask,int i){
+ if(selected[i]<0)return;
  device_state::require(constructed[i]);auto&b=*reinterpret_cast<sts::BattleContext*>(arena+i*sizeof(sts::BattleContext));
  int id=selected[i];device_state::require(id<sts::search::kAutoregressiveSize&&mask[i*sts::search::kAutoregressiveSize+id]&&b.outcome==sts::Outcome::UNDECIDED);
  sts::search::executeAutoregressiveAction(sts::search::Action(bits[i*sts::search::kAutoregressiveSize+id]),b,prefix[i]);
+}
+extern "C" __global__ void deck_apply(unsigned char*arena,int*constructed,int*prefix,int*selected,unsigned*bits,int*mask,int n){
+ int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;
+ deck_apply_row(arena,constructed,prefix,selected,bits,mask,i);
+}
+extern "C" __global__ void deck_apply_compact(unsigned char*arena,int*constructed,int*prefix,int*selected,unsigned*bits,int*mask,int*indices,int*count,long long*offset,int n){
+ int row=blockIdx.x*blockDim.x+threadIdx.x;if(row>=n||row>=*count)return;
+ deck_apply_row(arena,constructed,prefix,selected,bits,mask,int(*offset)+indices[row]);
 }
 extern "C" __global__ void deck_destroy(unsigned char*arena,int*constructed,int n){
  int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;

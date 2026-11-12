@@ -30,6 +30,8 @@ class ResidentStepPipeline:
         self.live, self.depth, self.cursor, self.kind, self.forced, self.need, self.prefix, self.ids = (
             empty((self.n,)) for _ in range(8))
         self.anchors = empty((self.n,))
+        self.active_ids, self.active_count = empty((self.n,)), empty((1,))
+        self.compact_simulator = all(k in arena.functions for k in ('observe_indexed', 'apply_compact'))
         self.final = empty((self.n,), torch.float64)
         self.totals = empty((triton.cdiv(self.n, 1024),))
         self.status, self.enabled, self.counters = empty((10,)), empty(()), empty((5,), torch.int64)
@@ -56,13 +58,23 @@ class ResidentStepPipeline:
     def execute(self, rows, uniforms, width, token_capacity, query_capacity):
         s, a, n, F = self.scorer, self.arena, self.n, len(rows)
         a.selected.fill_(-1)
-        a._launch('observe_live', a.observe_args+[self.live, s.wave_offset], n)
+        nb = triton.cdiv(n, 1024)
+        if self.compact_simulator:
+            # The old StepPipeline packs simulator threads too, so completed
+            # branches no longer leave holes in the active warps. Stable ids
+            # keep every state, depth and random stream at its original slot.
+            K.compact_local[(nb,)](self.live, self.prefix, self.totals, n, 1024)
+            K.compact_scatter[(nb,)](self.live, self.prefix, self.totals,
+                self.active_ids, self.active_count, n, 1024, nb, triton.next_power_of_2(nb))
+            a._launch('observe_indexed', a.observe_args+[
+                self.active_ids, self.active_count, s.wave_offset], n)
+        else:
+            a._launch('observe_live', a.observe_args+[self.live, s.wave_offset], n)
         self.status.zero_()
         K.classify[(triton.cdiv(n, 32),)](a.outcome, a.mask, a.categorical, a.misc,
             self.expected, self.deck, s.wave_owners, self.live, self.depth,
             self.kind, self.forced, self.need, self.status, s.wave_offset,
             n, self.max_depth, MISC_SCALE, 32, num_warps=4)
-        nb = triton.cdiv(n, 1024)
         K.compact_local[(nb,)](self.need, self.prefix, self.totals, n, 1024)
         K.compact_scatter[(nb,)](self.need, self.prefix, self.totals, self.ids,
             self.status, n, 1024, nb, triton.next_power_of_2(nb))
@@ -79,7 +91,11 @@ class ResidentStepPipeline:
             self.enabled, self.counters, s.wave_offset, n, F, width, 256)
         K.commit_scores[(triton.cdiv(F, 256),)](rows, sampled, values, self.kind,
             self.final, a.selected, self.status, self.enabled, s.wave_offset, F, width, 256)
-        a._launch('apply', a.apply_args, n)
+        if self.compact_simulator:
+            a._launch('apply_compact', a.apply_args+[
+                self.active_ids, self.active_count, s.wave_offset], n)
+        else:
+            a._launch('apply', a.apply_args, n)
 
     def graph(self, count, width):
         # Persistent kernels consume device counts. Bounded physical buckets

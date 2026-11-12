@@ -299,6 +299,18 @@ def test_resident_forks_atomic_masks_rng_and_graph_lifetime(complete_combat_fact
                 for key in raw:
                     torch.testing.assert_close(raw[key], expected_raw[key], rtol=0, atol=0)
                 torch.testing.assert_close(arena.bits[:6], expected_bits, rtol=0, atol=0)
+            if 'observe_indexed' in arena.functions:
+                # Nonzero offset and holes: indexed observation must neither
+                # reorder fields nor touch roots and excluded sibling slots.
+                selected_rows = torch.tensor([2, 4, 5], device='cuda')
+                for key, value in raw.items():
+                    if key != 'prefix':
+                        value[selected_rows] = 99
+                arena._launch('observe_indexed', arena.observe_args+[
+                    arena._upload([0, 2, 3]), arena._upload([3]),
+                    arena._upload([2], np.int64)], 6)
+                for key in raw:
+                    torch.testing.assert_close(raw[key], expected_raw[key], rtol=0, atol=0)
             decoded = {k: v.cpu().numpy() for k, v in decoder(raw, root_tensors,
                 torch.arange(6, device='cuda')).items()}
             anchored = decoder.anchor(raw, root_tensors, torch.arange(6, device='cuda'))
@@ -339,7 +351,13 @@ def test_resident_forks_atomic_masks_rng_and_graph_lifetime(complete_combat_fact
                 selected[i] = action
                 env.step(action + env._policy_offset)
                 atomic_steps += 1
-            arena.apply(selected)
+            if turn % 2 and 'apply_compact' in arena.functions:
+                arena.selected[:6].copy_(arena._upload(selected))
+                arena._launch('apply_compact', arena.apply_args+[
+                    arena._upload(np.flatnonzero(selected >= 0)-2), arena._upload([len(active)]),
+                    arena._upload([2], np.int64)], 6)
+            else:
+                arena.apply(selected)
             if turn == 3:
                 arena.clear_graphs()
                 gc.collect()
