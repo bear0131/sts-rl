@@ -39,6 +39,57 @@ def _first_action(env):
     return int(np.flatnonzero(mask)[0])
 
 
+@pytest.mark.parametrize('json_history', [False, True])
+def test_run_fork_history_isolation_and_replay(json_history):
+    import copy
+    import json
+
+    env = SlayTheSpireEnv(global_map_view=True)
+    restored = SlayTheSpireEnv(global_map_view=True)
+    branches = []
+    try:
+        env.reset(seed=123)
+        _advance_to_combat(env)
+        bits = int(env.native_combat_actions()[0])
+        action = env._native_action_to_thin(bits)
+        assert action is not None
+        env._nosl_cpp_pending = (action, bits)
+        env.step(action)
+        state = env.export_training_state()
+        if json_history:
+            state['actions'] = json.loads(json.dumps(state['actions']))
+            env.restore_training_state(state)
+        history = copy.deepcopy(env._episode_action_journal)
+        parent_obs = env._obs()
+        branches = [env.fork_run(), env.fork_run()]
+        first, sibling = branches
+        for _ in range(8):
+            result = first.step(_first_action(first))
+            if result[2] or result[3]:
+                break
+        snapshot = first.export_training_state()
+        observation, _ = restored.restore_training_state(snapshot)
+        _assert_observation_equal(first._obs(), observation)
+        np.testing.assert_array_equal(first.action_masks(), restored.action_masks())
+        assert restored._episode_action_journal == first._episode_action_journal
+        assert env._episode_action_journal == sibling._episode_action_journal == history
+        _assert_observation_equal(env._obs(), parent_obs)
+        _assert_observation_equal(sibling._obs(), parent_obs)
+        # Mutable records and JSON's pending lists must not alias siblings.
+        first._episode_action_journal[0]['action'] = -1
+        for record in first._episode_action_journal:
+            if isinstance(record.get('native_pending'), list):
+                record['native_pending'][0] = -1
+        assert env._episode_action_journal == sibling._episode_action_journal == history
+        snapshot['actions'][0]['action'] = -2
+        assert restored._episode_action_journal[0]['action'] != -2
+    finally:
+        for branch in branches:
+            branch.close()
+        env.close()
+        restored.close()
+
+
 def test_backend_step_observation_remains_opt_in_to_omission():
     regular = SimGameEnv()
     transition_only = SimGameEnv(emit_step_observation=False)

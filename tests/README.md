@@ -168,3 +168,8 @@ with the explicitly selected native extension:
 These cover complete observation bytes, branch context changes, paired search
 results, and two real PPO rounds plus ordinary restore. They do not qualify a
 production-length GPU search collection or replace the CUDA lifecycle tests.
+
+Search fork journal isolation and replay (including JSON pending-action lists)
+use the supported full-map observation configuration:
+
+    python -m pytest -q tests/integration/test_environment_recovery.py::test_run_fork_history_isolation_and_replay

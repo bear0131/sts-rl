@@ -733,9 +733,17 @@ class SlayTheSpireEnv(gym.Env):
         branch._nosl_cpp_stochastic = False
         branch._nosl_cpp_state_nonce = 0
         branch._nosl_cpp_decision_index = 0
-        branch._episode_action_journal = copy.deepcopy(
-            self._episode_action_journal
-        )
+        # Committed records contain scalar action metadata, not simulator state.
+        # Copy each mutable record once; avoid deepcopy's per-scalar memo work
+        # on the entire episode for every search chain. Preserve isolation for
+        # pending lists from JSON snapshots and any nested record metadata.
+        branch._episode_action_journal = []
+        for record in self._episode_action_journal:
+            cloned = record.copy()
+            for key, value in record.items():
+                if value is not None and type(value) not in (str, int):
+                    cloned[key] = copy.deepcopy(value)
+            branch._episode_action_journal.append(cloned)
         branch._np_random = copy.deepcopy(self._np_random)
         branch._invalidate_backend_cache()
         return branch
