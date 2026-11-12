@@ -6,6 +6,7 @@ miss, so graph capture and retry never advance a battle or a random cursor.
 """
 import triton
 import triton.language as tl
+from triton.language.extra.cuda import libdevice
 
 
 @triton.jit
@@ -77,6 +78,26 @@ def prepare(IDS, ROWS, RANDOM, CURSOR, UNIFORMS, STATUS, F: tl.constexpr,
     u = tl.load(RANDOM+row*MAX_DEPTH+cursor, i < F, .5)
     tl.store(ROWS+i, row.to(tl.int64), i < F)
     tl.store(UNIFORMS+i, u, i < F)
+
+
+@triton.jit
+def sample_fp64(LOGITS, MASK, ROWS, OFFSET, UNIFORMS, SAMPLED, STATUS,
+                A: tl.constexpr, B: tl.constexpr):
+    i=tl.program_id(0);j=tl.arange(0,B)
+    if (i<tl.load(STATUS)) & (tl.load(STATUS+7)==0):
+        physical=tl.load(ROWS+i)+tl.load(OFFSET)
+        legal=tl.load(MASK+physical*A+j,j<A,0)!=0
+        x=tl.load(LOGITS+i*A+j,j<A,0.).to(tl.float64)
+        x=tl.where(legal,x,-float('inf'))
+        weight=libdevice.exp(x-tl.max(x,0))
+        probability=weight/tl.sum(weight,0)
+        cdf=tl.cumsum(probability,0)
+        last=tl.sum(tl.where(j==A-1,cdf,0.),0)
+        uniform=tl.load(UNIFORMS+i)
+        selected=tl.sum(((j<A)&(cdf/last<=uniform)).to(tl.int32),0)
+        tl.store(SAMPLED+i,selected)
+    else:
+        tl.store(SAMPLED+i,0)
 
 
 @triton.jit

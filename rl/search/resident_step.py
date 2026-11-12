@@ -70,7 +70,9 @@ class ResidentStepPipeline:
             uniforms, self.status, F, self.max_depth, 256)
         logits, values = s._forward_gather({'rows': rows}, width, contexts=self.context,
             row_count=self.status, workspace=(token_capacity, query_capacity, self.status))
-        sampled = s._sample(logits, a.mask[rows+s.wave_offset], uniforms)
+        sampled = torch.empty(F, dtype=torch.int32, device=a.device)
+        K.sample_fp64[(F,)](logits, a.mask, rows, s.wave_offset, uniforms, sampled,
+                            self.status, a.actions, triton.next_power_of_2(a.actions), num_warps=4)
         K.validate[(triton.cdiv(F, 256),)](values, self.status, F, 256)
         K.commit[(triton.cdiv(n, 256),)](self.kind, self.forced, self.live, self.depth,
             self.cursor, self.anchors, self.final, a.selected, self.status,

@@ -14,6 +14,29 @@ from env.core.cuda_observation import CudaObservationDecoder
 pytestmark = [pytest.mark.native, pytest.mark.cuda, pytest.mark.timeout(120)]
 
 
+def test_resident_fused_fp64_sampling_preserves_masked_actions_and_padding():
+    from env.search.resident_step_kernels import sample_fp64
+    from rl.search.resident_deck import ResidentDeckScorer
+    torch.manual_seed(20261111)
+    n, actions = 2048, 198
+    logits = torch.randn(n, actions, device='cuda') * 7
+    mask = torch.rand(n+3, actions, device='cuda') > .85
+    mask[:, 0] = True
+    rows = torch.randperm(n, device='cuda')
+    offset = torch.tensor(3, device='cuda', dtype=torch.int64)
+    uniforms = torch.rand(n, device='cuda', dtype=torch.float64)
+    expected = ResidentDeckScorer._sample(logits, mask[rows+offset], uniforms)
+    result = torch.empty(n, device='cuda', dtype=torch.int32)
+    status = torch.zeros(10, device='cuda', dtype=torch.int32)
+    status[0] = n-9
+    sample_fp64[(n,)](logits, mask, rows, offset, uniforms, result, status, actions, 256, num_warps=4)
+    torch.testing.assert_close(result[:n-9], expected[:n-9], rtol=0, atol=0)
+    assert torch.count_nonzero(result[n-9:]) == 0
+    status[7] = 1
+    sample_fp64[(n,)](logits, mask, rows, offset, uniforms, result, status, actions, 256, num_warps=4)
+    assert torch.count_nonzero(result) == 0
+
+
 def test_resident_frame_preserves_separate_worker_random_streams(complete_combat_factory, cuda_battle_artifacts):
     from env.search.resident_chains import root_payload, resident_anchor_search
     from rl.search.resident_deck import ResidentDeckScorer
