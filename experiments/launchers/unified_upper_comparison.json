@@ -3306,7 +3306,7 @@
     "restart_reference": "references/before-large-fast-restart/rankN/step-000014548992"
   },
   "deck_latent_fast_restart": {
-    "status": "continuous-standard-packed-recovered-round107",
+    "status": "continuous-optimized-workspace-fix-recovered-round132",
     "plan": "docs/2026-11-11/deck-latent-fast-restart.md",
     "root": "/root/autodl-tmp/combat49-deck-latent512-t64x2-20261111",
     "run_id": "combat49-deck-latent512-t64x2-ppo-search-r1",
@@ -3341,7 +3341,7 @@
     "schedule_config": "configs/train/deck_latent_schedule.json",
     "context_grouping": true,
     "context_gradient_replay": false,
-    "physical_update_caps": "deck_latent_packed_fp32.json: standard packed, token budget 196608, max rows 1024, upper 384 rows / 320 contexts; optimized update graphs/overlap disabled after round108 CUDA fault",
+    "physical_update_caps": "deck_latent_448_fp32.json: FP32, combat 448 contexts, upper 384 rows / 320 contexts, prefetch and exact ring overlap; captured cuBLAS workspace ownership fixed",
     "required_sampling_paths": [
       "geometry-compatible GPU graphs",
       "host metadata and packed gathers",
@@ -3350,7 +3350,7 @@
       "direct native destinations"
     ],
     "qualification": "same-state complete 256x768 baseline/candidate; semantic and GPU cache lifecycle checks; then two full four-rank production rounds",
-    "runtime_source": "abfcb134",
+    "runtime_source": "dc09baf5",
     "overlap_prototype": {
       "source": "fed93e8b",
       "production_round_held": 21,
@@ -3439,7 +3439,7 @@
         "graph_hits_rank_mean": 3775.25
       }
     ],
-    "source_archive_sha256": "a9f84fa273899463b6332824bb16068183352be44b26347d91f72a9eda397c4b",
+    "source_archive_sha256": "94ffc96b67cd80b87fc369f2026f7f8bd711f9187380a0cbcc4094b3f93a8eed",
     "qualification_result": {
       "seed": 20261111,
       "rows_per_arm": 196608,
@@ -3563,7 +3563,12 @@
       "handoff": "docs/2026-11-11/combat49-update-50s.md",
       "remote_handoff": {
         "host": "connect.bjb2.seetacloud.com",
-        "ports_by_rank": [53841, 13208, 15409, 26162],
+        "ports_by_rank": [
+          53841,
+          13208,
+          15409,
+          26162
+        ],
         "directory": "/root/autodl-tmp/combat49-deck-latent512-t64x2-20261111/handoffs/update2-ea044ba0",
         "entry": "README.md",
         "source_commit": "ea044ba0aaad52508c2db753266e18efb92ab294",
@@ -3819,6 +3824,79 @@
           "epochs": 1,
           "adam_updates": 16,
           "adam_step": 1744,
+          "oom_retries": 0
+        }
+      ]
+    },
+    "workspace_lifetime_recovery": {
+      "issue": "COMBAT49-UPDATE-ILLEGAL-ADDRESS",
+      "source": "dc09baf5",
+      "started_at": "2026-11-12T09:15:13+08:00",
+      "resume_round": 132,
+      "resume_step": 103809024,
+      "protected_reference": "references/maintenance-address-20261112/rank{rank}/step-000103809024",
+      "config": "configs/train/deck_latent_448_fp32.json",
+      "transport_root": "transport-address-dc09baf5",
+      "ring_port": 31462,
+      "root_cause": "Training CUDA graphs borrowed eager cuBLAS workspace addresses which became invalid after cache release; allocate workspace in graph pools and remove global aliases.",
+      "regression_tests_per_rank": 21,
+      "full_production_negative_control": "Original fast source fails on all four ranks at first forced workspace release after complete collection.",
+      "full_production_positive_control": {
+        "rounds": 2,
+        "workspace_releases_per_rank": [
+          27,
+          22,
+          22,
+          27
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "numeric_control": {
+        "source_round": 107,
+        "seed": 20261111,
+        "rows_per_rank": 196608,
+        "adam_updates": 16,
+        "deterministic": true,
+        "transfer_overlap": false,
+        "all_64_gradient_comparisons_bitwise": true,
+        "final_policy_and_adam_bitwise": true,
+        "qualification_only_transfer_control": true,
+        "candidate_rank3_oom_retries": 1,
+        "effective_routes_unchanged": true
+      },
+      "normal_prefetch_full_rounds": 2,
+      "acceptance": [
+        {
+          "round": 133,
+          "step": 104595456,
+          "policy_sha256": "73d23dd3dd56074dc98d836342215b3b517f61f8ef56dd0529eb53dcabc2c9fe",
+          "adam_sha256": "3b5e154c7a70fc0e34a3a0f7ca0335d42bc39a4d3aa810a337e0bda7912c9cb4",
+          "max_update_sec": 75.20699796872213,
+          "max_iteration_wall_sec": 109.06442040507682,
+          "all_manifest_hashes_verified": true,
+          "rows_per_rank": 196608,
+          "epochs": 1,
+          "adam_updates": 16,
+          "adam_step": 2128,
+          "oom_retries": 0
+        },
+        {
+          "round": 134,
+          "step": 105381888,
+          "policy_sha256": "2f4e32e4b222bae9176586fdcdc526cade4097f60a779c44a568098398425a47",
+          "adam_sha256": "1da8d10cb9663d4039b7f35d00c4e33f7948d0a78b5e6e73d6af5b81338a8c79",
+          "max_update_sec": 74.61078576603904,
+          "max_iteration_wall_sec": 105.68162563699298,
+          "all_manifest_hashes_verified": true,
+          "rows_per_rank": 196608,
+          "epochs": 1,
+          "adam_updates": 16,
+          "adam_step": 2144,
           "oom_retries": 0
         }
       ]
