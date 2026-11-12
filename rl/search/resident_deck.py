@@ -11,7 +11,7 @@ from rl.search.rollout_inference import ExactInputCache
 
 
 class ResidentDeckScorer:
-    def __init__(self, policy, cache_bytes=64*1024**2, graph_capacity=32):
+    def __init__(self, policy, cache_bytes=64*1024**2, graph_capacity=128):
         self.policy, self.core = policy, policy.core
         self.device = next(policy.parameters()).device
         self.decoder = CudaObservationDecoder(policy.observation_space, self.device)

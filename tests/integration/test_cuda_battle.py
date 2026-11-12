@@ -168,6 +168,17 @@ def test_resident_paired_search_matches_native_and_preserves_root(complete_comba
             full = score.decoder(raw, {k: torch.as_tensor(v[None], device='cuda')
                                       for k, v in obs.items()}, owners)
             with torch.no_grad():
+                from unittest.mock import patch
+                net = policy.core.combat
+                head_input = dict(full, _combat_context=score.context.combat)
+                complete_projection = net._dynamic_inputs
+                with patch.object(net, '_dynamic_inputs',
+                                  lambda obs, table=None: complete_projection(head_input, table)):
+                    old_global, old_entities = net.encode(head_input)
+                new_global, new_entities = net.encode(head_input)
+                torch.testing.assert_close(new_global, old_global, rtol=3e-5, atol=3e-6)
+                for key in old_entities:
+                    torch.testing.assert_close(new_entities[key], old_entities[key], rtol=3e-5, atol=3e-6)
                 expected = policy.core.combat_with_context(full, score.context)
                 actual = score.score(raw, owners, [0])
             for got, want in zip(actual, expected, strict=True):

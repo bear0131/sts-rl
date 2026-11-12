@@ -216,10 +216,6 @@ class TransformerCombatNetwork(FastCombatNetwork):
         self.blocks = nn.ModuleList([EntityBlock(64, 4) for _ in range(2)])
 
     def encode(self, obs, active_relic_width=None, *, card_table=None):
-        player, entities, summary = self._dynamic_inputs(obs, card_table)
-        context = obs.get('_combat_context')
-        if context is None:
-            context = self.context_projection(obs['_run_context'])
         valid = obs['select_native_indices'] > 0
         # Legal PAD-ID/handle-only candidates must retain their query slot.
         pick = C.JOINT_PICK - C.JOINT_END
@@ -227,6 +223,19 @@ class TransformerCombatNetwork(FastCombatNetwork):
         choice_width = obs.get('_choice_width')
         if choice_width is None:
             choice_width = _active_prefix_width(required)
+        dynamic = obs
+        if not self.training and not torch.is_grad_enabled():
+            # The same trailing PAD suffix already excluded from attention
+            # also has no head consumer. Avoid embedding/projecting all 96
+            # candidates before immediately discarding most of them.
+            dynamic = dict(obs)
+            for key in ('select_card_ids', 'select_card_upgrades',
+                        'select_card_costs', 'select_native_indices'):
+                dynamic[key] = obs[key][:, :choice_width]
+        player, entities, summary = self._dynamic_inputs(dynamic, card_table)
+        context = obs.get('_combat_context')
+        if context is None:
+            context = self.context_projection(obs['_run_context'])
         piles = self.pile_projection(self.summaries.features(summary).reshape(len(player), 3, 65))
         blocks = [
             ('global', (player + context)[:, None], torch.ones_like(valid[:, :1])),
