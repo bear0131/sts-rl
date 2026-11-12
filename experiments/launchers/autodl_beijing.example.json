@@ -1,0 +1,12 @@
+{
+  "job": "beijing-gpu",
+  "image_uuid": "",
+  "instances": 4,
+  "gpu_spec_uuid": "5090-p",
+  "gpus_per_instance": 1,
+  "cuda_v_from": 132,
+  "expand_system_disk_by_gb": 0,
+  "interval_seconds": 60,
+  "max_wait_seconds": 3600,
+  "max_create_attempts": 60
+}

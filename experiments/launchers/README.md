@@ -1,5 +1,77 @@
 # Four-Rank NOSL Startup: Authoritative Procedure
 
+<a id="autodl-pro"></a>
+## AutoDL 北京 Pro 实例获取
+
+`autodl_beijing.py` 使用官方 Pro API 申请资源，与下面管理已租机器的训练入口分开。
+只需 Python 3.11+ 标准库，不依赖 Torch，不启动训练，也不操作现有训练实例。
+本工具不支持普通容器的网页/私有接口。官方核对日期：2026-11-12。
+
+- [产品区别](https://www.autodl.com/docs/instance_pro/)：普通容器不支持创建管理 API，Pro 明确支持自动创建。
+- [服务协议](https://www.autodl.com/docs/agreements/)：禁止未经授权访问、干扰正常服务等行为。
+  本工具走已公开支持的接口；这不是对所有自动抢购方式的法律保证。
+- [API 合同](https://www.autodl.com/docs/instance_pro_api/)：需实名认证及开发者 Token，
+  固定 `https://api.autodl.com`，仅传 `data_center_list=["beijingDC2"]`，仅按量计费。
+  不保证可挑选北京子区、独立物理机、CPU 型号或内存容量，也不保证四台同时获取成功。
+
+**价格限制：**公开 create 接口没有限价字段或创建前报价接口。因此不提供虚假的价格上限；
+执行必须明确接受平台当前按量价。系统盘扩容、关机后的存储等费用以平台为准。
+等待超时、脚本退出或获取成功都不会自动关机/释放已拿到的实例。
+Pro 使用网络系统盘，其存储容量、性能和计费与普通容器不同，不能直接套旧部署路径。
+
+从仓库根目录执行（也可将脚本和配置单独复制到其他目录）：
+
+```powershell
+New-Item -ItemType Directory -Force runs/local/autodl-acquire
+Copy-Item experiments/launchers/autodl_beijing.example.json runs/local/autodl-acquire/config.json
+python experiments/launchers/autodl_beijing.py --config runs/local/autodl-acquire/config.json
+```
+
+默认只离线预演，不连接 AutoDL、不读取 Token。示例为 **4 台单卡 5090-32G**、
+驱动 CUDA 下限 13.2、系统盘不扩容；仅是可编辑模板，不代表用户已确定规格。
+填写真实 `image_uuid` 后才能执行。通过以下只读命令列出私有镜像；公共新镜像 UUID
+需从控制台/官方支持取得，不把文档中的老 Torch 镜像当作 5090 训练环境。
+
+```powershell
+python experiments/launchers/autodl_beijing.py --list-images
+python experiments/launchers/autodl_beijing.py --config runs/local/autodl-acquire/config.json --execute --accept-current-price
+```
+
+程序隐藏询问开发者 Token，也支持从进程环境 `AUTODL_TOKEN` 读取；不要把 Token 填到
+配置、命令参数或 Git。Token 来源：控制台 → 账号 → 设置 → 开发者 Token。
+脚本不保存 Token、SSH 密码或完整实例详情，HTTP 重定向不跟随。
+
+配置字段：`job` 是稳定任务名；`instances` 是实例数，`gpus_per_instance` 是每台卡数；
+`gpu_spec_uuid=5090-p` 对应 5090-32G 性能型。`cuda_v_from` 是驱动支持下限，不会安装软件。
+`interval_seconds` 默认60、最低60；`max_wait_seconds` 默认3600，限制本次等待；
+`max_create_attempts` 默认60，限制同一任务累计创建请求数，包括失败请求。
+一台成功后也会等待下一个间隔才申请下一台。60秒是本工具的保守选择，不是官方公布的限流阈值。
+
+创建意图先写入 `runs/local/autodl-acquire/<job>.json`，再发送请求；成功后保存 UUID。
+原命令重跑会核对完整实例列表并继续缺少的槽位，不替换已删除/停止的实例。
+状态目录有操作系统互斥锁，崩溃后锁自动释放。**同一任务必须使用同一账号、配置和状态目录；
+不要多开不同副本或删除台账来“重试”，平台 API 没有公开幂等键，跨机器副本不能保证去重。**
+
+只有 `code != Success`、`data=null` 且消息恰为“暂无库存”“库存不足”“暂无可用库存”的
+明确缺货拒绝会自动等待。官方未公布缺货错误码，以上是保守消息识别，尚未用真实缺货响应验证；
+其他文字、鉴权/余额错误、HTTP 429/5xx、超时、格式改变一律停止，不进行模糊重试。
+创建响应丢失后，原命令重跑只在唯一同名实例出现且地区/型号/卡数一致时认领；
+即使列表暂时为空也不再次创建。未知拒绝会保留 rejected 状态，请核对控制台或向平台确认，
+不要直接清空台账。列表分页读失败也不会继续下单。
+
+输出“已创建”只表示平台返回了实例 UUID 并完成列表核对，不保证镜像已加载、SSH可达或训练可恢复。
+状态从列表如实输出；已创建但仍在启动的实例在控制台确认。退出码0表示数量已创建，
+2表示时间/累计尝试用尽，1表示需核查的失败，130表示用户中断；任何退出码下都可能已租到部分机器。
+
+测试（不联网、不使用真实 Token、不产生费用）：
+
+```powershell
+python -m unittest discover -s tests/unit -p test_autodl_beijing.py -v
+```
+
+单测覆盖地区/数量、缺货等待、部分成功后恢复、超时后核对、进程中断、重复实例、
+预算上限、锁和凭据输出限制；模拟测试不替代真实账号/API及付费创建验收。
+
 ## 统一上层的持续训练
 
 `unified_upper_420.json` 记录 `combat31-unified-upper-420-r1` 的部署身份、初始化来源、

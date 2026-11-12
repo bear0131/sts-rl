@@ -1,4 +1,6 @@
 # 仓库总 TODO
+
+- **AUTODL-BEIJING-ACQUIRE** — 脚本完成，未付费实测/未租机：用户已选择Pro官方接口。experiments/launchers/autodl_beijing.py限定北京、默认离线预演、串行60秒/有限时间次数/指定数量，先保存创建意图、核列表、同目录互斥；超时/未知响应不盲目重试。23项标准库模拟测试通过，含部分成功恢复/凭据输出/HTTP格式。公开API无下单前报价或限价，实际执行需接受当前按量价；缺货消息保守识别尚未实测。示例4台单卡5090、CUDA下限132，镜像留空，具体配置尚待用户确定；说明见experiments/launchers/README.md#autodl-pro。
 - **COMBAT49-READINESS-GPU-MEMORY** — 已复现修复部署08dd88ac；140 rank2验证子进程被父allocator近30GB闲置缓存挤占，保存后同步/GC/empty_cache修复。旧路径四卡均失败，新路径6项/卡通过；145来源完整两轮+64自然局/532锚点真实验证通过，权重/Adam/RNG前后完全一致，四机exit0，24成员SHA/跨rank模型Adam一致。09:46:43从正式145恢复，正式146/147保存与16Adam验收通过；160正式验证64自然局/513锚点、EV .2092957、failed/timeout/censored全0，四rank good1/last160、下次180；140失败保留，不以诊断通过填充正式检查。详见worklog同ID。
 
 - **COMBAT49-UPDATE-ILLEGAL-ADDRESS** — 已稳定复现并修复，完整资格及正式133/134恢复验收通过，持续观察。生产Torch2.12/cu132四张5090：原_CapturedHead控制20次通过，清cuBLAS workspace并释放/重用显存后四卡均第二次重放非法地址；修复每段forward/backward capture独立持有私有池scratch、移除全局缓存别名后四卡20次通过，前向/梯度一致，21项CUDA回归通过。原107四卡完整正常/强释放各2轮及固定buffer确定性64步梯度/末模型Adam逐位等价已通过；09:15从132完整模型/Adam/RNG/env恢复dc09baf5优化路径，正式133/134完整保存通过、模型/Adam一致、196608行/1epoch/16Adam/0OOM，正式133–145全部完整推进、无非法地址；138及143出现正常图退役后均完成继续，后续08dd88ac继承本修复；未宣称原108具体出错内核已被memcheck定位。证据diagnostic-address-20261112及worklog同ID，禁止直接重跑旧恢复脚本。
