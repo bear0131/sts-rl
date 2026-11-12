@@ -3,7 +3,6 @@
 The norm/QKV, attention tile/buckets and mix+FFN below retain the old kernel
 arithmetic. New packing adapts current fixed native slots to those contracts.
 """
-import math
 import torch
 import triton
 import triton.language as tl
@@ -21,7 +20,7 @@ def attention_tile(qkv,present,query_tokens,ts,qs,nt,nq,local,h,H:tl.constexpr,D
  q=tl.load(qkv+qtoken[:,None]*(3*H*D)+h*D+di[None,:],qi[:,None]<nq,0.)
  k=tl.load(qkv+(ts+ki[None,:])*(3*H*D)+H*D+h*D+di[:,None],ki[None,:]<nt,0.)
  live=(ki<nt)&(tl.load(present+ts+ki,ki<nt,False)!=0)
- scores=tl.where(live[None,:],tl.dot(q,k,input_precision='ieee')*(1.0/math.sqrt(D)),-float('inf'))
+ scores=tl.where(live[None,:],tl.dot(q,k,input_precision='ieee')*(D**-0.5),-float('inf'))
  probs=tl.exp(scores-tl.max(scores,1)[:,None]);probs=probs/tl.sum(probs,1)[:,None]
  v=tl.load(qkv+(ts+ki[:,None])*(3*H*D)+2*H*D+h*D+di[None,:],ki[:,None]<nt,0.)
  return tl.dot(probs,v,input_precision='ieee')
@@ -72,6 +71,23 @@ def attend_bucket(QKV,PRESENT,QUERY,STARTS,LENS,BLOCKS,OUT,COUNTS,SECOND:tl.cons
     else:y=attention_tile(QKV,PRESENT,QUERY,ts,qs,nt,nq,local,h,4,16,SECOND,256)
    qi=local+tl.arange(0,16);di=tl.arange(0,16)
    tl.store(OUT+(qs+qi[:,None])*64+h*16+di[None,:],y,qi[:,None]<nq)
+
+
+@triton.jit
+def prepare_lens(PRESENT, QUERIES, ROWS, KEEP, KEYS, VALID_QUERY, LENS,
+                 T: tl.constexpr, TT: tl.constexpr, BOUNDED: tl.constexpr):
+ row=tl.program_id(0);j=tl.arange(0,TT)
+ active=True
+ if BOUNDED:active=row<tl.load(ROWS)
+ key=tl.load(PRESENT+row*T+j,(j<T)&active,False)
+ query=tl.load(QUERIES+row*T+j,(j<T)&active,False)
+ keep=key|query
+ tl.store(KEEP+row*T+j,keep,j<T)
+ tl.store(KEYS+row*T+j,key,j<T)
+ tl.store(VALID_QUERY+row*T+j,query,j<T)
+ nt=tl.sum(keep.to(tl.int64),0);nq=tl.sum(query.to(tl.int64),0)
+ tl.store(LENS+row*4,nt);tl.store(LENS+row*4+1,nq)
+ tl.store(LENS+row*4+2,(nt+15)//16);tl.store(LENS+row*4+3,(nq+15)//16)
 
 
 @triton.jit
@@ -139,19 +155,19 @@ def unpack_queries(X, SLOTS, OUT, COUNTS, CAP: tl.constexpr, B: tl.constexpr):
  tl.store(OUT+slot[:,None]*64+d[None,:],value,valid[:,None])
 
 
+@torch.compiler.disable
 def frozen_ragged_blocks(blocks, x, present, queries, row_count=None, workspace=None):
     """Current entities packed into the original dynamic 2x64 kernel ABI."""
     if (torch.is_grad_enabled() or any(b.training for b in blocks) or len(blocks)!=2
             or not x.is_cuda or x.dtype!=torch.float32 or x.shape[-1]!=64):
         raise ValueError('ragged search requires frozen CUDA FP32 2x64 blocks')
     batch,length,_=x.shape
-    if row_count is not None:
-        active=torch.arange(batch,device=x.device) < row_count[0]
-        queries=queries & active[:,None]
-        present=present & active[:,None]
-    keep=present | queries
-    nt,nq=keep.sum(1),queries.sum(1)
-    lens=torch.stack((nt,nq,(nt+15)//16,(nq+15)//16),1)
+    keep=torch.empty_like(present)
+    keys_dense,queries_dense=torch.empty_like(present),torch.empty_like(queries)
+    lens=torch.empty((batch,4),device=x.device,dtype=torch.int64)
+    prepare_lens[(batch,)](present,queries,lens if row_count is None else row_count,
+        keep,keys_dense,queries_dense,lens,length,triton.next_power_of_2(length),row_count is not None,
+        num_warps=4)
     ends,starts=torch.empty_like(lens),torch.empty_like(lens)
     totals=torch.empty((triton.cdiv(batch,256),4),device=x.device,dtype=lens.dtype)
     counts=torch.zeros(6,device=x.device,dtype=torch.int32)
@@ -166,7 +182,7 @@ def frozen_ragged_blocks(blocks, x, present, queries, row_count=None, workspace=
     query=arr((qcap,),torch.int64);slots=arr((qcap,),torch.int64)
     bcap=triton.cdiv(cap,16)+batch
     first,second=(arr((bcap,2),torch.int32) for _ in range(2))
-    pack_slots[(batch,)](x,present,keep,queries,starts,lens,packed,keys,query,slots,
+    pack_slots[(batch,)](x,keys_dense,keep,queries_dense,starts,lens,packed,keys,query,slots,
         first,second,status,length,triton.next_power_of_2(length),workspace is not None,num_warps=4)
     qkv=arr((cap,192));attention=arr((cap,64))
     sms=torch.cuda.get_device_properties(x.device).multi_processor_count

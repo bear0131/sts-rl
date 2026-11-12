@@ -68,7 +68,7 @@ class ResidentStepPipeline:
             self.status, n, 1024, nb, triton.next_power_of_2(nb))
         K.prepare[(triton.cdiv(F, 256),)](self.ids, rows, self.randoms, self.cursor,
             uniforms, self.status, F, self.max_depth, 256)
-        logits, values = s._forward_gather({'rows': rows}, width, contexts=self.context,
+        logits, values = s.step_forward({'rows': rows}, width, contexts=self.context,
             row_count=self.status, workspace=(token_capacity, query_capacity, self.status))
         sampled = torch.empty(F, dtype=torch.int32, device=a.device)
         K.sample_fp64[(F,)](logits, a.mask, rows, s.wave_offset, uniforms, sampled,

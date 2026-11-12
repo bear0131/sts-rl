@@ -31,11 +31,35 @@ class ResidentDeckScorer:
         self.bound_arena = None
         self.step_pipeline = None
         with torch.no_grad():
+            self.card_table = self.core.combat.inference_card_table()
+            projection = self.core.combat.card_projection
+            self.projected_cards = torch.nn.functional.linear(
+                self.card_table, projection.weight[:, :-1], projection.bias)
+            self.card_upgrade = projection.weight[:, -1].contiguous()
+            net = self.core.combat
+            weight = net.monster_projection.weight
+            self.monster_tables = (
+                torch.nn.functional.linear(net.monster_id.weight, weight[:, :32]),
+                torch.nn.functional.linear(net.monster_move.weight, weight[:, 32:64]),
+                torch.nn.functional.linear(net.monster_intent.weight, weight[:, 64:80]),
+                weight[:, 80:].contiguous())
             summaries = self.core.combat.summaries
             ids = torch.arange(summaries.card.num_embeddings, device=self.device)
             self.card_base = summaries.card_terms(ids, torch.zeros_like(ids))
             self.card_delta = (summaries.card_projection(summaries.card.versioned_forward(ids,
                 torch.ones_like(ids)))-self.card_base)*ids.ne(0)[:, None]
+        # Compile the current input adapter and heads around the migrated
+        # ragged kernels. Keeping their dynamic capacities outside Dynamo
+        # avoids recompiling the entire model for every CUDA graph bucket.
+        # This runtime is constructed only in the learner, never env workers.
+        self.compiled_gather = torch.compile(self._forward_gather, fullgraph=False,
+            dynamic=True, options={'triton.cudagraphs': False})
+
+    def step_forward(self, batch, width, **kwargs):
+        # Geometry variants belong to this bounded frozen runtime. Do not
+        # silently hit the process-wide default limit and fall back to eager.
+        with torch._dynamo.config.patch(recompile_limit=128, accumulated_recompile_limit=256):
+            return self.compiled_gather(batch, width, **kwargs)
 
     @torch.no_grad()
     def roots(self, observations, context=None):
@@ -216,6 +240,9 @@ class ResidentDeckScorer:
         o['_resident_fused_blocks'] = True
         if 'row_count' in batch:
             o['_resident_rows'] = batch['row_count']
+            o['_resident_card_table'] = self.card_table
+            o['_resident_card_projection'] = (self.projected_cards, self.card_upgrade)
+            o['_resident_monster_projection'] = self.monster_tables
         if 'workspace' in batch:
             o['_resident_workspace'] = batch['workspace']
         context = SearchContext(batch['context'], None)
@@ -322,3 +349,4 @@ class ResidentDeckScorer:
             self.step_pipeline = None
         self.runtime.close()
         self.anchor_cache.clear()
+        self.compiled_gather = None

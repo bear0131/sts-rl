@@ -42,6 +42,38 @@ def enter_combat(env):
     raise AssertionError('could not enter combat with bounded legal actions')
 
 
+@pytest.mark.cuda
+def test_resident_frozen_entity_projection_preserves_unbounded_upgrades(latent_env):
+    from rl.search.resident_deck import ResidentDeckScorer
+    policy = policy_for(latent_env, 'transformer64x2').cuda()
+    policy.set_training_mode(False)
+    scorer = ResidentDeckScorer(policy)
+    obs = {k: v.cuda() for k, v in tensor_obs(latent_env, 4).items()}
+    for prefix in ('hand', 'select_card'):
+        ids, upgrades = obs[prefix+'_ids'], obs[prefix+'_upgrades']
+        ids.copy_(torch.arange(ids.numel(), device='cuda').reshape_as(ids) % policy.core.combat.n_cards)
+        upgrades.copy_(torch.arange(upgrades.numel(), device='cuda').reshape_as(upgrades) / 4)
+    for key, count in (('monster_id', policy.core.combat.monster_id.num_embeddings),
+                       ('monster_move', policy.core.combat.monster_move.num_embeddings),
+                       ('monster_intent_cat', policy.core.combat.monster_intent.num_embeddings)):
+        obs[key].copy_(torch.arange(obs[key].numel(), device='cuda').reshape_as(obs[key]) % count)
+    obs['monster_scalars'].normal_()
+    obs['monster_buffs'].normal_()
+    try:
+        with torch.no_grad():
+            expected = policy.core.combat._dynamic_inputs(obs, scorer.card_table)
+            frozen = dict(obs, _resident_card_projection=(scorer.projected_cards, scorer.card_upgrade),
+                          _resident_monster_projection=scorer.monster_tables)
+            actual = policy.core.combat._dynamic_inputs(frozen, scorer.card_table)
+        torch.testing.assert_close(actual[0], expected[0], rtol=0, atol=0)
+        for key in expected[1]:
+            torch.testing.assert_close(actual[1][key], expected[1][key], rtol=3e-5, atol=3e-6)
+        with pytest.raises(ValueError, match='cannot be used for training'):
+            policy.core.combat._dynamic_inputs(frozen, scorer.card_table)
+    finally:
+        scorer.close()
+
+
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 def test_repeated_status_cards_keep_three_pile_tokens_and_exact_counts(latent_env, device):
     from tests.bridge_fixtures import native_card, native_card_state

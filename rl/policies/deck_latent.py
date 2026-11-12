@@ -155,6 +155,17 @@ class FastCombatNetwork(ScalarCombatNetwork):
     def _dynamic_inputs(self, obs, card_table=None):
         table = (self._encode_card_table() if self.training or torch.is_grad_enabled()
                  else self.inference_card_table()) if card_table is None else card_table
+        projected = obs.get('_resident_card_projection')
+        def card_tokens(ids, upgrades):
+            if projected is None:
+                return self._card_tokens(table, ids, upgrades)
+            if self.training or torch.is_grad_enabled():
+                raise ValueError('frozen card projection cannot be used for training')
+            # The old frozen input lookup folds the static embedding and
+            # projection once. Keep upgrade magnitude separate and unbounded.
+            encoded, magnitude = projected
+            index = ids.long() * 2 + upgrades.gt(0).long()
+            return F.embedding(index, encoded.reshape(-1, encoded.shape[-1])) + upgrades[..., None] * magnitude
         hp = obs['player_scalars'].float(); batch = len(hp)
         turn = hp[:, 4:5] * encode.TURN_SCALE
         extra = torch.cat((hp[:, 1:2] - hp[:, :1], turn.clamp_min(0).log1p()/4,
@@ -163,14 +174,25 @@ class FastCombatNetwork(ScalarCombatNetwork):
             [obs[k].float().reshape(batch, -1) for k in self.scalar_keys] + [extra], -1))
         player = player + self.turn_bucket(turn.long().flatten().clamp(0, 31))
         player = player + self.choice_reason(obs['select_context'].long().flatten())
-        hand = self._card_tokens(table, obs['hand_ids'], obs['hand_upgrades'])
+        hand = card_tokens(obs['hand_ids'], obs['hand_upgrades'])
         hand = hand + self.hand_context(torch.stack([obs[k] for k in
             ('hand_costs', 'hand_damage', 'hand_block', 'select_hand_mask')], -1).float())
-        monsters = self.monster_projection(torch.cat((self.monster_id(obs['monster_id'].long()),
-            self.monster_move(obs['monster_move'].long()), self.monster_intent(obs['monster_intent_cat'].long()),
-            obs['monster_scalars'].float(), obs['monster_buffs'].float()), -1))
+        monster_tables = obs.get('_resident_monster_projection')
+        if monster_tables is None:
+            monsters = self.monster_projection(torch.cat((self.monster_id(obs['monster_id'].long()),
+                self.monster_move(obs['monster_move'].long()), self.monster_intent(obs['monster_intent_cat'].long()),
+                obs['monster_scalars'].float(), obs['monster_buffs'].float()), -1))
+        else:
+            if self.training or torch.is_grad_enabled():
+                raise ValueError('frozen monster projection cannot be used for training')
+            identity, move, intent, dynamic_weight = monster_tables
+            monsters = F.linear(torch.cat((obs['monster_scalars'].float(),
+                obs['monster_buffs'].float()), -1), dynamic_weight, self.monster_projection.bias)
+            monsters = monsters + F.embedding(obs['monster_id'].long(), identity)
+            monsters = monsters + F.embedding(obs['monster_move'].long(), move)
+            monsters = monsters + F.embedding(obs['monster_intent_cat'].long(), intent)
         potions = self.potion(obs['potions'].long())
-        choices = self._card_tokens(table, obs['select_card_ids'], obs['select_card_upgrades'])
+        choices = card_tokens(obs['select_card_ids'], obs['select_card_upgrades'])
         valid = obs['select_native_indices'] > 0
         choices = choices + self.choice_context(torch.stack((obs['select_card_costs'].float(),
             (valid & (obs['select_card_ids'] == 0)).float()), -1))
@@ -217,6 +239,7 @@ class TransformerCombatNetwork(FastCombatNetwork):
 
     def encode(self, obs, active_relic_width=None, *, card_table=None):
         valid = obs['select_native_indices'] > 0
+        card_table = obs.get('_resident_card_table', card_table)
         # Legal PAD-ID/handle-only candidates must retain their query slot.
         pick = C.JOINT_PICK - C.JOINT_END
         required = valid | obs['combat_legal'][:, pick:pick + valid.shape[1]].bool()
