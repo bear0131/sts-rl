@@ -1,8 +1,11 @@
 """Bounded validation subprocesses; phase decisions use one all-rank result."""
 from pathlib import Path
+import gc
 import json
 import subprocess
 import sys
+
+import torch
 
 from rl.algorithms.deck_schedule import configure, check_due, advance, apply_stage
 
@@ -21,6 +24,14 @@ def at_collection_boundary(model, *, rank, world_size, local_root, ascension, av
         checkpoint, output = folder / 'model.zip', folder / f'round-{completed}.json'
         output.unlink(missing_ok=True)
         model.save(checkpoint)
+        if model.device.type == 'cuda':
+            # A child has its own allocator: the parent's unused update cache
+            # is unavailable to it, even though the next parent rollout fits.
+            # Keep live weights/Adam/graphs; only return unreferenced storage.
+            torch.cuda.synchronize(model.device)
+            gc.collect()
+            with torch.cuda.device(model.device):
+                torch.cuda.empty_cache()
         count = schedule.validation_games // world_size
         command = [sys.executable, '-m', 'rl.evaluation.eval', str(checkpoint), '--anchor-readiness',
             '--episodes', str(count), '--num-envs', str(min(8, count)), '--seed',

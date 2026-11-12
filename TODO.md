@@ -1,4 +1,5 @@
 # 仓库总 TODO
+- **COMBAT49-READINESS-GPU-MEMORY** — 修复中；140独立验证rank2加载checkpoint CUDA OOM，48自然局/16删失/failed1使good_checks归零，训练继续。定位父训练进程保留约30GB allocator cache，子验证进程不能复用；在验证启动前同步/GC/empty_cache，只释放闲置存储。验收：旧路径失败/新路径通过子进程分配回归，固定完整边界/原种子/256×768两轮及64局真实验证，checkpoint/Adam/RNG/env连续，失败140保留，不改门槛或手填通过次数。
 
 - **COMBAT49-UPDATE-ILLEGAL-ADDRESS** — 已稳定复现并修复，完整资格及正式133/134恢复验收通过，持续观察。生产Torch2.12/cu132四张5090：原_CapturedHead控制20次通过，清cuBLAS workspace并释放/重用显存后四卡均第二次重放非法地址；修复每段forward/backward capture独立持有私有池scratch、移除全局缓存别名后四卡20次通过，前向/梯度一致，21项CUDA回归通过。原107四卡完整正常/强释放各2轮及固定buffer确定性64步梯度/末模型Adam逐位等价已通过；09:15从132完整模型/Adam/RNG/env恢复dc09baf5优化路径，正式133/134完整保存通过、模型/Adam一致、196608行/1epoch/16Adam/0OOM，继续观察至140；未宣称原108具体出错内核已被memcheck定位。证据diagnostic-address-20261112及worklog同ID，禁止直接重跑旧恢复脚本。
 
