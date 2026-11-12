@@ -7,7 +7,7 @@
 
 - **COMBAT49-FAILURE-SCENE** — 待修诊断：distributed_sb3失败捕获在NativeSubprocVecEnv访问不存在的envs，训练原始异常仍在log。范围失败现场捕获/原生子进程环境；验收支持该生产后端、保留原异常并导出可用状态，独立于已修scalar schema，不阻塞健康续训。
 
-- **COMBAT49-MAINT** — 每半小时自主维护。当前source-08dd88ac/configs/train/deck_latent_448_fp32.json；09:46:43从145/global114032640恢复优化路径，transport-readiness-08dd88ac/ring31662，正式146/147核验通过。原CUDA workspace寿命缺陷dc09baf5修复，140独立验证显存交接08dd88ac修复；现warmup/good_checks0/last_check140/search_qualified=false，下一次160；140失败原样保留，独立诊断64局通过不算正式通过。原run/W&B offline不变，禁止重跑任何恢复/诊断launch脚本。145保护references/maintenance-readiness-20261112软链接到/root/combat49-maintenance-recovery-20261112，21/69/70/107/132保护全部保留；rank0数据盘约1.29GB，监控轮转/临时保存余量。搜索GPU资格仍待补齐，不改三次门槛或强开；CPU15项及预算协议见worklog06:24/06:54。维护ID combat49，分支codex/combat49-maintenance。
+- **COMBAT49-MAINT** — 每半小时自主维护。当前source-08dd88ac/configs/train/deck_latent_448_fp32.json；09:46:43从145/global114032640恢复优化路径，transport-readiness-08dd88ac/ring31662，正式146/147恢复验收后持续至149，148/149保存及Adam一致，四PID继续150；148正常图退役后149完整0重试。原CUDA workspace寿命缺陷dc09baf5修复，140独立验证显存交接08dd88ac修复；现warmup/good_checks0/last_check140/search_qualified=false，下一次160；140失败原样保留，独立诊断64局通过不算正式通过。原run/W&B offline不变，禁止重跑任何恢复/诊断launch脚本。145保护references/maintenance-readiness-20261112软链接到/root/combat49-maintenance-recovery-20261112，21/69/70/107/132保护全部保留；rank0数据盘约1.29GB，监控轮转/临时保存余量。搜索GPU资格仍待补齐，不改三次门槛或强开；CPU15项及预算协议见worklog06:24/06:54。维护ID combat49，分支codex/combat49-maintenance。
 
 | UPPER-POLICY-PRE | 已完成：四机180–183真实采集更新保存 | rl/algorithms/unified_upper.py及真实训练上报；新增全部更新前固定actor的policy loss并分析，测量不改变权重/Adam/RNG或目标，CPU/CUDA及两轮生产/保存恢复验收，监控合并COMBAT37。 |
 
