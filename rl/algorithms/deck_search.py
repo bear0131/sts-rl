@@ -16,7 +16,7 @@ import torch
 from env.core import vocab
 from env.search.anchored_chains import paired_anchor_search
 from rl.algorithms.search_auxiliary import SearchTrainingConfig, SearchRolloutBuffer, improved_prior
-from rl.policies.deck_latent import MODEL_CONTRACT, SearchContext
+from rl.policies.deck_latent import MODEL_CONTRACT
 from rl.search.deck_latent import DeckLatentScorer
 from rl.training.deck_search_worker import search_options
 
@@ -75,8 +75,7 @@ class ShadowSearchCollection:
         logits = policy.action_dist.distribution.logits[rows].detach().cpu()
         # The ordinary action forward has just produced this exact context.
         # Reuse its output, without rerunning E or consuming policy RNG.
-        z = policy.core._context_cache[2][rows]
-        context = SearchContext(policy.core.combat.context_projection(z), policy.core.anchor.context_projection(z))
+        context = policy.core.actor_search_context(rows)
         self.pending = (indices, masks[indices], logits, context)
 
     def step(self, actions):

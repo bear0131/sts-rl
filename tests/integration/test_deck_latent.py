@@ -186,7 +186,7 @@ def test_duplicate_context_gradients_equal_full_recomputation(latent_env):
 @pytest.mark.parametrize('transport', ['dummy', 'native-subproc'])
 @pytest.mark.parametrize('context_mode', ['off', 'replay', 'grouped', 'screens', 'context-limit', 'direct-mask', 'prefetch'])
 def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, transport, context_mode,
-                                                       encoder='pooled-mlp'):
+                                                       encoder='pooled-mlp', device='cpu'):
     from gymnasium.wrappers import TimeLimit
     from stable_baselines3.common.vec_env import DummyVecEnv
     from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
@@ -208,7 +208,7 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         return NativeSubprocVecEnv([factory, factory], envs_per_worker=1, start_method='spawn')
     env = vector()
     model = AccumulatingMaskablePPO(DeckLatentPolicy, env, seed=20261111,
-        n_steps=32, batch_size=32, n_epochs=1, device='cpu', gamma=1., gae_lambda=1.,
+        n_steps=32, batch_size=32, n_epochs=1, device=device, gamma=1., gae_lambda=1.,
         learning_rate=5e-5, reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
         policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=1., reward_flow='sequential-v1',
                            deck_combat_encoder=encoder))
@@ -238,7 +238,7 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         model._ppo_microbatch_caps = {'upper': 2}
     source = save_bundle(model, tmp_path/'first', rank=0, world_size=1, run_id='deck-latent-test',
                          wandb_id=None, config={'ascension': 0})
-    loaded = load_checkpoint(source/'model.zip', device='cpu')
+    loaded = load_checkpoint(source/'model.zip', device=device)
     assert isinstance(loaded.policy, DeckLatentPolicy)
     assert loaded.policy.deck_combat_encoder == encoder
     assert loaded.policy.core.combat_encoder == encoder
@@ -252,7 +252,7 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         assert loaded.deck_search_config == model.deck_search_config
         assert loaded.deck_search_rng == model.deck_search_rng
     target = vector()
-    restored = AccumulatingMaskablePPO.load(source/'model.zip', env=target, device='cpu')
+    restored = AccumulatingMaskablePPO.load(source/'model.zip', env=target, device=device)
     restored._setup_learn(64, reset_num_timesteps=False)
     restore_learner(restored, source, rank=0, world_size=1)
     assert restored._recovery_environment_restored
@@ -275,6 +275,54 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         assert again.deck_training_state['stage_start'] == 2
         assert again.deck_training_state['good_checks'] == 0
     env.close(); target.close()
+
+
+def test_cuda_shadow_search_native_rounds_and_resume(tmp_path):
+    assert torch.cuda.is_available(), 'explicit CUDA search qualification required'
+    test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, True, 'native-subproc',
+        'grouped', encoder='transformer64x2', device='cuda')
+
+
+def test_cuda_actor_search_context_survives_graph_changes(latent_env):
+    from rl.policies.collection_graphs import SharedCollectionGraphs
+    assert torch.cuda.is_available(), 'explicit CUDA search qualification required'
+    enter_combat(latent_env)
+    policy = policy_for(latent_env, 'transformer64x2').to('cuda')
+    policy.set_training_mode(False)
+    core = policy.core
+    runtime = SharedCollectionGraphs(core, capacity=1)
+    core._collection_graphs = runtime
+    try:
+        with torch.no_grad():
+            for iteration, count in enumerate((3, 17, 3, 1)):
+                host = {k: np.repeat(v[None], count, 0) for k, v in latent_env._obs().items()}
+                host['outer_deck_misc'][:, 0] += iteration * .1
+                tensors = obs_as_tensor(host, 'cuda')
+                if iteration == 2:
+                    core.context.roles.add_(.03)
+                    torch.cuda.synchronize()
+                    torch._C._cuda_clearCublasWorkspaces()
+                    torch.cuda.empty_cache()
+                # A previous eager cache may exist but must never supply a
+                # different observation's context to the graph search hook.
+                core.run_context(obs_as_tensor({k: v[:1] for k, v in host.items()}, 'cuda'))
+                runtime.bind_host_observations(tensors, host)
+                core.actor_critic(tensors)
+                rows = torch.arange(count-1, -1, -1, device='cuda')
+                actual = core.actor_search_context(rows)
+                expected = core.prepare_search_context({k: v[rows] for k, v in tensors.items()})
+                for a, b in zip((actual.combat, actual.anchor), (expected.combat, expected.anchor)):
+                    torch.testing.assert_close(a, b, rtol=3e-5, atol=3e-6)
+            assert runtime.stats['evictions'] > 0
+            # The same runtime also supports its eager fallback (no host bind).
+            tensors['outer_deck_misc'][:, 0] += .5
+            core.actor_critic(tensors)
+            actual = core.actor_search_context(rows)
+            expected = core.prepare_search_context(tensors)
+            torch.testing.assert_close(actual.combat, expected.combat, rtol=3e-5, atol=3e-6)
+    finally:
+        core.__dict__.pop('_collection_graphs', None)
+        runtime.close()
 
 
 @pytest.mark.parametrize('encoder', ['pooled-mlp', 'transformer64x2'])
@@ -321,7 +369,8 @@ def test_paired_shadow_search_batches_real_anchors_without_mutating_root(latent_
         scorer([])
 
 
-def test_shadow_teaching_preserves_real_actions_rewards_and_sampling_rng():
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_shadow_teaching_preserves_real_actions_rewards_and_sampling_rng(device):
     from dataclasses import asdict
     from stable_baselines3.common.vec_env import DummyVecEnv
     from stable_baselines3.common.callbacks import BaseCallback
@@ -330,6 +379,9 @@ def test_shadow_teaching_preserves_real_actions_rewards_and_sampling_rng():
     from rl.algorithms.search_auxiliary import SearchTrainingConfig
     from rl.training.reward import StrategicRewardWrapper
 
+    if device == 'cuda':
+        assert torch.cuda.is_available(), 'explicit CUDA search qualification required'
+
     class Capture(BaseCallback):
         def _on_step(self):
             return True
@@ -337,6 +389,7 @@ def test_shadow_teaching_preserves_real_actions_rewards_and_sampling_rng():
             self.actions = self.model.rollout_buffer.actions.copy()
             self.rewards = self.model.rollout_buffer.rewards.copy()
             self.rng = torch.get_rng_state().clone()
+            self.cuda_rng = torch.cuda.get_rng_state().clone() if device == 'cuda' else None
 
     captures = []
     for searched in (False, True):
@@ -345,7 +398,7 @@ def test_shadow_teaching_preserves_real_actions_rewards_and_sampling_rng():
             event_option_observation=True, combat_action_contract='autoregressive-v2',
             combat_exit_anchor=True, reward_flow='sequential-v1', deck_latent_context=True))])
         model = AccumulatingMaskablePPO(DeckLatentPolicy, env, seed=20261111,
-            n_steps=24, batch_size=24, n_epochs=1, device='cpu', gamma=1., gae_lambda=1.,
+            n_steps=24, batch_size=24, n_epochs=1, device=device, gamma=1., gae_lambda=1.,
             learning_rate=5e-5, reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
             policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
                 reward_flow='sequential-v1', combat_value_target='pre-reward-anchor'))
@@ -362,6 +415,8 @@ def test_shadow_teaching_preserves_real_actions_rewards_and_sampling_rng():
     np.testing.assert_array_equal(captures[0].actions, captures[1].actions)
     np.testing.assert_array_equal(captures[0].rewards, captures[1].rewards)
     torch.testing.assert_close(captures[0].rng, captures[1].rng, rtol=0, atol=0)
+    if device == 'cuda':
+        torch.testing.assert_close(captures[0].cuda_rng, captures[1].cuda_rng, rtol=0, atol=0)
 
 
 @pytest.mark.parametrize('card,zone', [('ARMAMENTS', 1), ('SECRET_TECHNIQUE', 2), ('HEADBUTT', 3)])

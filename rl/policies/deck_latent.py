@@ -294,9 +294,11 @@ class DeckLatentCore(SharedWholeRunCore):
                                               vf_arch=(width,), kind='overworld')
         self.map_dag_enabled = encoder.map_dag_enabled
         self._context_cache = None
+        self._actor_context = None
 
     def _apply(self, fn, recurse=True):
         self._context_cache = None
+        self._actor_context = None
         return super()._apply(fn, recurse=recurse)
 
     def _encode_unique(self, obs, keys):
@@ -351,6 +353,7 @@ class DeckLatentCore(SharedWholeRunCore):
         return SearchContext(self.combat.context_projection(z), self.anchor.context_projection(z))
 
     def actor_critic(self, obs, **kwargs):
+        self._actor_context = None
         runtime = getattr(self, '_collection_graphs', None)
         if runtime is not None:
             return runtime(obs)
@@ -358,6 +361,7 @@ class DeckLatentCore(SharedWholeRunCore):
 
     def eager_actor_critic(self, obs):
         context = self.run_context(obs)
+        self.publish_actor_context(context)
         phase = obs['phase'].long().flatten()
         anchored = obs['combat_exit_anchor'].bool().any(1)
         indices, logits, values = [], [], []
@@ -381,6 +385,18 @@ class DeckLatentCore(SharedWholeRunCore):
                 indices.append(rows); logits.append(out.float()); values.append(value.float())
         order = torch.argsort(torch.cat(indices))
         return torch.cat(logits)[order], torch.cat(values)[order]
+
+    def publish_actor_context(self, context):
+        # Search consumes the immediate policy forward's exact row order.
+        # Eager and graph collectors own different reusable encoder caches;
+        # neither cache is an interface for the shadow-search hook.
+        self._actor_context = context.detach() if not torch.is_grad_enabled() else None
+
+    def actor_search_context(self, rows):
+        if self._actor_context is None:
+            raise RuntimeError('search requires context from the current inference forward')
+        z = self._actor_context[rows]
+        return SearchContext(self.combat.context_projection(z), self.anchor.context_projection(z))
 
 
 class DeckLatentPolicy(SharedWholeRunPolicy):

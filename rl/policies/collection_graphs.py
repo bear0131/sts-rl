@@ -101,6 +101,10 @@ class SharedCollectionGraphs:
                 # backing blocks. Finish queued replay before dropping it.
                 torch.cuda.synchronize(self.device)
                 cache.popitem(last=False)
+                if not self.entries and not self.map_entries:
+                    # The last graph ended this pool's allocator lifetime.
+                    # A retired pool token cannot start a new capture.
+                    self.temporary_pool = torch.cuda.graph_pool_handle()
                 self.stats['evictions'] += 1
             started = time.perf_counter()
             cache[signature] = self._capture(batch, padded, forward)
@@ -204,6 +208,8 @@ class SharedCollectionGraphs:
         if deck_model and host is None:
             return self.core.eager_actor_critic(observations)
         context = self._run_context(observations, host) if deck_model else None
+        if deck_model:
+            self.core.publish_actor_context(context)
         phase = observations['phase'].long().flatten()
         use_map = self.core.map_dag_enabled and 'upper_public_context' in observations
         if host is not None:
