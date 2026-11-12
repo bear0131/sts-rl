@@ -406,6 +406,59 @@ def test_resident_forks_atomic_masks_rng_and_graph_lifetime(complete_combat_fact
         arena.observe(2)
 
 
+def test_resident_anchor_batches_bound_projection_and_keep_exact_cache(
+        complete_combat_factory, cuda_battle_artifacts, monkeypatch):
+    from env.search.resident_chains import root_payload
+    from rl.search.resident_deck import ResidentDeckScorer
+    from rl.policies.deck_latent import DeckLatentPolicy
+    root = complete_combat_factory(['STRIKE_RED', 'DEFEND_RED', 'BASH'], seed=42,
+        deck_latent_context=True, card_language=True)
+    torch.manual_seed(20261111)
+    policy = DeckLatentPolicy(root.observation_space, root.action_space, lambda _: 5e-5,
+        d_model=32, n_layers=1, n_heads=4, room_lambda=1., reward_flow='sequential-v1',
+        deck_combat_encoder='transformer64x2').cuda().eval()
+    folder, manifest, bridge = cuda_battle_artifacts
+    payload = root_payload(root, bridge)
+    arena = CudaBattleArena(folder/'deck.cubin', manifest['sha256']['deck.cubin'], 1,
+        card_count=_nosl_compact_lut()['layout']['card_count'])
+    scorer = ResidentDeckScorer(policy)
+    before = root.export_training_state()
+    try:
+        arena.load([payload['snapshot']], [payload['prefix']])
+        raw = {k: v.repeat(257, *([1] * (v.ndim-1))) for k, v in arena.observe(1).items()}
+        scorer.roots([root._obs()])
+        owners = torch.zeros(257, device='cuda', dtype=torch.long)
+        rows = np.arange(256, -1, -1)
+        with torch.no_grad():
+            obs = scorer.decoder.anchor(raw, scorer.root, owners)
+            relics = policy.core.combat.summaries.relic_terms(obs['relics'], obs['relic_counters']).sum(1)
+            expected = policy.core.anchor_with_context(obs, scorer.context.anchor[owners], relics).flatten()
+        lengths = []
+        original = scorer._forward
+        def bounded(batch, width, anchor):
+            lengths.append(len(batch['context']))
+            assert lengths[-1] <= 17
+            return original(batch, width, anchor)
+        monkeypatch.setattr(scorer, 'anchor_batch_size', 17)
+        monkeypatch.setattr(scorer, '_forward', bounded)
+        rng = torch.cuda.get_rng_state().clone()
+        _, actual = scorer.score(raw, owners, rows, anchor=True)
+        torch.testing.assert_close(actual, expected[rows], rtol=3e-5, atol=3e-6)
+        misses = scorer.anchor_cache.stats['misses']
+        assert misses == 1 and len(lengths) == 16 and lengths[-1] == 2
+        # A changed chunk boundary and temporary allocator release retain exact
+        # values/cache identity without forwarding previously scored anchors.
+        torch.cuda.empty_cache()
+        _, replay = scorer.score(raw, owners, rows[:33], anchor=True)
+        torch.testing.assert_close(replay, actual[:33], rtol=0, atol=0)
+        assert scorer.anchor_cache.stats['misses'] == misses
+        assert torch.equal(rng, torch.cuda.get_rng_state())
+        assert before == root.export_training_state()
+    finally:
+        scorer.close()
+        arena.close()
+
+
 @pytest.mark.timeout(180)
 def test_resident_paired_search_matches_native_and_preserves_root(complete_combat_factory, cuda_battle_artifacts):
     from env.search.anchored_chains import paired_anchor_search

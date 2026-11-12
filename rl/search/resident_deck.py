@@ -11,6 +11,10 @@ from rl.search.rollout_inference import ExactInputCache
 
 
 class ResidentDeckScorer:
+    # The waiting branch pool can exceed a neural frame. Bound materialization
+    # before decoding/projecting anchors, including exact-cache hits.
+    anchor_batch_size = 4096
+
     def __init__(self, policy, cache_bytes=64*1024**2, graph_capacity=128):
         self.policy, self.core = policy, policy.core
         self.device = next(policy.parameters()).device
@@ -267,6 +271,12 @@ class ResidentDeckScorer:
                 for m, name, p, version in self.parameter_bindings)
                 or any(m._modules.get(name) is not child for m, name, child in self.module_bindings)):
             raise RuntimeError('resident search weights changed during collection')
+        if anchor and len(rows) > self.anchor_batch_size:
+            values = torch.empty(len(rows), device=self.device)
+            for start in range(0, len(rows), self.anchor_batch_size):
+                end = start + self.anchor_batch_size
+                _, values[start:end] = self.score(raw, owners, rows[start:end], anchor=True)
+            return None, values
         if metadata is not None and not anchor:
             widths = np.asarray(metadata)[np.asarray(rows), 2]
             widths = np.minimum(96, 2 ** np.ceil(np.log2(widths)).astype(np.int64))
