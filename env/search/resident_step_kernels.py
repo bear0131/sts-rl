@@ -91,7 +91,7 @@ def validate(VALUES, STATUS, F: tl.constexpr, B: tl.constexpr):
 def commit(KIND, FORCED, LIVE, DEPTH, CURSOR, ANCHORS, FINAL, SELECTED,
            STATUS, ENABLED, COUNTERS, OFFSET, N: tl.constexpr,
            F: tl.constexpr, WIDTH: tl.constexpr, B: tl.constexpr):
-    if (tl.load(ENABLED) != 0) & (tl.load(STATUS) <= F) & (tl.load(STATUS+1) <= WIDTH) & (tl.load(STATUS+2) == 0) & (tl.load(STATUS+3) == 0):
+    if (tl.load(ENABLED) != 0) & (tl.load(STATUS) <= F) & (tl.load(STATUS+1) <= WIDTH) & (tl.load(STATUS+2) == 0) & (tl.load(STATUS+3) == 0) & (tl.load(STATUS+7) == 0):
         i = tl.program_id(0)*B + tl.arange(0, B)
         offset = tl.load(OFFSET)
         kind = tl.load(KIND+i, i < N, 0)
@@ -113,7 +113,7 @@ def commit(KIND, FORCED, LIVE, DEPTH, CURSOR, ANCHORS, FINAL, SELECTED,
 def commit_scores(ROWS, SAMPLED, VALUES, KIND, FINAL, SELECTED, STATUS,
                   ENABLED, OFFSET, F: tl.constexpr,
                   WIDTH: tl.constexpr, B: tl.constexpr):
-    if (tl.load(ENABLED) != 0) & (tl.load(STATUS) <= F) & (tl.load(STATUS+1) <= WIDTH) & (tl.load(STATUS+2) == 0) & (tl.load(STATUS+3) == 0):
+    if (tl.load(ENABLED) != 0) & (tl.load(STATUS) <= F) & (tl.load(STATUS+1) <= WIDTH) & (tl.load(STATUS+2) == 0) & (tl.load(STATUS+3) == 0) & (tl.load(STATUS+7) == 0):
         i = tl.program_id(0)*B + tl.arange(0, B)
         offset = tl.load(OFFSET)
         valid = (i < F) & (i < tl.load(STATUS))

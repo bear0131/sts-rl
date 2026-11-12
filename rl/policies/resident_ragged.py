@@ -97,9 +97,21 @@ def prefix_starts(ENDS,LENS,STARTS,COUNTS,TOTALS,F:tl.constexpr,B:tl.constexpr,C
 
 
 @triton.jit
+def check_capacity(COUNTS, STATUS, CT: tl.constexpr, CQ: tl.constexpr):
+ nt=tl.load(COUNTS);nq=tl.load(COUNTS+1)
+ overflow=(nt>CT)|(nq>CQ)
+ tl.store(STATUS+5,nt);tl.store(STATUS+6,nq);tl.store(STATUS+7,overflow.to(tl.int32))
+ # A capacity retry is read-only. Downstream persistent kernels see no work.
+ if overflow:
+  tl.store(COUNTS+tl.arange(0,4),0)
+
+
+@triton.jit
 def pack_slots(X, PRESENT, KEEP, QUERIES, STARTS, LENS, PACKED, KEYS,
-               QUERY, DENSE_SLOT, BLOCKS1, BLOCKS2, T: tl.constexpr,
-               TT: tl.constexpr):
+               QUERY, DENSE_SLOT, BLOCKS1, BLOCKS2, STATUS, T: tl.constexpr,
+               TT: tl.constexpr, BOUNDED: tl.constexpr):
+ if BOUNDED:
+  if tl.load(STATUS+7)!=0:return
  row = tl.program_id(0); j = tl.arange(0, TT); d = tl.arange(0, 64)
  keep = tl.load(KEEP+row*T+j, j<T, 0).to(tl.int32)
  query = tl.load(QUERIES+row*T+j, j<T, 0).to(tl.int32)
@@ -127,7 +139,7 @@ def unpack_queries(X, SLOTS, OUT, COUNTS, CAP: tl.constexpr, B: tl.constexpr):
  tl.store(OUT+slot[:,None]*64+d[None,:],value,valid[:,None])
 
 
-def frozen_ragged_blocks(blocks, x, present, queries, row_count=None):
+def frozen_ragged_blocks(blocks, x, present, queries, row_count=None, workspace=None):
     """Current entities packed into the original dynamic 2x64 kernel ABI."""
     if (torch.is_grad_enabled() or any(b.training for b in blocks) or len(blocks)!=2
             or not x.is_cuda or x.dtype!=torch.float32 or x.shape[-1]!=64):
@@ -146,15 +158,17 @@ def frozen_ragged_blocks(blocks, x, present, queries, row_count=None):
     prefix_local[(triton.cdiv(batch,256),)](lens,ends,totals,batch,256)
     prefix_starts[(triton.cdiv(batch,256),)](ends,lens,starts,counts,totals,batch,256,
         triton.next_power_of_2(triton.cdiv(batch,256)))
-    cap=batch*length
+    cap,qcap,status=(batch*length,batch*length,counts) if workspace is None else workspace
+    if workspace is not None:
+        check_capacity[(1,)](counts,status,cap,qcap)
     def arr(shape,dtype=torch.float32):return torch.empty(shape,device=x.device,dtype=dtype)
     packed=arr((cap,64));keys=arr((cap,),torch.bool)
-    query=arr((cap,),torch.int64);slots=arr((cap,),torch.int64)
-    bcap=batch*triton.cdiv(length,16)
+    query=arr((qcap,),torch.int64);slots=arr((qcap,),torch.int64)
+    bcap=triton.cdiv(cap,16)+batch
     first,second=(arr((bcap,2),torch.int32) for _ in range(2))
     pack_slots[(batch,)](x,present,keep,queries,starts,lens,packed,keys,query,slots,
-        first,second,length,triton.next_power_of_2(length),num_warps=4)
-    qkv=arr((cap,192));attention=arr((cap,64));out=arr((cap,64))
+        first,second,status,length,triton.next_power_of_2(length),workspace is not None,num_warps=4)
+    qkv=arr((cap,192));attention=arr((cap,64))
     sms=torch.cuda.get_device_properties(x.device).multi_processor_count
     grid=min(triton.cdiv(cap,32),sms*8)
     for i,b in enumerate(blocks):
@@ -165,7 +179,9 @@ def frozen_ragged_blocks(blocks, x, present, queries, row_count=None):
                 first if i==0 else second,attention,counts,i==1,bucket,num_warps=1,num_stages=1)
         mix_feed[(grid,)](attention,packed,query,b.mix.weight,b.mix.bias,b.norm2.weight,
             b.norm2.bias,b.ff1.weight,b.ff1.bias,b.ff2.weight,b.ff2.bias,
-            packed if i==0 else out,counts,i==1,b.norm2.eps,num_warps=4,num_stages=1)
-    dense=torch.zeros_like(x)
-    unpack_queries[(triton.cdiv(cap,32),)](out,slots,dense,counts,cap,32,num_warps=4)
+            packed if i==0 else attention,counts,i==1,b.norm2.eps,num_warps=4,num_stages=1)
+    # Input entities died at pack_slots; the second mix consumes each compact
+    # attention row once. Reuse both stores as in the original frame workspace.
+    dense=x.zero_()
+    unpack_queries[(triton.cdiv(qcap,32),)](attention,slots,dense,counts,qcap,32,num_warps=4)
     return dense

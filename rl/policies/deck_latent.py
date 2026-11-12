@@ -268,7 +268,8 @@ class TransformerCombatNetwork(FastCombatNetwork):
                 queries[:, lo:hi] = False
             lo, hi = spans['select']
             queries[:, lo:hi] |= required[:, :choice_width]
-            x = frozen_ragged_blocks(self.blocks, x, mask, queries, obs['_resident_rows'])
+            x = frozen_ragged_blocks(self.blocks, x, mask, queries, obs['_resident_rows'],
+                                     obs.get('_resident_workspace'))
         else:
             for block in self.blocks:
                 if obs.get('_resident_fused_blocks', False):

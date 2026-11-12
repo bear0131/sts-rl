@@ -102,7 +102,7 @@ class ResidentDeckScorer:
         self.wave_owners[:len(owners)].copy_(owners)
         self.wave_offset.fill_(offset)
 
-    def _forward_gather(self, batch, width, contexts=None, row_count=None):
+    def _forward_gather(self, batch, width, contexts=None, row_count=None, workspace=None):
         rows = batch['rows']
         owner = self.wave_owners[rows]
         physical = rows + self.wave_offset
@@ -111,6 +111,8 @@ class ResidentDeckScorer:
         gathered['context'] = self.banked_context[owner] if contexts is None else contexts[rows]
         if row_count is not None:
             gathered['row_count'] = row_count
+        if workspace is not None:
+            gathered['workspace'] = workspace
         return self._forward(gathered, width, False)
 
     def resolve_changed_context(self, owners, misc, projected, changed, anchor):
@@ -214,6 +216,8 @@ class ResidentDeckScorer:
         o['_resident_fused_blocks'] = True
         if 'row_count' in batch:
             o['_resident_rows'] = batch['row_count']
+        if 'workspace' in batch:
+            o['_resident_workspace'] = batch['workspace']
         context = SearchContext(batch['context'], None)
         counts = torch.stack([o[k+'_counts'] for k in ('draw', 'discard', 'exhaust')], 1)
         piles = counts @ self.card_base + o['pile_upgraded_counts'] @ self.card_delta

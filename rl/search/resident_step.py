@@ -22,6 +22,7 @@ class ResidentStepPipeline:
         self.scorer, self.arena, self.max_depth = scorer, arena, max_depth
         self.n, self.capacity = arena.capacity, capacity
         self.graphs = OrderedDict()
+        self.workspace_capacities = {}
         self.pool = torch.cuda.graph_pool_handle()
         self.stats = dict(captures=0, replays=0, retries=0, host_reads=0, evictions=0)
         def empty(shape, dtype=torch.int32):
@@ -52,7 +53,7 @@ class ResidentStepPipeline:
         self.wave_n, self.owners = n, owners
         self.enabled.fill_(1)
 
-    def execute(self, rows, uniforms, width):
+    def execute(self, rows, uniforms, width, token_capacity, query_capacity):
         s, a, n, F = self.scorer, self.arena, self.n, len(rows)
         a.selected.fill_(-1)
         a._launch('observe_live', a.observe_args+[self.live, s.wave_offset], n)
@@ -67,7 +68,8 @@ class ResidentStepPipeline:
             self.status, n, 1024, nb, triton.next_power_of_2(nb))
         K.prepare[(triton.cdiv(F, 256),)](self.ids, rows, self.randoms, self.cursor,
             uniforms, self.status, F, self.max_depth, 256)
-        logits, values = s._forward_gather({'rows': rows}, width, contexts=self.context, row_count=self.status)
+        logits, values = s._forward_gather({'rows': rows}, width, contexts=self.context,
+            row_count=self.status, workspace=(token_capacity, query_capacity, self.status))
         sampled = s._sample(logits, a.mask[rows+s.wave_offset], uniforms)
         K.validate[(triton.cdiv(F, 256),)](values, self.status, F, 256)
         K.commit[(triton.cdiv(n, 256),)](self.kind, self.forced, self.live, self.depth,
@@ -83,7 +85,9 @@ class ResidentStepPipeline:
         # Ragged blocks skip the remaining padded rows/tokens on device.
         F = max(32, triton.next_power_of_2(max(1, count)))
         width = next(w for w in (1, 4, 16, 96) if width <= w)
-        key = F, width, self.scorer.bank_key
+        base = F, width, self.scorer.bank_key
+        ct,cq = self.workspace_capacities.get(base, (F*32, F*16))
+        key = base, ct, cq
         if key not in self.graphs:
             if len(self.graphs) >= self.capacity:
                 torch.cuda.synchronize()
@@ -97,12 +101,12 @@ class ResidentStepPipeline:
             self.enabled.zero_()
             # Warmup observes but cannot commit actions, depths, counters or RNG.
             for _ in range(2):
-                self.execute(rows, uniforms, width)
+                self.execute(rows, uniforms, width, ct, cq)
             torch.cuda.synchronize()
             torch._C._cuda_clearCublasWorkspaces()
             graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(graph, pool=self.pool):
-                self.execute(rows, uniforms, width)
+                self.execute(rows, uniforms, width, ct, cq)
             torch._C._cuda_clearCublasWorkspaces()
             self.enabled.fill_(1)
             self.graphs[key] = graph, rows, uniforms
@@ -134,10 +138,14 @@ class ResidentStepPipeline:
             status = self.status.cpu().tolist(); self.stats['host_reads'] += 1
             if status[3]:
                 raise RuntimeError(f'resident device step failed validation {status[3]}')
-            if status[0] > F or status[1] > W or status[2]:
+            if status[0] > F or status[1] > W or status[2] or status[7]:
                 self.stats['retries'] += 1
                 if status[2]:
                     self.refresh_context()
+                if status[7]:
+                    self.workspace_capacities[(F,W,self.scorer.bank_key)] = (
+                        max(F*32,triton.next_power_of_2(status[5])),
+                        max(F*16,triton.next_power_of_2(status[6])))
                 count, width = status[:2]
                 continue
             if status[4] == 0:

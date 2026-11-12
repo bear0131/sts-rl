@@ -90,6 +90,29 @@ def test_resident_ragged_blocks_preserve_selected_queries_and_empty_padding():
             assert torch.count_nonzero(actual[~selected]) == 0
 
 
+def test_resident_ragged_capacity_retry_preserves_selected_outputs():
+    from rl.policies.entity_action_playout import EntityBlock
+    from rl.policies.resident_ragged import frozen_ragged_blocks
+    torch.manual_seed(20261111)
+    blocks = torch.nn.ModuleList([EntityBlock(64, 4), EntityBlock(64, 4)]).cuda().eval()
+    with torch.no_grad():
+        x = torch.randn(17, 128, 64, device='cuda')
+        present = torch.rand(17, 128, device='cuda') > .6
+        present[:, 0] = True
+        queries = torch.rand_like(present, dtype=torch.float32) > .7
+        count = torch.tensor([11], device='cuda', dtype=torch.int32)
+        status = torch.zeros(10, device='cuda', dtype=torch.int32)
+        before = blocks[1](blocks[0](x, present), present)
+        failed = frozen_ragged_blocks(blocks, x.clone(), present, queries, count, (1, 1, status))
+        nt, nq, overflow = status[5:8].cpu().tolist()
+        assert overflow == 1 and nt > nq > 1 and torch.count_nonzero(failed) == 0
+        actual = frozen_ragged_blocks(blocks, x.clone(), present, queries, count, (nt, nq, status))
+        assert status[7] == 0
+        selected = queries & (torch.arange(17, device='cuda') < 11)[:, None]
+        torch.testing.assert_close(actual[selected], before[selected], rtol=3e-5, atol=3e-6)
+        assert torch.count_nonzero(actual[~selected]) == 0
+
+
 @pytest.mark.parametrize('graph_capacity', [0, 1])
 def test_resident_forks_atomic_masks_rng_and_graph_lifetime(complete_combat_factory, cuda_battle_artifacts,
                                                          graph_capacity):
