@@ -1,4 +1,6 @@
 # 仓库总 TODO
+
+- **PRO6000-MIGRATE-BENCH** — 进行中：用户提供新目标及两台源机SSH，要求迁移数据到Pro6000并测速。已实查源26162=旧rank3、53841=旧rank0，目标37468=RTX PRO 6000 Blackwell Server Edition 97887MiB/driver595.71.05，22核配额/110GiB内存。目标只有30GiB盘，用户明确“先只迁当前训练和GPU搜索材料”，据此缩小为当前combat49、保护恢复点、旧GPU搜索归档和必要运行环境；保留源数据，目标/root/combat49-pro6000-20261112按源端口隔离。两源清单约19.2GB，已开始有界只读拉取，源SHA清单3038/41055路径已生成，目标校验/测速尚未完成；凭据不入Git/日志。清单/容量/逐SHA核验后，固定模型/seed/预算进行训练更新与旧GPU搜索分项及端到端有界测速。不能将单机测速当四rank续训或新DeckLatent GPU搜索已适配。
 - **COMBAT49-READINESS-GPU-MEMORY** — 已复现修复部署08dd88ac；140 rank2验证子进程被父allocator近30GB闲置缓存挤占，保存后同步/GC/empty_cache修复。旧路径四卡均失败，新路径6项/卡通过；145来源完整两轮+64自然局/532锚点真实验证通过，权重/Adam/RNG前后完全一致，四机exit0，24成员SHA/跨rank模型Adam一致。09:46:43从正式145恢复，正式146/147保存与16Adam验收通过；160正式验证64自然局/513锚点、EV .2092957、failed/timeout/censored全0，四rank good1/last160、下次180；140失败保留，不以诊断通过填充正式检查。详见worklog同ID。
 
 - **COMBAT49-UPDATE-ILLEGAL-ADDRESS** — 已稳定复现并修复，完整资格及正式133/134恢复验收通过，持续观察。生产Torch2.12/cu132四张5090：原_CapturedHead控制20次通过，清cuBLAS workspace并释放/重用显存后四卡均第二次重放非法地址；修复每段forward/backward capture独立持有私有池scratch、移除全局缓存别名后四卡20次通过，前向/梯度一致，21项CUDA回归通过。原107四卡完整正常/强释放各2轮及固定buffer确定性64步梯度/末模型Adam逐位等价已通过；09:15从132完整模型/Adam/RNG/env恢复dc09baf5优化路径，正式133/134完整保存通过、模型/Adam一致、196608行/1epoch/16Adam/0OOM，正式133–145全部完整推进、无非法地址；138及143出现正常图退役后均完成继续，后续08dd88ac继承本修复；未宣称原108具体出错内核已被memcheck定位。证据diagnostic-address-20261112及worklog同ID，禁止直接重跑旧恢复脚本。
