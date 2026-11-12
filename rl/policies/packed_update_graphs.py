@@ -89,12 +89,23 @@ class _CapturedHead:
             self.backward_graph = torch.cuda.CUDAGraph()
             options = dict(pool=torch.cuda.graph_pool_handle(), stream=torch.cuda.current_stream(),
                            capture_error_mode='thread_local')
-            with torch.cuda.graph(self.forward_graph, **options):
-                result = compute()
-            self.output = result.detach()
-            self.upstream = torch.empty_like(result)
-            with torch.cuda.graph(self.backward_graph, **options):
-                grads = torch.autograd.grad(result, inputs, self.upstream, allow_unused=True)
+            # Warmup's cuBLAS workspace is an eager allocation. A graph that
+            # borrows it becomes invalid when collection capture clears the
+            # workspace cache and empty_cache unmaps the expandable segment.
+            # Allocate scratch inside each capture's pool, then remove its
+            # global cache entry so eager work cannot borrow graph-owned memory.
+            torch.cuda.synchronize(context.device)
+            torch._C._cuda_clearCublasWorkspaces()
+            try:
+                with torch.cuda.graph(self.forward_graph, **options):
+                    result = compute()
+                self.output = result.detach()
+                self.upstream = torch.empty_like(result)
+                torch._C._cuda_clearCublasWorkspaces()
+                with torch.cuda.graph(self.backward_graph, **options):
+                    grads = torch.autograd.grad(result, inputs, self.upstream, allow_unused=True)
+            finally:
+                torch._C._cuda_clearCublasWorkspaces()
         self.used = tuple(i for i, grad in enumerate(grads) if grad is not None)
         self.gradients = tuple(grads[i] for i in self.used)
 

@@ -96,8 +96,16 @@ The training tests enter short fights through the real run state machine and
 verify native PUCT/strict Full Gumbel targets reach the learner. Neither these
 tests nor benchmarks cover real multi-machine synchronization or long-term convergence.
 The `training` marker also includes a real replay/Adam comparison between the
-local learner and a single-rank loopback ring adapter; CI selects the complete
-marker group so new training regressions are not omitted by a fixed file list.
+local learner and a single-rank loopback ring adapter; CPU CI selects
+`training and not cuda` so CPU training regressions are not omitted by a fixed
+file list. CUDA-only tests are explicitly marked `cuda` and fail if invoked
+without a GPU; CPU CI is not GPU qualification. On the production CUDA runtime,
+run `python -m pytest -q tests/integration/test_packed_update_graphs.py` with
+`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` and
+`CUBLAS_WORKSPACE_CONFIG=:4096:8`. These tests compare forward/gradients after
+workspace release, allocation reuse, shape changes, sibling eviction and weight
+updates. Complete production-length collection/update/recovery remains a
+separate bounded deployment gate.
 
 JSON records configuration, commit/dirty state, actual native path/hash, dependency
 versions and hardware, setup/warmup/process/measurement time, rollout and

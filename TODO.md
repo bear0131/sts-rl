@@ -1,12 +1,12 @@
 # 仓库总 TODO
 
-- **COMBAT49-UPDATE-ILLEGAL-ADDRESS** — 已回退恢复，根因待定位。第108轮rank1快速packed更新CUDA非法地址导致四机退出；固定107/原seed/全生产工作量同步诊断一轮未复现，不证明长生命周期安全。07:34用同abfcb134源码的已验普通deck_latent_packed_fp32.json从完整107恢复，108/109四机保存/模型/Adam一致、196608行/1epoch/16Adam、0OOM；实读Adam1712→1728→1744有限。保护references/maintenance-illegal108-20261112及故障日志；禁直接重启快速路径，须定位并过同源数值/释放重放/完整生产生命周期和长时验收。无学习超参/预算改变；详见worklog/2026-11-12.md同ID。
+- **COMBAT49-UPDATE-ILLEGAL-ADDRESS** — 已稳定复现并修复候选，完整资格进行中。生产Torch2.12/cu132四张5090：原_CapturedHead控制20次通过，清cuBLAS workspace并释放/重用显存后四卡均第二次重放非法地址；修复每段forward/backward capture独立持有私有池scratch、移除全局缓存别名后四卡20次通过，前向/梯度一致，21项CUDA回归通过。生产已在132完整边界正常暂停并保护模型/Adam/RNG/env，下一步固定107原预算四卡两轮数值与强制释放对照，再从132恢复优化路径；未宣称原108具体出错内核已被memcheck定位。证据diagnostic-address-20261112及worklog同ID，禁止直接重跑旧恢复脚本。
 
 - **COMBAT49-SCALAR-SCHEMA** — 已修复并恢复：abfcb134固定图计数schema及标量传输前全rank验证；CPU/CUDA与真实PPO/NOSL生命周期43项通过。06:16从完整70普通续训，四机71/72各196608行/1epoch/16Adam，模型/Adam一致、0OOM；69–72实读Adam步1104/1120/1136/1152有限。70轮污染指标已标null，原日志及69/70保存保护，源与证据见worklog对应节。
 
 - **COMBAT49-FAILURE-SCENE** — 待修诊断：distributed_sb3失败捕获在NativeSubprocVecEnv访问不存在的envs，训练原始异常仍在log。范围失败现场捕获/原生子进程环境；验收支持该生产后端、保留原异常并导出可用状态，独立于已修scalar schema，不阻塞健康续训。
 
-- **COMBAT49-MAINT** — 半小时自主维护中。现役abfcb134/configs/train/deck_latent_packed_fp32.json普通更新；07:34从完整107恢复，108/109四机完整保存且1epoch/16Adam。原run/W&B offline不变；transport-standard107-20261112、ring31162，禁止重跑takeover/resume_scalar/resume_standard107。每轮查真实四进程、新完成轮、保存、学习/资源和阶段一致性；70污染统计null排除。117轮四机完整保存/模型/Adam一致，108–117无新CUDA错误、OOM/overflow，117仍warmup/good_checks0/last_check100/qualified=false：100轮64自然局458锚点EV .021008<.05未通过，下次120；不强开。搜索CPU语义/原生恢复15项通过，onset/full隔离计划已准备，GPU资格未启动、固定70源target_std待实测/诊断输入待构建；见worklog的06:24/06:54节，首次anchor转换后完整边界安排剩余资格，不能永久忽略。普通更新109–117整轮121.24–123.63秒；阶段切换后实测速度。rank0约1.795GB，追踪两代轮转；原21、69/70及107基准均保护。维护ID combat49，分支codex/combat49-maintenance。
+- **COMBAT49-MAINT** — 半小时自主维护中；当前响应用户要求定位修复快速更新故障，生产在132/global103809024完整边界正常暂停，保护references/maintenance-address-20261112/rankN/step-000103809024。当前计划仍abfcb134普通packed，恢复必须用132及最新验收源码，保留原run/W&B offline。132阶段warmup/good_checks1/last_check120/qualified=false；120独立64自然局477锚点EV .1955858、target_std .0598786，首次通过，下次140，连续3次门槛不改。搜索CPU15项和onset/full计划已有、GPU资格未过，仍按worklog06:24/06:54协议后续补齐，不能强开。21/69/70/107/132恢复基准保留，rank0约1.79GB，恢复后关注新增保护导致的两代轮转空间。维护ID combat49，分支codex/combat49-maintenance。
 
 | UPPER-POLICY-PRE | 已完成：四机180–183真实采集更新保存 | rl/algorithms/unified_upper.py及真实训练上报；新增全部更新前固定actor的policy loss并分析，测量不改变权重/Adam/RNG或目标，CPU/CUDA及两轮生产/保存恢复验收，监控合并COMBAT37。 |
 

@@ -41,7 +41,7 @@ jobs:
             bash -n "$script"
           done
       - name: Real training, optimizer persistence and CPU bitwise checks
-        run: python -m pytest -q -m training --junitxml=runs/local/training.xml
+        run: python -m pytest -q -m "training and not cuda" --junitxml=runs/local/training.xml
       - name: Bounded performance smoke (no hardware-specific speed gate)
         run: python -m rl.benchmarks.train --device cpu --output runs/local/ci-benchmark.json --timeout 180
       - name: Whitespace checks
