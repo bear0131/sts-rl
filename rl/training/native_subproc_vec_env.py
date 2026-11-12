@@ -6,6 +6,7 @@ Only current observations use shared storage; public returns always own copies.
 from multiprocessing import shared_memory
 import os
 import selectors
+import time
 
 import numpy as np
 from stable_baselines3.common.vec_env.base_vec_env import CloudpickleWrapper
@@ -23,6 +24,7 @@ class _NativeStepPipe:
         self.memory = None
         self.closed = False
         self.deck_search = None
+        self.deck_frontier = None
 
     def send(self, x):
         self.remote.send(x)
@@ -32,6 +34,8 @@ class _NativeStepPipe:
             return
         self.closed = True
         try:
+            if self.deck_frontier is not None:
+                self.deck_frontier.close()
             if self.native is not None:
                 self.native.close()
         finally:
@@ -70,6 +74,12 @@ class _NativeStepPipe:
                     from rl.training.deck_search_worker import DeckSearchWorker
                     self.deck_search = DeckSearchWorker(self.envs)
                 self.remote.send(self.deck_search.run(data))
+            elif cmd in ('deck_frontier_start', 'deck_frontier_advance', 'deck_frontier_close'):
+                if self.deck_frontier is None:
+                    from env.search.frontier_transport import FrontierSession
+                    self.deck_frontier = FrontierSession(self.envs)
+                method = getattr(self.deck_frontier, cmd.removeprefix('deck_frontier_'))
+                self.remote.send(method() if cmd == 'deck_frontier_close' else method(data))
             else:
                 return (cmd, data)
 
@@ -149,6 +159,80 @@ class NativeSubprocVecEnv(cv.GroupedCachedMaskSubprocVecEnv):
             for key, value in stats.items():
                 totals[key] = totals.get(key, 0.) + value
         return results, totals
+
+    def deck_batched_search(self, request, scorer):
+        """Central inference with native CPU branches; never a CUDA simulator.
+
+        Partition and world seeds match the CPU worker reference. One model
+        scores the merged frontier; worker processes never own CUDA contexts.
+        All workers finish a complete paired set before real actions advance.
+        """
+        from env.search.anchored_chains import ChainRequest
+        if self.waiting:
+            raise RuntimeError('cannot search while real transitions are in flight')
+        positions = {index: j for j, index in enumerate(request['indices'])}
+        selected, pending, active = {}, {}, set()
+        results, caches = [None] * len(positions), {}
+        totals = dict(scoring_seconds=0., worker_and_transport_seconds=0., frontier_batches=0.,
+                      frontier_rows=0., transport_bytes=0.)
+        try:
+            started = time.monotonic()
+            for group_index, group in enumerate(self._groups):
+                local = [j for j, i in enumerate(group) if i in positions]
+                if not local:
+                    continue
+                rows = [positions[group[j]] for j in local]
+                call = dict(request, indices=local, budgets=[request['budgets'][j] for j in rows],
+                    observation_keys=scorer.observation_keys, static_keys=scorer.context_keys,
+                    seed=int(np.random.SeedSequence([request['seed'], group_index]).generate_state(1, dtype=np.uint64)[0]))
+                self.remotes[group_index].send(('deck_frontier_start', call))
+                pending[self.remotes[group_index]] = group_index
+                selected[group_index] = rows
+                active.add(group_index)
+            while pending:
+                responses = self._receive_groups(pending)
+                totals['worker_and_transport_seconds'] += time.monotonic() - started
+                frontier, batches = [], []
+                for group_index, response in responses.items():
+                    if response['done']:
+                        active.remove(group_index)
+                        group_results, stats = response['result']
+                        for row, result in zip(selected[group_index], group_results, strict=True):
+                            results[row] = result
+                        for key, value in stats.items():
+                            totals[key] = totals.get(key, 0.) + value
+                        continue
+                    begin = len(frontier)
+                    for root, lane, kind, mask, delta in response['rows']:
+                        row = selected[group_index][root]
+                        observation = dict(scorer.roots[row], **delta)
+                        cache = caches.setdefault((group_index, lane), {})
+                        frontier.append(ChainRequest(row, observation, mask, kind, cache, lane))
+                    totals['transport_bytes'] += response['observation_bytes']
+                    batches.append((group_index, response['sequence'], begin, len(frontier)))
+                if not frontier:
+                    continue
+                before = time.monotonic()
+                outputs = scorer(frontier)  # CPU outputs imply completion of CUDA copies.
+                totals['scoring_seconds'] += time.monotonic() - before
+                totals['frontier_batches'] += 1
+                totals['frontier_rows'] += len(frontier)
+                if len(outputs) != len(frontier):
+                    raise ValueError('incomplete central search scorer response')
+                pending, started = {}, time.monotonic()
+                for group_index, sequence, begin, end in batches:
+                    self.remotes[group_index].send(('deck_frontier_advance', dict(
+                        generation=request['generation'], sequence=sequence, outputs=outputs[begin:end])))
+                    pending[self.remotes[group_index]] = group_index
+            totals['context_refreshes'] = scorer.context_refreshes
+            return results, totals
+        finally:
+            # Scorer failures must not leave a suspended search retaining forks
+            # or turn the next real step into a stale frontier response.
+            if active and all(self.processes[i].is_alive() for i in active):
+                for i in active:
+                    self.remotes[i].send(('deck_frontier_close', None))
+                self._receive_groups({self.remotes[i]: i for i in active})
 
     def _receive_groups(self, pending):
         if os.name != 'posix':

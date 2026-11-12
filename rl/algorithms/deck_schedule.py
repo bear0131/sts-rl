@@ -21,9 +21,11 @@ class DeckTrainingSchedule:
     minimum_anchors: int = 64
     minimum_ev: float = .05
     search_qualified: bool = False
+    search_backend: str = 'native-cpu'
     anchor_start_round: int | None = None
 
     def __post_init__(self):
+        SearchTrainingConfig(backend=self.search_backend)
         if min(self.check_interval, self.consecutive_checks, self.anchor_rounds, self.ramp_rounds,
                self.validation_games, self.validation_max_steps, self.minimum_natural, self.minimum_anchors) < 1:
             raise ValueError('deck training schedule requires positive bounded counts')
@@ -102,6 +104,7 @@ def apply_stage(model, schedule, completed_rounds, *, rank=0):
         progress = min(1., max(0., (completed_rounds - state['stage_start']) / schedule.ramp_rounds))
         fraction = .25 + .5 * progress if progress <= .5 else progress
         model.deck_search_config = asdict(SearchTrainingConfig(fraction=fraction, coefficient=.1 * progress,
-            target_std=state['validation']['target_std'], seed=20261111 + 1_000_003 * rank))
+            target_std=state['validation']['target_std'], seed=20261111 + 1_000_003 * rank,
+            backend=schedule.search_backend))
     model.training_objective_contract = ('deck-latent-ppo-search-v1' if state['stage'] == 'search'
                                          else 'deck-latent-ppo-' + state['stage'] + '-v1')

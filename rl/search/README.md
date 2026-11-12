@@ -125,3 +125,17 @@ NumPy observation decode. Each search tree retains its own root-global fields,
 request IDs, legal mask, and ordered response slice. A single leaf and the
 canonical fallback use the original decoder. This changes only worker-side
 observation materialization; native tree expansion and backup are unchanged.
+
+## Deck-latent paired teaching
+
+`env/search/anchored_chains.py` owns the paired-world scheduler; its synchronous
+reference and suspended frontier interface share the same implementation.
+`SearchTrainingConfig.backend` defaults to `native-cpu` for retained checkpoints.
+`cuda-batched-native` is an explicit experimental adapter requiring a CUDA policy
+and `NativeSubprocVecEnv`: simulation stays on native CPU workers, while their
+frontiers are merged for inference on the learner GPU. It never falls back to a
+CPU model. This is not the resident CUDA simulator and is not performance qualified.
+The fixed metrics distinguish CUDA inference from CUDA simulation. Scoring wall
+time includes packing and completed device copies; worker-and-transport wall time
+includes worker simulation and waiting, not just IPC. Search-stage configuration
+stores `search_backend`; changing it does not grant `search_qualified`.

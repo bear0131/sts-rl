@@ -19,8 +19,11 @@ class SearchTrainingConfig:
     timeout_seconds: float = 120.
     target_std: float = .25
     seed: int = 20261111
+    backend: str = 'native-cpu'
 
     def __post_init__(self):
+        if self.backend not in ('native-cpu', 'cuda-batched-native'):
+            raise ValueError('unknown shadow search backend')
         if not (0 < self.fraction <= 1 and 0 <= self.coefficient <= 1):
             raise ValueError('invalid shadow search fraction/coefficient')
         if min(self.normal_budget, self.boss_budget, self.max_depth, self.max_active) < 1:

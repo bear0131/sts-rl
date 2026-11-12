@@ -8,7 +8,7 @@ from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS
 
 
 class DeckLatentScorer:
-    def __init__(self, policy, root_observations, context=None):
+    def __init__(self, policy, root_observations, context=None, tables=None):
         if policy.training:
             raise ValueError('search scorer requires a frozen inference policy')
         self.core = policy.core
@@ -18,10 +18,13 @@ class DeckLatentScorer:
         self.context_keys = (*self.core.context.keys, 'phase')
         self.combat_keys = tuple(k for k in root_observations[0] if k in COMBAT_OBSERVATION_KEYS)
         self.anchor_keys = ('player_scalars', 'potions', *self.core.anchor.dynamic_keys)
+        self.observation_keys = tuple(sorted(set(self.context_keys) | set(self.combat_keys)
+            | set(self.anchor_keys) | {'draw_counts', 'discard_counts', 'exhaust_counts',
+                                      'pile_upgraded_counts', 'pile_upgrade_sums', 'relic_counters'}))
         with torch.no_grad():
             self.context = (self.core.prepare_search_context(self.pack(root_observations, self.context_keys))
                             if context is None else context)
-            self.tables = self.core.combat.summaries.export_inference_tables()
+            self.tables = self.core.combat.summaries.export_inference_tables() if tables is None else tables
             self.summaries = [self.tables.new_state(o) for o in root_observations]
         self.versions = tuple((id(p), p._version) for p in policy.parameters())
 

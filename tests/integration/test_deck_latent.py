@@ -272,7 +272,7 @@ def test_duplicate_context_gradients_equal_full_recomputation(latent_env):
 @pytest.mark.parametrize('transport', ['dummy', 'native-subproc'])
 @pytest.mark.parametrize('context_mode', ['off', 'replay', 'grouped', 'screens', 'context-limit', 'direct-mask', 'prefetch'])
 def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, transport, context_mode,
-                                                       encoder='pooled-mlp', device='cpu'):
+                                                       encoder='pooled-mlp', device='cpu', search_backend='native-cpu'):
     from gymnasium.wrappers import TimeLimit
     from stable_baselines3.common.vec_env import DummyVecEnv
     from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
@@ -311,7 +311,7 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         model.policy.combat_value_target = 'pre-reward-anchor'
         model.policy_kwargs['combat_value_target'] = 'pre-reward-anchor'
         model.deck_search_config = asdict(SearchTrainingConfig(fraction=1., normal_budget=2,
-            boss_budget=2, max_depth=2, max_active=16, timeout_seconds=30.))
+            boss_budget=2, max_depth=2, max_active=16, timeout_seconds=30., backend=search_backend))
         model.deck_search_snapshot_dir = str(tmp_path / 'weights')
     model.learn(128)
     assert model.num_timesteps == 128
@@ -320,6 +320,12 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         assert len(model.rollout_buffer.search_targets) > 0
         assert model._deck_search_loss_normalization > 0
         assert model.deck_search_last_stats['atomic_steps'] > model.deck_search_last_stats['searched_roots']
+        if search_backend == 'cuda-batched-native':
+            assert model.deck_search_last_stats['backend_cuda_inference'] == 1
+            assert model.deck_search_last_stats['backend_cuda_simulation'] == 0
+            assert model.deck_search_last_stats['frontier_rows'] > 0
+            assert model.deck_search_last_stats['scoring_seconds'] > 0
+            assert not (tmp_path / 'weights' / 'frozen.pt').exists()
     if context_mode == 'grouped':
         model._ppo_microbatch_caps = {'upper': 2}
     source = save_bundle(model, tmp_path/'first', rank=0, world_size=1, run_id='deck-latent-test',
@@ -372,6 +378,92 @@ def test_cuda_shadow_search_native_rounds_and_resume(tmp_path):
     assert torch.cuda.is_available(), 'explicit CUDA search qualification required'
     test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, True, 'native-subproc',
         'grouped', encoder='transformer64x2', device='cuda')
+
+
+def test_cuda_batched_search_native_rounds_and_resume(tmp_path):
+    assert torch.cuda.is_available(), 'explicit CUDA search qualification required'
+    test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, True, 'native-subproc',
+        'grouped', encoder='transformer64x2', device='cuda', search_backend='cuda-batched-native')
+
+
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_external_frontiers_preserve_teacher_and_root(latent_env, device):
+    from env.search.anchored_chains import paired_anchor_search, ChainRequest
+    from env.search.frontier_transport import FrontierSession
+    from env.core.native_observation import NativeRootObservationBatch
+    from rl.search.deck_latent import DeckLatentScorer
+    if device == 'cuda':
+        assert torch.cuda.is_available()
+    env = latent_env
+    enter_combat(env)
+    env.thick.bc.set_player_strength(999)
+    env._invalidate_backend_cache()
+    obs = env._obs()
+    policy = policy_for(env, 'transformer64x2').to(device)
+    policy.set_training_mode(False)
+    root = env.thick.bc.nosl_future_key()
+    journal = deepcopy(env._episode_action_journal)
+    options = dict(seed=20261111, max_depth=12, max_active=16, timeout_seconds=30.)
+    budget = int(np.count_nonzero(env.action_masks())) * 2
+    reference = DeckLatentScorer(policy, [obs])
+    expected, expected_stats = paired_anchor_search([env], [budget], reference,
+        observation_batch=NativeRootObservationBatch(env), **options)
+    scorer = DeckLatentScorer(policy, [obs])
+    session = FrontierSession([env])
+    rng = torch.get_rng_state().clone()
+    cuda_rng = torch.cuda.get_rng_state().clone() if device == 'cuda' else None
+    packet = session.start(dict(indices=[0], budgets=[budget], generation=7,
+        seed=options['seed'], options={k: v for k, v in options.items() if k != 'seed'},
+        observation_keys=scorer.observation_keys, static_keys=scorer.context_keys))
+    caches, seen = {}, []
+    try:
+        with pytest.raises(RuntimeError, match='stale or out-of-order'):
+            session.advance(dict(generation=8, sequence=packet['sequence'], outputs=[]))
+        while not packet['done']:
+            requests = []
+            for row, lane, kind, mask, delta in packet['rows']:
+                # Static maps/deck bytes do not cross the pipe when unchanged.
+                assert 'map_full_features' not in delta
+                requests.append(ChainRequest(row, dict(obs, **delta), mask, kind,
+                    caches.setdefault(lane, {}), lane))
+                seen.append(kind)
+            packet = session.advance(dict(generation=7, sequence=packet['sequence'], outputs=scorer(requests)))
+        actual, stats = packet['result']
+    finally:
+        session.close()
+    for key in ('actions', 'visits', 'values'):
+        np.testing.assert_array_equal(actual[0][key], expected[0][key])
+    assert {k: v for k, v in stats.items() if k != 'seconds'} == {
+        k: v for k, v in expected_stats.items() if k != 'seconds'}
+    assert 'anchor' in seen
+    assert env.thick.bc.nosl_future_key() == root
+    assert env._episode_action_journal == journal
+    assert torch.equal(rng, torch.get_rng_state())
+    if cuda_rng is not None:
+        assert torch.equal(cuda_rng, torch.cuda.get_rng_state())
+
+
+def test_frontier_cancel_closes_forks_without_advancing_root(latent_env, monkeypatch):
+    from env.search.anchored_chains import paired_anchor_frontiers
+    env = latent_env
+    enter_combat(env)
+    before = env.thick.bc.nosl_future_key()
+    fork = env.fork_run
+    closed = []
+    def tracked(**kwargs):
+        child = fork(**kwargs)
+        close = child.close
+        def record():
+            closed.append(child)
+            close()
+        child.close = record
+        return child
+    monkeypatch.setattr(env, 'fork_run', tracked)
+    session = paired_anchor_frontiers([env], [64], seed=20261111, max_active=4)
+    next(session)
+    session.close()
+    assert len(closed) == 4 and len({id(c) for c in closed}) == 4
+    assert env.thick.bc.nosl_future_key() == before
 
 
 def test_cuda_actor_search_context_survives_graph_changes(latent_env):

@@ -31,6 +31,9 @@ class ShadowSearchCollection:
             raise ValueError('shadow search requires the packed PPO/search buffer lifecycle')
         if model.policy.combat_value_target != 'pre-reward-anchor':
             raise ValueError('search teaching requires the learned combat-exit anchor target')
+        if self.config.backend == 'cuda-batched-native':
+            if model.device.type != 'cuda' or not hasattr(env, 'deck_batched_search'):
+                raise ValueError('cuda-batched-native requires a CUDA policy and NativeSubprocVecEnv')
         self.rng = np.random.default_rng(self.config.seed)
         state = getattr(model, 'deck_search_rng', None)
         if state is not None:
@@ -39,13 +42,20 @@ class ShadowSearchCollection:
         # roots, are required by the scalar reduction contract.
         self.stats = dict.fromkeys(('searched_roots', 'eligible_roots', 'selected_roots', 'search_seconds',
             'chains', 'atomic_steps', 'policy_rows', 'forced_rows', 'anchor_rows', 'cutoff_rows',
-            'terminal_rows', 'max_active', 'budget_floor_overage', 'worker_search_seconds', 'context_refreshes'), 0.)
+            'terminal_rows', 'max_active', 'budget_floor_overage', 'worker_search_seconds', 'context_refreshes',
+            'scoring_seconds', 'worker_and_transport_seconds', 'frontier_batches', 'frontier_rows', 'transport_bytes',
+            'backend_cuda_inference', 'backend_cuda_simulation'), 0.)
+        self.stats['backend_cuda_inference'] = float(self.config.backend == 'cuda-batched-native')
         self.hook = None
         self.previous = env.step_async
         self.snapshot = None
 
     def start(self):
-        if hasattr(self.env, 'deck_shadow_search'):
+        if self.config.backend == 'cuda-batched-native':
+            # Weights stay on the learner device for the entire frozen
+            # collection. Export only the small summary tables, once.
+            self.tables = self.model.policy.core.combat.summaries.export_inference_tables()
+        elif hasattr(self.env, 'deck_shadow_search'):
             folder = Path(self.model.deck_search_snapshot_dir)
             folder.mkdir(parents=True, exist_ok=True)
             self.snapshot = folder / 'frozen.pt'
@@ -86,7 +96,11 @@ class ShadowSearchCollection:
             budgets = [self.config.boss_budget if o['combat_is_boss'].item() else self.config.normal_budget
                        for o in observations]
             seed = int(self.rng.integers(0, 2**63 - 1))
-            if self.snapshot is not None:
+            if self.config.backend == 'cuda-batched-native':
+                scorer = DeckLatentScorer(self.model.policy, observations, context=context, tables=self.tables)
+                result, stats = self.env.deck_batched_search(dict(indices=indices.tolist(), budgets=budgets,
+                    seed=seed, generation=self.generation, options=search_options(self.config)), scorer)
+            elif self.snapshot is not None:
                 result, stats = self.env.deck_shadow_search(dict(indices=indices.tolist(), budgets=budgets,
                     context=(context.combat.detach().cpu().numpy(), context.anchor.detach().cpu().numpy()),
                     config=asdict(self.config), seed=seed, generation=self.generation, snapshot=str(self.snapshot)))
