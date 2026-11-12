@@ -154,6 +154,11 @@ class ShadowSearchCollection:
         self.env.step_async = self.previous
         self.inference_cache.clear()
         if self.config.backend == 'cuda-resident':
+            for key, value in self.resident_scorer.anchor_cache.stats.items():
+                metric = 'anchor_cache_' + key
+                if metric in self.stats:
+                    self.stats[metric] = value
+            self.stats['context_refreshes'] = self.resident_scorer.refreshes
             self.resident_scorer.close()
             self.resident_arena.close()
         self.model.deck_search_rng = self.rng.bit_generator.state
