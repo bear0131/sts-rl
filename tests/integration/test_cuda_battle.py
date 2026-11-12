@@ -28,8 +28,15 @@ def test_resident_stack_limit_restored_after_last_arena(cuda_battle_artifacts):
     def make():
         return CudaBattleArena(folder/'deck.cubin', manifest['sha256']['deck.cubin'], 1,
             card_count=_nosl_compact_lut()['layout']['card_count'])
+    # Simulate unused allocator storage after a full PPO update. A cold arena
+    # succeeding says nothing about the update -> next collection boundary.
+    cached_bytes = min(12*1024**3, torch.cuda.mem_get_info()[0]//2)
+    temporary = torch.empty(cached_bytes, dtype=torch.uint8, device='cuda')
+    del temporary
+    reserved_before = torch.cuda.memory_reserved()
     a, b = make(), make()
     try:
+        assert torch.cuda.memory_reserved() < reserved_before
         assert stack_limit() >= 80 * 1024
         a.close()
         assert stack_limit() >= 80 * 1024

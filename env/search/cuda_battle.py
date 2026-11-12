@@ -6,6 +6,7 @@ stay with this module through forks, graph retirement and state destruction.
 """
 from collections import OrderedDict
 import ctypes as c
+import gc
 import hashlib
 import importlib.util
 import json
@@ -138,6 +139,13 @@ class CudaBattleArena:
             current = c.c_size_t()
             self._check(self.driver.cuCtxGetLimit(c.byref(current), 0))
             required = max(current.value, 80 * 1024)
+            if required > current.value:
+                # A preceding PPO update can leave the otherwise idle caching
+                # allocator holding most VRAM. The driver cannot reuse it for
+                # its stack reservation. Live tensors/graphs remain owned.
+                torch.cuda.synchronize(self.device)
+                gc.collect()
+                torch.cuda.empty_cache()
             self._check(self.driver.cuCtxSetLimit(0, required))
             entry = owners[self.stack_device] = dict(original=current.value, required=required, count=0)
         entry['count'] += 1
