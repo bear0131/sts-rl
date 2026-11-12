@@ -4,6 +4,7 @@ import torch
 
 from rl.policies.deck_latent import SearchContext
 from rl.policies.combat_summary import CombatSummary
+from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS
 
 
 class DeckLatentScorer:
@@ -14,16 +15,19 @@ class DeckLatentScorer:
         self.device = next(policy.parameters()).device
         self.roots = root_observations
         self.context_refreshes = 0
+        self.context_keys = (*self.core.context.keys, 'phase')
+        self.combat_keys = tuple(k for k in root_observations[0] if k in COMBAT_OBSERVATION_KEYS)
+        self.anchor_keys = ('player_scalars', 'potions', *self.core.anchor.dynamic_keys)
         with torch.no_grad():
-            self.context = (self.core.prepare_search_context(self.pack(root_observations))
+            self.context = (self.core.prepare_search_context(self.pack(root_observations, self.context_keys))
                             if context is None else context)
             self.tables = self.core.combat.summaries.export_inference_tables()
             self.summaries = [self.tables.new_state(o) for o in root_observations]
         self.versions = tuple((id(p), p._version) for p in policy.parameters())
 
-    def pack(self, observations):
+    def pack(self, observations, keys):
         return {k: torch.as_tensor(np.stack([o[k] for o in observations]), device=self.device)
-                for k in observations[0]}
+                for k in keys}
 
     @torch.no_grad()
     def __call__(self, requests):
@@ -31,7 +35,6 @@ class DeckLatentScorer:
             raise RuntimeError('search weights changed during a frozen collection')
         if not requests:
             return []
-        obs = self.pack([r.observation for r in requests])
         roots = torch.tensor([r.root for r in requests], device=self.device)
         context = self.context.index(roots)
         # A branch retains its refreshed static context after permanent changes.
@@ -47,7 +50,8 @@ class DeckLatentScorer:
                 context.combat[i], context.anchor[i] = r.cache['context']
         if changed:
             rows = torch.tensor(changed, device=self.device)
-            refreshed = self.core.prepare_search_context({k: v[rows] for k, v in obs.items()})
+            refreshed = self.core.prepare_search_context(
+                self.pack([requests[i].observation for i in changed], self.context_keys))
             context.combat[rows] = refreshed.combat
             context.anchor[rows] = refreshed.anchor
             self.context_refreshes += len(changed)
@@ -62,7 +66,11 @@ class DeckLatentScorer:
             if not rows:
                 continue
             index = torch.tensor(rows, device=self.device)
-            batch = {k: v[index] for k, v in obs.items()}
+            # The context and summaries already own static deck/map/pile data.
+            # Pack only inputs consumed by this head, preserving row order and
+            # the exact values/shape seen by the previous full-dict projection.
+            batch = self.pack([requests[i].observation for i in rows],
+                              self.anchor_keys if anchor else self.combat_keys)
             z = context.index(index)
             if anchor:
                 values = self.core.anchor_with_context(batch, z, summary.relics[index]).flatten().cpu().numpy()

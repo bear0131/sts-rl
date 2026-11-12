@@ -35,10 +35,19 @@ class _Lane:
     cache: dict = field(default_factory=dict)
 
 
-def _step(lane, action):
+def _step(lane, action, *, defer_observation=False):
     env = lane.environment
     act, floor = env.thick.gc.act, env.thick.gc.floor_num
-    obs, _, terminated, truncated, info = env.step(int(action))
+    previous = env._defer_combat_observation
+    env._defer_combat_observation = defer_observation
+    env._combat_observation_pending = False
+    try:
+        obs, _, terminated, truncated, info = env.step(int(action))
+        if env._combat_observation_pending:
+            obs = None
+    finally:
+        env._defer_combat_observation = previous
+        env._combat_observation_pending = False
     if truncated or info.get('dead_screen'):
         raise RuntimeError('censored search branch cannot supply a complete teacher')
     lane.reward += strategic_reward(act, floor, env.thick.run_stats(),
@@ -48,12 +57,15 @@ def _step(lane, action):
 
 
 def paired_anchor_search(roots, budgets, scorer, *, seed, max_depth=200,
-                         max_active=256, timeout_seconds=120.):
+                         max_active=256, timeout_seconds=120., observation_batch=None):
     """Return per-root action means using complete equal paired-world sets.
 
     ``scorer(requests)`` returns one (logits, scalar value) per request; anchor
     rows only consume the value. It owns the model, shared context and any
     inference caches. Shadow search must not change the real policy's RNG.
+    An optional native root encoder fills deferred live combat observations at
+    the next scored frontier. Anchors, terminals and thin prefixes retain the
+    ordinary codec. Forced steps consume no observation and need no encoding.
     """
     if len(roots) != len(budgets) or min(max_depth, max_active) < 1 or timeout_seconds <= 0:
         raise ValueError('invalid anchored search batch limits')
@@ -100,7 +112,8 @@ def paired_anchor_search(roots, budgets, scorer, *, seed, max_depth=200,
                 raise RuntimeError('root atomic action lost its identity in a sampled world')
             lane = _Lane(root, action_index, branch, np.random.default_rng(world ^ 0x504F4C494359),
                          0, 0., {}, False)
-            _step(lane, inverse[bits]); lanes.append(lane)
+            _step(lane, inverse[bits], defer_observation=observation_batch is not None)
+            lanes.append(lane)
             stats['chains'] += 1
         stats['max_active'] = max(stats['max_active'], len(lanes))
         requests, requested_lanes = [], []
@@ -112,10 +125,17 @@ def paired_anchor_search(roots, budgets, scorer, *, seed, max_depth=200,
                     'cutoff' if lane.steps >= max_depth else 'combat')
             mask = env.action_masks()
             if kind == 'combat' and np.count_nonzero(mask) == 1:
-                _step(lane, np.flatnonzero(mask)[0]); stats['forced_rows'] += 1
+                _step(lane, np.flatnonzero(mask)[0], defer_observation=observation_batch is not None)
+                stats['forced_rows'] += 1
                 continue
             requests.append(ChainRequest(lane.root, lane.observation, mask, kind, lane.cache))
             requested_lanes.append(lane)
+        pending = [i for i, lane in enumerate(requested_lanes) if lane.observation is None]
+        if pending:
+            encoded = observation_batch.encode([requested_lanes[i].environment for i in pending])
+            for row, i in enumerate(pending):
+                observation = {key: value[row] for key, value in encoded.items()}
+                requested_lanes[i].observation = requests[i].observation = observation
         scored = scorer(requests) if requests else []
         if len(scored) != len(requests):
             raise ValueError('scorer must return exactly one result per frontier row')
@@ -140,7 +160,9 @@ def paired_anchor_search(roots, budgets, scorer, *, seed, max_depth=200,
                     if not len(legal) or not np.isfinite(scores).all():
                         raise FloatingPointError('empty/nonfinite search action distribution')
                     probability = np.exp(scores - scores.max()); probability /= probability.sum()
-                    _step(lane, lane.rng.choice(legal, p=probability)); stats['policy_rows'] += 1
+                    _step(lane, lane.rng.choice(legal, p=probability),
+                          defer_observation=observation_batch is not None)
+                    stats['policy_rows'] += 1
                     # Finalize on the next iteration, so every exit is classified.
                     survivors.append(lane)
                     continue

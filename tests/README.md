@@ -159,3 +159,12 @@ continuity of a live remote experiment.
 
 Archive verification hashes each file against the pre-move manifest; archived
 user material deliberately retains original whitespace via .gitattributes.
+
+Deck-latent search frontier encoding and head projection can be checked on CPU
+with the explicitly selected native extension:
+
+    python -m pytest -q tests/integration/test_deck_latent.py::test_native_search_frontiers_match_reference_observations_and_results tests/integration/test_deck_latent.py::test_search_head_projection_refreshes_branch_context_and_preserves_siblings tests/integration/test_deck_latent.py::test_cpu_shadow_search_native_rounds_and_resume
+
+These cover complete observation bytes, branch context changes, paired search
+results, and two real PPO rounds plus ordinary restore. They do not qualify a
+production-length GPU search collection or replace the CUDA lifecycle tests.

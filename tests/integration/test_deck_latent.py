@@ -119,6 +119,92 @@ def test_anchor_uses_branch_hp_and_ignores_unrevealed_rewards(latent_env):
         assert not logits.any()
 
 
+@pytest.mark.parametrize('scenario', ['ordinary', 'lethal', 'ARMAMENTS', 'SECRET_TECHNIQUE', 'HEADBUTT'])
+def test_native_search_frontiers_match_reference_observations_and_results(latent_env, scenario):
+    import slaythespire as sts
+    from env.core.native_observation import NativeRootObservationBatch
+    from env.search.anchored_chains import paired_anchor_search
+    from rl.search.deck_latent import DeckLatentScorer
+
+    env = latent_env
+    enter_combat(env)
+    if scenario == 'lethal':
+        env.thick.bc.set_player_strength(999)
+    elif scenario != 'ordinary':
+        env.thick.bc.apply_custom_state(dict(hand=[scenario, 'DEFEND_RED', 'STRIKE_RED'],
+            draw=['DEFEND_RED', 'SHRUG_IT_OFF', 'STRIKE_RED'], discard=['BASH', 'ANGER']))
+        env.thick.bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    env._invalidate_backend_cache()
+    original = env._array_mapping_digest(env._obs())
+    journal = deepcopy(env._episode_action_journal)
+    policy = policy_for(env, 'transformer64x2'); policy.set_training_mode(False)
+    encoder = NativeRootObservationBatch(env)
+    encoded_rows = []
+    native_encode = encoder.encode
+    def checked_encode(branches):
+        expected = [branch._obs() for branch in branches]
+        actual = native_encode(branches)
+        for row, reference in enumerate(expected):
+            assert actual.keys() == reference.keys()
+            for key in reference:
+                assert actual[key][row].tobytes() == reference[key].tobytes(), key
+        encoded_rows.append(len(branches))
+        return actual
+    encoder.encode = checked_encode
+    runs = []
+    for batch in (None, encoder):
+        trace = []
+        scorer = DeckLatentScorer(policy, [env._obs()])
+        def score(requests):
+            trace.extend((r.root, r.kind, env._array_mapping_digest(r.observation),
+                          r.action_mask.tobytes()) for r in requests)
+            return scorer(requests)
+        result, stats = paired_anchor_search([env], [64], score, seed=20261111,
+            max_depth=12, max_active=16, timeout_seconds=30., observation_batch=batch)
+        runs.append((result, {k: v for k, v in stats.items() if k != 'seconds'}, trace))
+        assert env._array_mapping_digest(env._obs()) == original
+        assert env._episode_action_journal == journal
+        assert not env._defer_combat_observation and not env._combat_observation_pending
+    assert encoded_rows
+    assert runs[0][1:] == runs[1][1:]
+    for key in ('actions', 'values', 'visits'):
+        np.testing.assert_array_equal(runs[0][0][0][key], runs[1][0][0][key])
+
+
+@pytest.mark.parametrize('encoder', ['pooled-mlp', 'transformer64x2'])
+def test_search_head_projection_refreshes_branch_context_and_preserves_siblings(latent_env, encoder):
+    from env.search.anchored_chains import ChainRequest
+    from rl.search.deck_latent import DeckLatentScorer
+    enter_combat(latent_env)
+    policy = policy_for(latent_env, encoder); policy.set_training_mode(False)
+    root = latent_env._obs()
+    scorer = DeckLatentScorer(policy, [root])
+    rows = [ChainRequest(0, {k: v.copy() for k, v in root.items()},
+                        latent_env.action_masks(), kind) for kind in ('combat', 'anchor', 'cutoff')]
+    rows[1].observation['combat_exit_anchor'][0] = 1
+    # A permanent card change belongs to one branch; later resource changes
+    # retain that branch's refreshed context and leave its sibling untouched.
+    rows[0].observation['outer_deck_misc'][0] += .2
+    rows[1].observation['deck_upgrades'][0] += .2
+    for iteration in range(2):
+        if iteration:
+            for row in rows:
+                row.observation['player_scalars'][0] *= .8
+                row.observation['relic_counters'][0] += .1
+        actual = scorer(rows)
+        assert scorer.context_refreshes == 2
+        with torch.no_grad():
+            for request, (logits, value) in zip(rows, actual, strict=True):
+                full = obs_as_tensor({k: v[None] for k, v in request.observation.items()}, 'cpu')
+                context = policy.core.prepare_search_context(full)
+                if request.kind == 'anchor':
+                    expected_value = policy.core.anchor_with_context(full, context)
+                else:
+                    expected_logits, expected_value = policy.core.combat_with_context(full, context)
+                    np.testing.assert_allclose(logits, expected_logits[0], rtol=3e-5, atol=3e-6)
+                np.testing.assert_allclose(value, expected_value.item(), rtol=3e-5, atol=3e-6)
+
+
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 @pytest.mark.parametrize('pattern', ['holes', 'global_only', 'all_present'])
 def test_context_padding_compaction_preserves_output_and_gradients(latent_env, device, pattern):
@@ -275,6 +361,11 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         assert again.deck_training_state['stage_start'] == 2
         assert again.deck_training_state['good_checks'] == 0
     env.close(); target.close()
+
+
+def test_cpu_shadow_search_native_rounds_and_resume(tmp_path):
+    test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, True, 'native-subproc',
+        'grouped', encoder='transformer64x2', device='cpu')
 
 
 def test_cuda_shadow_search_native_rounds_and_resume(tmp_path):

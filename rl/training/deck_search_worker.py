@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from env.search.anchored_chains import paired_anchor_search
+from env.core.native_observation import NativeRootObservationBatch
 from rl.policies.deck_latent import DeckLatentCore, SearchContext
 from rl.search.deck_latent import DeckLatentScorer
 
@@ -21,6 +22,7 @@ def search_options(config):
 class DeckSearchWorker:
     def __init__(self, envs):
         self.envs, self.generation, self.policy = envs, None, None
+        self.observation_batch = NativeRootObservationBatch(envs[0].unwrapped)
 
     def run(self, request):
         from rl.algorithms.search_auxiliary import SearchTrainingConfig
@@ -46,6 +48,6 @@ class DeckSearchWorker:
         context = SearchContext(*(torch.from_numpy(v) for v in request['context']))
         scorer = DeckLatentScorer(self.policy, observations, context=context)
         result, stats = paired_anchor_search(roots, request['budgets'], scorer,
-            seed=request['seed'], **search_options(config))
+            seed=request['seed'], observation_batch=self.observation_batch, **search_options(config))
         stats['context_refreshes'] = scorer.context_refreshes
         return result, stats

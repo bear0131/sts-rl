@@ -1006,3 +1006,11 @@ PAD卡ID等同于无效native候选。缓存、稀疏摘要接口、标量critic
 和原PPO/搜索辅助生命周期保持。现役新配置仍FP32，不直接加载旧专用Triton
 权重布局/内核。`pooled-mlp`是旧checkpoint缺省几何；新旧权重互不兼容，几何
 写入policy构造参数和搜索worker冻结快照，旧checkpoint仍按原MLP恢复。
+
+Deck-latent 的原生子进程搜索复用 `NativeRootObservationBatch`：模拟动作仍经
+环境的原奖励、终局和动作编解码路径执行，将活跃战斗观测推迟到待评分分支
+集合形成后统一编码；强制动作中间帧不送评分器。战后锚点、终局和薄动作前缀
+保持普通观测路径。`paired_anchor_search` 不传 `observation_batch` 时保留参考
+逐步编码，供同根同预算对照。评分器只打包当前战斗头或锚点头使用的字段；
+分支永久构筑变化仍比较完整静态键并单独刷新上下文，观测和checkpoint格式不变。
+该CPU路径的语义/速度对照不能代替正式搜索的完整GPU collection与更新恢复资格。
