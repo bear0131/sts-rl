@@ -40,6 +40,8 @@ class CudaBattleArena:
     This adapter does not sample actions, change RNG algorithms or score leaves.
     """
 
+    _stack_owners = {}  # Primary CUDA context, shared by live simulator arenas.
+
     def __init__(self, cubin, sha256, capacity, *, card_count, deck_capacity=96,
                  graph_capacity=2, device='cuda'):
         if min(capacity, card_count, deck_capacity) < 1 or graph_capacity < 0:
@@ -66,46 +68,76 @@ class CudaBattleArena:
             self.driver.cuCtxSetLimit.argtypes = [c.c_int, c.c_size_t]
             self.driver.cuCtxGetLimit.argtypes = [c.POINTER(c.c_size_t), c.c_int]
             self.driver.cuLaunchKernel.argtypes = [p] + [c.c_uint] * 7 + [p, p, p]
-            # Dynamic monster callbacks have an unknown static stack bound.
-            # The old observation kernel incidentally made the driver grow the
-            # stack beyond 64 KiB; direct observation must not rely on that.
-            for kind, minimum in ((0, 80 * 1024), (2, 512 * 1024**2)):
-                current = c.c_size_t()
-                self._check(self.driver.cuCtxGetLimit(c.byref(current), kind))
-                if current.value < minimum:
-                    self._check(self.driver.cuCtxSetLimit(kind, minimum))
+            self.stack_device = torch.cuda.current_device()
             self.module = p()
-            image = c.create_string_buffer(data)
-            self._check(self.driver.cuModuleLoadData(c.byref(self.module), image))
-            self.functions = {}
-            for name in ('layout', 'load', 'observe', 'apply', 'snapshot', 'fork', 'destroy', 'first'):
+            self._acquire_stack_limit()
+            try:
+                # Dynamic monster callbacks have an unknown static stack bound.
+                # The old observation kernel incidentally made the driver grow the
+                # stack beyond 64 KiB; direct observation must not rely on that.
+                current = c.c_size_t()
+                self._check(self.driver.cuCtxGetLimit(c.byref(current), 2))
+                if current.value < 512 * 1024**2:
+                    self._check(self.driver.cuCtxSetLimit(2, 512 * 1024**2))
+                self.module = p()
+                image = c.create_string_buffer(data)
+                self._check(self.driver.cuModuleLoadData(c.byref(self.module), image))
+                self.functions = {}
+                for name in ('layout', 'load', 'observe', 'apply', 'snapshot', 'fork', 'destroy', 'first'):
+                    f = p()
+                    self._check(self.driver.cuModuleGetFunction(c.byref(f), self.module, ('deck_' + name).encode()))
+                    self.functions[name] = f
                 f = p()
-                self._check(self.driver.cuModuleGetFunction(c.byref(f), self.module, ('deck_' + name).encode()))
-                self.functions[name] = f
-            f = p()
-            if self.driver.cuModuleGetFunction(c.byref(f), self.module, b'deck_observe_live_block') == 0:
-                self.functions['observe_live'] = f
-            layout = self._empty((8,), torch.int64)
-            self._launch('layout', [layout])
-            self.battle_bytes, cats, floats, self.actions, cards, deck, version, words = layout.cpu().tolist()
-            if (self.battle_bytes < 1 or (cats, self.actions, version, words) != (226, 198, 1, 8192)
-                    or (cards, deck) != (card_count, deck_capacity)):
-                self._check(self.driver.cuModuleUnload(self.module))
-                raise ValueError('unsupported resident simulator layout')
-            self.arena = self._empty((capacity, self.battle_bytes), torch.uint8)
-            self.constructed = self._empty((capacity,)).zero_()
-            self.prefix = self._empty((capacity,)).zero_()
-            self.selected = self._empty((capacity,)).fill_(-1)
-            self.categorical = self._empty((capacity, cats))
-            self.scalars = self._empty((capacity, floats), torch.float32)
-            self.bits = self._empty((capacity, self.actions))
-            self.mask = self._empty((capacity, self.actions))
-            self.outcome = self._empty((capacity,))
-            self.upgrades = self._empty((capacity, 6, card_count), torch.float32)
-            self.misc = self._empty((capacity, deck_capacity))
-            self.observe_args = [self.arena, self.constructed, self.prefix, self.categorical,
-                self.scalars, self.bits, self.mask, self.outcome, self.upgrades, self.misc]
-            self.apply_args = [self.arena, self.constructed, self.prefix, self.selected, self.bits, self.mask]
+                if self.driver.cuModuleGetFunction(c.byref(f), self.module, b'deck_observe_live_block') == 0:
+                    self.functions['observe_live'] = f
+                layout = self._empty((8,), torch.int64)
+                self._launch('layout', [layout])
+                self.battle_bytes, cats, floats, self.actions, cards, deck, version, words = layout.cpu().tolist()
+                if (self.battle_bytes < 1 or (cats, self.actions, version, words) != (226, 198, 1, 8192)
+                        or (cards, deck) != (card_count, deck_capacity)):
+                    raise ValueError('unsupported resident simulator layout')
+                self.arena = self._empty((capacity, self.battle_bytes), torch.uint8)
+                self.constructed = self._empty((capacity,)).zero_()
+                self.prefix = self._empty((capacity,)).zero_()
+                self.selected = self._empty((capacity,)).fill_(-1)
+                self.categorical = self._empty((capacity, cats))
+                self.scalars = self._empty((capacity, floats), torch.float32)
+                self.bits = self._empty((capacity, self.actions))
+                self.mask = self._empty((capacity, self.actions))
+                self.outcome = self._empty((capacity,))
+                self.upgrades = self._empty((capacity, 6, card_count), torch.float32)
+                self.misc = self._empty((capacity, deck_capacity))
+                self.observe_args = [self.arena, self.constructed, self.prefix, self.categorical,
+                    self.scalars, self.bits, self.mask, self.outcome, self.upgrades, self.misc]
+                self.apply_args = [self.arena, self.constructed, self.prefix, self.selected, self.bits, self.mask]
+            except BaseException:
+                if self.module.value:
+                    self.driver.cuModuleUnload(self.module)
+                self._release_stack_limit()
+                raise
+
+    def _acquire_stack_limit(self):
+        owners = type(self)._stack_owners
+        entry = owners.get(self.stack_device)
+        if entry is None:
+            current = c.c_size_t()
+            self._check(self.driver.cuCtxGetLimit(c.byref(current), 0))
+            required = max(current.value, 80 * 1024)
+            self._check(self.driver.cuCtxSetLimit(0, required))
+            entry = owners[self.stack_device] = dict(original=current.value, required=required, count=0)
+        entry['count'] += 1
+
+    def _release_stack_limit(self):
+        owners = type(self)._stack_owners
+        entry = owners[self.stack_device]
+        entry['count'] -= 1
+        if entry['count'] == 0:
+            current = c.c_size_t()
+            self._check(self.driver.cuCtxGetLimit(c.byref(current), 0))
+            # Do not overwrite a later external context-limit change.
+            if current.value == entry['required']:
+                self._check(self.driver.cuCtxSetLimit(0, entry['original']))
+            del owners[self.stack_device]
 
     @staticmethod
     def _check(rc):
@@ -254,4 +286,5 @@ class CudaBattleArena:
         self._launch('destroy', [self.arena, self.constructed], self.capacity)
         self.stream.synchronize()
         self._check(self.driver.cuModuleUnload(self.module))
+        self._release_stack_limit()
         self.closed = True

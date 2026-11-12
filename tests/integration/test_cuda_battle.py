@@ -14,6 +14,61 @@ from env.core.cuda_observation import CudaObservationDecoder
 pytestmark = [pytest.mark.native, pytest.mark.cuda, pytest.mark.timeout(120)]
 
 
+def test_resident_stack_limit_restored_after_last_arena(cuda_battle_artifacts):
+    import ctypes as c
+    folder, manifest, _ = cuda_battle_artifacts
+    torch.empty(1, device='cuda')
+    driver = c.CDLL('libcuda.so.1')
+    driver.cuCtxGetLimit.argtypes = [c.POINTER(c.c_size_t), c.c_int]
+    def stack_limit():
+        value = c.c_size_t()
+        assert driver.cuCtxGetLimit(c.byref(value), 0) == 0
+        return value.value
+    original = stack_limit()
+    def make():
+        return CudaBattleArena(folder/'deck.cubin', manifest['sha256']['deck.cubin'], 1,
+            card_count=_nosl_compact_lut()['layout']['card_count'])
+    a, b = make(), make()
+    try:
+        assert stack_limit() >= 80 * 1024
+        a.close()
+        assert stack_limit() >= 80 * 1024
+        b.close()
+        assert stack_limit() == original
+        gc.collect()
+        torch.cuda.empty_cache()
+        with_again = make()
+        with_again.close()
+        assert stack_limit() == original
+    finally:
+        a.close()
+        b.close()
+
+
+def test_resident_host_snapshot_does_not_cap_generated_piles(complete_combat_factory,
+                                                            cuda_battle_artifacts):
+    from tests.bridge_fixtures import native_card, native_card_state
+    _, _, bridge = cuda_battle_artifacts
+    env = complete_combat_factory(['STRIKE_RED', 'DEFEND_RED'], seed=42,
+                                  deck_latent_context=True)
+    try:
+        piles = {zone: [native_card('DAZED', 1 + index * 333 + j, base_cost=-2, cost=-2)
+                        for j in range(333)]
+                 for index, zone in enumerate(('draw', 'discard', 'exhaust'))}
+        env.thick.bc.set_card_state(native_card_state(hand=[native_card('STRIKE_RED', 0)],
+            next_uid=1000, **piles))
+        before = env.thick.bc.nosl_future_key()
+        snapshot = bridge.snapshot(env.thick.bc)
+        assert snapshot['max_vector'] == 333
+        assert len(snapshot['words']) > 8192
+        assert not snapshot['portable']  # Exporter must replay from its earlier origin.
+        assert env.thick.bc.nosl_future_key() == before
+        again = bridge.snapshot(env.thick.bc)
+        np.testing.assert_array_equal(snapshot['words'], again['words'])
+    finally:
+        env.close()
+
+
 def test_resident_fused_fp64_sampling_preserves_masked_actions_and_padding():
     from env.search.resident_step_kernels import sample_fp64
     from rl.search.resident_deck import ResidentDeckScorer
