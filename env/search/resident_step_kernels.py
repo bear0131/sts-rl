@@ -10,13 +10,14 @@ from triton.language.extra.cuda import libdevice
 
 
 @triton.jit
-def classify(OUTCOME, MASK, CATS, MISC, EXPECTED, DECK, OWNERS, LIVE, DEPTH,
+def classify(OUTCOME, MASK, CATS, MISC, EXPECTED, DECK, OWNERS, FRAME_IDS, FRAME_COUNT, DEPTH,
              KIND, FORCED, NEED, STATUS, OFFSET, N: tl.constexpr,
              MAX_DEPTH: tl.constexpr, MISC_SCALE: tl.constexpr, B: tl.constexpr):
-    i = tl.program_id(0)*B + tl.arange(0, B)
+    lane = tl.program_id(0)*B + tl.arange(0, B)
+    active = (lane < N) & (lane < tl.load(FRAME_COUNT))
+    i = tl.load(FRAME_IDS+lane, active, 0)
     offset = tl.load(OFFSET)
     a, d = tl.arange(0, 256), tl.arange(0, 128)
-    active = (i < N) & (tl.load(LIVE+i, i < N, 0) != 0)
     outcome = tl.load(OUTCOME+offset+i, active, 0)
     mask = tl.load(MASK+(offset+i[:, None])*198+a[None, :], active[:, None] & (a[None, :] < 198), 0)
     count = tl.sum((mask != 0).to(tl.int32), 1)
@@ -35,9 +36,9 @@ def classify(OUTCOME, MASK, CATS, MISC, EXPECTED, DECK, OWNERS, LIVE, DEPTH,
     expected = tl.load(EXPECTED+i[:, None]*96+d[None, :], need[:, None] & (d[None, :] < 96), 0.)
     card = tl.load(DECK+owner[:, None]*96+d[None, :], need[:, None] & (d[None, :] < 96), 0)
     changed = tl.sum(((misc >= 0) & (card != 0) & (misc.to(tl.float32)/MISC_SCALE != expected)).to(tl.int32), 1) > 0
-    tl.store(KIND+i, kind, i < N)
-    tl.store(FORCED+i, tl.min(tl.where(mask != 0, a[None, :], 198), 1), i < N)
-    tl.store(NEED+i, need.to(tl.int32), i < N)
+    tl.store(KIND+i, kind, active)
+    tl.store(FORCED+i, tl.min(tl.where(mask != 0, a[None, :], 198), 1), active)
+    tl.store(NEED+lane, need.to(tl.int32), lane < N)
     tl.atomic_max(STATUS+1, tl.max(tl.where(need, width, 1), 0))
     tl.atomic_or(STATUS+2, tl.max(changed.to(tl.int32), 0))
     tl.atomic_or(STATUS+3, tl.max((combat & (count < 1)).to(tl.int32), 0))
@@ -69,14 +70,35 @@ def compact_scatter(NEED, PREFIX, TOTALS, IDS, STATUS, N: tl.constexpr,
 
 
 @triton.jit
-def frame_members(IDS, COUNT, FRAME_LIVE, FRAME_COUNT, CAP: tl.constexpr, B: tl.constexpr):
-    i = tl.program_id(0)*B + tl.arange(0, B)
-    count = tl.minimum(tl.load(COUNT), CAP)
-    valid = (i < CAP) & (i < count)
-    row = tl.load(IDS+i, valid, 0)
-    tl.store(FRAME_LIVE+row, 1, valid)
-    if tl.program_id(0) == 0:
-        tl.store(FRAME_COUNT, count)
+def compact_live_local(LIVE, PREFIX, TOTALS, CONTROL, N: tl.constexpr, B: tl.constexpr):
+    if tl.load(CONTROL+1):
+        compact_local(LIVE, PREFIX, TOTALS, N, B)
+
+
+@triton.jit
+def compact_live_scatter(LIVE, PREFIX, TOTALS, IDS, COUNT, CONTROL, N: tl.constexpr,
+                         B: tl.constexpr, NB: tl.constexpr, CB: tl.constexpr):
+    if tl.load(CONTROL+1):
+        compact_scatter(LIVE, PREFIX, TOTALS, IDS, COUNT, N, B, NB, CB)
+
+
+@triton.jit
+def frame_prepare(IDS, COUNT, FRAME_IDS, FRAME_COUNT, CONTROL, CAP: tl.constexpr, B: tl.constexpr):
+    i=tl.program_id(0)*B+tl.arange(0,B)
+    cursor=tl.load(CONTROL);count=tl.minimum(tl.load(COUNT)-cursor,CAP)
+    value=tl.load(IDS+cursor+i,(i<CAP)&(i<count),0)
+    tl.store(FRAME_IDS+i,value,i<CAP)
+    if tl.program_id(0)==0:
+        tl.store(FRAME_COUNT,count);tl.store(CONTROL+1,0)
+
+
+@triton.jit
+def frame_finish(COUNT, FRAME_COUNT, CONTROL, STATUS, ENABLED, F: tl.constexpr, WIDTH: tl.constexpr):
+    if (tl.load(ENABLED)!=0)&(tl.load(STATUS)<=F)&(tl.load(STATUS+1)<=WIDTH)&(tl.load(STATUS+2)==0)&(tl.load(STATUS+3)==0)&(tl.load(STATUS+7)==0):
+        cursor=tl.load(CONTROL)+tl.load(FRAME_COUNT)
+        complete=cursor>=tl.load(COUNT)
+        tl.store(CONTROL,tl.where(complete,0,cursor))
+        tl.store(CONTROL+1,complete.to(tl.int32))
 
 
 @triton.jit
@@ -87,11 +109,12 @@ def remaining_live(LIVE, STATUS, N: tl.constexpr, B: tl.constexpr):
 
 
 @triton.jit
-def prepare(IDS, ROWS, RANDOM, CURSOR, UNIFORMS, STATUS, F: tl.constexpr,
+def prepare(IDS, FRAME_IDS, ROWS, RANDOM, CURSOR, UNIFORMS, STATUS, F: tl.constexpr,
             MAX_DEPTH: tl.constexpr, B: tl.constexpr):
     i = tl.program_id(0)*B + tl.arange(0, B)
     count = tl.load(STATUS)
-    row = tl.load(IDS+tl.where(i < count, i, 0), (i < F) & (count > 0), 0)
+    frame = tl.load(IDS+tl.where(i < count, i, 0), (i < F) & (count > 0), 0)
+    row = tl.load(FRAME_IDS+frame, (i < F) & (count > 0), 0)
     cursor = tl.minimum(tl.load(CURSOR+row, i < F, 0), MAX_DEPTH-1)
     u = tl.load(RANDOM+row*MAX_DEPTH+cursor, i < F, .5)
     tl.store(ROWS+i, row.to(tl.int64), i < F)
@@ -128,23 +151,25 @@ def validate(VALUES, STATUS, F: tl.constexpr, B: tl.constexpr):
 
 @triton.jit
 def commit(KIND, FORCED, LIVE, DEPTH, CURSOR, ANCHORS, FINAL, SELECTED,
-           STATUS, ENABLED, COUNTERS, OFFSET, N: tl.constexpr,
+           STATUS, ENABLED, COUNTERS, OFFSET, FRAME_IDS, FRAME_COUNT, N: tl.constexpr,
            F: tl.constexpr, WIDTH: tl.constexpr, B: tl.constexpr):
     if (tl.load(ENABLED) != 0) & (tl.load(STATUS) <= F) & (tl.load(STATUS+1) <= WIDTH) & (tl.load(STATUS+2) == 0) & (tl.load(STATUS+3) == 0) & (tl.load(STATUS+7) == 0):
-        i = tl.program_id(0)*B + tl.arange(0, B)
+        lane = tl.program_id(0)*B + tl.arange(0, B)
+        valid = (lane < N) & (lane < tl.load(FRAME_COUNT))
+        i = tl.load(FRAME_IDS+lane, valid, 0)
         offset = tl.load(OFFSET)
-        kind = tl.load(KIND+i, i < N, 0)
+        kind = tl.load(KIND+i, valid, 0)
         live = (kind == 5) | (kind == 6)
         # Rows waiting outside this physical frame retain their state. A zero
         # kind is either already finished or has not been observed this tick.
-        tl.store(LIVE+i, live.to(tl.int32), (i < N) & (kind != 0))
-        depth = tl.load(DEPTH+i, i < N, 0)
-        tl.store(DEPTH+i, depth + live.to(tl.int32), i < N)
-        cursor = tl.load(CURSOR+i, i < N, 0)
-        tl.store(CURSOR+i, cursor+(kind == 6).to(tl.int32), i < N)
-        tl.store(ANCHORS+i, 1, (i < N) & (kind == 1))
-        action = tl.load(FORCED+i, i < N, 0)
-        tl.store(SELECTED+offset+i, action, (i < N) & (kind == 5))
+        tl.store(LIVE+i, live.to(tl.int32), valid)
+        depth = tl.load(DEPTH+i, valid, 0)
+        tl.store(DEPTH+i, depth + live.to(tl.int32), valid)
+        cursor = tl.load(CURSOR+i, valid, 0)
+        tl.store(CURSOR+i, cursor+(kind == 6).to(tl.int32), valid)
+        tl.store(ANCHORS+i, 1, valid & (kind == 1))
+        action = tl.load(FORCED+i, valid, 0)
+        tl.store(SELECTED+offset+i, action, valid & (kind == 5))
         for slot in tl.static_range(5):
             target = 2 if slot == 0 else 1 if slot == 1 else 4 if slot == 2 else 5 if slot == 3 else 6
             tl.atomic_add(COUNTERS+slot, tl.sum((kind == target).to(tl.int32), 0))

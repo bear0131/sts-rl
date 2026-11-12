@@ -152,6 +152,17 @@ class FastCombatNetwork(ScalarCombatNetwork):
                 'monster_buffs', 'potions', 'select_card_ids', 'select_card_upgrades',
                 'select_card_costs', 'select_native_indices', 'select_zone', 'combat_legal')
 
+    def _player_inputs(self, obs):
+        hp = obs['player_scalars'].float(); batch = len(hp)
+        turn = hp[:, 4:5] * encode.TURN_SCALE
+        extra = torch.cat((hp[:, 1:2] - hp[:, :1], turn.clamp_min(0).log1p()/4,
+                           torch.sigmoid((hp[:, 5:6] - self.hp_thresholds)*12)), -1)
+        player = self.player_projection(torch.cat(
+            [obs[k].float().reshape(batch, -1) for k in self.scalar_keys] + [extra], -1))
+        player = player + self.turn_bucket(turn.long().flatten().clamp(0, 31))
+        player = player + self.choice_reason(obs['select_context'].long().flatten())
+        return player
+
     def _dynamic_inputs(self, obs, card_table=None):
         table = (self._encode_card_table() if self.training or torch.is_grad_enabled()
                  else self.inference_card_table()) if card_table is None else card_table
@@ -166,14 +177,7 @@ class FastCombatNetwork(ScalarCombatNetwork):
             encoded, magnitude = projected
             index = ids.long() * 2 + upgrades.gt(0).long()
             return F.embedding(index, encoded.reshape(-1, encoded.shape[-1])) + upgrades[..., None] * magnitude
-        hp = obs['player_scalars'].float(); batch = len(hp)
-        turn = hp[:, 4:5] * encode.TURN_SCALE
-        extra = torch.cat((hp[:, 1:2] - hp[:, :1], turn.clamp_min(0).log1p()/4,
-                           torch.sigmoid((hp[:, 5:6] - self.hp_thresholds)*12)), -1)
-        player = self.player_projection(torch.cat(
-            [obs[k].float().reshape(batch, -1) for k in self.scalar_keys] + [extra], -1))
-        player = player + self.turn_bucket(turn.long().flatten().clamp(0, 31))
-        player = player + self.choice_reason(obs['select_context'].long().flatten())
+        player = self._player_inputs(obs)
         hand = card_tokens(obs['hand_ids'], obs['hand_upgrades'])
         hand = hand + self.hand_context(torch.stack([obs[k] for k in
             ('hand_costs', 'hand_damage', 'hand_block', 'select_hand_mask')], -1).float())
@@ -255,10 +259,17 @@ class TransformerCombatNetwork(FastCombatNetwork):
             for key in ('select_card_ids', 'select_card_upgrades',
                         'select_card_costs', 'select_native_indices'):
                 dynamic[key] = obs[key][:, :choice_width]
-        player, entities, summary = self._dynamic_inputs(dynamic, card_table)
         context = obs.get('_combat_context')
         if context is None:
             context = self.context_projection(obs['_run_context'])
+        if '_resident_rows' in obs:
+            from rl.policies.resident_ragged import frozen_entity_blocks
+            player = self._player_inputs(dynamic)
+            summary = obs['_combat_summary']
+            piles = self.pile_projection(self.summaries.features(summary).reshape(len(player), 3, 65))
+            return frozen_entity_blocks(self, dynamic, player + context, summary.relics,
+                piles, valid, required, obs['_resident_rows'], obs['_resident_workspace'])
+        player, entities, summary = self._dynamic_inputs(dynamic, card_table)
         piles = self.pile_projection(self.summaries.features(summary).reshape(len(player), 3, 65))
         blocks = [
             ('global', (player + context)[:, None], torch.ones_like(valid[:, :1])),
@@ -280,36 +291,18 @@ class TransformerCombatNetwork(FastCombatNetwork):
         if padding:
             x = torch.nn.functional.pad(x, (0, 0, 0, padding))
             mask = torch.nn.functional.pad(mask, (0, padding), value=False)
-        if '_resident_rows' in obs:
-            from rl.policies.resident_ragged import frozen_ragged_blocks
-            # The first layer still sees every present key. The last layer
-            # computes only public action entities and the global value token;
-            # relic/pile summaries are keys, with no output-head consumer.
-            queries = mask.clone()
-            for name in ('relic', 'pile0', 'pile1', 'pile2'):
-                lo, hi = spans[name]
-                queries[:, lo:hi] = False
-            lo, hi = spans['select']
-            queries[:, lo:hi] |= required[:, :choice_width]
-            x = frozen_ragged_blocks(self.blocks, x, mask, queries, obs['_resident_rows'],
-                                     obs.get('_resident_workspace'), norm=self.norm)
-        else:
-            for block in self.blocks:
-                if obs.get('_resident_fused_blocks', False):
-                    from rl.policies.resident_transformer import frozen_block
-                    x = frozen_block(block, x, mask)
-                else:
-                    x = block(x, mask)
-        if '_resident_rows' not in obs:
-            x = self.norm(x)
+        for block in self.blocks:
+            if obs.get('_resident_fused_blocks', False):
+                from rl.policies.resident_transformer import frozen_block
+                x = frozen_block(block, x, mask)
+            else:
+                x = block(x, mask)
+        x = self.norm(x)
         result = {name: x[:, lo:hi] for name, (lo, hi) in spans.items()}
         # Heads still see the complete native candidate index space.
-        if '_resident_rows' in obs:
-            result['select'] = result['select'] * required[:, :choice_width, None]
-        else:
-            result['select'] = torch.nn.functional.pad(result['select'],
-                (0, 0, 0, valid.shape[1] - choice_width))
-            result['select'] = result['select'] * required[..., None]
+        result['select'] = torch.nn.functional.pad(result['select'],
+            (0, 0, 0, valid.shape[1] - choice_width))
+        result['select'] = result['select'] * required[..., None]
         return result['global'][:, 0], result
 
 

@@ -27,7 +27,7 @@ def resident_anchor_search(roots, budgets, scorer, arena, *, seed, max_depth=200
     start = time.monotonic()
     stats = dict(chains=0, atomic_steps=0, policy_rows=0, forced_rows=0, anchor_rows=0,
         cutoff_rows=0, terminal_rows=0, max_active=0, budget_floor_overage=0)
-    results, jobs = [], []
+    results, job_parts = [], []
     generators = {}
     for i, (root, budget) in enumerate(zip(roots, budgets, strict=True)):
         group = 0 if groups is None else groups[i]
@@ -42,14 +42,19 @@ def resident_anchor_search(roots, budgets, scorer, arena, *, seed, max_depth=200
             result['skipped'] = root['skipped']; continue
         worlds = max(1, budget // len(legal))
         stats['budget_floor_overage'] += max(0, worlds*len(legal)-budget)
-        for world in generators[group].integers(0, 2**63-1, worlds, dtype=np.int64):
-            for a in range(len(legal)):
-                jobs.append((i, a, int(world)))
-    if not jobs:
+        world_seeds = generators[group].integers(0, 2**63-1, worlds, dtype=np.int64)
+        # Pack the old batched job boundary in the same world-major/action-major
+        # order. It owns logical IDs separately from physical reusable lanes.
+        job_parts.append(np.column_stack((np.full(worlds*len(legal), i, np.int64),
+            np.tile(np.arange(len(legal), dtype=np.int64), worlds), np.repeat(world_seeds, len(legal)))))
+    if not job_parts:
         return results, dict(stats, seconds=time.monotonic()-start)
+    jobs = np.concatenate(job_parts)
     offsets = np.r_[0, np.cumsum([len(r['actions']) for r in results])]
     value_sums = np.zeros(offsets[-1], np.float64)
     visit_sums = np.zeros(offsets[-1], np.int64)
+    bits = np.concatenate([r['bits'] for r in roots])
+    draw_selection = np.asarray([r['draw_selection'] for r in roots])
     arena.load([r['snapshot'] for r in roots], [r['prefix'] for r in roots])
     nr = len(roots)
     for step in range(max((len(r.get('replay', ())) for r in roots), default=0)):
@@ -58,11 +63,10 @@ def resident_anchor_search(roots, budgets, scorer, arena, *, seed, max_depth=200
     for begin in range(0, len(jobs), wave_capacity):
         wave = jobs[begin:begin+wave_capacity]
         n = len(wave)
-        source, action, worlds = (np.asarray(v) for v in zip(*wave))
+        source, action, worlds = wave.T
         dest = np.arange(nr, nr+n)
         arena.fork(source, dest, worlds)
-        arena.first(source, dest, [roots[r]['bits'][a] for r, a, _ in wave],
-                    [roots[r]['draw_selection'] for r in source])
+        arena.first(source, dest, bits[offsets[source]+action], draw_selection[source])
         # Pre-generate the same independent PCG64 uniforms. A lane advances its
         # cursor only for a policy choice, never for forced or prefix actions.
         uniforms = {w: np.random.default_rng(int(w) ^ 0x504F4C494359).random(max_depth) for w in set(worlds)}

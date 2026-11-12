@@ -33,8 +33,10 @@ class ResidentStepPipeline:
             empty((self.n,)) for _ in range(8))
         self.anchors = empty((self.n,))
         self.active_ids, self.active_count = empty((self.n,)), empty((1,))
-        self.frame_live, self.frame_count = empty((self.n,)), empty((1,))
+        self.frame_count = empty((1,))
+        self.frame_control = empty((2,)).zero_()
         self.frame_capacity = min(self.n, type(self).frame_capacity)
+        self.frame_ids = empty((self.frame_capacity,))
         self.depth_limit = empty((1,)).fill_(max_depth)
         self.compact_simulator = all(k in arena.functions for k in ('observe_indexed', 'apply_compact'))
         self.final = empty((self.n,), torch.float64)
@@ -58,6 +60,7 @@ class ResidentStepPipeline:
         self.context[:n].copy_(self.scorer.context.combat[owners])
         self.deck[:len(self.scorer.root['deck_ids'])].copy_(self.scorer.root['deck_ids'])
         self.wave_n, self.owners = n, owners
+        self.frame_control.zero_(); self.frame_control[1:2].fill_(1)
         self.enabled.fill_(1)
 
     def execute(self, rows, uniforms, width, token_capacity, query_capacity):
@@ -67,30 +70,32 @@ class ResidentStepPipeline:
         # Port the old pool/frame split: completed lanes immediately admit
         # waiting jobs into a bounded neural frame. More queued chains must
         # not allocate a worst-case neural workspace for every waiting job.
-        K.compact_local[(nb,)](self.live, self.prefix, self.totals, n, 1024)
-        K.compact_scatter[(nb,)](self.live, self.prefix, self.totals,
-            self.active_ids, self.active_count, n, 1024, nb, triton.next_power_of_2(nb))
-        self.frame_live.zero_()
-        K.frame_members[(triton.cdiv(self.frame_capacity, 256),)](self.active_ids,
-            self.active_count, self.frame_live, self.frame_count, self.frame_capacity, 256)
+        K.compact_live_local[(nb,)](self.live, self.prefix, self.totals, self.frame_control, n, 1024)
+        K.compact_live_scatter[(nb,)](self.live, self.prefix, self.totals,
+            self.active_ids, self.active_count, self.frame_control, n, 1024, nb, triton.next_power_of_2(nb))
+        K.frame_prepare[(triton.cdiv(self.frame_capacity,256),)](self.active_ids,
+            self.active_count,self.frame_ids,self.frame_count,self.frame_control,self.frame_capacity,256)
         if self.compact_simulator:
-            observation_args = a.observe_args+[self.active_ids, self.frame_count, s.wave_offset]
+            observation_args = a.observe_args+[self.frame_ids, self.frame_count, s.wave_offset]
             if 'observe_search' in a.functions:
                 a._launch('observe_search', observation_args+[self.depth, self.depth_limit], n,
                           dispatch_n=self.frame_capacity)
             else:
                 a._launch('observe_indexed', observation_args, n, dispatch_n=self.frame_capacity)
         else:
-            a._launch('observe_live', a.observe_args+[self.frame_live, s.wave_offset], n)
+            # Old artifacts lack indexed dispatch; the observer still sees all
+            # live lanes, but classification/commit owns only the current frame.
+            a._launch('observe_live', a.observe_args+[self.live, s.wave_offset], n)
         self.status.zero_()
-        K.classify[(triton.cdiv(n, 32),)](a.outcome, a.mask, a.categorical, a.misc,
-            self.expected, self.deck, s.wave_owners, self.frame_live, self.depth,
+        frame_n=self.frame_capacity; frame_nb=triton.cdiv(frame_n,1024)
+        K.classify[(triton.cdiv(frame_n, 32),)](a.outcome, a.mask, a.categorical, a.misc,
+            self.expected, self.deck, s.wave_owners, self.frame_ids, self.frame_count, self.depth,
             self.kind, self.forced, self.need, self.status, s.wave_offset,
-            n, self.max_depth, MISC_SCALE, 32, num_warps=4)
-        K.compact_local[(nb,)](self.need, self.prefix, self.totals, n, 1024)
-        K.compact_scatter[(nb,)](self.need, self.prefix, self.totals, self.ids,
-            self.status, n, 1024, nb, triton.next_power_of_2(nb))
-        K.prepare[(triton.cdiv(F, 256),)](self.ids, rows, self.randoms, self.cursor,
+            frame_n, self.max_depth, MISC_SCALE, 32, num_warps=4)
+        K.compact_local[(frame_nb,)](self.need, self.prefix, self.totals, frame_n, 1024)
+        K.compact_scatter[(frame_nb,)](self.need, self.prefix, self.totals, self.ids,
+            self.status, frame_n, 1024, frame_nb, triton.next_power_of_2(frame_nb))
+        K.prepare[(triton.cdiv(F, 256),)](self.ids, self.frame_ids, rows, self.randoms, self.cursor,
             uniforms, self.status, F, self.max_depth, 256)
         logits, values = s.step_forward({'rows': rows}, width, contexts=self.context,
             row_count=self.status, workspace=(token_capacity, query_capacity, self.status))
@@ -98,16 +103,19 @@ class ResidentStepPipeline:
         K.sample_fp64[(F,)](logits, a.mask, rows, s.wave_offset, uniforms, sampled,
                             self.status, a.actions, triton.next_power_of_2(a.actions), num_warps=4)
         K.validate[(triton.cdiv(F, 256),)](values, self.status, F, 256)
-        K.commit[(triton.cdiv(n, 256),)](self.kind, self.forced, self.live, self.depth,
+        K.commit[(triton.cdiv(frame_n, 256),)](self.kind, self.forced, self.live, self.depth,
             self.cursor, self.anchors, self.final, a.selected, self.status,
-            self.enabled, self.counters, s.wave_offset, n, F, width, 256)
+            self.enabled, self.counters, s.wave_offset, self.frame_ids, self.frame_count,
+            frame_n, F, width, 256)
         K.commit_scores[(triton.cdiv(F, 256),)](rows, sampled, values, self.kind,
             self.final, a.selected, self.status, self.enabled, s.wave_offset, F, width, 256)
         if self.compact_simulator:
             a._launch('apply_compact', a.apply_args+[
-                self.active_ids, self.frame_count, s.wave_offset], n, dispatch_n=self.frame_capacity)
+                self.frame_ids, self.frame_count, s.wave_offset], n, dispatch_n=self.frame_capacity)
         else:
             a._launch('apply', a.apply_args, n)
+        K.frame_finish[(1,)](self.active_count,self.frame_count,self.frame_control,
+            self.status,self.enabled,F,width)
         self.status[4:5].zero_()
         K.remaining_live[(nb,)](self.live, self.status, n, 1024)
 

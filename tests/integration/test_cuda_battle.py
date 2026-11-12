@@ -275,6 +275,91 @@ def test_resident_ragged_blocks_preserve_selected_queries_and_empty_padding():
             torch.testing.assert_close(normalized, norm(actual), rtol=3e-5, atol=3e-6)
 
 
+def test_resident_indexed_piles_match_full_histograms_with_holes():
+    from rl.policies.resident_ragged import frozen_indexed_piles, frozen_pile_summary
+    torch.manual_seed(20261111)
+    cards, start, physical = 73, 11, 19
+    scalars = torch.randint(0, 333, (physical, start+3*cards+7), device='cuda').float()
+    upgraded = torch.randint(0, 128, (physical, 6, cards), device='cuda').float()
+    rows = torch.tensor([17, 3, 11, 0, 9], device='cuda')
+    base = torch.randn(cards, 64, device='cuda')*.01
+    delta = torch.randn_like(base)*.01; magnitude = torch.randn(64, device='cuda')*.01
+    with torch.no_grad():
+        counts = scalars[rows, start:start+3*cards].reshape(-1, 3, cards)
+        expected = frozen_pile_summary(counts, upgraded[rows, :3], upgraded[rows, 3:]/10,
+                                       base, delta, magnitude)
+        for active in (5, 3, 0):
+            actual = frozen_indexed_piles(scalars, upgraded, rows, torch.tensor(active, device='cuda'),
+                                         base, delta, magnitude, start, 10.)
+            for got, want in zip(actual, expected):
+                torch.testing.assert_close(got[:active], want[:active], rtol=3e-5, atol=3e-6)
+                assert torch.count_nonzero(got[active:]) == 0
+
+
+@pytest.mark.timeout(180)
+def test_resident_compact_features_preserve_slots_queries_and_retry(complete_combat_factory, monkeypatch):
+    from rl.policies.deck_latent import DeckLatentPolicy
+    from rl.search.resident_deck import ResidentDeckScorer
+    root = complete_combat_factory(['STRIKE_RED', 'DEFEND_RED', 'BASH', 'WARCRY'], seed=42,
+        deck_latent_context=True, card_language=True)
+    torch.manual_seed(20261111)
+    policy = DeckLatentPolicy(root.observation_space, root.action_space, lambda _: 5e-5,
+        d_model=32, n_layers=1, n_heads=4, room_lambda=1., reward_flow='sequential-v1',
+        deck_combat_encoder='transformer64x2').cuda().eval()
+    scorer = ResidentDeckScorer(policy)
+    net = policy.core.combat
+    try:
+        scorer.roots([root._obs()])
+        for batch, width, active in ((1, 1, 1), (33, 16, 17), (17, 96, 17), (33, 1, 0)):
+            obs = {k: torch.as_tensor(v, device='cuda')[None].repeat(batch, *([1]*v.ndim))
+                   for k, v in root._obs().items()}
+            obs['select_native_indices'].zero_();obs['select_card_ids'].zero_()
+            obs['combat_legal'][:, 91:187] = 0
+            # Interior holes and a legal PAD-ID/handle-only query are distinct.
+            obs['select_native_indices'][:, width-1] = 9
+            obs['combat_legal'][:, 91+width-1] = 1
+            obs['select_card_ids'][:, 0] = obs['hand_ids'][:, 0]
+            obs['select_card_upgrades'][:, 0] = 1000.
+            obs['select_card_upgrades'][:, width-1] = -1.
+            obs['hand_upgrades'][:, 0] = 1000.
+            obs['hand_ids'][:, 3] = 0
+            obs['_combat_context'] = scorer.context.combat.expand(batch, -1)
+            obs['_choice_width'] = width
+            with torch.no_grad():
+                obs['_combat_summary'] = net.summaries.rebuild(obs)
+                reference, entities = net.encode(obs)
+                resident = dict(obs, _resident_rows=torch.tensor(active, device='cuda'),
+                    _resident_card_projection=(scorer.projected_cards, scorer.card_upgrade),
+                    _resident_monster_projection=scorer.monster_tables)
+                status = torch.zeros(8, dtype=torch.int32, device='cuda')
+                resident['_resident_workspace'] = (1, 1, status)
+                # The combined route must not silently rebuild dense entities.
+                def dense_forbidden(*args, **kwargs):
+                    raise AssertionError('resident path rebuilt dense projected entities')
+                with monkeypatch.context() as patch:
+                    patch.setattr(net, '_dynamic_inputs', dense_forbidden)
+                    failed, _ = net.encode(resident)
+                    needed = status.cpu().tolist()
+                    assert bool(needed[7]) == bool(active)
+                    assert torch.isfinite(failed).all()
+                    resident['_resident_workspace'] = (max(1, needed[5]), max(1, needed[6]), status)
+                    actual, blocks = net.encode(resident)
+                assert status[7].item() == 0
+                torch.testing.assert_close(actual[:active], reference[:active], rtol=3e-5, atol=3e-6)
+                for key, mask in (('hand', obs['hand_ids'] != 0), ('monster', obs['monster_id'] != 0),
+                                  ('potion', obs['potions'] != 0)):
+                    mask = mask[:active]
+                    torch.testing.assert_close(blocks[key][:active][mask], entities[key][:active][mask],
+                                               rtol=3e-5, atol=3e-6)
+                required = (obs['select_native_indices'] > 0) | obs['combat_legal'][:, 91:187].bool()
+                mask = required[:active, :width]
+                torch.testing.assert_close(blocks['select'][:active][mask],
+                    entities['select'][:active, :width][mask], rtol=3e-5, atol=3e-6)
+            gc.collect();torch.cuda.empty_cache()
+    finally:
+        scorer.close()
+
+
 def test_resident_ragged_capacity_retry_preserves_selected_outputs():
     from rl.policies.entity_action_playout import EntityBlock
     from rl.policies.resident_ragged import frozen_ragged_blocks

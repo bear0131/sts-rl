@@ -73,7 +73,9 @@ class CudaObservationDecoder:
             combat_exit_anchor=torch.stack((raw['outcome'] == 1, raw['outcome'] == 3), 1).float(),
             relics=ids, relic_counters=self.relic_counters(s, ids, roots['relic_counters'][owners]))
 
-    def __call__(self, raw, roots, owners, *, head_only=False):
+    def __call__(self, raw, roots, owners, *, head_only=False, choice_width=96, include_piles=True):
+        if not 1 <= choice_width <= 96 or (not head_only and (choice_width != 96 or not include_piles)):
+            raise ValueError('only the frozen head may narrow trailing selection padding')
         c, s, n = raw['categorical'].long(), raw['scalars'], len(owners)
         # Only public context and the head consumers, not unused reward pages.
         keys = ('phase', 'ascension', 'act', 'floor', 'next_boss', 'character', 'run_keys',
@@ -89,7 +91,8 @@ class CudaObservationDecoder:
         o.update(hand_ids=lookup('card', slice(0, 10)), monster_id=lookup('monster', slice(10, 15)),
                  monster_move=lookup('move', slice(15, 20)), monster_intent_cat=c[:, 20:25].clone(),
                  potions=lookup('potion', slice(25, 30)), select_context=lookup('select_context', slice(30, 31)),
-                 select_card_ids=lookup('card', slice(31, 127)), select_native_indices=c[:, 127:223],
+                 select_card_ids=lookup('card', slice(31, 31+choice_width)),
+                 select_native_indices=c[:, 127:127+choice_width],
                  select_zone=c[:, 223:224], combat_legal=raw['mask'].bool(), gold=s[:, 5:6]/E.GOLD_SCALE)
         o['player_scalars'] = torch.stack((s[:, 0].clamp_max(E.HP_SCALE)/E.HP_SCALE,
             s[:, 1].clamp_max(E.HP_SCALE)/E.HP_SCALE, s[:, 2]/E.BLOCK_SCALE,
@@ -121,22 +124,24 @@ class CudaObservationDecoder:
         ids, levels = o['hand_ids'], (up > 0).long()
         o['hand_damage'] = torch.where(ids == self.searing, 12+up*(up+7)/2, self.damage[ids, levels])/E.DMG_SCALE
         o['hand_block'] = self.block[ids, levels]/E.BLOCK_SCALE
-        pile = s[:, self.pile_start:self.select_start].reshape(n, 3, self.cards)
-        for i, name in enumerate(('draw', 'discard', 'exhaust')):
-            o[name+'_counts'] = pile[:, i]
-        o['pile_upgraded_counts'] = raw['upgrades'][:, :3]
-        o['pile_upgrade_sums'] = raw['upgrades'][:, 3:]/E.UPGRADE_SCALE
+        if include_piles:
+            pile = s[:, self.pile_start:self.select_start].reshape(n, 3, self.cards)
+            for i, name in enumerate(('draw', 'discard', 'exhaust')):
+                o[name+'_counts'] = pile[:, i]
+            o['pile_upgraded_counts'] = raw['upgrades'][:, :3]
+            o['pile_upgrade_sums'] = raw['upgrades'][:, 3:]/E.UPGRADE_SCALE
         selection = s[:, self.select_start:]
-        o['select_card_upgrades'] = selection[:, 4:100]/E.UPGRADE_SCALE
-        cost = selection[:, 100:196]
+        o['select_card_upgrades'] = selection[:, 4:4+choice_width]/E.UPGRADE_SCALE
+        cost = selection[:, 100:100+choice_width]
         o['select_card_costs'] = torch.where(cost == -3, -2, cost)/E.ENERGY_SCALE
         o['select_hand_mask'] = ((raw['prefix'][:, None] & self.bits) != 0).float()
         o['pick_remaining'] = (selection[:, :1]-o['select_hand_mask'].sum(1, keepdim=True)).clamp_min(0)/E.PICK_SCALE
         o['can_pick_zero'], o['can_pick_any'] = selection[:, 1:2], selection[:, 2:3]
-        o['selected_card_ids'] = zeros('selected_card_ids').long()
-        o['selected_card_ids'][:, :2] = lookup('card', slice(224, 226))
-        o['selected_card_upgrades'] = zeros('selected_card_upgrades')
-        o['selected_card_upgrades'][:, :2] = selection[:, 196:198]/E.UPGRADE_SCALE
+        if not head_only:
+            o['selected_card_ids'] = zeros('selected_card_ids').long()
+            o['selected_card_ids'][:, :2] = lookup('card', slice(224, 226))
+            o['selected_card_upgrades'] = zeros('selected_card_upgrades')
+            o['selected_card_upgrades'][:, :2] = selection[:, 196:198]/E.UPGRADE_SCALE
         o['relic_counters'] = self.relic_counters(s, o['relics'], o['relic_counters'])
         if not head_only:
             misc = raw['permanent_misc']

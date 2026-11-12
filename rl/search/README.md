@@ -166,3 +166,17 @@ context/table caches, bounded inference graphs and the exact anchor cache.
 Original actor actions, per-world PCG64 draws, paired budgets and PPO targets
 remain separate. Qualification requires a full collection plus update/recovery;
 small resident tests alone do not enable the production schedule gate.
+
+The frozen transformer64x2 resident path packs canonical entity features directly
+into retained tokens before projection. Its feature buffer aliases graph-owned
+QKV storage only after input projection has finished. Final queries retain native
+hand/enemy/potion slots and required PAD-ID choices; relic and pile tokens remain
+attention keys. Indexed pile projection reads the owned arena histograms directly.
+Inactive rows and capacity retries cannot advance environments or random cursors.
+`ResidentStepPipeline` traverses every row of a stable compacted pass before
+rebuilding the live queue, and submits bounded frames before a host status read.
+Anchor cache transfers batch fields by dtype while retaining their exact schema
+and bytes. These inference changes do not alter checkpoint parameters or the
+training decoder. The legacy token-regret hash-feature encoder, action head,
+counter-based RNG and terminal-return target are different contracts; their
+weights/semantics are not substitutes for DeckLatent/paired-PCG64/anchor targets.

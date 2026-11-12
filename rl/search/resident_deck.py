@@ -3,6 +3,7 @@ import numpy as np
 import torch
 
 from env.core.cuda_observation import CudaObservationDecoder
+from env.core import encode
 from env.core.outer_return import MISC_SCALE
 from rl.policies.combat_summary import CombatSummary
 from rl.policies.collection_graphs import SharedCollectionGraphs
@@ -148,7 +149,13 @@ class ResidentDeckScorer:
         rows = batch['rows']
         owner = self.wave_owners[rows]
         physical = rows + self.wave_offset
-        gathered = {'raw:'+k: v[physical] for k, v in self.arena_inputs.items() if k != 'permanent_misc'}
+        excluded = ('permanent_misc', 'upgrades') if row_count is not None else ('permanent_misc',)
+        gathered = {'raw:'+k: v[physical] for k, v in self.arena_inputs.items() if k not in excluded}
+        if row_count is not None:
+            from rl.policies.resident_ragged import frozen_indexed_piles
+            gathered['resident_piles'] = frozen_indexed_piles(self.arena_inputs['scalars'],
+                self.arena_inputs['upgrades'], physical, row_count, self.card_base, self.card_delta,
+                self.core.combat.summaries.upgrade_projection, self.decoder.pile_start, encode.UPGRADE_SCALE)
         gathered.update({k: v[owner] for k, v in self.packed_root.items()})
         gathered['context'] = self.banked_context[owner] if contexts is None else contexts[rows]
         gathered['static_relics'] = self.banked_static_relics[owner]
@@ -249,7 +256,9 @@ class ResidentDeckScorer:
                  for key, (group, start, end, shape) in self.root_layout.items()}
         rows = torch.arange(len(raw['outcome']), device=self.device)
         o = (self.decoder.anchor(raw, roots, rows) if anchor
-             else self.decoder(raw, roots, rows, head_only=True))
+             else self.decoder(raw, roots, rows, head_only=True,
+                               choice_width=width if 'row_count' in batch else 96,
+                               include_piles='resident_piles' not in batch))
         if anchor:
             # Counter features belong after exact-cache lookup. Merely asking
             # for a previously scored anchor must not rebuild its projection.
@@ -264,12 +273,10 @@ class ResidentDeckScorer:
         if 'workspace' in batch:
             o['_resident_workspace'] = batch['workspace']
         context = SearchContext(batch['context'], None)
-        counts = torch.stack([o[k+'_counts'] for k in ('draw', 'discard', 'exhaust')], 1)
-        if 'row_count' in batch:
-            from rl.policies.resident_ragged import frozen_pile_summary
-            piles, sizes = frozen_pile_summary(counts, o['pile_upgraded_counts'], o['pile_upgrade_sums'],
-                self.card_base, self.card_delta, self.core.combat.summaries.upgrade_projection)
+        if 'resident_piles' in batch:
+            piles, sizes = batch['resident_piles']
         else:
+            counts = torch.stack([o[k+'_counts'] for k in ('draw', 'discard', 'exhaust')], 1)
             piles = counts @ self.card_base + o['pile_upgraded_counts'] @ self.card_delta
             piles = piles + o['pile_upgrade_sums'].sum(2, keepdim=True)*self.core.combat.summaries.upgrade_projection
             sizes = counts[:, :, 1:].sum(2, keepdim=True)
@@ -334,7 +341,8 @@ class ResidentDeckScorer:
                            else self._forward_sample(x, width)), self.runtime.capacity)
             return out[0][:len(rows)], out[1][:len(rows)].flatten()
         owner = owners[rows]
-        batch = {'raw:'+k: v[rows] for k, v in raw.items()}
+        batch = {'raw:'+k: v[rows] for k, v in raw.items()
+                 if not anchor or k in ('categorical', 'scalars', 'outcome', 'permanent_misc')}
         batch.update({k: v[owner] for k, v in self.packed_root.items()})
         context = (self.context.anchor if anchor else self.context.combat)[owner].clone()
         # Permanent growth is rare; it owns a refreshed projection. No root or
@@ -355,10 +363,23 @@ class ResidentDeckScorer:
         if anchor:
             batch['relic_identity'] = self.root_relic_identity[owner]
             obs, identity = self._forward(batch, 1, True)
-            inputs = {k: obs[k].cpu().numpy() for k in
+            fields = {k: obs[k] for k in
                       ('gold', 'run_keys', 'potions', 'combat_exit_anchor', 'relics', 'relic_counters')}
-            inputs.update(hp=obs['player_scalars'][:, :2].cpu().numpy(),
-                          context=context.cpu().numpy(), relic_identity=identity.cpu().numpy())
+            fields.update(hp=obs['player_scalars'][:, :2], context=context, relic_identity=identity)
+            # One transfer per dtype retains the exact bytes/schema used by the
+            # cache. Do not cast integer IDs to floats or rendezvous per field.
+            groups = {}
+            for key, value in fields.items():
+                groups.setdefault(value.dtype, []).append(key)
+            inputs = {}
+            for keys in groups.values():
+                host = torch.cat([fields[k].reshape(len(rows), -1) for k in keys], 1).cpu().numpy()
+                offset = 0
+                for key in keys:
+                    shape = fields[key].shape[1:]
+                    end = offset + int(np.prod(shape))
+                    inputs[key] = host[:, offset:end].reshape(len(rows), *shape)
+                    offset = end
             def forward(host):
                 x = {k: torch.as_tensor(v, device=self.device) for k, v in host.items()}
                 x['player_scalars'] = x.pop('hp')
