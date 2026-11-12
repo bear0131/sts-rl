@@ -139,3 +139,18 @@ The fixed metrics distinguish CUDA inference from CUDA simulation. Scoring wall
 time includes packing and completed device copies; worker-and-transport wall time
 includes worker simulation and waiting, not just IPC. Search-stage configuration
 stores `search_backend`; changing it does not grant `search_qualified`.
+
+`inference_cache_bytes` enables a bounded, collection-owned `ExactInputCache`
+for combat logits/value (three quarters of the allowance) and pre-reward anchor
+value (one quarter). It defaults to zero for retained configurations until the
+complete backend is qualified. Both adapters expose requests, actual forwarded
+rows, cross-batch hits, within-batch duplicates, evictions and separate key/forward
+wall time. No environment step or RNG draw is cached or skipped. Keys include
+the exact consumed head inputs, frozen projections and resource summaries;
+combat keys retain candidate order, prefixes, masks and physical choice width.
+The anchor consumes actual HP/maxHP, potions, gold, keys, exit kind and relic
+summary, not battle block/energy/turn. Changes in permanent cards refresh the
+context. Weight changes reject a live cache; each new collection owns a new one.
+Missing-row batching is validated numerically on the same device, not advertised
+as bitwise identical across different batch sizes or GPUs. This CPU-keyed cache
+does not substitute for resident CUDA simulation or CUDA graph lifecycle gates.

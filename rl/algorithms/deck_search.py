@@ -17,7 +17,7 @@ from env.core import vocab
 from env.search.anchored_chains import paired_anchor_search
 from rl.algorithms.search_auxiliary import SearchTrainingConfig, SearchRolloutBuffer, improved_prior
 from rl.policies.deck_latent import MODEL_CONTRACT
-from rl.search.deck_latent import DeckLatentScorer
+from rl.search.deck_latent import DeckLatentScorer, DeckSearchInferenceCache, DECK_SEARCH_CACHE_METRICS
 from rl.training.deck_search_worker import search_options
 
 
@@ -44,13 +44,14 @@ class ShadowSearchCollection:
             'chains', 'atomic_steps', 'policy_rows', 'forced_rows', 'anchor_rows', 'cutoff_rows',
             'terminal_rows', 'max_active', 'budget_floor_overage', 'worker_search_seconds', 'context_refreshes',
             'scoring_seconds', 'worker_and_transport_seconds', 'frontier_batches', 'frontier_rows', 'transport_bytes',
-            'backend_cuda_inference', 'backend_cuda_simulation'), 0.)
+            'backend_cuda_inference', 'backend_cuda_simulation', *DECK_SEARCH_CACHE_METRICS), 0.)
         self.stats['backend_cuda_inference'] = float(self.config.backend == 'cuda-batched-native')
         self.hook = None
         self.previous = env.step_async
         self.snapshot = None
 
     def start(self):
+        self.inference_cache = DeckSearchInferenceCache(self.model.policy.core, self.config.inference_cache_bytes)
         if self.config.backend == 'cuda-batched-native':
             # Weights stay on the learner device for the entire frozen
             # collection. Export only the small summary tables, once.
@@ -97,7 +98,8 @@ class ShadowSearchCollection:
                        for o in observations]
             seed = int(self.rng.integers(0, 2**63 - 1))
             if self.config.backend == 'cuda-batched-native':
-                scorer = DeckLatentScorer(self.model.policy, observations, context=context, tables=self.tables)
+                scorer = DeckLatentScorer(self.model.policy, observations, context=context, tables=self.tables,
+                    inference_cache=self.inference_cache)
                 result, stats = self.env.deck_batched_search(dict(indices=indices.tolist(), budgets=budgets,
                     seed=seed, generation=self.generation, options=search_options(self.config)), scorer)
             elif self.snapshot is not None:
@@ -108,9 +110,11 @@ class ShadowSearchCollection:
                 if not hasattr(self.env, 'envs'):
                     raise ValueError('unsupported shadow search environment transport')
                 roots = [self.env.envs[i].unwrapped for i in indices]
-                scorer = DeckLatentScorer(self.model.policy, observations, context=context)
+                scorer = DeckLatentScorer(self.model.policy, observations, context=context,
+                    inference_cache=self.inference_cache)
                 result, stats = paired_anchor_search(roots, budgets, scorer, seed=seed, **search_options(self.config))
                 stats['context_refreshes'] = scorer.context_refreshes
+                stats.update(scorer.cache_statistics())
             for j, (index, row) in enumerate(zip(indices, result, strict=True)):
                 if row.get('skipped'):
                     continue
@@ -131,6 +135,7 @@ class ShadowSearchCollection:
         if self.hook is not None:
             self.hook.remove()
         self.env.step_async = self.previous
+        self.inference_cache.clear()
         self.model.deck_search_rng = self.rng.bit_generator.state
         self.model.deck_search_last_stats = self.stats
         for k, v in self.stats.items():

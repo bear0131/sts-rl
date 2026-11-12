@@ -143,6 +143,15 @@ class FastCombatNetwork(ScalarCombatNetwork):
         # Conservative physical memory proxy, not an attention FLOP claim.
         return (obs['deck_ids'] != 0).sum(1) + (obs['relics'] != 0).sum(1) + 128
 
+    @property
+    def search_input_keys(self):
+        """Head inputs when frozen run projections and pile summaries exist."""
+        return (*self.scalar_keys, 'select_context', 'hand_ids', 'hand_upgrades',
+                'hand_costs', 'hand_damage', 'hand_block', 'select_hand_mask',
+                'monster_id', 'monster_move', 'monster_intent_cat', 'monster_scalars',
+                'monster_buffs', 'potions', 'select_card_ids', 'select_card_upgrades',
+                'select_card_costs', 'select_native_indices', 'select_zone', 'combat_legal')
+
     def _dynamic_inputs(self, obs, card_table=None):
         table = (self._encode_card_table() if self.training or torch.is_grad_enabled()
                  else self.inference_card_table()) if card_table is None else card_table

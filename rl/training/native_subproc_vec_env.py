@@ -225,6 +225,7 @@ class NativeSubprocVecEnv(cv.GroupedCachedMaskSubprocVecEnv):
                         generation=request['generation'], sequence=sequence, outputs=outputs[begin:end])))
                     pending[self.remotes[group_index]] = group_index
             totals['context_refreshes'] = scorer.context_refreshes
+            totals.update(scorer.cache_statistics())
             return results, totals
         finally:
             # Scorer failures must not leave a suspended search retaining forks
