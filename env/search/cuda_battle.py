@@ -1,0 +1,216 @@
+"""Owned, model-free CUDA battle states; not a training search backend.
+
+The caller supplies a separately built and hash-verified simulator module.
+Native callback queues cannot be imported from CPU. Queues created on device
+stay with this module through forks, graph retirement and state destruction.
+"""
+from collections import OrderedDict
+import ctypes as c
+import hashlib
+from pathlib import Path
+
+import numpy as np
+import torch
+
+
+class CudaBattleArena:
+    """Fixed state storage and bounded observe/apply graph pairs.
+
+    Operations are serialized on the creating CUDA stream. Returned observation
+    views are overwritten by the next observe. The module must outlive every
+    state and graph; close destroys graphs, then states, then the module.
+    This adapter does not sample actions, change RNG algorithms or score leaves.
+    """
+
+    def __init__(self, cubin, sha256, capacity, *, card_count, deck_capacity=96,
+                 graph_capacity=2, device='cuda'):
+        if min(capacity, card_count, deck_capacity) < 1 or graph_capacity < 0:
+            raise ValueError('invalid resident battle capacity')
+        data = Path(cubin).read_bytes()
+        if hashlib.sha256(data).hexdigest() != sha256:
+            raise ValueError('resident simulator module hash mismatch')
+        self.device = torch.device(device)
+        if self.device.type != 'cuda':
+            raise ValueError('resident battles require CUDA')
+        self.capacity, self.graph_capacity = int(capacity), int(graph_capacity)
+        self.graphs = OrderedDict()
+        self.closed = False
+        self.loaded = np.zeros(capacity, bool)
+        self.counts = dict(graph_captures=0, graph_replays=0, graph_evictions=0)
+        with torch.cuda.device(self.device):
+            self.stream = torch.cuda.current_stream()
+            torch.empty(1, device=self.device)  # Establish the primary context.
+            self.driver = c.CDLL('libcuda.so.1')
+            p = c.c_void_p
+            self.driver.cuModuleLoadData.argtypes = [c.POINTER(p), p]
+            self.driver.cuModuleGetFunction.argtypes = [c.POINTER(p), p, c.c_char_p]
+            self.driver.cuModuleUnload.argtypes = [p]
+            self.driver.cuCtxSetLimit.argtypes = [c.c_int, c.c_size_t]
+            self.driver.cuCtxGetLimit.argtypes = [c.POINTER(c.c_size_t), c.c_int]
+            self.driver.cuLaunchKernel.argtypes = [p] + [c.c_uint] * 7 + [p, p, p]
+            for kind, minimum in ((0, 65536), (2, 512 * 1024**2)):
+                current = c.c_size_t()
+                self._check(self.driver.cuCtxGetLimit(c.byref(current), kind))
+                if current.value < minimum:
+                    self._check(self.driver.cuCtxSetLimit(kind, minimum))
+            self.module = p()
+            image = c.create_string_buffer(data)
+            self._check(self.driver.cuModuleLoadData(c.byref(self.module), image))
+            self.functions = {}
+            for name in ('layout', 'load', 'observe', 'apply', 'snapshot', 'fork', 'destroy'):
+                f = p()
+                self._check(self.driver.cuModuleGetFunction(c.byref(f), self.module, ('deck_' + name).encode()))
+                self.functions[name] = f
+            layout = self._empty((8,), torch.int64)
+            self._launch('layout', [layout])
+            self.battle_bytes, cats, floats, self.actions, cards, deck, version, words = layout.cpu().tolist()
+            if (self.battle_bytes < 1 or (cats, self.actions, version, words) != (226, 198, 1, 8192)
+                    or (cards, deck) != (card_count, deck_capacity)):
+                self._check(self.driver.cuModuleUnload(self.module))
+                raise ValueError('unsupported resident simulator layout')
+            self.arena = self._empty((capacity, self.battle_bytes), torch.uint8)
+            self.constructed = self._empty((capacity,)).zero_()
+            self.prefix = self._empty((capacity,)).zero_()
+            self.selected = self._empty((capacity,)).fill_(-1)
+            self.categorical = self._empty((capacity, cats))
+            self.scalars = self._empty((capacity, floats), torch.float32)
+            self.bits = self._empty((capacity, self.actions))
+            self.mask = self._empty((capacity, self.actions))
+            self.outcome = self._empty((capacity,))
+            self.upgrades = self._empty((capacity, 6, card_count), torch.float32)
+            self.misc = self._empty((capacity, deck_capacity))
+            self.observe_args = [self.arena, self.constructed, self.prefix, self.categorical,
+                self.scalars, self.bits, self.mask, self.outcome, self.upgrades, self.misc]
+            self.apply_args = [self.arena, self.constructed, self.prefix, self.selected, self.bits, self.mask]
+
+    @staticmethod
+    def _check(rc):
+        if rc:
+            raise RuntimeError(f'resident CUDA driver failure {rc}; do not reuse this arena')
+
+    def _empty(self, shape, dtype=torch.int32):
+        return torch.empty(shape, dtype=dtype, device=self.device)
+
+    def _upload(self, values, dtype=np.int32):
+        array = np.ascontiguousarray(values, dtype=dtype)
+        if array.dtype == np.uint64:
+            array = array.view(np.int64)
+        return torch.from_numpy(array).to(self.device)
+
+    def _assert_owner(self):
+        if self.closed:
+            raise RuntimeError('resident battle arena is closed')
+        if torch.cuda.current_stream(self.device) != self.stream:
+            raise RuntimeError('resident battle operations must use their owning stream')
+
+    def _launch(self, name, tensors, n=None):
+        values = [c.c_void_p(t.data_ptr()) for t in tensors]
+        if n is not None:
+            values.append(c.c_int(n))
+        arguments = (c.c_void_p * len(values))(*(c.cast(c.byref(v), c.c_void_p) for v in values))
+        self._check(self.driver.cuLaunchKernel(self.functions[name], ((n or 1) + 31) // 32,
+            1, 1, 32, 1, 1, 0, c.c_void_p(torch.cuda.current_stream(self.device).cuda_stream), arguments, None))
+
+    def _rows(self, n):
+        self._assert_owner()
+        if not 0 < n <= self.capacity or not self.loaded[:n].all():
+            raise ValueError('observe/apply requires a constructed contiguous prefix')
+
+    def load(self, snapshots, prefixes):
+        self._assert_owner()
+        n = len(snapshots)
+        if not 0 < n <= self.capacity or len(prefixes) != n:
+            raise ValueError('invalid imported battle count')
+        words = np.zeros((n, 8192), np.uint64)
+        lengths = []
+        for i, state in enumerate(snapshots):
+            if not state['portable'] or state['queue_size'] or len(state['words']) > 8192:
+                raise ValueError('CPU callback queues cannot be imported to CUDA')
+            words[i, :len(state['words'])] = state['words']
+            lengths.append(len(state['words']))
+        self.prefix[:n].copy_(self._upload(prefixes))
+        self._launch('load', [self.arena, self.constructed, self._upload(words, np.uint64), self._upload(lengths)], n)
+        self.loaded[:n] = True
+
+    def fork(self, sources, destinations, worlds):
+        self._assert_owner()
+        sources, destinations = np.asarray(sources), np.asarray(destinations)
+        if (not len(sources) or len(sources) != len(destinations) or len(sources) != len(worlds)
+                or len(set(destinations)) != len(destinations)
+                or np.any(sources < 0) or np.any(sources >= self.capacity)
+                or np.any(destinations < 0) or np.any(destinations >= self.capacity)
+                or not self.loaded[sources].all() or np.intersect1d(sources, destinations).size):
+            raise ValueError('fork sources must be live and disjoint from unique destinations')
+        self._launch('fork', [self.arena, self.constructed, self.prefix, self._upload(sources),
+            self._upload(destinations), self._upload(worlds, np.uint64)], len(sources))
+        self.loaded[destinations] = True
+
+    def _graphs(self, n):
+        found = self.graphs.get(n)
+        if found is not None:
+            self.graphs.move_to_end(n)
+            return found
+        while len(self.graphs) >= self.graph_capacity:
+            self.stream.synchronize()
+            self.graphs.popitem(last=False)
+            self.counts['graph_evictions'] += 1
+        stream = torch.cuda.Stream(device=self.device)
+        stream.wait_stream(self.stream)
+        with torch.cuda.stream(stream):
+            self._launch('observe', self.observe_args, n)
+        stream.synchronize()
+        observe, apply = torch.cuda.CUDAGraph(), torch.cuda.CUDAGraph()
+        # Capture does not advance state. Each graph has its own pool and owns
+        # no model/cuBLAS workspace; its only mutable inputs are arena buffers.
+        with torch.cuda.graph(observe, stream=stream):
+            self._launch('observe', self.observe_args, n)
+        with torch.cuda.graph(apply, stream=stream):
+            self._launch('apply', self.apply_args, n)
+        self.graphs[n] = (observe, apply)
+        self.counts['graph_captures'] += 1
+        return observe, apply
+
+    def observe(self, n):
+        self._rows(n)
+        if self.graph_capacity:
+            self._graphs(n)[0].replay()
+            self.counts['graph_replays'] += 1
+        else:
+            self._launch('observe', self.observe_args, n)
+        return dict(categorical=self.categorical[:n], scalars=self.scalars[:n],
+            mask=self.mask[:n], outcome=self.outcome[:n], prefix=self.prefix[:n],
+            upgrades=self.upgrades[:n], permanent_misc=self.misc[:n])
+
+    def apply(self, selected):
+        n = len(selected)
+        self._rows(n)
+        selected = np.asarray(selected, np.int32)
+        if np.any(selected < -1) or np.any(selected >= self.actions):
+            raise ValueError('invalid relative atomic action')
+        self.selected[:n].copy_(self._upload(selected))
+        if self.graph_capacity:
+            self._graphs(n)[1].replay()
+            self.counts['graph_replays'] += 1
+        else:
+            self._launch('apply', self.apply_args, n)
+
+    def snapshot(self, n):
+        self._rows(n)
+        words, metadata = self._empty((n, 8192), torch.int64), self._empty((n, 5))
+        self._launch('snapshot', [self.arena, self.constructed, words, metadata], n)
+        return words.cpu().numpy().view(np.uint64), metadata.cpu().numpy()
+
+    def clear_graphs(self):
+        self._assert_owner()
+        self.stream.synchronize()
+        self.graphs.clear()
+
+    def close(self):
+        if self.closed:
+            return
+        self._assert_owner()
+        self.clear_graphs()
+        self._launch('destroy', [self.arena, self.constructed], self.capacity)
+        self.stream.synchronize()
+        self._check(self.driver.cuModuleUnload(self.module))
+        self.closed = True

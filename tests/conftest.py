@@ -1,5 +1,8 @@
 """Shared deterministic native fixtures; missing native builds are errors."""
 import os
+import hashlib
+import importlib.util
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -15,6 +18,24 @@ import numpy as np
 from env.core import _BUILD
 from env.core.run_env import SlayTheSpireEnv
 import slaythespire as sts
+
+
+@pytest.fixture(scope='session')
+def cuda_battle_artifacts():
+    """Explicit resident simulator build, never a skipped native/GPU test."""
+    assert torch.cuda.is_available(), 'resident simulator qualification requires CUDA'
+    folder = os.environ.get('STS_CUDA_BATTLE_ARTIFACTS')
+    assert folder, 'set STS_CUDA_BATTLE_ARTIFACTS to an explicit verified build'
+    folder = Path(folder)
+    manifest = json.loads((folder / 'artifacts.json').read_text())
+    assert manifest['contract'] == 'deck-resident-battle-v1'
+    for name in ('deck.cubin', 'deck_cuda_bridge.cpython-311-x86_64-linux-gnu.so'):
+        assert hashlib.sha256((folder / name).read_bytes()).hexdigest() == manifest['sha256'][name]
+    path = folder / 'deck_cuda_bridge.cpython-311-x86_64-linux-gnu.so'
+    spec = importlib.util.spec_from_file_location('deck_cuda_bridge', path)
+    bridge = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bridge)
+    return folder, manifest, bridge
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -54,6 +75,28 @@ def combat_factory():
         env._invalidate_backend_cache()
         created.append(env)
         return env
+
+    yield make
+    for env in created:
+        env.close()
+
+
+@pytest.fixture
+def complete_combat_factory():
+    """Reach a fight through the real run, retaining its complete continuation."""
+    created = []
+
+    def make(deck, *, seed):
+        env = SlayTheSpireEnv(global_map_view=True, combat_action_contract='autoregressive-v2',
+            combat_exit_anchor=True, reward_flow='sequential-v1')
+        created.append(env)
+        env.reset(seed=seed)
+        env.thick.gc.set_deck([(card, 0) for card in deck])
+        for _ in range(128):
+            if env.thick.bc is not None:
+                return env
+            env.step(int(np.flatnonzero(env.action_masks())[0]))
+        raise AssertionError('fixed native fixture did not enter a fight')
 
     yield make
     for env in created:

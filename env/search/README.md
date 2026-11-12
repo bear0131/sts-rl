@@ -1,5 +1,26 @@
 # Worker 搜索基础
 
+`cuda_battle.py` 是实验中的无模型 CUDA 常驻战斗组件，尚未作为训练搜索后端启用。
+它要求调用方提供固定 SHA256 的 `deck-resident-battle-v1` 模块；模块包含
+`cuda_battle_kernels.cuh`，并使用与当前原生环境一致的规则、compact v9 观测及
+逻辑状态序列化器构建。私有模拟器源码、生成文件和编译产物不入 Git。
+旧规则构建中的 185 个方法和 99 个动作工厂的 `__noinline__` 处理需要保留；
+未应用时，当前原子出牌路径已复现 64 KiB device stack overflow。
+
+CPU 待执行回调不能跨设备导入。`load` 拒绝这类根；在 GPU 中产生的回调由同一
+模块持有，可随独立分支复制，直到状态销毁。调度接入必须维护真实战斗的 GPU
+镜像，或明确报告尚不能导入的根，不能跳过 continuation 或静默改变搜索预算。
+`fork` 使用当前 `noslRedeterminize`；动作沿当前 autoregressive-v2 执行，选择
+前缀、候选槽位、完整逻辑状态和随机状态须与 CPU 对照。它不负责叶评分或策略采样。
+
+单个 arena 只允许一个调用方在创建它的 CUDA stream 上串行操作；观察结果是下次
+`observe` 会覆盖的视图。固定状态缓冲区跨图淘汰保留，图按行数有界缓存；关闭时
+先释放图，再销毁设备状态，最后卸载模块。不能让带函数指针的状态跨模块存活。
+显式 GPU 回归入口为 `tests/integration/test_cuda_battle.py`，设置
+`STS_CUDA_BATTLE_ARTIFACTS` 指向带 `artifacts.json`、固定 SHA 的 cubin 和 Python 3.11
+桥接扩展的目录；缺少构建或 CUDA 是失败，不是跳过。该组件测试不替代完整
+256×768 collection、当前模型评分、两轮训练更新/恢复和端到端速度验收。
+
 `nosl_sampler.py` 派生 opaque nonce；`nosl_is_az.py` 提供只依赖 NumPy/观测编码的 Python tree/session。模型前推由外部 value callback/leaf request 提供，不导入 Torch、训练器或 policy。
 
 env/core/run_env.py 在 worker 中驱动这些 session；学习侧通过同一接口消费。这里解决了过去 env 反向导入 rl 的耦合。原生严格 Full Gumbel 树仍归 sim/；checkpoint value 对照搜索归 rl/search/。
