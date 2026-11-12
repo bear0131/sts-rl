@@ -42,6 +42,42 @@ def enter_combat(env):
     raise AssertionError('could not enter combat with bounded legal actions')
 
 
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_repeated_status_cards_keep_three_pile_tokens_and_exact_counts(latent_env, device):
+    from tests.bridge_fixtures import native_card, native_card_state
+    from env.core import encode
+
+    enter_combat(latent_env)
+    policy = policy_for(latent_env, 'transformer64x2').to(device)
+    policy.set_training_mode(False)
+    net = policy.core.combat
+    widths = []
+    hook = net.blocks[0].register_forward_pre_hook(lambda _, args: widths.append(args[0].shape[1]))
+    try:
+        for count in (1, 207):
+            piles = {zone: [native_card('DAZED', 1 + i * count + j, base_cost=-2, cost=-2)
+                           for j in range(count)]
+                     for i, zone in enumerate(('draw', 'discard', 'exhaust'))}
+            latent_env.thick.bc.set_card_state(native_card_state(
+                hand=[native_card('STRIKE_RED', 0)], next_uid=1 + 3 * count, **piles))
+            latent_env._invalidate_backend_cache()
+            obs = {k: v.to(device) for k, v in tensor_obs(latent_env).items()}
+            status = encode._card_id_idx('Dazed')
+            for zone in piles:
+                assert obs[zone + '_counts'][0, status].item() == count
+            with torch.no_grad():
+                summary = net.summaries.rebuild(obs)
+                assert summary.piles.shape == (1, 3, 64)
+                assert summary.pile_counts.flatten().tolist() == [count] * 3
+                context = policy.core.prepare_search_context(obs)
+                _, entities = net.encode(dict(obs, _combat_context=context.combat))
+                for i in range(3):
+                    assert entities[f'pile{i}'].shape == (1, 1, 64)
+        assert widths[0] == widths[1] <= 32
+    finally:
+        hook.remove()
+
+
 def test_public_context_present_in_combat_and_checkpoint_replay(latent_env):
     env = latent_env
     enter_combat(env)
