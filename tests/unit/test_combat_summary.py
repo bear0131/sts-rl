@@ -66,6 +66,23 @@ def test_repeated_upgrade_magnitude_and_delta_gradients():
             torch.testing.assert_close(left, right, atol=2e-6, rtol=2e-5)
 
 
+def test_frozen_relic_identity_preserves_active_flags_and_unbounded_counters():
+    net = make_inputs()
+    ids = torch.tensor([[1, 0, 2, 3]])
+    static = (net.relic_identity(ids) * ids.ne(0)[..., None]).sum(1)
+    original = static.clone()
+    values = []
+    for counters in (torch.tensor([[1., 99., .2, 0.]]),
+                     torch.tensor([[0., 99., .2, 0.]]),
+                     torch.tensor([[0., 99., 100.1, -.4]])):
+        combined = static + (net.relic_counter_terms(ids, counters) * ids.ne(0)[..., None]).sum(1)
+        torch.testing.assert_close(combined, net.relic_terms(ids, counters).sum(1), rtol=3e-5, atol=3e-6)
+        values.append(combined)
+    assert not torch.equal(values[0], values[1])
+    assert not torch.equal(values[1], values[2])
+    torch.testing.assert_close(static, original, rtol=0, atol=0)
+
+
 def test_long_update_stream_does_not_accumulate_large_fp32_error():
     net = make_inputs()
     with torch.no_grad():

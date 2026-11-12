@@ -84,6 +84,9 @@ class ResidentDeckScorer:
                      ('ascension', 'run_keys', 'combat_is_boss', 'relics', 'relic_counters')}
         for key in ('relics', 'relic_counters'):
             head_root[key] = head_root[key][:, :self.relic_width]
+        ids = head_root['relics'].long()
+        self.root_relic_identity = (self.core.combat.summaries.relic_identity(ids)
+                                   * ids.ne(0)[..., None]).sum(1)
         groups = {}
         for key, value in head_root.items():
             groups.setdefault(value.dtype, []).append(key)
@@ -236,10 +239,9 @@ class ResidentDeckScorer:
         o = (self.decoder.anchor(raw, roots, rows) if anchor
              else self.decoder(raw, roots, rows, head_only=True))
         if anchor:
-            # Cache identity is the complete consumed dynamic state plus the
-            # frozen projected context. Combat turn/block do not enter it.
-            relics = self.core.combat.summaries.relic_terms(o['relics'], o['relic_counters']).sum(1)
-            return o, relics
+            # Counter features belong after exact-cache lookup. Merely asking
+            # for a previously scored anchor must not rebuild its projection.
+            return o, batch['relic_identity']
         o['_choice_width'] = width
         o['_resident_fused_blocks'] = True
         if 'row_count' in batch:
@@ -332,14 +334,18 @@ class ResidentDeckScorer:
             context.index_copy_(0, changed, self.resolve_changed_context(owner, misc, projected, changed, anchor))
         batch['context'] = context
         if anchor:
-            obs, relics = self._forward(batch, 1, True)
-            inputs = {k: obs[k].cpu().numpy() for k in ('gold', 'run_keys', 'potions', 'combat_exit_anchor')}
+            batch['relic_identity'] = self.root_relic_identity[owner]
+            obs, identity = self._forward(batch, 1, True)
+            inputs = {k: obs[k].cpu().numpy() for k in
+                      ('gold', 'run_keys', 'potions', 'combat_exit_anchor', 'relics', 'relic_counters')}
             inputs.update(hp=obs['player_scalars'][:, :2].cpu().numpy(),
-                          context=context.cpu().numpy(), relics=relics.cpu().numpy())
+                          context=context.cpu().numpy(), relic_identity=identity.cpu().numpy())
             def forward(host):
                 x = {k: torch.as_tensor(v, device=self.device) for k, v in host.items()}
                 x['player_scalars'] = x.pop('hp')
-                values = self.core.anchor_with_context(x, x.pop('context'), x.pop('relics'))
+                dynamic = self.core.combat.summaries.relic_counter_terms(x['relics'], x['relic_counters'])
+                relics = x.pop('relic_identity') + (dynamic * x['relics'].ne(0)[..., None]).sum(1)
+                values = self.core.anchor_with_context(x, x.pop('context'), relics)
                 return np.empty((len(values), 0), np.float32), values.flatten().cpu().numpy()
             _, values = self.anchor_cache.forward(inputs, forward)
             return None, torch.as_tensor(values, device=self.device)

@@ -449,6 +449,9 @@ def test_resident_anchor_batches_bound_projection_and_keep_exact_cache(
         # A changed chunk boundary and temporary allocator release retain exact
         # values/cache identity without forwarding previously scored anchors.
         torch.cuda.empty_cache()
+        def unexpected_projection(*args, **kwargs):
+            raise AssertionError('an exact cache hit rebuilt relic counter features')
+        monkeypatch.setattr(policy.core.combat.summaries, 'relic_counter_terms', unexpected_projection)
         _, replay = scorer.score(raw, owners, rows[:33], anchor=True)
         torch.testing.assert_close(replay, actual[:33], rtol=0, atol=0)
         assert scorer.anchor_cache.stats['misses'] == misses
