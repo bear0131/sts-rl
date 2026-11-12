@@ -152,6 +152,26 @@ def test_resident_paired_search_matches_native_and_preserves_root(complete_comba
             torch.cuda.empty_cache()
         assert before == root.export_training_state()
         assert torch.equal(rng_before, torch.cuda.get_rng_state())
+        # Trailing PAD width changes graph identity; interior empty slots must
+        # survive. Compare against the complete untrimmed head consumers.
+        base = root._obs()
+        present = np.flatnonzero(base['relics'])
+        assert len(present)
+        for slot in (0, 7, 0):
+            obs = {k: v.copy() for k, v in base.items()}
+            obs['relics'].fill(0); obs['relic_counters'].fill(0)
+            obs['relics'][slot] = base['relics'][present[0]]
+            obs['relic_counters'][slot] = base['relic_counters'][present[0]]
+            score.roots([obs])
+            raw = arena.observe(1)
+            owners = torch.zeros(1, dtype=torch.long, device='cuda')
+            full = score.decoder(raw, {k: torch.as_tensor(v[None], device='cuda')
+                                      for k, v in obs.items()}, owners)
+            with torch.no_grad():
+                expected = policy.core.combat_with_context(full, score.context)
+                actual = score.score(raw, owners, [0])
+            for got, want in zip(actual, expected, strict=True):
+                torch.testing.assert_close(got.flatten(), want.flatten(), rtol=3e-5, atol=3e-6)
         with torch.no_grad():
             next(policy.core.parameters()).add_(0.)
         with pytest.raises(RuntimeError, match='weights changed'):

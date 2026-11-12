@@ -40,18 +40,26 @@ class ResidentDeckScorer:
         self.root = {k: torch.as_tensor(np.stack([o[k] for o in observations]), device=self.device)
                      for k in keys if k in observations[0]}
         self.context = self.core.prepare_search_context(self.root) if context is None else context
+        # Match the existing collection graph's bounded relic projection. A
+        # maximum-capacity PAD suffix otherwise creates a multi-GiB basis
+        # tensor for thousands of search lanes, despite only a few real relics.
+        relics = np.stack([o['relics'] for o in observations])
+        self.relic_width = SharedCollectionGraphs._width(relics, 4)
+        head_root = dict(self.root)
+        for key in ('relics', 'relic_counters'):
+            head_root[key] = head_root[key][:, :self.relic_width]
         groups = {}
-        for key, value in self.root.items():
+        for key, value in head_root.items():
             groups.setdefault(value.dtype, []).append(key)
         self.root_layout, self.packed_root = {}, {}
         for index, keys in enumerate(groups.values()):
             group, offset = 'rootgroup:'+str(index), 0
             for key in keys:
-                shape = self.root[key].shape[1:]
+                shape = head_root[key].shape[1:]
                 end = offset + int(np.prod(shape))
                 self.root_layout[key] = group, offset, end, shape
                 offset = end
-            self.packed_root[group] = torch.cat([self.root[k].reshape(len(observations), -1)
+            self.packed_root[group] = torch.cat([head_root[k].reshape(len(observations), -1)
                                                  for k in keys], 1)
         self.changed_context = {}
 
@@ -122,7 +130,7 @@ class ResidentDeckScorer:
         # Only masked trailing padding changes physical shape; no candidate cap.
         width = min(96, 1 << (width-1).bit_length())
         padded = max(16, 1 << (len(rows)-1).bit_length())
-        outputs = self.runtime._replay(self.runtime.entries, ('resident', width, padded), batch,
+        outputs = self.runtime._replay(self.runtime.entries, ('resident', width, padded, self.relic_width), batch,
             padded, lambda x: self._forward(x, width, False), self.runtime.capacity)
         return outputs[0][:len(rows)], outputs[1][:len(rows)].flatten()
 
