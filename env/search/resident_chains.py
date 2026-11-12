@@ -47,6 +47,9 @@ def resident_anchor_search(roots, budgets, scorer, arena, *, seed, max_depth=200
                 jobs.append((i, a, int(world)))
     if not jobs:
         return results, dict(stats, seconds=time.monotonic()-start)
+    offsets = np.r_[0, np.cumsum([len(r['actions']) for r in results])]
+    value_sums = np.zeros(offsets[-1], np.float64)
+    visit_sums = np.zeros(offsets[-1], np.int64)
     arena.load([r['snapshot'] for r in roots], [r['prefix'] for r in roots])
     nr = len(roots)
     for step in range(max((len(r.get('replay', ())) for r in roots), default=0)):
@@ -126,10 +129,14 @@ def resident_anchor_search(roots, budgets, scorer, arena, *, seed, max_depth=200
             final[rows] = values.cpu().numpy()
         if 'observe_live' not in arena.functions:
             stats['atomic_steps'] += int(depth.sum())
-        for j, (root, a, _) in enumerate(wave):
-            results[root]['values'][a] += final[j]
-            results[root]['visits'][a] += 1
-    for result in results:
+        # Unbuffered add.at keeps the original paired-world addition order,
+        # without dispatching two Python dictionary updates for every chain.
+        slots = offsets[source] + action
+        np.add.at(value_sums, slots, final)
+        np.add.at(visit_sums, slots, 1)
+    for i, result in enumerate(results):
+        result['values'] = value_sums[offsets[i]:offsets[i+1]].copy()
+        result['visits'] = visit_sums[offsets[i]:offsets[i+1]].copy()
         count = result['visits']
         if count.any():
             if not (count > 0).all() or not (count == count[0]).all():

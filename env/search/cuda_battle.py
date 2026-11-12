@@ -182,12 +182,15 @@ class CudaBattleArena:
         if torch.cuda.current_stream(self.device) != self.stream:
             raise RuntimeError('resident battle operations must use their owning stream')
 
-    def _launch(self, name, tensors, n=None):
+    def _launch(self, name, tensors, n=None, *, dispatch_n=None):
         values = [c.c_void_p(t.data_ptr()) for t in tensors]
         if n is not None:
             values.append(c.c_int(n))
         arguments = (c.c_void_p * len(values))(*(c.cast(c.byref(v), c.c_void_p) for v in values))
-        grid, threads = (n, 64) if name in ('observe_live', 'observe_indexed', 'observe_search') else (((n or 1) + 31) // 32, 32)
+        # Indexed work consumes a compact frame, but its physical indices
+        # still address the full arena. Keep launch extent and bounds separate.
+        extent = n if dispatch_n is None else dispatch_n
+        grid, threads = (extent, 64) if name in ('observe_live', 'observe_indexed', 'observe_search') else (((extent or 1) + 31) // 32, 32)
         self._check(self.driver.cuLaunchKernel(self.functions[name], grid,
             1, 1, threads, 1, 1, 0, c.c_void_p(torch.cuda.current_stream(self.device).cuda_stream), arguments, None))
 

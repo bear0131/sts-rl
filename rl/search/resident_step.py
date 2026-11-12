@@ -76,9 +76,10 @@ class ResidentStepPipeline:
         if self.compact_simulator:
             observation_args = a.observe_args+[self.active_ids, self.frame_count, s.wave_offset]
             if 'observe_search' in a.functions:
-                a._launch('observe_search', observation_args+[self.depth, self.depth_limit], n)
+                a._launch('observe_search', observation_args+[self.depth, self.depth_limit], n,
+                          dispatch_n=self.frame_capacity)
             else:
-                a._launch('observe_indexed', observation_args, n)
+                a._launch('observe_indexed', observation_args, n, dispatch_n=self.frame_capacity)
         else:
             a._launch('observe_live', a.observe_args+[self.frame_live, s.wave_offset], n)
         self.status.zero_()
@@ -104,7 +105,7 @@ class ResidentStepPipeline:
             self.final, a.selected, self.status, self.enabled, s.wave_offset, F, width, 256)
         if self.compact_simulator:
             a._launch('apply_compact', a.apply_args+[
-                self.active_ids, self.frame_count, s.wave_offset], n)
+                self.active_ids, self.frame_count, s.wave_offset], n, dispatch_n=self.frame_capacity)
         else:
             a._launch('apply', a.apply_args, n)
         self.status[4:5].zero_()
@@ -161,11 +162,18 @@ class ResidentStepPipeline:
 
     def run(self, deadline):
         count, width = self.wave_n, 1
+        remaining = self.wave_n
         while True:
             if time.monotonic() > deadline:
                 raise TimeoutError('resident paired budget incomplete; no partial teacher accepted')
             graph, F, W = self.graph(count, width)
-            graph.replay(); self.stats['replays'] += 1
+            # As in the original StepPipeline, submit a bounded group of
+            # frames before rendezvous. A failed transaction cannot advance
+            # state or RNG, so later submissions retain the same retry/error.
+            replays = min(4, max(1, triton.cdiv(remaining, self.frame_capacity)))
+            for _ in range(replays):
+                graph.replay()
+            self.stats['replays'] += replays
             status = self.status.cpu().tolist(); self.stats['host_reads'] += 1
             if status[3]:
                 raise RuntimeError(f'resident device step failed validation {status[3]}')
@@ -181,6 +189,7 @@ class ResidentStepPipeline:
                 continue
             if status[4] == 0:
                 break
+            remaining = status[4]
             count, width = status[:2]
         counts = self.counters.cpu().tolist()
         return (self.final[:self.wave_n].cpu().numpy(),

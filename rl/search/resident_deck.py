@@ -52,6 +52,9 @@ class ResidentDeckScorer:
             self.card_base = summaries.card_terms(ids, torch.zeros_like(ids))
             self.card_delta = (summaries.card_projection(summaries.card.versioned_forward(ids,
                 torch.ones_like(ids)))-self.card_base)*ids.ne(0)[:, None]
+            relic_ids = torch.arange(summaries.relic_identity.num_embeddings, device=self.device)
+            counters = torch.arange(256, device=self.device).float()/10
+            self.relic_table = summaries.relic_terms(relic_ids[:, None], counters[None, :]).contiguous()
         # Compile the current input adapter and heads around the migrated
         # ragged kernels. Keeping their dynamic capacities outside Dynamo
         # avoids recompiling the entire model for every CUDA graph bucket.
@@ -87,6 +90,10 @@ class ResidentDeckScorer:
         ids = head_root['relics'].long()
         self.root_relic_identity = (self.core.combat.summaries.relic_identity(ids)
                                    * ids.ne(0)[..., None]).sum(1)
+        # Inventory and non-live counters are invariant inside this battle.
+        # Live fields (including consumed Lizard Tail) keep their own lookup.
+        static_relics = (self.core.combat.summaries.relic_terms(ids, head_root['relic_counters'])
+                         * (~self.decoder.live[ids])[..., None]).sum(1)
         groups = {}
         for key, value in head_root.items():
             groups.setdefault(value.dtype, []).append(key)
@@ -110,6 +117,10 @@ class ResidentDeckScorer:
             bank['context'] = torch.empty((capacity, self.context.combat.shape[1]), device=self.device)
         bank['context'][:len(observations)].copy_(self.context.combat)
         self.banked_context = bank['context']
+        if 'static_relics' not in bank:
+            bank['static_relics'] = torch.empty((capacity, 64), device=self.device)
+        bank['static_relics'][:len(observations)].copy_(static_relics)
+        self.banked_static_relics = bank['static_relics']
         for key in ('deck_ids', 'outer_deck_misc'):
             name = 'metadata:'+key
             if name not in bank:
@@ -140,6 +151,7 @@ class ResidentDeckScorer:
         gathered = {'raw:'+k: v[physical] for k, v in self.arena_inputs.items() if k != 'permanent_misc'}
         gathered.update({k: v[owner] for k, v in self.packed_root.items()})
         gathered['context'] = self.banked_context[owner] if contexts is None else contexts[rows]
+        gathered['static_relics'] = self.banked_static_relics[owner]
         if row_count is not None:
             gathered['row_count'] = row_count
         if workspace is not None:
@@ -261,7 +273,14 @@ class ResidentDeckScorer:
             piles = counts @ self.card_base + o['pile_upgraded_counts'] @ self.card_delta
             piles = piles + o['pile_upgrade_sums'].sum(2, keepdim=True)*self.core.combat.summaries.upgrade_projection
             sizes = counts[:, :, 1:].sum(2, keepdim=True)
-        relics = self.core.combat.summaries.relic_terms(o['relics'], o['relic_counters']).sum(1)
+        if 'row_count' in batch:
+            from rl.policies.resident_ragged import frozen_relic_summary
+            summaries = self.core.combat.summaries
+            relics = frozen_relic_summary(o['relics'], o['relic_counters'], batch['static_relics'],
+                self.decoder.live, self.relic_table, summaries.relic_identity.weight,
+                summaries.relic_counter.weight)
+        else:
+            relics = self.core.combat.summaries.relic_terms(o['relics'], o['relic_counters']).sum(1)
         summary = CombatSummary(piles, sizes, relics)
         return self.core.combat_with_context(o, context, summary)
 

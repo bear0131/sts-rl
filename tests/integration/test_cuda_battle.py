@@ -14,6 +14,40 @@ from env.core.cuda_observation import CudaObservationDecoder
 pytestmark = [pytest.mark.native, pytest.mark.cuda, pytest.mark.timeout(120)]
 
 
+def test_resident_relic_lookup_keeps_static_inventory_and_unbounded_live_fields():
+    from rl.policies.combat_summary import AdditiveCombatInputs
+    from rl.policies.shared_wholerun import LearnedCardTable
+    from rl.policies.resident_ragged import frozen_relic_summary
+    torch.manual_seed(20261111)
+    net = AdditiveCombatInputs(LearnedCardTable(12, 8), 9, width=64).cuda().eval()
+    live = torch.tensor([False, True, False, True, True, False, True, False, False], device='cuda')
+    with torch.no_grad():
+        rid = torch.arange(9, device='cuda')
+        table = net.relic_terms(rid[:, None], torch.arange(256, device='cuda')[None, :].float()/10)
+        for batch in (17, 257, 33):
+            ids = torch.tensor([[1, 2, 3, 0, 4, 6]], device='cuda').repeat(batch, 1)
+            original = torch.tensor([[1., .9, 0., 99., .2, -.7]], device='cuda').repeat(batch, 1)
+            static = (net.relic_terms(ids, original)*(~live[ids])[..., None]).sum(1)
+            frozen = static.clone()
+            counters = original.clone()
+            # Consumed active flag, ordinary counts, fractional/out-of-table
+            # values and negative counters must all retain the original basis.
+            counters[:, 0] = torch.arange(batch, device='cuda') % 2
+            counters[:, 2] = torch.arange(batch, device='cuda').float()/10
+            counters[:, 4] = 100.1
+            counters[::2, 5] = .035
+            expected = net.relic_terms(ids, counters).sum(1)
+            actual = frozen_relic_summary(ids, counters, static, live, table,
+                net.relic_identity.weight, net.relic_counter.weight)
+            torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-6)
+            torch.testing.assert_close(static, frozen, rtol=0, atol=0)
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            replay = frozen_relic_summary(ids, counters, static, live, table,
+                net.relic_identity.weight, net.relic_counter.weight)
+            torch.testing.assert_close(replay, actual, rtol=0, atol=0)
+
+
 def test_resident_stack_limit_restored_after_last_arena(cuda_battle_artifacts):
     import ctypes as c
     folder, manifest, _ = cuda_battle_artifacts
@@ -194,6 +228,7 @@ def test_resident_frame_preserves_separate_worker_random_streams(complete_combat
             np.testing.assert_allclose(a['values'], b['values'], rtol=3e-5, atol=3e-6)
         for key in ('chains', 'atomic_steps', 'policy_rows', 'forced_rows', 'anchor_rows', 'cutoff_rows', 'terminal_rows'):
             assert counts[key] == sum(w[key] for w in work)
+        assert score.step_pipeline.stats['replays'] > score.step_pipeline.stats['host_reads']
         assert snapshots == [r.export_training_state() for r in roots]
     finally:
         score.close(); arena.close()
@@ -340,7 +375,7 @@ def test_resident_forks_atomic_masks_rng_and_graph_lifetime(complete_combat_fact
                         value[selected_rows] = 99
                 arena._launch('observe_indexed', arena.observe_args+[
                     arena._upload([0, 2, 3]), arena._upload([3]),
-                    arena._upload([2], np.int64)], 6)
+                    arena._upload([2], np.int64)], 6, dispatch_n=3)
                 for key in raw:
                     torch.testing.assert_close(raw[key], expected_raw[key], rtol=0, atol=0)
             decoded = {k: v.cpu().numpy() for k, v in decoder(raw, root_tensors,
@@ -387,7 +422,7 @@ def test_resident_forks_atomic_masks_rng_and_graph_lifetime(complete_combat_fact
                 arena.selected[:6].copy_(arena._upload(selected))
                 arena._launch('apply_compact', arena.apply_args+[
                     arena._upload(np.flatnonzero(selected >= 0)-2), arena._upload([len(active)]),
-                    arena._upload([2], np.int64)], 6)
+                    arena._upload([2], np.int64)], 6, dispatch_n=len(active))
             else:
                 arena.apply(selected)
             if turn == 3:

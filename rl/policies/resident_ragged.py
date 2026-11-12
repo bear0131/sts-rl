@@ -6,6 +6,47 @@ arithmetic. New packing adapts current fixed native slots to those contracts.
 import torch
 import triton
 import triton.language as tl
+from triton.language.extra.cuda import libdevice
+
+
+@triton.jit
+def relic_lookup(IDS, COUNTERS, LIVE, TABLE, IDENTITY, GATES, STATIC, OUT,
+                 R: tl.constexpr, RR: tl.constexpr, LIMIT: tl.constexpr):
+ row=tl.program_id(0);r=tl.arange(0,RR);d=tl.arange(0,64)
+ ids=tl.load(IDS+row*R+r,r<R,0).to(tl.int64)
+ live=(r<R)&(ids!=0)&tl.load(LIVE+ids)
+ x=tl.load(COUNTERS+row*R+r,live,0.)
+ count=libdevice.nearbyint(x*10.)
+ lookup=live&(count>=0)&(count<LIMIT)&(x==count/10.)
+ index=count.to(tl.int64)
+ value=tl.load(TABLE+(ids[:,None]*LIMIT+index[:,None])*64+d[None,:],lookup[:,None],0.)
+ fallback=live&~lookup
+ if tl.sum(fallback.to(tl.int32),0)>0:
+  direct=tl.load(IDENTITY+ids[:,None]*64+d[None,:],fallback[:,None],0.)
+  contribution=tl.zeros((RR,64),tl.float32)
+  for feature in tl.static_range(10):
+   if feature==0:basis=x
+   elif feature==1:basis=tl.where(x>0,1.,tl.where(x<0,-1.,0.))*libdevice.log1p(tl.abs(x))
+   else:
+    period=10 if feature==9 else feature
+    basis=(count-tl.floor(count/period)*period)/period
+   weight=tl.load(GATES+(ids[:,None]*10+feature)*64+d[None,:],fallback[:,None],0.)
+   contribution=contribution+weight*basis[:,None]
+  value=tl.where(fallback[:,None],direct+contribution,value)
+ total=tl.load(STATIC+row*64+d)+tl.sum(value,0)
+ tl.store(OUT+row*64+d,total)
+
+
+@torch.compiler.disable
+def frozen_relic_summary(ids, counters, static, live, table, identity, gates):
+    """Root-static vector plus live counters; unusual values retain full basis."""
+    if torch.is_grad_enabled() or not counters.is_cuda or counters.dtype != torch.float32:
+        raise ValueError('frozen relic projection requires CUDA FP32 inference')
+    result = torch.empty((len(ids),64),device=counters.device,dtype=torch.float32)
+    relic_lookup[(len(ids),)](ids.contiguous(),counters.contiguous(),live,table,
+        identity,gates,static.contiguous(),result,ids.shape[1],
+        triton.next_power_of_2(ids.shape[1]),table.shape[1],num_warps=4,enable_fp_fusion=False)
+    return result
 
 
 @triton.jit

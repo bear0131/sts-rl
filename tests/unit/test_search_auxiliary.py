@@ -44,6 +44,45 @@ def test_equal_values_preserve_prior_and_illegal_atoms_have_no_gradient():
     assert old.grad is None and not q.requires_grad
 
 
+def test_deferred_resident_targets_keep_skips_world_counts_and_original_positions(monkeypatch):
+    from collections import Counter
+    from gymnasium import spaces
+    from rl.algorithms.deck_search import ShadowSearchCollection
+    from rl.algorithms.search_auxiliary import SearchRolloutBuffer, SearchTrainingConfig
+    from rl.policies.deck_latent import SearchContext
+    import env.search.resident_chains as resident
+    buffer = SearchRolloutBuffer(4, spaces.Dict(x=spaces.Box(0, 100, (1,), dtype=np.float32)),
+                                 spaces.Discrete(3), device='cpu', n_envs=2)
+    buffer.full = True
+    items = []
+    for position, indices in ((0, [1, 0]), (3, [0, 1])):
+        items.append(dict(position=position, indices=np.array(indices), roots=[None, None],
+            observations=[None, None], budgets=[64, 64], groups=[0, 0], seed=20261111+position,
+            context=SearchContext(torch.zeros(2, 64), torch.zeros(2, 256)),
+            logits=torch.tensor([[.5, 5., -.2], [-.8, 2., .3]])+position,
+            masks=np.array([[True, False, True], [True, False, True]])))
+    results = [dict(actions=np.array([0, 2]), values=np.array([a, b]), visits=np.array([n, n]))
+               for a, b, n in ((.2, .4, 4), (0., 0., 1), (.3, .1, 8), (.4, .5, 16))]
+    results[1]['skipped'] = 'forced'
+    monkeypatch.setattr(resident, 'resident_anchor_search', lambda *args, **kwargs: (results, dict(chains=56)))
+    obj = SimpleNamespace(resident_pending=items, resident_pending_roots=4, config=SearchTrainingConfig(),
+        resident_scorer=SimpleNamespace(roots=lambda *args: None), resident_arena=None,
+        buffer=buffer, stats=Counter())
+    expected = {}
+    for k in (0, 2, 3):
+        item, j = items[k//2], k%2
+        q = torch.zeros(1, 3);q[0, results[k]['actions']] = torch.tensor(results[k]['values'], dtype=q.dtype)
+        expected[(item['position'], int(item['indices'][j]))] = improved_prior(
+            item['logits'][j:j+1], q, torch.from_numpy(item['masks'][j:j+1]),
+            torch.tensor([results[k]['visits'][0]]), obj.config.target_std)[0].numpy()
+    ShadowSearchCollection._flush_resident(obj)
+    assert set(buffer.search_targets) == set(expected)
+    for key in expected:
+        np.testing.assert_array_equal(buffer.search_targets[key], expected[key])
+    assert obj.stats['searched_roots'] == 3 and obj.stats['chains'] == 56
+    assert obj.resident_pending_roots == 0 and not obj.resident_pending
+
+
 def test_more_worlds_strengthen_bounded_improvement_and_constant_shift_cancels():
     logits = torch.tensor([[.5, 0.]])
     legal = torch.ones(1, 2, dtype=torch.bool)

@@ -201,19 +201,36 @@ class ShadowSearchCollection:
             max_depth=self.config.max_depth, wave_capacity=self.config.cuda_wave_capacity,
             timeout_seconds=self.config.timeout_seconds)
         offset = 0
+        target_logits, target_masks, target_rows, destinations = [], [], [], []
         for item in items:
+            selected = []
             for j, index in enumerate(item['indices']):
                 row = result[offset+j]
                 if row.get('skipped'):
                     continue
-                logits, masks = item['logits'], item['masks']
-                q = torch.zeros_like(logits[j:j+1])
-                q[0, row['actions']] = torch.as_tensor(row['values'], dtype=q.dtype)
-                target = improved_prior(logits[j:j+1], q, torch.from_numpy(masks[j:j+1]),
-                    torch.tensor([int(row['visits'][0])]), self.config.target_std)[0].numpy()
-                self.buffer.add_search_target(int(index), target, position=item['position'])
-                self.stats['searched_roots'] += 1
+                selected.append(j)
+                target_rows.append(row)
+                destinations.append((int(index), item['position']))
+            if selected:
+                target_logits.append(item['logits'][selected])
+                target_masks.append(item['masks'][selected])
             offset += len(item['roots'])
+        if target_rows:
+            # The legacy GPU pipeline finalizes a frame in bulk. These are
+            # independent per-root softmaxes; batching never mixes baselines,
+            # worlds or the original real (time, environment) destination.
+            logits = torch.cat(target_logits)
+            q = np.zeros(tuple(logits.shape), np.float32)
+            worlds = np.empty(len(target_rows), np.int64)
+            for j, row in enumerate(target_rows):
+                q[j, row['actions']] = row['values']
+                worlds[j] = row['visits'][0]
+            targets = improved_prior(logits, torch.from_numpy(q),
+                torch.from_numpy(np.concatenate(target_masks)), torch.from_numpy(worlds),
+                self.config.target_std).numpy()
+            for (index, position), target in zip(destinations, targets, strict=True):
+                self.buffer.add_search_target(index, target, position=position)
+            self.stats['searched_roots'] += len(destinations)
         for k, v in stats.items():
             k = 'worker_search_seconds' if k == 'seconds' else k
             self.stats[k] = max(self.stats[k], float(v)) if k == 'max_active' else self.stats[k]+float(v)
