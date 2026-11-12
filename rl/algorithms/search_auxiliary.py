@@ -21,12 +21,16 @@ class SearchTrainingConfig:
     seed: int = 20261111
     backend: str = 'native-cpu'
     inference_cache_bytes: int = 0
+    cuda_artifacts: str = ''
+    cuda_wave_capacity: int = 4096
 
     def __post_init__(self):
         if self.inference_cache_bytes < 0:
             raise ValueError('search inference cache capacity must be nonnegative')
-        if self.backend not in ('native-cpu', 'cuda-batched-native'):
+        if self.backend not in ('native-cpu', 'cuda-batched-native', 'cuda-resident'):
             raise ValueError('unknown shadow search backend')
+        if self.backend == 'cuda-resident' and (not self.cuda_artifacts or self.cuda_wave_capacity < 1):
+            raise ValueError('resident search requires explicit artifacts and a positive wave capacity')
         if not (0 < self.fraction <= 1 and 0 <= self.coefficient <= 1):
             raise ValueError('invalid shadow search fraction/coefficient')
         if min(self.normal_budget, self.boss_budget, self.max_depth, self.max_active) < 1:

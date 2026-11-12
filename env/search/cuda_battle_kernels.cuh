@@ -58,3 +58,12 @@ extern "C" __global__ void deck_fork(unsigned char*arena,int*constructed,int*pre
  constructed[d]=1;prefix[d]=prefix[s];
  sts::search::noslRedeterminize(*target,worlds[j]);
 }
+extern "C" __global__ void deck_first(unsigned char*arena,int*constructed,int*prefix,int*source,int*dest,unsigned*bits,int*draw,unsigned*available,int*mask,int*selected,int count){
+ int j=blockIdx.x*blockDim.x+threadIdx.x;if(j>=count)return;
+ int s=source[j],d=dest[j];device_state::require(s!=d&&constructed[s]&&constructed[d]);
+ auto&target=*reinterpret_cast<sts::BattleContext*>(arena+d*sizeof(sts::BattleContext));
+ const auto&root=*reinterpret_cast<const sts::BattleContext*>(arena+s*sizeof(sts::BattleContext));
+ unsigned b=bits[j];if((b>>29)==2&&draw[j])b=sts::search::Action::remapDrawSelection(target,root,b);
+ int found=-1;for(int k=0;k<sts::search::kAutoregressiveSize;++k)if(mask[d*sts::search::kAutoregressiveSize+k]&&available[d*sts::search::kAutoregressiveSize+k]==b)found=k;
+ device_state::require(found>=0);selected[d]=found;
+}

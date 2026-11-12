@@ -31,7 +31,7 @@ class ShadowSearchCollection:
             raise ValueError('shadow search requires the packed PPO/search buffer lifecycle')
         if model.policy.combat_value_target != 'pre-reward-anchor':
             raise ValueError('search teaching requires the learned combat-exit anchor target')
-        if self.config.backend == 'cuda-batched-native':
+        if self.config.backend in ('cuda-batched-native', 'cuda-resident'):
             if model.device.type != 'cuda' or not hasattr(env, 'deck_batched_search'):
                 raise ValueError('cuda-batched-native requires a CUDA policy and NativeSubprocVecEnv')
         self.rng = np.random.default_rng(self.config.seed)
@@ -45,14 +45,24 @@ class ShadowSearchCollection:
             'terminal_rows', 'max_active', 'budget_floor_overage', 'worker_search_seconds', 'context_refreshes',
             'scoring_seconds', 'worker_and_transport_seconds', 'frontier_batches', 'frontier_rows', 'transport_bytes',
             'backend_cuda_inference', 'backend_cuda_simulation', *DECK_SEARCH_CACHE_METRICS), 0.)
-        self.stats['backend_cuda_inference'] = float(self.config.backend == 'cuda-batched-native')
+        self.stats['backend_cuda_inference'] = float(self.config.backend in ('cuda-batched-native', 'cuda-resident'))
+        self.stats['backend_cuda_simulation'] = float(self.config.backend == 'cuda-resident')
         self.hook = None
         self.previous = env.step_async
         self.snapshot = None
 
     def start(self):
         self.inference_cache = DeckSearchInferenceCache(self.model.policy.core, self.config.inference_cache_bytes)
-        if self.config.backend == 'cuda-batched-native':
+        if self.config.backend == 'cuda-resident':
+            from env.search.cuda_battle import CudaBattleArena, load_artifacts
+            from env.core.run_env import _nosl_compact_lut
+            from rl.search.resident_deck import ResidentDeckScorer
+            folder, manifest, _ = load_artifacts(self.config.cuda_artifacts)
+            self.resident_arena = CudaBattleArena(folder/'deck.cubin', manifest['sha256']['deck.cubin'],
+                self.env.num_envs+self.config.cuda_wave_capacity,
+                card_count=_nosl_compact_lut()['layout']['card_count'])
+            self.resident_scorer = ResidentDeckScorer(self.model.policy, self.config.inference_cache_bytes)
+        elif self.config.backend == 'cuda-batched-native':
             # Weights stay on the learner device for the entire frozen
             # collection. Export only the small summary tables, once.
             self.tables = self.model.policy.core.combat.summaries.export_inference_tables()
@@ -97,7 +107,14 @@ class ShadowSearchCollection:
             budgets = [self.config.boss_budget if o['combat_is_boss'].item() else self.config.normal_budget
                        for o in observations]
             seed = int(self.rng.integers(0, 2**63 - 1))
-            if self.config.backend == 'cuda-batched-native':
+            if self.config.backend == 'cuda-resident':
+                from env.search.resident_chains import resident_anchor_search
+                roots, groups = self.env.deck_resident_roots(indices.tolist(), self.config.cuda_artifacts)
+                self.resident_scorer.roots(observations, context)
+                result, stats = resident_anchor_search(roots, budgets, self.resident_scorer,
+                    self.resident_arena, seed=seed, groups=groups, max_depth=self.config.max_depth,
+                    wave_capacity=self.config.cuda_wave_capacity, timeout_seconds=self.config.timeout_seconds)
+            elif self.config.backend == 'cuda-batched-native':
                 scorer = DeckLatentScorer(self.model.policy, observations, context=context, tables=self.tables,
                     inference_cache=self.inference_cache)
                 result, stats = self.env.deck_batched_search(dict(indices=indices.tolist(), budgets=budgets,
@@ -136,6 +153,9 @@ class ShadowSearchCollection:
             self.hook.remove()
         self.env.step_async = self.previous
         self.inference_cache.clear()
+        if self.config.backend == 'cuda-resident':
+            self.resident_scorer.close()
+            self.resident_arena.close()
         self.model.deck_search_rng = self.rng.bit_generator.state
         self.model.deck_search_last_stats = self.stats
         for k, v in self.stats.items():

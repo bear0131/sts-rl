@@ -601,7 +601,7 @@ class SlayTheSpireEnv(gym.Env):
             "action_mask_sha256": self._array_mapping_digest({"mask": action_mask}),
         }
 
-    def restore_training_state(self, state):
+    def restore_training_state(self, state, *, replay_observer=None):
         """Rebuild one live episode and reject any replay divergence."""
         if state.get("schema_version") not in (1, 2):
             raise ValueError("unsupported environment state schema")
@@ -646,6 +646,8 @@ class SlayTheSpireEnv(gym.Env):
         for position, record in enumerate(state["actions"]):
             if self.combat_exit_anchor and position == anchor_start:
                 self.thick.combat_exit_anchor_enabled = True
+            if replay_observer is not None:
+                replay_observer(self, record)
             kind = record.get("kind")
             if kind == "thin":
                 pending = record.get("native_pending")

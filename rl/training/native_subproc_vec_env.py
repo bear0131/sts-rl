@@ -25,6 +25,7 @@ class _NativeStepPipe:
         self.closed = False
         self.deck_search = None
         self.deck_frontier = None
+        self.deck_resident = None
 
     def send(self, x):
         self.remote.send(x)
@@ -59,6 +60,8 @@ class _NativeStepPipe:
                 self.native = NativeSearchVecEnv([lambda env=env: env for env in self.envs], threads=1)
                 self.remote.send(None)
             elif cmd == 'step' and self.native is not None:
+                if self.deck_resident is not None:
+                    self.deck_resident.before_step(data)
                 obs, rewards, dones, infos = self.native._step_for_transport(np.asarray(data))
                 self.write(obs)
                 self.remote.send([(None, rewards[i], dones[i], info, self.native.reset_infos[i])
@@ -74,6 +77,11 @@ class _NativeStepPipe:
                     from rl.training.deck_search_worker import DeckSearchWorker
                     self.deck_search = DeckSearchWorker(self.envs)
                 self.remote.send(self.deck_search.run(data))
+            elif cmd == 'deck_resident_roots':
+                if self.deck_resident is None:
+                    from env.search.resident_transport import ResidentRootExporter
+                    self.deck_resident = ResidentRootExporter(self.envs, data['artifacts'])
+                self.remote.send(self.deck_resident.export(data['indices']))
             elif cmd in ('deck_frontier_start', 'deck_frontier_advance', 'deck_frontier_close'):
                 if self.deck_frontier is None:
                     from env.search.frontier_transport import FrontierSession
@@ -159,6 +167,23 @@ class NativeSubprocVecEnv(cv.GroupedCachedMaskSubprocVecEnv):
             for key, value in stats.items():
                 totals[key] = totals.get(key, 0.) + value
         return results, totals
+
+    def deck_resident_roots(self, indices, artifacts):
+        if self.waiting:
+            raise RuntimeError('cannot export resident roots during real transitions')
+        positions = {index: j for j, index in enumerate(indices)}
+        pending, selected = {}, {}
+        for group_index, group in enumerate(self._groups):
+            local = [j for j, i in enumerate(group) if i in positions]
+            if local:
+                selected[group_index] = [positions[group[j]] for j in local]
+                self.remotes[group_index].send(('deck_resident_roots', dict(indices=local, artifacts=artifacts)))
+                pending[self.remotes[group_index]] = group_index
+        roots, groups = [None]*len(indices), [None]*len(indices)
+        for group, response in self._receive_groups(pending).items():
+            for row, root in zip(selected[group], response, strict=True):
+                roots[row], groups[row] = root, group
+        return roots, groups
 
     def deck_batched_search(self, request, scorer):
         """Central inference with native CPU branches; never a CUDA simulator.

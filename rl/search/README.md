@@ -154,3 +154,15 @@ context. Weight changes reject a live cache; each new collection owns a new one.
 Missing-row batching is validated numerically on the same device, not advertised
 as bitwise identical across different batch sizes or GPUs. This CPU-keyed cache
 does not substitute for resident CUDA simulation or CUDA graph lifecycle gates.
+
+
+The explicit `cuda-resident` DeckLatent backend uses `env.search.cuda_battle`
+for current native AR states and `env.core.cuda_observation` for the canonical
+observation projection. `SearchTrainingConfig.cuda_artifacts` must point to a
+hash-verified simulator/CPU snapshot build; callbacks are reconstructed through
+committed actions, never copied across devices. `cuda_wave_capacity` controls
+physical inference batching, not search simulations. The frozen collection owns
+context/table caches, bounded inference graphs and the exact anchor cache.
+Original actor actions, per-world PCG64 draws, paired budgets and PPO targets
+remain separate. Qualification requires a full collection plus update/recovery;
+small resident tests alone do not enable the production schedule gate.

@@ -22,10 +22,14 @@ class DeckTrainingSchedule:
     minimum_ev: float = .05
     search_qualified: bool = False
     search_backend: str = 'native-cpu'
+    search_cuda_artifacts: str = ''
+    search_cuda_wave_capacity: int = 4096
+    search_inference_cache_bytes: int = 0
     anchor_start_round: int | None = None
 
     def __post_init__(self):
-        SearchTrainingConfig(backend=self.search_backend)
+        SearchTrainingConfig(backend=self.search_backend, cuda_artifacts=self.search_cuda_artifacts,
+            cuda_wave_capacity=self.search_cuda_wave_capacity, inference_cache_bytes=self.search_inference_cache_bytes)
         if min(self.check_interval, self.consecutive_checks, self.anchor_rounds, self.ramp_rounds,
                self.validation_games, self.validation_max_steps, self.minimum_natural, self.minimum_anchors) < 1:
             raise ValueError('deck training schedule requires positive bounded counts')
@@ -105,6 +109,8 @@ def apply_stage(model, schedule, completed_rounds, *, rank=0):
         fraction = .25 + .5 * progress if progress <= .5 else progress
         model.deck_search_config = asdict(SearchTrainingConfig(fraction=fraction, coefficient=.1 * progress,
             target_std=state['validation']['target_std'], seed=20261111 + 1_000_003 * rank,
-            backend=schedule.search_backend))
+            backend=schedule.search_backend, cuda_artifacts=schedule.search_cuda_artifacts,
+            cuda_wave_capacity=schedule.search_cuda_wave_capacity,
+            inference_cache_bytes=schedule.search_inference_cache_bytes))
     model.training_objective_contract = ('deck-latent-ppo-search-v1' if state['stage'] == 'search'
                                          else 'deck-latent-ppo-' + state['stage'] + '-v1')

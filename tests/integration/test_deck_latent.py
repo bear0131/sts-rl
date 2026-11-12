@@ -312,6 +312,8 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         model.policy_kwargs['combat_value_target'] = 'pre-reward-anchor'
         model.deck_search_config = asdict(SearchTrainingConfig(fraction=1., normal_budget=2,
             boss_budget=2, max_depth=2, max_active=16, timeout_seconds=30., backend=search_backend,
+            cuda_artifacts=__import__('os').environ.get('STS_CUDA_BATTLE_ARTIFACTS', '') if search_backend == 'cuda-resident' else '',
+            cuda_wave_capacity=64,
             inference_cache_bytes=64 * 1024**2))
         model.deck_search_snapshot_dir = str(tmp_path / 'weights')
     model.learn(128)
@@ -321,6 +323,8 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         assert len(model.rollout_buffer.search_targets) > 0
         assert model._deck_search_loss_normalization > 0
         assert model.deck_search_last_stats['atomic_steps'] > model.deck_search_last_stats['searched_roots']
+        if search_backend == 'cuda-resident':
+            assert model.deck_search_last_stats['backend_cuda_simulation'] == 1
         if search_backend == 'cuda-batched-native':
             assert model.deck_search_last_stats['backend_cuda_inference'] == 1
             assert model.deck_search_last_stats['backend_cuda_simulation'] == 0
@@ -385,6 +389,11 @@ def test_cuda_batched_search_native_rounds_and_resume(tmp_path):
     assert torch.cuda.is_available(), 'explicit CUDA search qualification required'
     test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, True, 'native-subproc',
         'grouped', encoder='transformer64x2', device='cuda', search_backend='cuda-batched-native')
+
+
+def test_cuda_resident_search_native_rounds_and_resume(tmp_path, cuda_battle_artifacts):
+    test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, True, 'native-subproc',
+        'grouped', encoder='transformer64x2', device='cuda', search_backend='cuda-resident')
 
 
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])

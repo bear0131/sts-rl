@@ -7,10 +7,28 @@ stay with this module through forks, graph retirement and state destruction.
 from collections import OrderedDict
 import ctypes as c
 import hashlib
+import importlib.util
+import json
 from pathlib import Path
 
 import numpy as np
 import torch
+
+
+def load_artifacts(folder):
+    """Verify both halves of one simulator build before importing CPU states."""
+    folder = Path(folder)
+    manifest = json.loads((folder / 'artifacts.json').read_text())
+    if manifest['contract'] != 'deck-resident-battle-v1':
+        raise ValueError('unknown resident simulator contract')
+    for name, digest in manifest['sha256'].items():
+        if hashlib.sha256((folder / name).read_bytes()).hexdigest() != digest:
+            raise ValueError(f'resident simulator artifact mismatch: {name}')
+    name = 'deck_cuda_bridge.cpython-311-x86_64-linux-gnu.so'
+    spec = importlib.util.spec_from_file_location('deck_cuda_bridge', folder / name)
+    bridge = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bridge)
+    return folder, manifest, bridge
 
 
 class CudaBattleArena:
@@ -57,7 +75,7 @@ class CudaBattleArena:
             image = c.create_string_buffer(data)
             self._check(self.driver.cuModuleLoadData(c.byref(self.module), image))
             self.functions = {}
-            for name in ('layout', 'load', 'observe', 'apply', 'snapshot', 'fork', 'destroy'):
+            for name in ('layout', 'load', 'observe', 'apply', 'snapshot', 'fork', 'destroy', 'first'):
                 f = p()
                 self._check(self.driver.cuModuleGetFunction(c.byref(f), self.module, ('deck_' + name).encode()))
                 self.functions[name] = f
@@ -184,15 +202,31 @@ class CudaBattleArena:
     def apply(self, selected):
         n = len(selected)
         self._rows(n)
-        selected = np.asarray(selected, np.int32)
-        if np.any(selected < -1) or np.any(selected >= self.actions):
-            raise ValueError('invalid relative atomic action')
-        self.selected[:n].copy_(self._upload(selected))
+        if isinstance(selected, torch.Tensor):
+            if selected.device != self.selected.device or selected.dtype != torch.int32:
+                raise ValueError('resident action tensor must be device int32')
+            self.selected[:n].copy_(selected)
+        else:
+            selected = np.asarray(selected, np.int32)
+            if np.any(selected < -1) or np.any(selected >= self.actions):
+                raise ValueError('invalid relative atomic action')
+            self.selected[:n].copy_(self._upload(selected))
         if self.graph_capacity:
             self._graphs(n)[1].replay()
             self.counts['graph_replays'] += 1
         else:
             self._launch('apply', self.apply_args, n)
+
+    def first(self, sources, destinations, action_bits, draw_selection):
+        """Execute root identities after world sampling, remapping draw UIDs."""
+        self._assert_owner()
+        n = int(max(destinations))+1
+        self.observe(n)
+        self.selected[:n].fill_(-1)
+        self._launch('first', [self.arena, self.constructed, self.prefix,
+            self._upload(sources), self._upload(destinations), self._upload(action_bits, np.uint32),
+            self._upload(draw_selection), self.bits, self.mask, self.selected], len(sources))
+        self.apply(self.selected[:n])
 
     def snapshot(self, n):
         self._rows(n)
