@@ -66,3 +66,5 @@ dtype、搜索顺序不变，恢复已有完整训练状态仍须遵守 native S
 `legacy-v8` profile 保留原值用于配对复现。Runic Dome 不进入
 native 规划，adapter 回退 `rules-ironclad-v3`。主要回归入口为
 `tests/integration/test_turn_planner*.py`。
+
+GPU 常驻模拟器的 shim vector 使用 `cuda_vector.h` 替换固定容量实现：常见牌堆保留内联存储，超过容量时由该实例独占堆内存并增长；复制/分支不共享可变存储，销毁时释放。该头在 shim namespace 内包含，依赖既有 `vector_capacity`、placement new、malloc/free。编译产物必须与 `cuda_battle.py` 的逻辑状态协议一起逐 SHA 验证；不能在既有 arena 中更换模块。逻辑 checkpoint 字段/顺序不变，物理对象大小由模块 layout 返回。回归包括 `tests/unit/cuda_vector_contract.cpp` 的 ASan/UBSan，以及 `tests/integration/test_cuda_vector.py` 的 CPU/GPU 状态、扩容后 fork 和图释放生命周期。
