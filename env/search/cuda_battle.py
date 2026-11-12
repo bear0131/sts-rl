@@ -66,7 +66,10 @@ class CudaBattleArena:
             self.driver.cuCtxSetLimit.argtypes = [c.c_int, c.c_size_t]
             self.driver.cuCtxGetLimit.argtypes = [c.POINTER(c.c_size_t), c.c_int]
             self.driver.cuLaunchKernel.argtypes = [p] + [c.c_uint] * 7 + [p, p, p]
-            for kind, minimum in ((0, 65536), (2, 512 * 1024**2)):
+            # Dynamic monster callbacks have an unknown static stack bound.
+            # The old observation kernel incidentally made the driver grow the
+            # stack beyond 64 KiB; direct observation must not rely on that.
+            for kind, minimum in ((0, 80 * 1024), (2, 512 * 1024**2)):
                 current = c.c_size_t()
                 self._check(self.driver.cuCtxGetLimit(c.byref(current), kind))
                 if current.value < minimum:
@@ -79,6 +82,9 @@ class CudaBattleArena:
                 f = p()
                 self._check(self.driver.cuModuleGetFunction(c.byref(f), self.module, ('deck_' + name).encode()))
                 self.functions[name] = f
+            f = p()
+            if self.driver.cuModuleGetFunction(c.byref(f), self.module, b'deck_observe_live_block') == 0:
+                self.functions['observe_live'] = f
             layout = self._empty((8,), torch.int64)
             self._launch('layout', [layout])
             self.battle_bytes, cats, floats, self.actions, cards, deck, version, words = layout.cpu().tolist()
@@ -126,8 +132,9 @@ class CudaBattleArena:
         if n is not None:
             values.append(c.c_int(n))
         arguments = (c.c_void_p * len(values))(*(c.cast(c.byref(v), c.c_void_p) for v in values))
-        self._check(self.driver.cuLaunchKernel(self.functions[name], ((n or 1) + 31) // 32,
-            1, 1, 32, 1, 1, 0, c.c_void_p(torch.cuda.current_stream(self.device).cuda_stream), arguments, None))
+        grid, threads = (n, 64) if name == 'observe_live' else (((n or 1) + 31) // 32, 32)
+        self._check(self.driver.cuLaunchKernel(self.functions[name], grid,
+            1, 1, threads, 1, 1, 0, c.c_void_p(torch.cuda.current_stream(self.device).cuda_stream), arguments, None))
 
     def _rows(self, n):
         self._assert_owner()

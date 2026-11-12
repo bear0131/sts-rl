@@ -73,12 +73,14 @@ class CudaObservationDecoder:
             combat_exit_anchor=torch.stack((raw['outcome'] == 1, raw['outcome'] == 3), 1).float(),
             relics=ids, relic_counters=self.relic_counters(s, ids, roots['relic_counters'][owners]))
 
-    def __call__(self, raw, roots, owners):
+    def __call__(self, raw, roots, owners, *, head_only=False):
         c, s, n = raw['categorical'].long(), raw['scalars'], len(owners)
         # Only public context and the head consumers, not unused reward pages.
         keys = ('phase', 'ascension', 'act', 'floor', 'next_boss', 'character', 'run_keys',
                 'combat_is_boss', 'deck_ids', 'deck_upgrades', 'outer_deck_misc', 'relics',
                 'relic_counters', 'map_full_rooms', 'map_full_features')
+        if head_only:
+            keys = ('ascension', 'run_keys', 'combat_is_boss', 'relics', 'relic_counters')
         o = {k: roots[k][owners] for k in keys if k in roots}
         def zeros(key):
             return torch.zeros((n, *self.space[key].shape), device=s.device, dtype=torch.float32)
@@ -136,7 +138,8 @@ class CudaObservationDecoder:
         o['selected_card_upgrades'] = zeros('selected_card_upgrades')
         o['selected_card_upgrades'][:, :2] = selection[:, 196:198]/E.UPGRADE_SCALE
         o['relic_counters'] = self.relic_counters(s, o['relics'], o['relic_counters'])
-        misc = raw['permanent_misc']
-        o['outer_deck_misc'] = torch.where((misc >= 0) & (o['deck_ids'] != 0), misc/MISC_SCALE, o['outer_deck_misc'])
+        if not head_only:
+            misc = raw['permanent_misc']
+            o['outer_deck_misc'] = torch.where((misc >= 0) & (o['deck_ids'] != 0), misc/MISC_SCALE, o['outer_deck_misc'])
         o['combat_exit_anchor'] = torch.stack((raw['outcome'] == 1, raw['outcome'] == 3), 1).float()
         return o

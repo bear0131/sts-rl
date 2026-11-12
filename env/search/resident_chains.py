@@ -63,16 +63,23 @@ def resident_anchor_search(roots, budgets, scorer, arena, *, seed, max_depth=200
         uniforms = {w: np.random.default_rng(int(w) ^ 0x504F4C494359).random(max_depth) for w in set(worlds)}
         randoms = torch.as_tensor(np.stack([uniforms[w] for w in worlds]), device=arena.device)
         owners = torch.as_tensor(source, device=arena.device)
+        scorer.bind_wave(arena, owners, nr)
         live = np.ones(n, bool); depth = np.ones(n, np.int64); cursor = np.zeros(n, np.int64)
         final = np.zeros(n, np.float64)
         anchors = np.zeros(n, bool)
         stats['chains'] += n; stats['max_active'] = max(stats['max_active'], n)
+        if 'observe_live' in arena.functions:
+            final, anchors, counts, atomic = scorer.run_wave(arena, owners, randoms,
+                max_depth, start+timeout_seconds)
+            for key, value in counts.items():
+                stats[key] += value
+            stats['atomic_steps'] += atomic
+            live[:] = False
         while live.any():
             if time.monotonic()-start > timeout_seconds:
                 raise TimeoutError('resident paired budget incomplete; no partial teacher accepted')
             raw = {k: v[nr:] for k, v in arena.observe(nr+n).items()}
-            counts = raw['mask'].sum(1)
-            meta = torch.stack((raw['outcome'], counts), 1).cpu().numpy()
+            meta = scorer.metadata(raw, owners)
             dead = live & (meta[:, 0] == 2)
             anchor = live & np.isin(meta[:, 0], [1, 3])
             anchors |= anchor
@@ -87,21 +94,17 @@ def resident_anchor_search(roots, budgets, scorer, arena, *, seed, max_depth=200
             selected[nr+force_rows] = raw['mask'][force_rows].argmax(1).int()
             rows = np.flatnonzero(policy | cutoff)
             if len(rows):
-                logits, values = scorer.score(raw, owners, rows)
+                # The frozen graph owns the FP64 CDF. Counterfactual cutoff
+                # samples are ignored and do not advance any policy cursor.
+                u = randoms[rows, np.minimum(cursor[rows], max_depth-1)]
+                sampled, values = scorer.score(raw, owners, rows, metadata=meta, uniforms=u)
                 if not torch.isfinite(values).all():
                     raise FloatingPointError('nonfinite resident leaf value')
                 terminal = cutoff[rows]
                 if terminal.any(): final[rows[terminal]] = values[terminal].cpu().numpy()
                 choose = rows[~terminal]
                 if len(choose):
-                    legal = raw['mask'][choose].bool()
-                    scores = logits[~terminal].double().masked_fill(~legal, -torch.inf)
-                    probability = (scores-scores.max(1, keepdim=True).values).exp()
-                    probability = probability/probability.sum(1, keepdim=True)
-                    cdf = probability.cumsum(1); cdf = cdf/cdf[:, -1:]
-                    u = randoms[choose, cursor[choose]]
-                    sampled = (cdf <= u[:, None]).sum(1).int()
-                    selected[nr+choose] = sampled
+                    selected[nr+choose] = sampled[~terminal]
                     cursor[choose] += 1
             for kind, subset in (('terminal', dead), ('anchor', anchor), ('cutoff', cutoff),
                                  ('forced', forced), ('policy', policy)):
@@ -119,7 +122,8 @@ def resident_anchor_search(roots, budgets, scorer, arena, *, seed, max_depth=200
             if not torch.isfinite(values).all():
                 raise FloatingPointError('nonfinite resident anchor value')
             final[rows] = values.cpu().numpy()
-        stats['atomic_steps'] += int(depth.sum())
+        if 'observe_live' not in arena.functions:
+            stats['atomic_steps'] += int(depth.sum())
         for j, (root, a, _) in enumerate(wave):
             results[root]['values'][a] += final[j]
             results[root]['visits'][a] += 1

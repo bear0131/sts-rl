@@ -10,26 +10,54 @@ extern "C" __global__ void deck_load(unsigned char*arena,int*constructed,unsigne
  device_state::Archive<true>a{words+i*8192,lengths[i]};a.field(s);device_state::require(a.at==lengths[i]);
  device_state::require(s.actionQueue.size==0);constructed[i]=1;
 }
-extern "C" __global__ void deck_observe(unsigned char*arena,int*constructed,int*prefix,int*cat,float*scalars,unsigned*bits,int*mask,int*status,float*upgrades,int*misc,int n){
- int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;
- device_state::require(constructed[i]);
- const auto&b=*reinterpret_cast<const sts::BattleContext*>(arena+i*sizeof(sts::BattleContext));
- auto row=compact_leaf::pack(b);
- for(int k=0;k<compact_leaf::kCatSize;++k)cat[i*compact_leaf::kCatSize+k]=row.categorical[k];
- for(int k=0;k<compact_leaf::kFloatSize;++k)scalars[i*compact_leaf::kFloatSize+k]=row.scalars[k];
+template<bool Clear>
+__device__ __forceinline__ void deck_observe_extras(const sts::BattleContext&b,int*prefix,unsigned*bits,int*mask,int*status,float*upgrades,int*misc,int i){
  constexpr int A=sts::search::kAutoregressiveSize,C=compact_leaf::kCardIds;
- for(int k=0;k<A;++k){bits[i*A+k]=0;mask[i*A+k]=0;}
+ if(Clear)for(int k=0;k<A;++k){bits[i*A+k]=0;mask[i*A+k]=0;}
  status[i]=int(b.outcome);
  if(b.outcome==sts::Outcome::UNDECIDED){
   const auto actions=sts::search::autoregressiveActions(b,prefix[i]);
   for(auto a:actions){int id=sts::search::jointActionId(a,b)-sts::search::kJointEnd;device_state::require(id>=0&&id<A);mask[i*A+id]=1;bits[i*A+id]=a.bits;}
  }
- for(int k=0;k<6*C;++k)upgrades[i*6*C+k]=0;
- for(int k=0;k<sts::Deck::MAX_SIZE;++k)misc[i*sts::Deck::MAX_SIZE+k]=-1;
+ if(Clear)for(int k=0;k<6*C;++k)upgrades[i*6*C+k]=0;
+ if(Clear)for(int k=0;k<sts::Deck::MAX_SIZE;++k)misc[i*sts::Deck::MAX_SIZE+k]=-1;
  auto permanent=[&](const sts::CardInstance&c){if(c.getId()==sts::CardId::RITUAL_DAGGER&&c.uniqueId>=0&&c.uniqueId<sts::Deck::MAX_SIZE)misc[i*sts::Deck::MAX_SIZE+c.uniqueId]=c.specialData;};
  auto pile=[&](const auto&cards,int zone){for(const auto&c:cards){int id=int(c.getId()),up=c.getUpgradeCount();upgrades[i*6*C+zone*C+id]+=up>0;upgrades[i*6*C+(3+zone)*C+id]+=float(up);permanent(c);}};
  pile(b.cards.drawPile,0);pile(b.cards.discardPile,1);pile(b.cards.exhaustPile,2);
  for(int k=0;k<b.cards.cardsInHand;++k)permanent(b.cards.hand[k]);
+}
+__device__ __forceinline__ void deck_observe_row(unsigned char*arena,int*constructed,int*prefix,int*cat,float*scalars,unsigned*bits,int*mask,int*status,float*upgrades,int*misc,int i){
+ device_state::require(constructed[i]);
+ const auto&b=*reinterpret_cast<const sts::BattleContext*>(arena+i*sizeof(sts::BattleContext));
+ auto row=compact_leaf::pack(b);
+ for(int k=0;k<compact_leaf::kCatSize;++k)cat[i*compact_leaf::kCatSize+k]=row.categorical[k];
+ for(int k=0;k<compact_leaf::kFloatSize;++k)scalars[i*compact_leaf::kFloatSize+k]=row.scalars[k];
+ deck_observe_extras<true>(b,prefix,bits,mask,status,upgrades,misc,i);
+}
+extern "C" __global__ void deck_observe(unsigned char*arena,int*constructed,int*prefix,int*cat,float*scalars,unsigned*bits,int*mask,int*status,float*upgrades,int*misc,int n){
+ int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;
+ deck_observe_row(arena,constructed,prefix,cat,scalars,bits,mask,status,upgrades,misc,i);
+}
+// One cooperative block clears a live row; thread zero writes the shared
+// canonical codec directly to global storage, with no large per-thread Row.
+struct DeckOutputView {int*categorical;float*scalars;int selectionCount=0;};
+extern "C" __global__ void deck_observe_live_block(unsigned char*arena,int*constructed,int*prefix,int*cat,float*scalars,unsigned*bits,int*mask,int*status,float*upgrades,int*misc,int*live,long long*offset,int n){
+ int lane=blockIdx.x;if(lane>=n||!live[lane])return;
+ int i=int(*offset)+lane,t=threadIdx.x;
+ constexpr int A=sts::search::kAutoregressiveSize,C=compact_leaf::kCardIds,D=sts::Deck::MAX_SIZE;
+ for(int k=t;k<compact_leaf::kCatSize;k+=blockDim.x)cat[i*compact_leaf::kCatSize+k]=0;
+ for(int k=t;k<compact_leaf::kFloatSize;k+=blockDim.x)scalars[i*compact_leaf::kFloatSize+k]=0;
+ for(int k=t;k<A;k+=blockDim.x){bits[i*A+k]=0;mask[i*A+k]=0;}
+ for(int k=t;k<6*C;k+=blockDim.x)upgrades[i*6*C+k]=0;
+ for(int k=t;k<D;k+=blockDim.x)misc[i*D+k]=-1;
+ __syncthreads();
+ if(t==0){
+  device_state::require(constructed[i]);
+  const auto&b=*reinterpret_cast<const sts::BattleContext*>(arena+i*sizeof(sts::BattleContext));
+  DeckOutputView row{cat+i*compact_leaf::kCatSize,scalars+i*compact_leaf::kFloatSize};
+  compact_leaf::packInto(b,row);
+  deck_observe_extras<false>(b,prefix,bits,mask,status,upgrades,misc,i);
+ }
 }
 extern "C" __global__ void deck_apply(unsigned char*arena,int*constructed,int*prefix,int*selected,unsigned*bits,int*mask,int n){
  int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n||selected[i]<0)return;

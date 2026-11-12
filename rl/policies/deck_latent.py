@@ -257,8 +257,25 @@ class TransformerCombatNetwork(FastCombatNetwork):
         if padding:
             x = torch.nn.functional.pad(x, (0, 0, 0, padding))
             mask = torch.nn.functional.pad(mask, (0, padding), value=False)
-        for block in self.blocks:
-            x = block(x, mask)
+        if '_resident_rows' in obs:
+            from rl.policies.resident_ragged import frozen_ragged_blocks
+            # The first layer still sees every present key. The last layer
+            # computes only public action entities and the global value token;
+            # relic/pile summaries are keys, with no output-head consumer.
+            queries = mask.clone()
+            for name in ('relic', 'pile0', 'pile1', 'pile2'):
+                lo, hi = spans[name]
+                queries[:, lo:hi] = False
+            lo, hi = spans['select']
+            queries[:, lo:hi] |= required[:, :choice_width]
+            x = frozen_ragged_blocks(self.blocks, x, mask, queries, obs['_resident_rows'])
+        else:
+            for block in self.blocks:
+                if obs.get('_resident_fused_blocks', False):
+                    from rl.policies.resident_transformer import frozen_block
+                    x = frozen_block(block, x, mask)
+                else:
+                    x = block(x, mask)
         x = self.norm(x)
         result = {name: x[:, lo:hi] for name, (lo, hi) in spans.items()}
         # Heads still see the complete native candidate index space.

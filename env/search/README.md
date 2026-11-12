@@ -1,6 +1,6 @@
 # Worker 搜索基础
 
-`cuda_battle.py` 是实验中的无模型 CUDA 常驻战斗组件，尚未作为训练搜索后端启用。
+`cuda_battle.py` 是无模型 CUDA 常驻战斗组件，通过显式 `cuda-resident` 后端接入影子搜索；生产资格须单独验收。
 它要求调用方提供固定 SHA256 的 `deck-resident-battle-v1` 模块；模块包含
 `cuda_battle_kernels.cuh`，并使用与当前原生环境一致的规则、compact v9 观测及
 逻辑状态序列化器构建。私有模拟器源码、生成文件和编译产物不入 Git。
@@ -20,6 +20,17 @@ CPU 待执行回调不能跨设备导入。`load` 拒绝这类根；在 GPU 中�
 `STS_CUDA_BATTLE_ARTIFACTS` 指向带 `artifacts.json`、固定 SHA 的 cubin 和 Python 3.11
 桥接扩展的目录；缺少构建或 CUDA 是失败，不是跳过。该组件测试不替代完整
 256×768 collection、当前模型评分、两轮训练更新/恢复和端到端速度验收。
+
+含 `deck_observe_live_block` 的模块支持 `resident_step_kernels.py` 的稳定设备压缩与
+无副作用重试；只观察活跃分支，已结束的分支保持最后状态。每行64线程协作清零，
+共享 `compact_leaf::packInto` 直接写目标存储，不创建大型线程私有临时Row。模型侧整步图在
+`rl/search/resident_step.py`，负责观测、动态打包、评分、配对采样、提交及推进。
+捕获/预热时提交关闭；容量不足或永久卡牌变化时整步不推进，扩容/批量刷新缓存后
+重放。PCG64 流仍按 world 生成，只有真正的策略动作前移 cursor，强制动作及深度
+截断不消耗随机数。旧不含此符号的模块继续使用已支持的逐步调度，不虚报整步图。
+`rl/policies/resident_ragged.py` 迁入旧2×64的融合QKV、分桶attention、mix/FFN及
+动态计数路径；第二层只查询动作实体及global，牌堆/遗物仍参与两层的key/value。
+仅冻结FP32推理使用该路径，训练及checkpoint参数布局不变。
 
 `nosl_sampler.py` 派生 opaque nonce；`nosl_is_az.py` 提供只依赖 NumPy/观测编码的 Python tree/session。模型前推由外部 value callback/leaf request 提供，不导入 Torch、训练器或 policy。
 

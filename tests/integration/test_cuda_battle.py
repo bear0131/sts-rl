@@ -14,6 +14,41 @@ from env.core.cuda_observation import CudaObservationDecoder
 pytestmark = [pytest.mark.native, pytest.mark.cuda, pytest.mark.timeout(120)]
 
 
+def test_resident_fused_blocks_preserve_fp32_outputs_across_shapes():
+    from rl.policies.entity_action_playout import EntityBlock
+    from rl.policies.resident_transformer import frozen_block
+    torch.manual_seed(20261111)
+    block = EntityBlock(64, 4).cuda().eval()
+    with torch.no_grad():
+        for batch, length in ((3, 32), (64, 40), (3, 128), (3, 32)):
+            x = torch.randn(batch, length, 64, device='cuda')
+            present = torch.rand(batch, length, device='cuda') > .3
+            present[:, 0] = True
+            expected = block(x, present)
+            actual = frozen_block(block, x, present)
+            torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-6)
+
+
+def test_resident_ragged_blocks_preserve_selected_queries_and_empty_padding():
+    from rl.policies.entity_action_playout import EntityBlock
+    from rl.policies.resident_ragged import frozen_ragged_blocks
+    torch.manual_seed(20261111)
+    blocks = torch.nn.ModuleList([EntityBlock(64, 4), EntityBlock(64, 4)]).cuda().eval()
+    with torch.no_grad():
+        for batch, length, count in ((3, 32, 3), (16, 128, 9), (3, 40, 0), (3, 32, 2)):
+            x = torch.randn(batch, length, 64, device='cuda')
+            present = torch.rand(batch, length, device='cuda') > .6
+            present[:, 0] = True
+            queries = torch.rand(batch, length, device='cuda') > .7
+            queries[:, 0] = True
+            expected = blocks[1](blocks[0](x, present), present)
+            actual = frozen_ragged_blocks(blocks, x, present, queries,
+                torch.tensor([count], device='cuda', dtype=torch.int32))
+            selected = queries & (torch.arange(batch, device='cuda') < count)[:, None]
+            torch.testing.assert_close(actual[selected], expected[selected], rtol=3e-5, atol=3e-6)
+            assert torch.count_nonzero(actual[~selected]) == 0
+
+
 @pytest.mark.parametrize('graph_capacity', [0, 1])
 def test_resident_forks_atomic_masks_rng_and_graph_lifetime(complete_combat_factory, cuda_battle_artifacts,
                                                          graph_capacity):
@@ -49,6 +84,18 @@ def test_resident_forks_atomic_masks_rng_and_graph_lifetime(complete_combat_fact
             # continuation. Graph retirement must not destroy simulator state.
             arena.observe(2)
             raw = arena.observe(6)
+            if 'observe_live' in arena.functions:
+                expected_raw = {k: v.clone() for k, v in raw.items()}
+                expected_bits = arena.bits[:6].clone()
+                for key, value in raw.items():
+                    if key != 'prefix':
+                        value.fill_(99)
+                arena._launch('observe_live', arena.observe_args+[
+                    torch.ones(6, device='cuda', dtype=torch.int32),
+                    torch.zeros((), device='cuda', dtype=torch.int64)], 6)
+                for key in raw:
+                    torch.testing.assert_close(raw[key], expected_raw[key], rtol=0, atol=0)
+                torch.testing.assert_close(arena.bits[:6], expected_bits, rtol=0, atol=0)
             decoded = {k: v.cpu().numpy() for k, v in decoder(raw, root_tensors,
                 torch.arange(6, device='cuda')).items()}
             anchored = decoder.anchor(raw, root_tensors, torch.arange(6, device='cuda'))
@@ -144,6 +191,10 @@ def test_resident_paired_search_matches_native_and_preserves_root(complete_comba
             for key in ('actions', 'visits'):
                 np.testing.assert_array_equal(actual[0][key], expected[0][key])
             np.testing.assert_allclose(actual[0]['values'], expected[0]['values'], rtol=3e-5, atol=3e-6)
+            if score.step_pipeline is not None:
+                assert score.step_pipeline.stats['replays'] > 0
+                score.step_pipeline.capacity = 1
+                score.step_pipeline.close()
             arena.clear_graphs()
             gc.collect()
             temporary = torch.empty(8*1024**2, device='cuda')
@@ -152,6 +203,27 @@ def test_resident_paired_search_matches_native_and_preserves_root(complete_comba
             torch.cuda.empty_cache()
         assert before == root.export_training_state()
         assert torch.equal(rng_before, torch.cuda.get_rng_state())
+        # A smaller next wave reuses the same padded graph, while its unused
+        # observation rows have no validity contract. Never gather stale rows.
+        score.roots([root._obs()])
+        arena.load([payload['snapshot']] * 33, [payload['prefix']] * 33)
+        arena.observe(33)
+        owner = torch.zeros(32, dtype=torch.long, device='cuda')
+        score.bind_wave(arena, owner, 1)
+        raw = {k: v[1:] for k, v in arena.observe(33).items()}
+        meta = score.metadata(raw, owner)
+        uniforms = torch.full((32,), .375, dtype=torch.float64, device='cuda')
+        expected = tuple(x.clone() for x in score.score(raw, owner, np.arange(32),
+            metadata=meta, uniforms=uniforms))
+        arena.categorical[18:33].fill_(-100000)
+        owner = owner[:17]
+        score.bind_wave(arena, owner, 1)
+        small = {k: v[:17] for k, v in raw.items()}
+        meta = score.metadata(small, owner)
+        actual = score.score(small, owner, np.arange(17), metadata=meta, uniforms=uniforms[:17])
+        for got, want in zip(actual, expected, strict=True):
+            torch.testing.assert_close(got, want[:17], rtol=0, atol=0)
+        arena.observe(33)
         # Trailing PAD width changes graph identity; interior empty slots must
         # survive. Compare against the complete untrimmed head consumers.
         base = root._obs()
