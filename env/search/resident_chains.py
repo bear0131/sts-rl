@@ -22,7 +22,8 @@ def root_payload(env, bridge):
 
 @torch.no_grad()
 def resident_anchor_search(roots, budgets, scorer, arena, *, seed, max_depth=200,
-                           wave_capacity=4096, timeout_seconds=120., groups=None):
+                           wave_capacity=4096, timeout_seconds=120., groups=None,
+                           group_seeds=None):
     start = time.monotonic()
     stats = dict(chains=0, atomic_steps=0, policy_rows=0, forced_rows=0, anchor_rows=0,
         cutoff_rows=0, terminal_rows=0, max_active=0, budget_floor_overage=0)
@@ -31,7 +32,8 @@ def resident_anchor_search(roots, budgets, scorer, arena, *, seed, max_depth=200
     for i, (root, budget) in enumerate(zip(roots, budgets, strict=True)):
         group = 0 if groups is None else groups[i]
         if group not in generators:
-            group_seed = seed if groups is None else int(np.random.SeedSequence([seed, group]).generate_state(1, dtype=np.uint64)[0])
+            group_seed = (group_seeds[group] if group_seeds is not None else seed if groups is None
+                          else int(np.random.SeedSequence([seed, group]).generate_state(1, dtype=np.uint64)[0]))
             generators[group] = np.random.default_rng(group_seed)
         legal = root['actions']
         result = dict(actions=legal, values=np.zeros(len(legal)), visits=np.zeros(len(legal), np.int64))

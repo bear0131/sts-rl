@@ -14,6 +14,47 @@ from env.core.cuda_observation import CudaObservationDecoder
 pytestmark = [pytest.mark.native, pytest.mark.cuda, pytest.mark.timeout(120)]
 
 
+def test_resident_frame_preserves_separate_worker_random_streams(complete_combat_factory, cuda_battle_artifacts):
+    from env.search.resident_chains import root_payload, resident_anchor_search
+    from rl.search.resident_deck import ResidentDeckScorer
+    from rl.policies.deck_latent import DeckLatentPolicy
+    roots = [complete_combat_factory(['STRIKE_RED', 'DEFEND_RED', 'BASH', 'SHRUG_IT_OFF'],
+        seed=s, deck_latent_context=True, card_language=True) for s in (42, 91)]
+    torch.manual_seed(20261111)
+    policy = DeckLatentPolicy(roots[0].observation_space, roots[0].action_space, lambda _: 5e-5,
+        d_model=32, n_layers=1, n_heads=4, room_lambda=1., reward_flow='sequential-v1',
+        deck_combat_encoder='transformer64x2').cuda().eval()
+    folder, manifest, bridge = cuda_battle_artifacts
+    payloads = [root_payload(r, bridge) for r in roots]
+    snapshots = [r.export_training_state() for r in roots]
+    arena = CudaBattleArena(folder/'deck.cubin', manifest['sha256']['deck.cubin'], 258,
+        card_count=_nosl_compact_lut()['layout']['card_count'])
+    score = ResidentDeckScorer(policy)
+    try:
+        serial, work = [], []
+        for root, payload in zip(roots, payloads):
+            score.roots([root._obs()])
+            # Even repeated base seeds in different real steps restart their
+            # worker stream; batching must never concatenate these generators.
+            values, counts = resident_anchor_search([payload], [64], score, arena,
+                seed=20261111, groups=[0], max_depth=32, wave_capacity=256)
+            serial.extend(values); work.append(counts)
+        score.roots([r._obs() for r in roots])
+        seed = int(np.random.SeedSequence([20261111, 0]).generate_state(1, dtype=np.uint64)[0])
+        merged, counts = resident_anchor_search(payloads, [64, 64], score, arena, seed=0,
+            groups=[(0, 0), (1, 0)], group_seeds={(0, 0): seed, (1, 0): seed},
+            max_depth=32, wave_capacity=256)
+        for a, b in zip(serial, merged):
+            for key in ('actions', 'visits'):
+                np.testing.assert_array_equal(a[key], b[key])
+            np.testing.assert_allclose(a['values'], b['values'], rtol=3e-5, atol=3e-6)
+        for key in ('chains', 'atomic_steps', 'policy_rows', 'forced_rows', 'anchor_rows', 'cutoff_rows', 'terminal_rows'):
+            assert counts[key] == sum(w[key] for w in work)
+        assert snapshots == [r.export_training_state() for r in roots]
+    finally:
+        score.close(); arena.close()
+
+
 def test_resident_fused_blocks_preserve_fp32_outputs_across_shapes():
     from rl.policies.entity_action_playout import EntityBlock
     from rl.policies.resident_transformer import frozen_block

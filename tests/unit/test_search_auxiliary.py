@@ -1,8 +1,33 @@
 import torch
+import numpy as np
+import pytest
 from types import SimpleNamespace
 from dataclasses import asdict
 
 from rl.algorithms.search_auxiliary import improved_prior, search_kl
+
+
+def test_deferred_teacher_keeps_real_time_and_env_through_shuffle_and_reset():
+    from gymnasium import spaces
+    from rl.algorithms.search_auxiliary import SearchRolloutBuffer
+    buffer = SearchRolloutBuffer(4, spaces.Dict(x=spaces.Box(0, 100, (1,), dtype=np.float32)),
+                                 spaces.Discrete(2), device='cpu', n_envs=2)
+    target = np.log([.25, .75]).astype(np.float32)
+    with pytest.raises(ValueError, match='captured'):
+        buffer.add_search_target(0, target, position=1)
+    for t in range(4):
+        buffer.add({'x': np.array([[t], [10+t]], np.float32)}, np.zeros(2), np.zeros(2),
+                   np.zeros(2), torch.zeros(2), torch.zeros(2))
+    buffer.add_search_target(1, target, position=0)
+    buffer.add_search_target(0, target[::-1], position=3)
+    with pytest.raises(ValueError, match='already supplied'):
+        buffer.add_search_target(1, target, position=0)
+    batch = buffer._get_samples(np.array([4, 3, 0, 7]))
+    torch.testing.assert_close(batch.observations['x'].flatten(), torch.tensor([10., 3., 0., 13.]))
+    torch.testing.assert_close(batch.observations['_search_valid'], torch.tensor([1., 1., 0., 0.]))
+    np.testing.assert_array_equal(batch.observations['_search_target'][:2], np.stack([target, target[::-1]]))
+    buffer.reset()
+    assert not buffer.search_targets
 
 
 def test_equal_values_preserve_prior_and_illegal_atoms_have_no_gradient():

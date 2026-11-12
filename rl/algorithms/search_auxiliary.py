@@ -47,12 +47,17 @@ class SearchRolloutBuffer(SharedRolloutBuffer):
         super().reset()
         self.search_targets = {}
 
-    def add_search_target(self, env_index, log_target):
-        if self.full or not 0 <= env_index < self.n_envs:
+    def add_search_target(self, env_index, log_target, *, position=None):
+        if ((position is None and self.full) or not 0 <= env_index < self.n_envs):
             raise ValueError('search target must refer to the current real pre-action row')
+        position = self.pos if position is None else int(position)
+        if not (0 <= position < self.buffer_size and (self.full or position <= self.pos)):
+            raise ValueError('search target must refer to a captured real pre-action row')
         if np.shape(log_target) != (self.mask_dims,):
             raise ValueError('search target action contract mismatch')
-        self.search_targets[(self.pos, env_index)] = np.array(log_target, dtype=np.float32, copy=True)
+        if (position, env_index) in self.search_targets:
+            raise ValueError('search target already supplied for this real row')
+        self.search_targets[(position, env_index)] = np.array(log_target, dtype=np.float32, copy=True)
 
     def _get_samples(self, batch_inds, env=None, device_storage=None):
         result = super()._get_samples(batch_inds, env, device_storage=device_storage)

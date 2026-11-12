@@ -44,12 +44,15 @@ class ShadowSearchCollection:
             'chains', 'atomic_steps', 'policy_rows', 'forced_rows', 'anchor_rows', 'cutoff_rows',
             'terminal_rows', 'max_active', 'budget_floor_overage', 'worker_search_seconds', 'context_refreshes',
             'scoring_seconds', 'worker_and_transport_seconds', 'frontier_batches', 'frontier_rows', 'transport_bytes',
-            'backend_cuda_inference', 'backend_cuda_simulation', *DECK_SEARCH_CACHE_METRICS), 0.)
+            'backend_cuda_inference', 'backend_cuda_simulation', 'resident_frames',
+            'resident_frame_roots_max', *DECK_SEARCH_CACHE_METRICS), 0.)
         self.stats['backend_cuda_inference'] = float(self.config.backend in ('cuda-batched-native', 'cuda-resident'))
         self.stats['backend_cuda_simulation'] = float(self.config.backend == 'cuda-resident')
         self.hook = None
         self.previous = env.step_async
         self.snapshot = None
+        self.resident_pending = []
+        self.resident_pending_roots = 0
 
     def start(self):
         self.inference_cache = DeckSearchInferenceCache(self.model.policy.core, self.config.inference_cache_bytes)
@@ -59,7 +62,7 @@ class ShadowSearchCollection:
             from rl.search.resident_deck import ResidentDeckScorer
             folder, manifest, _ = load_artifacts(self.config.cuda_artifacts)
             self.resident_arena = CudaBattleArena(folder/'deck.cubin', manifest['sha256']['deck.cubin'],
-                self.env.num_envs+self.config.cuda_wave_capacity,
+                2*self.env.num_envs+self.config.cuda_wave_capacity,
                 card_count=_nosl_compact_lut()['layout']['card_count'])
             self.resident_scorer = ResidentDeckScorer(self.model.policy, self.config.inference_cache_bytes)
         elif self.config.backend == 'cuda-batched-native':
@@ -100,6 +103,8 @@ class ShadowSearchCollection:
         self.pending = (indices, masks[indices], logits, context)
 
     def step(self, actions):
+        if self.config.backend == 'cuda-resident':
+            return self._resident_step(actions)
         if self.pending is not None:
             started = time.monotonic()
             indices, masks, logits, context = self.pending
@@ -107,14 +112,7 @@ class ShadowSearchCollection:
             budgets = [self.config.boss_budget if o['combat_is_boss'].item() else self.config.normal_budget
                        for o in observations]
             seed = int(self.rng.integers(0, 2**63 - 1))
-            if self.config.backend == 'cuda-resident':
-                from env.search.resident_chains import resident_anchor_search
-                roots, groups = self.env.deck_resident_roots(indices.tolist(), self.config.cuda_artifacts)
-                self.resident_scorer.roots(observations, context)
-                result, stats = resident_anchor_search(roots, budgets, self.resident_scorer,
-                    self.resident_arena, seed=seed, groups=groups, max_depth=self.config.max_depth,
-                    wave_capacity=self.config.cuda_wave_capacity, timeout_seconds=self.config.timeout_seconds)
-            elif self.config.backend == 'cuda-batched-native':
+            if self.config.backend == 'cuda-batched-native':
                 scorer = DeckLatentScorer(self.model.policy, observations, context=context, tables=self.tables,
                     inference_cache=self.inference_cache)
                 result, stats = self.env.deck_batched_search(dict(indices=indices.tolist(), budgets=budgets,
@@ -148,11 +146,83 @@ class ShadowSearchCollection:
                 self.stats[k] = max(self.stats[k], float(v)) if k == 'max_active' else self.stats[k] + float(v)
         return self.previous(actions)
 
+    @torch.no_grad()
+    def _resident_step(self, actions):
+        # Shadow teachers never select real actions. Keep the frozen roots of
+        # several real steps in one frame, as in the original GPU pipeline.
+        # The original (time, env) and per-call worker RNG streams stay owned by
+        # each item; neither physical grouping nor flushing changes them.
+        started = time.monotonic()
+        if self.pending is not None:
+            indices, masks, logits, context = self.pending
+            observations = [{k: np.array(v[i], copy=True) for k, v in self.model._last_obs.items()}
+                            for i in indices]
+            budgets = [self.config.boss_budget if o['combat_is_boss'].item() else self.config.normal_budget
+                       for o in observations]
+            seed = int(self.rng.integers(0, 2**63-1))
+            roots, groups = self.env.deck_resident_roots(indices.tolist(), self.config.cuda_artifacts)
+            from rl.policies.deck_latent import SearchContext
+            context = SearchContext(context.combat.clone(), context.anchor.clone())
+            self.resident_pending.append(dict(position=self.buffer.pos, indices=indices.copy(),
+                masks=masks.copy(), logits=logits.clone(), context=context, observations=observations,
+                roots=roots, groups=groups, budgets=budgets, seed=seed))
+            self.resident_pending_roots += len(roots)
+            self.stats['selected_roots'] += len(indices)
+        if (self.resident_pending_roots >= self.env.num_envs
+                or self.buffer.pos == self.buffer.buffer_size-1):
+            self._flush_resident()
+        self.stats['search_seconds'] += time.monotonic()-started
+        return self.previous(actions)
+
+    @torch.no_grad()
+    def _flush_resident(self):
+        if not self.resident_pending:
+            return
+        from env.search.resident_chains import resident_anchor_search
+        from rl.policies.deck_latent import SearchContext
+        items = self.resident_pending
+        roots, observations, budgets, groups, group_seeds = [], [], [], [], {}
+        for frame, item in enumerate(items):
+            roots.extend(item['roots']); observations.extend(item['observations']); budgets.extend(item['budgets'])
+            for worker in item['groups']:
+                key = frame, int(worker)
+                groups.append(key)
+                group_seeds[key] = int(np.random.SeedSequence([item['seed'], int(worker)]).generate_state(1, dtype=np.uint64)[0])
+        context = SearchContext(torch.cat([i['context'].combat for i in items]),
+                                torch.cat([i['context'].anchor for i in items]))
+        self.resident_scorer.roots(observations, context)
+        result, stats = resident_anchor_search(roots, budgets, self.resident_scorer,
+            self.resident_arena, seed=0, groups=groups, group_seeds=group_seeds,
+            max_depth=self.config.max_depth, wave_capacity=self.config.cuda_wave_capacity,
+            timeout_seconds=self.config.timeout_seconds)
+        offset = 0
+        for item in items:
+            for j, index in enumerate(item['indices']):
+                row = result[offset+j]
+                if row.get('skipped'):
+                    continue
+                logits, masks = item['logits'], item['masks']
+                q = torch.zeros_like(logits[j:j+1])
+                q[0, row['actions']] = torch.as_tensor(row['values'], dtype=q.dtype)
+                target = improved_prior(logits[j:j+1], q, torch.from_numpy(masks[j:j+1]),
+                    torch.tensor([int(row['visits'][0])]), self.config.target_std)[0].numpy()
+                self.buffer.add_search_target(int(index), target, position=item['position'])
+                self.stats['searched_roots'] += 1
+            offset += len(item['roots'])
+        for k, v in stats.items():
+            k = 'worker_search_seconds' if k == 'seconds' else k
+            self.stats[k] = max(self.stats[k], float(v)) if k == 'max_active' else self.stats[k]+float(v)
+        self.stats['resident_frames'] += 1
+        self.stats['resident_frame_roots_max'] = max(self.stats['resident_frame_roots_max'], len(roots))
+        self.resident_pending.clear()
+        self.resident_pending_roots = 0
+
     def close(self):
         if self.hook is not None:
             self.hook.remove()
         self.env.step_async = self.previous
         self.inference_cache.clear()
+        self.resident_pending.clear()  # Failed/aborted rollouts never flush a partial teacher.
         if self.config.backend == 'cuda-resident':
             for key, value in self.resident_scorer.anchor_cache.stats.items():
                 metric = 'anchor_cache_' + key
