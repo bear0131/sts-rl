@@ -38,8 +38,8 @@ extern "C" __global__ void deck_observe(unsigned char*arena,int*constructed,int*
  int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;
  deck_observe_row(arena,constructed,prefix,cat,scalars,bits,mask,status,upgrades,misc,i);
 }
-// One cooperative block clears a live row; thread zero writes the shared
-// canonical codec directly to global storage, with no large per-thread Row.
+// Port the old normal_features split: one warp shares the canonical row
+// codec, the other owns legal-action assembly and pile metadata.
 struct DeckOutputView {int*categorical;float*scalars;int selectionCount=0;};
 extern "C" __global__ void deck_observe_live_block(unsigned char*arena,int*constructed,int*prefix,int*cat,float*scalars,unsigned*bits,int*mask,int*status,float*upgrades,int*misc,int*live,long long*offset,int n){
  int lane=blockIdx.x;if(lane>=n||!live[lane])return;
@@ -51,12 +51,12 @@ extern "C" __global__ void deck_observe_live_block(unsigned char*arena,int*const
  for(int k=t;k<6*C;k+=blockDim.x)upgrades[i*6*C+k]=0;
  for(int k=t;k<D;k+=blockDim.x)misc[i*D+k]=-1;
  __syncthreads();
- if(t==0){
+ if(t<=32){
   device_state::require(constructed[i]);
   const auto&b=*reinterpret_cast<const sts::BattleContext*>(arena+i*sizeof(sts::BattleContext));
   DeckOutputView row{cat+i*compact_leaf::kCatSize,scalars+i*compact_leaf::kFloatSize};
-  compact_leaf::packInto(b,row);
-  deck_observe_extras<false>(b,prefix,bits,mask,status,upgrades,misc,i);
+  if(t<32)compact_leaf::packInto(b,row,t,32);
+  else deck_observe_extras<false>(b,prefix,bits,mask,status,upgrades,misc,i);
  }
 }
 extern "C" __global__ void deck_apply(unsigned char*arena,int*constructed,int*prefix,int*selected,unsigned*bits,int*mask,int n){

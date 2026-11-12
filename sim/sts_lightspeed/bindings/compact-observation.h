@@ -176,7 +176,7 @@ inline int monsterStatusValue(const sts::Monster &monster, int status) {
 // The caller supplies zeroed categorical/scalar storage. CPU Row and the
 // cooperative GPU writer share this exact observation contract.
 template <typename Output>
-inline void packInto(const sts::BattleContext &bc, Output &row) {
+inline void packInto(const sts::BattleContext &bc, Output &row, int lane = 0, int lanes = 1) {
     if (bc.cards.cardsInHand < 0 || bc.cards.cardsInHand > kHandSlots) {
         throw std::invalid_argument("combat hand exceeds compact observation capacity");
     }
@@ -189,7 +189,7 @@ inline void packInto(const sts::BattleContext &bc, Output &row) {
     std::array<int, kMaxMonsters> baseDamages{};
     std::array<int, kMaxMonsters> attackCounts{};
     int c = 0;
-    for (int i = 0; i < bc.cards.cardsInHand && i < kHandSlots; ++i) {
+    for (int i = lane; i < bc.cards.cardsInHand && i < kHandSlots; i += lanes) {
         const int card = static_cast<int>(bc.cards.hand[i].getId());
         if (card <= 0 || card >= kCardIds) {
             throw std::invalid_argument("live hand contains an invalid card identity");
@@ -197,8 +197,8 @@ inline void packInto(const sts::BattleContext &bc, Output &row) {
         row.categorical[c + i] = card;
     }
     c += kHandSlots;
-    for (int i = 0; i < bc.monsters.monsterCount && i < kMaxMonsters;
-         ++i) {
+    for (int i = lane; i < bc.monsters.monsterCount && i < kMaxMonsters;
+         i += lanes) {
         const auto &monster = bc.monsters.arr[i];
         const int monsterId = static_cast<int>(monster.id);
         if (monster.id == sts::MonsterId::INVALID) continue;
@@ -213,8 +213,8 @@ inline void packInto(const sts::BattleContext &bc, Output &row) {
         row.categorical[c + kMaxMonsters + i] = move;
     }
     c += 2 * kMaxMonsters;
-    for (int i = 0; i < bc.monsters.monsterCount && i < kMaxMonsters;
-         ++i) {
+    for (int i = lane; i < bc.monsters.monsterCount && i < kMaxMonsters;
+         i += lanes) {
         const auto &monster = bc.monsters.arr[i];
         if (monster.id == sts::MonsterId::INVALID) continue;
         const auto damage = monster.getMoveBaseDamage(bc);
@@ -224,7 +224,7 @@ inline void packInto(const sts::BattleContext &bc, Output &row) {
             monster, baseDamages[i]);
     }
     c += kMaxMonsters;
-    for (int i = 0; i < bc.potionCapacity && i < kPotionSlots; ++i) {
+    for (int i = lane; i < bc.potionCapacity && i < kPotionSlots; i += lanes) {
         if (bc.potions[i] == sts::Potion::INVALID) {
             throw std::invalid_argument(
                 "physical potion slot contains INVALID instead of EMPTY_POTION_SLOT");
@@ -236,79 +236,58 @@ inline void packInto(const sts::BattleContext &bc, Output &row) {
         row.categorical[c + i] = potion;
     }
     c += kPotionSlots;
-    const bool selecting = bc.inputState == InputState::CARD_SELECT;
-    row.categorical[c++] = selecting ? static_cast<int>(bc.cardSelectInfo.cardSelectTask) : 0;
-    const auto choices = sts::search::combatChoices(bc);
-    row.selectionCount = static_cast<int>(choices.cards.size());
-    if (choices.cards.size() > 96 || choices.zone < 0 || choices.zone > 6) {
-        throw std::invalid_argument("combat selection exceeds compact observation contract");
-    }
-    for (std::size_t i = 0; i < choices.cards.size(); ++i) {
-        const int card = static_cast<int>(choices.cards[i].id);
-        if ((!choices.cards[i].skip && (card <= 0 || card >= kCardIds)) ||
-            (choices.cards[i].skip && card != 0)) {
-            throw std::invalid_argument("combat selection contains an invalid card identity");
+    if (lane == 0) {
+        int f = 0;
+        row.scalars[f++] = static_cast<float>(bc.player.curHp);
+        row.scalars[f++] = static_cast<float>(bc.player.maxHp);
+        row.scalars[f++] = static_cast<float>(bc.player.block);
+        row.scalars[f++] = static_cast<float>(bc.player.energy);
+        row.scalars[f++] = static_cast<float>(bc.turn);
+        row.scalars[f++] = static_cast<float>(bc.player.gold);
+        for (int status = 1; status <= kPlayerStatus; ++status) {
+            row.scalars[f++] = static_cast<float>(playerPowerObservation(bc.player,
+                static_cast<PlayerStatus>(status)));
         }
-        if (choices.cards[i].nativeIndex < 0 ||
-            choices.cards[i].nativeIndex >= 65536) {
-            throw std::invalid_argument("combat selection handle is outside observation range");
-        }
-        row.categorical[c + i] = card;
-        row.categorical[c + 96 + i] = choices.cards[i].nativeIndex + 1;
-    }
-    row.categorical[c + 192] = choices.zone;
-    const auto selectedCards = sts::search::combatSelectedCards(bc);
-    for (std::size_t i = 0; i < selectedCards.size(); ++i)
-        row.categorical[c + 193 + i] = static_cast<int>(selectedCards[i].id);
+        // Keep this order synchronized with encode.COMBAT_COUNTER_KEYS.
+        const float counters[kCombatCounters] = {
+            static_cast<float>(bc.player.happyFlowerCounter),
+            static_cast<float>(bc.player.incenseBurnerCounter),
+            static_cast<float>(bc.player.inkBottleCounter),
+            static_cast<float>(bc.player.inserterCounter),
+            static_cast<float>(bc.player.nunchakuCounter),
+            static_cast<float>(bc.player.penNibCounter),
+            static_cast<float>(bc.player.sundialCounter),
+            static_cast<float>(bc.player.haveUsedNecronomiconThisTurn),
+            static_cast<float>(bc.player.cardsPlayedThisTurn),
+            static_cast<float>(bc.player.attacksPlayedThisTurn),
+            static_cast<float>(bc.player.skillsPlayedThisTurn),
+            static_cast<float>(bc.player.orangePelletsCardTypesPlayed.test(0)),
+            static_cast<float>(bc.player.orangePelletsCardTypesPlayed.test(1)),
+            static_cast<float>(bc.player.orangePelletsCardTypesPlayed.test(2)),
+            static_cast<float>(bc.player.combustHpLoss),
+            static_cast<float>(bc.player.devaFormEnergyPerTurn),
+            static_cast<float>(bc.player.echoFormCardsDoubled),
+            static_cast<float>(bc.player.panacheCounter),
+            static_cast<float>(bc.player.cardsDiscardedThisTurn),
+            static_cast<float>(bc.player.timesDamagedThisCombat),
+            static_cast<float>(bc.player.bombDamage(1)),
+            static_cast<float>(bc.player.bombDamage(2)),
+            static_cast<float>(bc.player.bombDamage(3)),
+            static_cast<float>(bc.player.lastAttackUnblockedDamage),
+        };
+        for (int i = 0; i < kCombatCounters; ++i) row.scalars[f++] = counters[i];
+        row.scalars[f++] = bc.postEnemyTurnBoundary ? 1.0f : 0.0f;
 
-    int f = 0;
-    row.scalars[f++] = static_cast<float>(bc.player.curHp);
-    row.scalars[f++] = static_cast<float>(bc.player.maxHp);
-    row.scalars[f++] = static_cast<float>(bc.player.block);
-    row.scalars[f++] = static_cast<float>(bc.player.energy);
-    row.scalars[f++] = static_cast<float>(bc.turn);
-    row.scalars[f++] = static_cast<float>(bc.player.gold);
-    for (int status = 1; status <= kPlayerStatus; ++status) {
-        row.scalars[f++] = static_cast<float>(playerPowerObservation(bc.player,
-            static_cast<PlayerStatus>(status)));
     }
-    // Keep this order synchronized with encode.COMBAT_COUNTER_KEYS.
-    const float counters[kCombatCounters] = {
-        static_cast<float>(bc.player.happyFlowerCounter),
-        static_cast<float>(bc.player.incenseBurnerCounter),
-        static_cast<float>(bc.player.inkBottleCounter),
-        static_cast<float>(bc.player.inserterCounter),
-        static_cast<float>(bc.player.nunchakuCounter),
-        static_cast<float>(bc.player.penNibCounter),
-        static_cast<float>(bc.player.sundialCounter),
-        static_cast<float>(bc.player.haveUsedNecronomiconThisTurn),
-        static_cast<float>(bc.player.cardsPlayedThisTurn),
-        static_cast<float>(bc.player.attacksPlayedThisTurn),
-        static_cast<float>(bc.player.skillsPlayedThisTurn),
-        static_cast<float>(bc.player.orangePelletsCardTypesPlayed.test(0)),
-        static_cast<float>(bc.player.orangePelletsCardTypesPlayed.test(1)),
-        static_cast<float>(bc.player.orangePelletsCardTypesPlayed.test(2)),
-        static_cast<float>(bc.player.combustHpLoss),
-        static_cast<float>(bc.player.devaFormEnergyPerTurn),
-        static_cast<float>(bc.player.echoFormCardsDoubled),
-        static_cast<float>(bc.player.panacheCounter),
-        static_cast<float>(bc.player.cardsDiscardedThisTurn),
-        static_cast<float>(bc.player.timesDamagedThisCombat),
-        static_cast<float>(bc.player.bombDamage(1)),
-        static_cast<float>(bc.player.bombDamage(2)),
-        static_cast<float>(bc.player.bombDamage(3)),
-        static_cast<float>(bc.player.lastAttackUnblockedDamage),
-    };
-    for (int i = 0; i < kCombatCounters; ++i) row.scalars[f++] = counters[i];
-    row.scalars[f++] = bc.postEnemyTurnBoundary ? 1.0f : 0.0f;
-
+    constexpr int monsterBase = 6 + kPlayerStatus + kCombatCounters + 1;
     // Keep the packed layout identical to encode._empty_combat(): all
     // monsters' six scalar fields are contiguous, followed by all monster
     // status vectors.  The Python decoder relies on these two rectangular
     // blocks when reshaping a batch; interleaving status fields per monster
     // silently corrupts multi-monster leaves.
-    for (int i = 0; i < bc.monsters.monsterCount && i < kMaxMonsters;
-         ++i) {
+    for (int i = lane; i < bc.monsters.monsterCount && i < kMaxMonsters;
+         i += lanes) {
+        int f = monsterBase + i * 6;
         const auto &monster = bc.monsters.arr[i];
         if (monster.id == sts::MonsterId::INVALID) { f += 6; continue; }
         const int baseDamage = baseDamages[i];
@@ -320,24 +299,28 @@ inline void packInto(const sts::BattleContext &bc, Output &row) {
         row.scalars[f++] = static_cast<float>(adjusted);
         row.scalars[f++] = static_cast<float>(baseDamage > 0 ? attackCounts[i] : 0);
     }
-    f += 6 * (kMaxMonsters - std::min(kMaxMonsters, bc.monsters.monsterCount));
-    for (int i = 0; i < bc.monsters.monsterCount && i < kMaxMonsters;
-         ++i) {
+    constexpr int statusBase = monsterBase + 6 * kMaxMonsters;
+    for (int i = lane; i < bc.monsters.monsterCount && i < kMaxMonsters;
+         i += lanes) {
+        int f = statusBase + i * kMonsterStatus;
         const auto &monster = bc.monsters.arr[i];
         if (monster.id == sts::MonsterId::INVALID) { f += kMonsterStatus; continue; }
         for (int status = 0; status < kMonsterStatus; ++status) {
             row.scalars[f++] = static_cast<float>(monsterStatusValue(monster, status));
         }
     }
-    f += kMonsterStatus * (kMaxMonsters - std::min(kMaxMonsters, bc.monsters.monsterCount));
-    for (int i = 0; i < bc.cards.cardsInHand && i < kHandSlots; ++i) {
+
+    constexpr int handBase = statusBase + kMaxMonsters * kMonsterStatus;
+    for (int i = lane; i < bc.cards.cardsInHand && i < kHandSlots; i += lanes) {
+        int f = handBase + 2 * i;
         const auto &card = bc.cards.hand[i];
         row.scalars[f++] = static_cast<float>(card.getUpgradeCount());
         row.scalars[f++] = static_cast<float>(card.freeToPlayOnce ? 0 : card.costForTurn);
     }
-    f += 2 * (kHandSlots - std::min(kHandSlots, bc.cards.cardsInHand));
-    auto countPile = [&](const auto &pile) {
-        const int base = f;
+
+    constexpr int pileBase = handBase + 2 * kHandSlots;
+    auto countPile = [&](const auto &pile, int zone) {
+        const int base = pileBase + zone * kCardIds;
         for (const auto &card : pile) {
             const int id = static_cast<int>(card.getId());
             if (id <= 0 || id >= kCardIds) {
@@ -345,28 +328,55 @@ inline void packInto(const sts::BattleContext &bc, Output &row) {
             }
             row.scalars[base + id] += 1.0f;
         }
-        f += kCardIds;
     };
-    countPile(bc.cards.drawPile);
-    countPile(bc.cards.discardPile);
-    countPile(bc.cards.exhaustPile);
-    // GRID prefixes remain in the discard pile until the mandatory last pick.
-    row.scalars[f++] = selecting
-        ? static_cast<float>(bc.cardSelectInfo.pickCount - bc.cardSelectInfo.selectedCount)
-        : 0.0f;
-    row.scalars[f++] = selecting && bc.cardSelectInfo.canPickZero ? 1.0f : 0.0f;
-    row.scalars[f++] = selecting && bc.cardSelectInfo.canPickAnyNumber ? 1.0f : 0.0f;
-    row.scalars[f++] = selecting && bc.cardSelectInfo.isMultiSelection() ? 1.0f : 0.0f;
-    for (std::size_t i = 0; i < choices.cards.size(); ++i) {
-        row.scalars[f + i] = static_cast<float>(choices.cards[i].upgrades);
-        row.scalars[f + 96 + i] = static_cast<float>(choices.cards[i].cost);
+    if (0 % lanes == lane) countPile(bc.cards.drawPile, 0);
+    if (1 % lanes == lane) countPile(bc.cards.discardPile, 1);
+    if (2 % lanes == lane) countPile(bc.cards.exhaustPile, 2);
+    if (lane == 0) {
+        const bool selecting = bc.inputState == InputState::CARD_SELECT;
+        row.categorical[c++] = selecting ? static_cast<int>(bc.cardSelectInfo.cardSelectTask) : 0;
+        const auto choices = sts::search::combatChoices(bc);
+        row.selectionCount = static_cast<int>(choices.cards.size());
+        if (choices.cards.size() > 96 || choices.zone < 0 || choices.zone > 6) {
+            throw std::invalid_argument("combat selection exceeds compact observation contract");
+        }
+        for (std::size_t i = 0; i < choices.cards.size(); ++i) {
+            const int card = static_cast<int>(choices.cards[i].id);
+            if ((!choices.cards[i].skip && (card <= 0 || card >= kCardIds)) ||
+                (choices.cards[i].skip && card != 0)) {
+                throw std::invalid_argument("combat selection contains an invalid card identity");
+            }
+            if (choices.cards[i].nativeIndex < 0 ||
+                choices.cards[i].nativeIndex >= 65536) {
+                throw std::invalid_argument("combat selection handle is outside observation range");
+            }
+            row.categorical[c + i] = card;
+            row.categorical[c + 96 + i] = choices.cards[i].nativeIndex + 1;
+        }
+        row.categorical[c + 192] = choices.zone;
+        const auto selectedCards = sts::search::combatSelectedCards(bc);
+        for (std::size_t i = 0; i < selectedCards.size(); ++i)
+            row.categorical[c + 193 + i] = static_cast<int>(selectedCards[i].id);
+
+        int f = pileBase + 3 * kCardIds;
+        // GRID prefixes remain in the discard pile until the mandatory last pick.
+        row.scalars[f++] = selecting
+            ? static_cast<float>(bc.cardSelectInfo.pickCount - bc.cardSelectInfo.selectedCount)
+            : 0.0f;
+        row.scalars[f++] = selecting && bc.cardSelectInfo.canPickZero ? 1.0f : 0.0f;
+        row.scalars[f++] = selecting && bc.cardSelectInfo.canPickAnyNumber ? 1.0f : 0.0f;
+        row.scalars[f++] = selecting && bc.cardSelectInfo.isMultiSelection() ? 1.0f : 0.0f;
+        for (std::size_t i = 0; i < choices.cards.size(); ++i) {
+            row.scalars[f + i] = static_cast<float>(choices.cards[i].upgrades);
+            row.scalars[f + 96 + i] = static_cast<float>(choices.cards[i].cost);
+        }
+        for (std::size_t i = 0; i < selectedCards.size(); ++i)
+            row.scalars[f + 192 + i] = static_cast<float>(selectedCards[i].getUpgradeCount());
+        row.scalars[kFloatSize - 4] = bc.player.hasRelicRuntime(sts::RelicId::CENTENNIAL_PUZZLE) ? 1.0f : 0.0f;
+        row.scalars[kFloatSize - 3] = bc.player.hasRelicRuntime(sts::RelicId::LIZARD_TAIL) ? 1.0f : 0.0f;
+        row.scalars[kFloatSize - 2] = bc.postEnemyTurnBoundary ? bc.pocketwatchCardsAtBoundary : bc.player.cardsPlayedThisTurn;
+        row.scalars[kFloatSize - 1] = bc.player.neowLamentRemaining;
     }
-    for (std::size_t i = 0; i < selectedCards.size(); ++i)
-        row.scalars[f + 192 + i] = static_cast<float>(selectedCards[i].getUpgradeCount());
-    row.scalars[kFloatSize - 4] = bc.player.hasRelicRuntime(sts::RelicId::CENTENNIAL_PUZZLE) ? 1.0f : 0.0f;
-    row.scalars[kFloatSize - 3] = bc.player.hasRelicRuntime(sts::RelicId::LIZARD_TAIL) ? 1.0f : 0.0f;
-    row.scalars[kFloatSize - 2] = bc.postEnemyTurnBoundary ? bc.pocketwatchCardsAtBoundary : bc.player.cardsPlayedThisTurn;
-    row.scalars[kFloatSize - 1] = bc.player.neowLamentRemaining;
 }
 
 inline Row pack(const sts::BattleContext &bc) {
