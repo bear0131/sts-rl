@@ -7,7 +7,7 @@
 
 - **COMBAT49-FAILURE-SCENE** — 待修诊断：distributed_sb3失败捕获在NativeSubprocVecEnv访问不存在的envs，训练原始异常仍在log。范围失败现场捕获/原生子进程环境；验收支持该生产后端、保留原异常并导出可用状态，独立于已修scalar schema，不阻塞健康续训。
 
-- **COMBAT49-NODE-CONNECTION** — 待基础设施恢复（15:13再次实查四机均NoValidConnectionsError；STS stale，停留229，无新完成轮；用户尚未回复）：先rank2独立CPU诊断SSH回执rc=-1，随后rank2/0/1/3端口逐次拒绝连接。已读rank1/3 exit1及rank3在第230轮更新前优势归一化汇总报ring peer closed；监控最后229/global180092928，顶层training/缓存alive无效。228四rank全成员SHA/模型Adam一致已核，229尚未全rank核验。尝试保护228/229时四台均不可达，未新增保护。旧203及此前保护当前也不可访问；已询问用户是否主动回收/迁移，尚无回答。恢复前先查最新意图、四机进程和计划，取得完整229（否则228）并保护模型Adam/RNG/env再普通恢复；禁止单rank盲启或重跑旧脚本。原始记录runs/local/combat49-maintenance/network-*，现役source32ad，CPU候选未部署。基础设施原因未确定，不能把连接拒绝冒称CUDA错误或已修复。
+- **COMBAT49-NODE-CONNECTION** — 待基础设施恢复（15:43再次实查四机均NoValidConnectionsError；STS stale，停留229，无新完成轮；用户尚未回复）：先rank2独立CPU诊断SSH回执rc=-1，随后rank2/0/1/3端口逐次拒绝连接。已读rank1/3 exit1及rank3在第230轮更新前优势归一化汇总报ring peer closed；监控最后229/global180092928，顶层training/缓存alive无效。228四rank全成员SHA/模型Adam一致已核，229尚未全rank核验。尝试保护228/229时四台均不可达，未新增保护。旧203及此前保护当前也不可访问；已询问用户是否主动回收/迁移，尚无回答。恢复前先查最新意图、四机进程和计划，取得完整229（否则228）并保护模型Adam/RNG/env再普通恢复；禁止单rank盲启或重跑旧脚本。原始记录runs/local/combat49-maintenance/network-*，现役source32ad，CPU候选未部署。基础设施原因未确定，不能把连接拒绝冒称CUDA错误或已修复。
 
 - **ENV-LEGACY-MAP-CAPACITY** — 已复现待修：source32ad及候选上，test_environment_recovery旧紧凑地图配置在seed123遇4–5选项时触发options.nodes超过容量3；独立基线test_action_journal_restores_native_action_and_pending_target亦失败（exit1，.34s），不是journal优化引入。范围env/core/spiremap.py、encode.py紧凑地图及旧checkpoint兼容；验收不丢合法节点并覆盖旧观测/新完整地图恢复。combat49完整地图不走该失败路径，新增fork测试显式global_map_view=True；旧失败不skip。证据cpu-journal-1248/test.log及baseline-legacy-failure.log。
 
