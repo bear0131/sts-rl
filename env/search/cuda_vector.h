@@ -1,7 +1,10 @@
 // Included inside the simulator shim namespace in place of its fixed vector.
 // Common piles stay inline; generated cards can grow without truncation.
 template<class T>struct vector {
- static constexpr int CAP=vector_capacity<T>::value;
+ // Old exhaustive-action vectors reserved 2048 entries in every device
+ // stack frame. Dynamic growth preserves that workload without reserving
+ // its worst case on all lanes (including ordinary atomic-action steps).
+ static constexpr int CAP=vector_capacity<T>::value<256?vector_capacity<T>::value:256;
  alignas(T) unsigned char storage_[CAP*sizeof(T)];
  T*heap_;int n,capacity_;
  vector():heap_(nullptr),n(0),capacity_(CAP){}

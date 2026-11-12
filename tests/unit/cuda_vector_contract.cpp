@@ -8,6 +8,7 @@
 namespace candidate {
 using std::size_t;using std::initializer_list;using std::move;using std::forward;
 template<class T>struct vector_capacity{static constexpr int value=128;};
+template<>struct vector_capacity<int>{static constexpr int value=2048;};
 #include "env/search/cuda_vector.h"
 }
 struct Counted {
@@ -23,6 +24,13 @@ struct Counted {
 };
 int Counted::alive=0;
 int main(){
+ {
+  candidate::vector<int> actions;
+  static_assert(candidate::vector<int>::CAP==256);
+  for(int i=0;i<4097;++i)actions.push_back(i);
+  for(int i=0;i<4097;++i)assert(actions[i]==i);
+  auto sibling=actions;sibling[2048]=-1;assert(actions[2048]==2048);
+ }
  {
   candidate::vector<Counted> a;
   for(int i=0;i<128;++i)a.emplace_back(i);
