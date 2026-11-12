@@ -101,7 +101,7 @@ local learner and a single-rank loopback ring adapter; CPU CI selects
 `training and not cuda` so CPU training regressions are not omitted by a fixed
 file list. CUDA-only tests are explicitly marked `cuda` and fail if invoked
 without a GPU; CPU CI is not GPU qualification. On the production CUDA runtime,
-run `python -m pytest -q tests/integration/test_packed_update_graphs.py` with
+run `python -m pytest -q tests/integration/test_packed_update_graphs.py tests/integration/test_deck_readiness_cuda.py` with
 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` and
 `CUBLAS_WORKSPACE_CONFIG=:4096:8`. These tests compare forward/gradients after
 workspace release, allocation reuse, shape changes, sibling eviction and weight

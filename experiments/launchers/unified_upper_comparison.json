@@ -3306,7 +3306,7 @@
     "restart_reference": "references/before-large-fast-restart/rankN/step-000014548992"
   },
   "deck_latent_fast_restart": {
-    "status": "continuous-optimized-workspace-fix-recovered-round132",
+    "status": "continuous-optimized-readiness-memory-fix-recovered-round145",
     "plan": "docs/2026-11-11/deck-latent-fast-restart.md",
     "root": "/root/autodl-tmp/combat49-deck-latent512-t64x2-20261111",
     "run_id": "combat49-deck-latent512-t64x2-ppo-search-r1",
@@ -3350,7 +3350,7 @@
       "direct native destinations"
     ],
     "qualification": "same-state complete 256x768 baseline/candidate; semantic and GPU cache lifecycle checks; then two full four-rank production rounds",
-    "runtime_source": "dc09baf5",
+    "runtime_source": "08dd88ac",
     "overlap_prototype": {
       "source": "fed93e8b",
       "production_round_held": 21,
@@ -3439,7 +3439,7 @@
         "graph_hits_rank_mean": 3775.25
       }
     ],
-    "source_archive_sha256": "94ffc96b67cd80b87fc369f2026f7f8bd711f9187380a0cbcc4094b3f93a8eed",
+    "source_archive_sha256": "31d511159b8c3751f2a315723071558193f65f868b82018df5212c39756a8a47",
     "qualification_result": {
       "seed": 20261111,
       "rows_per_arm": 196608,
@@ -3563,12 +3563,7 @@
       "handoff": "docs/2026-11-11/combat49-update-50s.md",
       "remote_handoff": {
         "host": "connect.bjb2.seetacloud.com",
-        "ports_by_rank": [
-          53841,
-          13208,
-          15409,
-          26162
-        ],
+        "ports_by_rank": [53841, 13208, 15409, 26162],
         "directory": "/root/autodl-tmp/combat49-deck-latent512-t64x2-20261111/handoffs/update2-ea044ba0",
         "entry": "README.md",
         "source_commit": "ea044ba0aaad52508c2db753266e18efb92ab294",
@@ -3898,6 +3893,76 @@
           "adam_updates": 16,
           "adam_step": 2144,
           "oom_retries": 0
+        }
+      ]
+    },
+    "readiness_memory_recovery": {
+      "issue": "COMBAT49-READINESS-GPU-MEMORY",
+      "source": "08dd88ac",
+      "started_at": "2026-11-12T09:46:43+08:00",
+      "resume_round": 145,
+      "resume_step": 114032640,
+      "protected_reference": "references/maintenance-readiness-20261112/rank{rank}/step-000114032640",
+      "reference_filesystem_target": "/root/combat49-maintenance-recovery-20261112",
+      "config": "configs/train/deck_latent_448_fp32.json",
+      "transport_root": "transport-readiness-08dd88ac",
+      "ring_port": 31662,
+      "root_cause": "Parent CUDA allocator held idle training cache unavailable to the readiness subprocess; synchronize, collect unreachable objects and empty only unused cache before launch.",
+      "regression_tests_per_rank": 6,
+      "negative_control_failed_ranks": 4,
+      "qualification": {
+        "source_round": 145,
+        "full_rounds": 2,
+        "exit_codes": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "natural_validation_games": 64,
+        "anchors": 532,
+        "failed": 0,
+        "censored": 0,
+        "timeout": 0,
+        "ev": 0.32866807557963096,
+        "weights_adam_rng_unchanged_by_validation": true,
+        "diagnostic_only_check_round": 146
+      },
+      "production_state_preserved": {
+        "stage": "warmup",
+        "good_checks": 0,
+        "last_check": 140,
+        "failed_validation_rank": 2,
+        "next_check": 160
+      },
+      "acceptance": [
+        {
+          "round": 146,
+          "step": 114819072,
+          "policy_sha256": "ba6e7613bf757063e352e5767722abed5e85001596d15528dc66ef3ce211157d",
+          "adam_sha256": "dc0e1f4ca32dc482d0bad756d318e756d1dc76a9afed7b05522ca256f29dc214",
+          "max_update_sec": 72.91888244613074,
+          "max_iteration_wall_sec": 107.68788727372885,
+          "all_manifest_hashes_verified": true,
+          "rows_per_rank": 196608,
+          "epochs": 1,
+          "adam_updates": 16,
+          "adam_step": 2336,
+          "oom_retries": 0.0
+        },
+        {
+          "round": 147,
+          "step": 115605504,
+          "policy_sha256": "a4055dc8d4cc29e463b2618f9b903c4201cdb38bc13170394f2b249bbc5447bb",
+          "adam_sha256": "985e40d6b7ff4308785d6c93c8a22bc481cadfc9bea7d67cf02d329c7413a218",
+          "max_update_sec": 73.80228597670794,
+          "max_iteration_wall_sec": 105.14606012031436,
+          "all_manifest_hashes_verified": true,
+          "rows_per_rank": 196608,
+          "epochs": 1,
+          "adam_updates": 16,
+          "adam_step": 2352,
+          "oom_retries": 0.0
         }
       ]
     }
