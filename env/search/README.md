@@ -7,6 +7,8 @@
 旧规则构建中的 185 个方法和 99 个动作工厂的 `__noinline__` 处理需要保留；
 未应用时，当前原子出牌路径已复现 64 KiB device stack overflow。
 
+状态传输版本2按逻辑快照实际字数分配CPU/GPU导入导出缓冲，支持超过128张的牌堆及超过8192字的状态；canonical编码不变。bridge以`DECK_DYNAMIC_STATE_IMPORT`显式构建，manifest声明`transport_version=2`，与模块layout共同校验。旧版本1仍保留原容量检查。最后一个arena关闭时恢复本组件租借的CUDA栈限制，避免搜索退出后闲置栈挤占PPO显存。
+
 CPU 待执行回调不能跨设备导入。`load` 拒绝这类根；在 GPU 中产生的回调由同一
 模块持有，可随独立分支复制，直到状态销毁。调度接入必须维护真实战斗的 GPU
 镜像，或明确报告尚不能导入的根，不能跳过 continuation 或静默改变搜索预算。

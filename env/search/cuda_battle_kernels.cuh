@@ -1,6 +1,39 @@
 // Adapter only: reuse the accepted resident simulator's generated rules.
 extern "C" __global__ void deck_layout(long long*out){
- if(threadIdx.x==0&&blockIdx.x==0){out[0]=sizeof(sts::BattleContext);out[1]=compact_leaf::kCatSize;out[2]=compact_leaf::kFloatSize;out[3]=sts::search::kAutoregressiveSize;out[4]=compact_leaf::kCardIds;out[5]=sts::Deck::MAX_SIZE;out[6]=1;out[7]=8192;}
+ if(threadIdx.x==0&&blockIdx.x==0){out[0]=sizeof(sts::BattleContext);out[1]=compact_leaf::kCatSize;out[2]=compact_leaf::kFloatSize;out[3]=sts::search::kAutoregressiveSize;out[4]=compact_leaf::kCardIds;out[5]=sts::Deck::MAX_SIZE;out[6]=2;out[7]=8192;}
+}
+// The logical codec is unchanged; transport width follows the actual states.
+extern "C" __global__ void deck_load_variable(unsigned char*arena,int*constructed,unsigned long long*words,int*lengths,int*stride,int n){
+ int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;
+ auto*address=arena+i*sizeof(sts::BattleContext);
+ if(constructed[i])reinterpret_cast<sts::BattleContext*>(address)->~BattleContext();
+ auto&s=*new(address)sts::BattleContext{};
+ device_state::Archive<true>a{words+i*(*stride),lengths[i]};a.field(s);device_state::require(a.at==lengths[i]);
+ device_state::require(s.actionQueue.size==0);constructed[i]=1;
+}
+
+struct DeckSnapshotCounter {
+ static constexpr bool reading=false;
+ int at=0;unsigned long long max_vector=0;
+ void word(unsigned long long&){++at;}
+ template<class...T>void fields(T&...value){(field(value),...);}
+ template<class T>void field(T&value){
+  if constexpr(__is_class(T)||device_state::is_array<T>::value)device_state::visit(*this,value);
+  else {unsigned long long scalar[2]{};device_state::Archive<false>a{scalar,2};a.field(value);at+=a.at;}
+ }
+};
+extern "C" __global__ void deck_snapshot_sizes(unsigned char*arena,int*constructed,int*sizes,int n){
+ int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;
+ device_state::require(constructed[i]);
+ auto&b=*reinterpret_cast<sts::BattleContext*>(arena+i*sizeof(sts::BattleContext));
+ DeckSnapshotCounter a;a.field(b);sizes[i]=a.at;
+}
+extern "C" __global__ void deck_snapshot_variable(unsigned char*arena,int*constructed,unsigned long long*words,int*meta,int*stride,int n){
+ int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;
+ device_state::require(constructed[i]);
+ auto&b=*reinterpret_cast<sts::BattleContext*>(arena+i*sizeof(sts::BattleContext));
+ device_state::Archive<false>a{words+i*(*stride),*stride};a.field(b);
+ meta[i*5]=a.at;meta[i*5+1]=b.actionQueue.size;meta[i*5+2]=int(a.max_vector);meta[i*5+3]=int(b.inputState);meta[i*5+4]=int(b.outcome);
 }
 extern "C" __global__ void deck_load(unsigned char*arena,int*constructed,unsigned long long*words,int*lengths,int n){
  int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;

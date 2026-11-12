@@ -30,6 +30,11 @@ struct HostSnapshotWriter {
 
 PYBIND11_MODULE(deck_cuda_bridge, module) {
     module.attr("cpu_battle_bytes") = sizeof(sts::BattleContext);
+#ifdef DECK_DYNAMIC_STATE_IMPORT
+    module.attr("transport_version") = 2;
+#else
+    module.attr("transport_version") = 1;
+#endif
     module.def("snapshot", [](const sts::BattleContext& source) {
         auto state = source;
 #ifdef STS_ENABLE_RULE_TRACE
@@ -43,8 +48,12 @@ PYBIND11_MODULE(deck_cuda_bridge, module) {
         result["words"] = words;
         result["queue_size"] = state.actionQueue.size;
         result["max_vector"] = writer.max_vector;
+#ifdef DECK_DYNAMIC_STATE_IMPORT
+        result["portable"] = state.actionQueue.size == 0;
+#else
         result["portable"] = state.actionQueue.size == 0 && writer.max_vector <= 128
                              && writer.words.size() <= 8192;
+#endif
         result["input_state"] = int(state.inputState);
         result["outcome"] = int(state.outcome);
         return result;

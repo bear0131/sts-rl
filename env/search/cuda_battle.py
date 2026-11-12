@@ -28,6 +28,8 @@ def load_artifacts(folder):
     spec = importlib.util.spec_from_file_location('deck_cuda_bridge', folder / name)
     bridge = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bridge)
+    if getattr(bridge, 'transport_version', 1) != manifest.get('transport_version', 1):
+        raise ValueError('resident simulator transport version mismatch')
     return folder, manifest, bridge
 
 
@@ -93,9 +95,16 @@ class CudaBattleArena:
                 layout = self._empty((8,), torch.int64)
                 self._launch('layout', [layout])
                 self.battle_bytes, cats, floats, self.actions, cards, deck, version, words = layout.cpu().tolist()
-                if (self.battle_bytes < 1 or (cats, self.actions, version, words) != (226, 198, 1, 8192)
+                if (self.battle_bytes < 1 or (cats, self.actions, words) != (226, 198, 8192)
+                        or version not in (1, 2)
                         or (cards, deck) != (card_count, deck_capacity)):
                     raise ValueError('unsupported resident simulator layout')
+                self.transport_version = version
+                if version == 2:
+                    for name in ('load_variable', 'snapshot_sizes', 'snapshot_variable'):
+                        f = p()
+                        self._check(self.driver.cuModuleGetFunction(c.byref(f), self.module, ('deck_' + name).encode()))
+                        self.functions[name] = f
                 self.arena = self._empty((capacity, self.battle_bytes), torch.uint8)
                 self.constructed = self._empty((capacity,)).zero_()
                 self.prefix = self._empty((capacity,)).zero_()
@@ -178,15 +187,20 @@ class CudaBattleArena:
         n = len(snapshots)
         if not 0 < n <= self.capacity or len(prefixes) != n:
             raise ValueError('invalid imported battle count')
-        words = np.zeros((n, 8192), np.uint64)
+        width = max(len(s['words']) for s in snapshots) if self.transport_version == 2 else 8192
+        words = np.zeros((n, width), np.uint64)
         lengths = []
         for i, state in enumerate(snapshots):
-            if not state['portable'] or state['queue_size'] or len(state['words']) > 8192:
+            if not state['portable'] or state['queue_size'] or len(state['words']) > width:
                 raise ValueError('CPU callback queues cannot be imported to CUDA')
             words[i, :len(state['words'])] = state['words']
             lengths.append(len(state['words']))
         self.prefix[:n].copy_(self._upload(prefixes))
-        self._launch('load', [self.arena, self.constructed, self._upload(words, np.uint64), self._upload(lengths)], n)
+        args = [self.arena, self.constructed, self._upload(words, np.uint64), self._upload(lengths)]
+        if self.transport_version == 2:
+            self._launch('load_variable', args + [self._upload([width])], n)
+        else:
+            self._launch('load', args, n)
         self.loaded[:n] = True
 
     def fork(self, sources, destinations, worlds):
@@ -269,8 +283,17 @@ class CudaBattleArena:
 
     def snapshot(self, n):
         self._rows(n)
-        words, metadata = self._empty((n, 8192), torch.int64), self._empty((n, 5))
-        self._launch('snapshot', [self.arena, self.constructed, words, metadata], n)
+        width = 8192
+        if self.transport_version == 2:
+            sizes = self._empty((n,))
+            self._launch('snapshot_sizes', [self.arena, self.constructed, sizes], n)
+            width = int(sizes.max().item())
+        words, metadata = self._empty((n, width), torch.int64), self._empty((n, 5))
+        args = [self.arena, self.constructed, words, metadata]
+        if self.transport_version == 2:
+            self._launch('snapshot_variable', args + [self._upload([width])], n)
+        else:
+            self._launch('snapshot', args, n)
         return words.cpu().numpy().view(np.uint64), metadata.cpu().numpy()
 
     def clear_graphs(self):

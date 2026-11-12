@@ -61,11 +61,66 @@ def test_resident_host_snapshot_does_not_cap_generated_piles(complete_combat_fac
         snapshot = bridge.snapshot(env.thick.bc)
         assert snapshot['max_vector'] == 333
         assert len(snapshot['words']) > 8192
-        assert not snapshot['portable']  # Exporter must replay from its earlier origin.
+        assert snapshot['portable'] == (getattr(bridge, 'transport_version', 1) == 2)
         assert env.thick.bc.nosl_future_key() == before
         again = bridge.snapshot(env.thick.bc)
         np.testing.assert_array_equal(snapshot['words'], again['words'])
     finally:
+        env.close()
+
+
+def test_resident_variable_transport_preserves_large_piles_and_forks(complete_combat_factory,
+                                                                   cuda_battle_artifacts):
+    from tests.bridge_fixtures import native_card, native_card_state
+    folder, manifest, bridge = cuda_battle_artifacts
+    assert bridge.transport_version == 2, 'test requires the explicit dynamic transport build'
+    env = complete_combat_factory(['STRIKE_RED', 'DEFEND_RED'], seed=42,
+                                  deck_latent_context=True)
+    arena = None
+    branch = None
+    try:
+        piles = {zone: [native_card('DAZED', 1 + index * 333 + j, base_cost=-2, cost=-2)
+                        for j in range(333)]
+                 for index, zone in enumerate(('draw', 'discard', 'exhaust'))}
+        env.thick.bc.set_card_state(native_card_state(hand=[native_card('STRIKE_RED', 0)],
+            next_uid=1000, **piles))
+        env._invalidate_backend_cache()
+        root = bridge.snapshot(env.thick.bc)
+        arena = CudaBattleArena(folder/'deck.cubin', manifest['sha256']['deck.cubin'], 2,
+            card_count=_nosl_compact_lut()['layout']['card_count'], graph_capacity=1)
+        arena.load([root], [0])
+        arena.fork([0], [1], [31])
+        branch = env.fork_run(worldline=31)
+        branch.thick.bc.nosl_redeterminize(31)
+        branch._invalidate_backend_cache()
+        bc = branch.thick.bc
+        for turn in range(8):
+            arena.observe(1)
+            raw = arena.observe(2)
+            words, metadata = arena.snapshot(2)
+            reference = bridge.snapshot(bc)
+            np.testing.assert_array_equal(words[0, :len(root['words'])], root['words'])
+            np.testing.assert_array_equal(words[1, :metadata[1, 0]], reference['words'])
+            if branch._at_combat_exit_anchor() or branch.thick.is_over:
+                break
+            mask = branch.action_masks()[branch._policy_offset:]
+            np.testing.assert_array_equal(raw['mask'][1].cpu(), mask)
+            action = int(np.flatnonzero(mask)[0])
+            branch.step(action + branch._policy_offset)
+            arena.apply([-1, action])
+            if turn == 2:
+                arena.clear_graphs()
+                gc.collect()
+                torch.cuda.empty_cache()
+        # Replacing a heap-backed imported state must release its old piles.
+        arena.load([root], [0])
+        words, _ = arena.snapshot(1)
+        np.testing.assert_array_equal(words[0], root['words'])
+    finally:
+        if arena is not None:
+            arena.close()
+        if branch is not None:
+            branch.close()
         env.close()
 
 
