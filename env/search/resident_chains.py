@@ -65,6 +65,7 @@ def resident_anchor_search(roots, budgets, scorer, arena, *, seed, max_depth=200
         owners = torch.as_tensor(source, device=arena.device)
         live = np.ones(n, bool); depth = np.ones(n, np.int64); cursor = np.zeros(n, np.int64)
         final = np.zeros(n, np.float64)
+        anchors = np.zeros(n, bool)
         stats['chains'] += n; stats['max_active'] = max(stats['max_active'], n)
         while live.any():
             if time.monotonic()-start > timeout_seconds:
@@ -74,6 +75,7 @@ def resident_anchor_search(roots, budgets, scorer, arena, *, seed, max_depth=200
             meta = torch.stack((raw['outcome'], counts), 1).cpu().numpy()
             dead = live & (meta[:, 0] == 2)
             anchor = live & np.isin(meta[:, 0], [1, 3])
+            anchors |= anchor
             cutoff = live & (meta[:, 0] == 0) & (depth >= max_depth)
             combat = live & ~(dead | anchor | cutoff)
             if np.any(combat & (meta[:, 1] < 1)):
@@ -83,14 +85,11 @@ def resident_anchor_search(roots, budgets, scorer, arena, *, seed, max_depth=200
             selected = torch.full((nr+n,), -1, dtype=torch.int32, device=arena.device)
             force_rows = np.flatnonzero(forced)
             selected[nr+force_rows] = raw['mask'][force_rows].argmax(1).int()
-            for kind, subset in (('anchor', anchor), ('combat', policy | cutoff)):
-                rows = np.flatnonzero(subset)
-                if not len(rows): continue
-                logits, values = scorer.score(raw, owners, rows, anchor=kind == 'anchor')
+            rows = np.flatnonzero(policy | cutoff)
+            if len(rows):
+                logits, values = scorer.score(raw, owners, rows)
                 if not torch.isfinite(values).all():
                     raise FloatingPointError('nonfinite resident leaf value')
-                if kind == 'anchor':
-                    final[rows] = values.cpu().numpy(); continue
                 terminal = cutoff[rows]
                 if terminal.any(): final[rows[terminal]] = values[terminal].cpu().numpy()
                 choose = rows[~terminal]
@@ -110,6 +109,16 @@ def resident_anchor_search(roots, budgets, scorer, arena, *, seed, max_depth=200
             live &= ~(dead | anchor | cutoff)
             depth[live] += 1
             arena.apply(selected)
+        # Completed branches stay frozen in their owned arena slots. Batch all
+        # pre-reward values once, after advancement, so terminal arrivals do not
+        # trigger a host cache lookup and a full decoder launch at every depth.
+        rows = np.flatnonzero(anchors)
+        if len(rows):
+            raw = {k: v[nr:] for k, v in arena.observe(nr+n).items()}
+            _, values = scorer.score(raw, owners, rows, anchor=True)
+            if not torch.isfinite(values).all():
+                raise FloatingPointError('nonfinite resident anchor value')
+            final[rows] = values.cpu().numpy()
         stats['atomic_steps'] += int(depth.sum())
         for j, (root, a, _) in enumerate(wave):
             results[root]['values'][a] += final[j]

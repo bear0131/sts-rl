@@ -17,7 +17,14 @@ class ResidentDeckScorer:
         self.decoder = CudaObservationDecoder(policy.observation_space, self.device)
         self.runtime = SharedCollectionGraphs(self.core, capacity=graph_capacity)
         self.anchor_cache = ExactInputCache(cache_bytes // 4)
-        self.versions = tuple((id(p), p._version) for p in self.core.parameters())
+        # Keep registration owners as well as versions: replacing a parameter
+        # or a child module must invalidate the frozen collection, without
+        # recursively enumerating the entire encoder at every combat depth.
+        modules = tuple(self.core.modules())
+        self.parameter_bindings = tuple((m, name, p, p._version) for m in modules
+            for name, p in m._parameters.items() if p is not None)
+        self.module_bindings = tuple((m, name, child) for m in modules
+            for name, child in m._modules.items() if child is not None)
         self.refreshes = 0
         with torch.no_grad():
             summaries = self.core.combat.summaries
@@ -33,12 +40,27 @@ class ResidentDeckScorer:
         self.root = {k: torch.as_tensor(np.stack([o[k] for o in observations]), device=self.device)
                      for k in keys if k in observations[0]}
         self.context = self.core.prepare_search_context(self.root) if context is None else context
+        groups = {}
+        for key, value in self.root.items():
+            groups.setdefault(value.dtype, []).append(key)
+        self.root_layout, self.packed_root = {}, {}
+        for index, keys in enumerate(groups.values()):
+            group, offset = 'rootgroup:'+str(index), 0
+            for key in keys:
+                shape = self.root[key].shape[1:]
+                end = offset + int(np.prod(shape))
+                self.root_layout[key] = group, offset, end, shape
+                offset = end
+            self.packed_root[group] = torch.cat([self.root[k].reshape(len(observations), -1)
+                                                 for k in keys], 1)
         self.changed_context = {}
 
     def _forward(self, batch, width, anchor):
         raw = {k[4:]: v for k, v in batch.items() if k.startswith('raw:')}
-        roots = {k[5:]: v for k, v in batch.items() if k.startswith('root:')}
-        o = self.decoder(raw, roots, torch.arange(len(raw['outcome']), device=self.device))
+        roots = {key: batch[group][:, start:end].reshape(len(raw['outcome']), *shape)
+                 for key, (group, start, end, shape) in self.root_layout.items()}
+        decode = self.decoder.anchor if anchor else self.decoder
+        o = decode(raw, roots, torch.arange(len(raw['outcome']), device=self.device))
         if anchor:
             # Cache identity is the complete consumed dynamic state plus the
             # frozen projected context. Combat turn/block do not enter it.
@@ -55,21 +77,23 @@ class ResidentDeckScorer:
 
     @torch.no_grad()
     def score(self, raw, owners, rows, *, anchor=False):
-        if tuple((id(p), p._version) for p in self.core.parameters()) != self.versions:
+        if (any(m._parameters.get(name) is not p or p._version != version
+                for m, name, p, version in self.parameter_bindings)
+                or any(m._modules.get(name) is not child for m, name, child in self.module_bindings)):
             raise RuntimeError('resident search weights changed during collection')
         rows = torch.as_tensor(rows, device=self.device)
         owner = owners[rows]
         batch = {'raw:'+k: v[rows] for k, v in raw.items()}
-        batch.update({'root:'+k: v[owner] for k, v in self.root.items()})
+        batch.update({k: v[owner] for k, v in self.packed_root.items()})
         context = (self.context.anchor if anchor else self.context.combat)[owner].clone()
         # Permanent growth is rare; it owns a refreshed projection. No root or
         # sibling cache is mutated, and every card slot remains in its key.
         misc = batch['raw:permanent_misc']
-        original = batch['root:outer_deck_misc']
-        projected = torch.where((misc >= 0) & (batch['root:deck_ids'] != 0), misc/MISC_SCALE, original)
+        original = self.root['outer_deck_misc'][owner]
+        projected = torch.where((misc >= 0) & (self.root['deck_ids'][owner] != 0), misc/MISC_SCALE, original)
         changed = (projected != original).any(1).nonzero().flatten()
         if len(changed):
-            obs = {k[5:]: v[changed] for k, v in batch.items() if k.startswith('root:')}
+            obs = {k: v[owner[changed]] for k, v in self.root.items()}
             obs['outer_deck_misc'] = projected[changed]
             keys = torch.cat((owner[changed, None], misc[changed]), 1).cpu().numpy()
             for j, key in enumerate(keys):

@@ -51,6 +51,10 @@ def test_resident_forks_atomic_masks_rng_and_graph_lifetime(complete_combat_fact
             raw = arena.observe(6)
             decoded = {k: v.cpu().numpy() for k, v in decoder(raw, root_tensors,
                 torch.arange(6, device='cuda')).items()}
+            anchored = decoder.anchor(raw, root_tensors, torch.arange(6, device='cuda'))
+            for key, value in anchored.items():
+                expected = decoded[key][:, :2] if key == 'player_scalars' else decoded[key]
+                np.testing.assert_array_equal(value.cpu().numpy(), expected)
             observed = {key: value.cpu().numpy() for key, value in raw.items()}
             words, metadata = arena.snapshot(6)
             for i, bc in enumerate(battle_refs):
@@ -148,6 +152,10 @@ def test_resident_paired_search_matches_native_and_preserves_root(complete_comba
             torch.cuda.empty_cache()
         assert before == root.export_training_state()
         assert torch.equal(rng_before, torch.cuda.get_rng_state())
+        with torch.no_grad():
+            next(policy.core.parameters()).add_(0.)
+        with pytest.raises(RuntimeError, match='weights changed'):
+            score.score({}, None, [])
     finally:
         score.close()
         arena.close()

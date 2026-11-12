@@ -56,6 +56,23 @@ class CudaObservationDecoder:
     def tensor(self, value):
         return torch.as_tensor(np.asarray(value), device=self.device)
 
+    def relic_counters(self, scalars, ids, original):
+        ids = ids.long()
+        counter = scalars.gather(1, self.columns[ids])+self.add[ids]
+        counter = torch.where(self.mod[ids] != 0, torch.fmod(counter, self.mod[ids].clamp_min(1)), counter)
+        counter = torch.where((self.stop[ids] != 0) & (counter >= self.stop[ids]), 0, counter)/self.scale[ids]
+        return torch.where(self.live[ids], counter, original)
+
+    def anchor(self, raw, roots, owners):
+        """Only the exact pre-reward head consumers, without combat encoding."""
+        s = raw['scalars']
+        ids = roots['relics'][owners]
+        return dict(player_scalars=s[:, :2].clamp_max(E.HP_SCALE)/E.HP_SCALE,
+            gold=s[:, 5:6]/E.GOLD_SCALE, run_keys=roots['run_keys'][owners],
+            potions=self.tables['potion'][raw['categorical'][:, 25:30].long()],
+            combat_exit_anchor=torch.stack((raw['outcome'] == 1, raw['outcome'] == 3), 1).float(),
+            relics=ids, relic_counters=self.relic_counters(s, ids, roots['relic_counters'][owners]))
+
     def __call__(self, raw, roots, owners):
         c, s, n = raw['categorical'].long(), raw['scalars'], len(owners)
         # Only public context and the head consumers, not unused reward pages.
@@ -118,11 +135,7 @@ class CudaObservationDecoder:
         o['selected_card_ids'][:, :2] = lookup('card', slice(224, 226))
         o['selected_card_upgrades'] = zeros('selected_card_upgrades')
         o['selected_card_upgrades'][:, :2] = selection[:, 196:198]/E.UPGRADE_SCALE
-        ids = o['relics'].long()
-        counter = s.gather(1, self.columns[ids])+self.add[ids]
-        counter = torch.where(self.mod[ids] != 0, torch.fmod(counter, self.mod[ids].clamp_min(1)), counter)
-        counter = torch.where((self.stop[ids] != 0) & (counter >= self.stop[ids]), 0, counter)/self.scale[ids]
-        o['relic_counters'] = torch.where(self.live[ids], counter, o['relic_counters'])
+        o['relic_counters'] = self.relic_counters(s, o['relics'], o['relic_counters'])
         misc = raw['permanent_misc']
         o['outer_deck_misc'] = torch.where((misc >= 0) & (o['deck_ids'] != 0), misc/MISC_SCALE, o['outer_deck_misc'])
         o['combat_exit_anchor'] = torch.stack((raw['outcome'] == 1, raw['outcome'] == 3), 1).float()
