@@ -26,7 +26,7 @@ From the repository root:
     cmake --build sim/sts_lightspeed/build-ci --target slaythespire --parallel 2
     export STS_LIGHTSPEED_BUILD_DIR="$(pwd)/sim/sts_lightspeed/build-ci"
     python -c "from env.core import _BUILD; import slaythespire; print(_BUILD, slaythespire.__file__)"
-    python -m pytest -q
+    python -m pytest -q -m "not cuda"
 
 Set STS_LIGHTSPEED_BUILD_DIR to that absolute build directory before running
 Python. If reusing a build directory from another interpreter/compiler, use a
@@ -38,15 +38,16 @@ Windows 若加载 `.pyd` 报找不到依赖 DLL，将 `STS_LIGHTSPEED_DLL_DIRS` 
 
 ## Correctness layers
 
-    python -m pytest -q
-    python -m pytest tests -q
+    python -m pytest -q -m "not cuda"
+    python -m pytest tests -q -m "not cuda"
     python -m pytest tests/integration/test_training_smoke.py -q
     python -m tests.integration.test_combat
     python -m tests.integration.test_game
     python -m tests.integration.test_run_v2 --episodes 20 --seed 0
 
 The main suite collects tests/unit and tests/integration, including the relocated
-legacy tests. Native fixtures
+legacy tests. These commands select CPU-compatible tests; run the separately
+documented CUDA qualification on a GPU. Native fixtures
 require the native extension: a missing native build is an error, not a skipped
 success. pytest-timeout bounds each test to 120 seconds; native deadlocks can
 terminate the test process, so CI also has a job timeout.
