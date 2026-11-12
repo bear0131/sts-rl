@@ -1,5 +1,5 @@
 # 仓库总 TODO
-- **COMBAT49-READINESS-GPU-MEMORY** — 已复现修复部署08dd88ac；140 rank2验证子进程被父allocator近30GB闲置缓存挤占，保存后同步/GC/empty_cache修复。旧路径四卡均失败，新路径6项/卡通过；145来源完整两轮+64自然局/532锚点真实验证通过，权重/Adam/RNG前后完全一致，四机exit0，24成员SHA/跨rank模型Adam一致。09:46:43从正式145恢复，正式146/147保存与16Adam验收通过；140失败保留、good0/last140、下次160，不以诊断通过填充正式检查。详见worklog同ID。
+- **COMBAT49-READINESS-GPU-MEMORY** — 已复现修复部署08dd88ac；140 rank2验证子进程被父allocator近30GB闲置缓存挤占，保存后同步/GC/empty_cache修复。旧路径四卡均失败，新路径6项/卡通过；145来源完整两轮+64自然局/532锚点真实验证通过，权重/Adam/RNG前后完全一致，四机exit0，24成员SHA/跨rank模型Adam一致。09:46:43从正式145恢复，正式146/147保存与16Adam验收通过；160正式验证64自然局/513锚点、EV .2092957、failed/timeout/censored全0，四rank good1/last160、下次180；140失败保留，不以诊断通过填充正式检查。详见worklog同ID。
 
 - **COMBAT49-UPDATE-ILLEGAL-ADDRESS** — 已稳定复现并修复，完整资格及正式133/134恢复验收通过，持续观察。生产Torch2.12/cu132四张5090：原_CapturedHead控制20次通过，清cuBLAS workspace并释放/重用显存后四卡均第二次重放非法地址；修复每段forward/backward capture独立持有私有池scratch、移除全局缓存别名后四卡20次通过，前向/梯度一致，21项CUDA回归通过。原107四卡完整正常/强释放各2轮及固定buffer确定性64步梯度/末模型Adam逐位等价已通过；09:15从132完整模型/Adam/RNG/env恢复dc09baf5优化路径，正式133/134完整保存通过、模型/Adam一致、196608行/1epoch/16Adam/0OOM，正式133–145全部完整推进、无非法地址；138及143出现正常图退役后均完成继续，后续08dd88ac继承本修复；未宣称原108具体出错内核已被memcheck定位。证据diagnostic-address-20261112及worklog同ID，禁止直接重跑旧恢复脚本。
 
@@ -7,7 +7,7 @@
 
 - **COMBAT49-FAILURE-SCENE** — 待修诊断：distributed_sb3失败捕获在NativeSubprocVecEnv访问不存在的envs，训练原始异常仍在log。范围失败现场捕获/原生子进程环境；验收支持该生产后端、保留原异常并导出可用状态，独立于已修scalar schema，不阻塞健康续训。
 
-- **COMBAT49-MAINT** — 每半小时自主维护。当前source-08dd88ac/configs/train/deck_latent_448_fp32.json；09:46:43从145/global114032640恢复优化路径，transport-readiness-08dd88ac/ring31662，正式146/147恢复验收后持续至149，148/149保存及Adam一致，四PID继续150；148正常图退役后149完整0重试。原CUDA workspace寿命缺陷dc09baf5修复，140独立验证显存交接08dd88ac修复；现warmup/good_checks0/last_check140/search_qualified=false，下一次160；140失败原样保留，独立诊断64局通过不算正式通过。原run/W&B offline不变，禁止重跑任何恢复/诊断launch脚本。145保护references/maintenance-readiness-20261112软链接到/root/combat49-maintenance-recovery-20261112，21/69/70/107/132保护全部保留；rank0数据盘约1.29GB，监控轮转/临时保存余量。搜索GPU资格仍待补齐，不改三次门槛或强开；CPU15项及预算协议见worklog06:24/06:54。维护ID combat49，分支codex/combat49-maintenance。
+- **COMBAT49-MAINT** — 每半小时自主维护。当前source-08dd88ac/configs/train/deck_latent_448_fp32.json；09:46:43从145/global114032640恢复优化路径，transport-readiness-08dd88ac/ring31662，正式续训至166，165/166保存及Adam一致，原四PID持续推进；162/163正常图退役后164–166完整0重试。原CUDA workspace寿命缺陷dc09baf5修复，140独立验证显存交接08dd88ac修复；现warmup/good_checks1/last_check160/search_qualified=false，160正式64自然局/513锚点/EV .2092957通过，下一次180；140失败原样保留，独立诊断64局通过不算正式通过。原run/W&B offline不变，禁止重跑任何恢复/诊断launch脚本。145保护references/maintenance-readiness-20261112软链接到/root/combat49-maintenance-recovery-20261112，21/69/70/107/132保护全部保留；rank0数据盘约1.28GB，监控轮转/临时保存余量。搜索GPU资格仍待补齐，不改三次门槛或强开；CPU15项及预算协议见worklog06:24/06:54。维护ID combat49，分支codex/combat49-maintenance。
 
 | UPPER-POLICY-PRE | 已完成：四机180–183真实采集更新保存 | rl/algorithms/unified_upper.py及真实训练上报；新增全部更新前固定actor的policy loss并分析，测量不改变权重/Adam/RNG或目标，CPU/CUDA及两轮生产/保存恢复验收，监控合并COMBAT37。 |
 
