@@ -70,6 +70,27 @@ def test_ssh_stdin_uses_literal_lf_on_windows(tmp_path):
     assert script.endswith(b'\nPY_MONITOR\n')
 
 
+def test_rank_destinations_can_use_distinct_hosts_without_disabling_host_key_checks(tmp_path):
+    config = dict(run_id='example', iteration_steps=10, ports=[2200, 3300], ssh_key='key',
+                  root='/repo', hosts=['root@westc.example', 'root@weste.example'],
+                  ssh_known_hosts='verified-hosts')
+    monitor = Monitor(config, tmp_path / 'state.json', 30)
+    with patch('apps.training_monitor.subprocess.run', return_value=SimpleNamespace(
+            returncode=0, stdout=b'{"rank": 1, "alive": true}', stderr=b'')) as run:
+        assert monitor.read_rank(1)['alive']
+    command = run.call_args.args[0]
+    assert command[-4:] == ['-p', '3300', 'root@weste.example', 'bash -se']
+    assert 'StrictHostKeyChecking=yes' in command
+    assert 'UserKnownHostsFile=verified-hosts' in command
+
+
+def test_rank_host_count_must_match_ports(tmp_path):
+    import pytest
+    with pytest.raises(ValueError, match='one SSH destination per rank'):
+        Monitor(dict(run_id='example', iteration_steps=10, ports=[2200, 3300],
+                     hosts=['root@westc.example']), tmp_path / 'state.json', 30)
+
+
 def test_comparison_keeps_same_steps_separate_and_survives_restart(tmp_path):
     old = tmp_path / 'old.json'
     old.write_text(json.dumps(dict(run_id='old', iteration_steps=10,

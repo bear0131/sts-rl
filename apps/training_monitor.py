@@ -101,6 +101,9 @@ def allowed_client(address, networks):
 
 class Monitor:
     def __init__(self, config, output, interval):
+        if 'hosts' in config and (len(config['hosts']) != len(config['ports'])
+                                  or any(not isinstance(host, str) or not host for host in config['hosts'])):
+            raise ValueError('hosts must provide one SSH destination per rank port')
         self.config, self.output, self.interval = config, output, interval
         self.lock = threading.Lock()
         self.stop = threading.Event()
@@ -135,9 +138,11 @@ class Monitor:
         header = '\n'.join(f'{key}={value!r}' for key, value in dict(
             ROOT=c['root'], RUN=c['run_id'], RANK=rank, CURSOR=previous.get('cursor', {})).items())
         script = f"cd {shlex.quote(c['root'])}\n.venv/bin/python - <<'PY_MONITOR'\n{header}\n{REMOTE}\nPY_MONITOR\n"
+        host = c['hosts'][rank] if 'hosts' in c else c['host']
         args = ['ssh', '-i', c['ssh_key'], '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
                 '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=10',
-                '-p', str(c['ports'][rank]), c['host'], 'bash -se']
+                *(['-o', 'UserKnownHostsFile=' + c['ssh_known_hosts']] if c.get('ssh_known_hosts') else []),
+                '-p', str(c['ports'][rank]), host, 'bash -se']
         try:
             # Text-mode stdin adds CRLF on Windows; bash must receive literal LF.
             result = subprocess.run(args, input=script.replace('\r\n', '\n').encode('utf-8'),
