@@ -1,6 +1,7 @@
 - **COMBAT49-STATUS-PILE-TOKENS** — 当前三个牌堆已按牌种/升级计数并各一汇总token；用户要求同状态牌合并。实际1→207状态牌CPU/CUDA回归2 passed，三个牌堆数量保留/不截断/attention宽度恒定，合同已验，保留数量/真实候选及实例身份；不改checkpoint结构。见worklog/2026-11-13.md同ID。
 
-- **COMBAT49-GPU-COST** — 进行中，Pro6000已平台关机且SSH拒绝，数据保留。用户授权4090/4090D同源128/256环境完整采样成本对照及Pro6000关机；保持模型/奖励/预算/外层训练，24GB内部容量调整单独注明。每臂连续两次768步/1200s，每卡GPU总预算7200s；先sm89语义与资源生命周期，再比较元/有效训练样本及有效搜索工作。正式deferred/qualified=false不变，多机更新同步成本未知。结果runs/local/hardware-cost-20261113，详细协议见worklog/2026-11-13.md本ID。
+- **COMBAT49-GPU-COST** — 采样成本采集完成，正式资格仍待COMBAT49-CROSS-GPU-TEACHER；Pro6000已平台关机/SSH拒绝，数据保留。固定bc081439/146/FP32/原64-256预算，三台4090各33项native/CUDA通过，128/256各两次768步完整exit0；普通4090原256缓冲OOM保留，最终仅wave65536→32768适配24GB。后续秒数：5090最佳256=82.106；49148 128/256=66.769/134.383；4090D=72.383/134.174；新55105=75.960/143.931。按用户2.98/1.88元h，各自较优采样成本0.34569/0.35470/0.35639/0.38230元每百万真实样本，无明显4090整轮省钱证据；更新/多机同步未测。四机父SHA/源45文件保持、GPU任务已退出；正式deferred/qualified=false不变。协议/原始数据runs/local/hardware-cost-20261113，详细结果见worklog/2026-11-13.md本ID。
+- **COMBAT49-CROSS-GPU-TEACHER** — 待定位/正式启用门槛。bc081439固定146/FP32/原64-256预算/128×768两次采样，5090与4090/4090D实际actor动作、奖励、RNG及模型Adam相同；第二collection有2个搜索teacher根[10,51]、[146,39]超原rtol3e-5/atol3e-6，最大0.077548，4090D首轮另2根；256档普通4090首/次5/7根、4090D4/3根，具体positions与差异见结果。不得在未复放前归因为CDF或sm89编译修正，不能放宽容差假通过。验收固定输入/每链RNG复放，区分评分舍入/离散分支/模拟器或缓存差异，并保留完整GPU生命周期证据。位置runs/local/hardware-cost-20261113/comparison.json、各端口teacher文件与worklog同ID；当前仅测速，不晋级正式训练资格。
 - **COMBAT49-GPU-VECTOR-GROW** — 组件通过、完整生产长度待验收。范围env/search/cuda_vector.h及显式v10 CUDA产物；不截断合法生成牌，深复制/析构/图生命周期与CPU状态相同。host ASan/UBSan和native/CUDA128→130及原696失败根207牌重放通过；验收还需完整768及两轮普通恢复。证据worklog/2026-11-13.md同ID。
 # 仓库总 TODO
 
