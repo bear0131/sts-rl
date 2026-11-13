@@ -115,7 +115,7 @@ def publish_worklog(config, snapshot):
               'print(hashlib.sha256(data).hexdigest())\n')
     args = ['ssh', '-i', config['ssh_key'], '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
             '-o', 'ConnectTimeout=8', '-o', 'UserKnownHostsFile=' + config['ssh_known_hosts'],
-            '-p', str(config['port']), config['host'], 'python3 -c ' + shlex.quote(script)]
+            '-p', str(config['port']), config['host'], '/root/miniconda3/bin/python -c ' + shlex.quote(script)]
     result = subprocess.run(args, input=body, capture_output=True, timeout=30)
     digest = hashlib.sha256(body).hexdigest()
     if result.returncode or result.stdout.decode().strip() != digest:
