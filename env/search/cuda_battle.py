@@ -16,6 +16,15 @@ import numpy as np
 import torch
 
 
+def upload_arrays(host, device, arrays):
+    """One owned byte transfer with typed, aligned views for existing consumers."""
+    arrays = [np.ascontiguousarray(a) for a in arrays]
+    packed,offsets = host.pack_arrays(arrays)
+    storage = torch.from_numpy(packed).to(device)
+    return [storage[offset:offset+a.nbytes].view(torch.from_numpy(a).dtype).reshape(a.shape)
+            for offset,a in zip(offsets,arrays,strict=True)]
+
+
 def load_artifacts(folder):
     """Verify both halves of one simulator build before importing CPU states."""
     folder = Path(folder)
@@ -52,6 +61,9 @@ class CudaBattleArena:
         data = Path(cubin).read_bytes()
         if hashlib.sha256(data).hexdigest() != sha256:
             raise ValueError('resident simulator module hash mismatch')
+        self.host = load_artifacts(Path(cubin).parent)[2]
+        if getattr(self.host,'host_runtime_version',None) != 1:
+            raise ValueError('resident search requires the versioned native host runtime')
         self.device = torch.device(device)
         if self.device.type != 'cuda':
             raise ValueError('resident battles require CUDA')
@@ -196,6 +208,9 @@ class CudaBattleArena:
             array = array.view(np.int64)
         return torch.from_numpy(array).to(self.device)
 
+    def _upload_many(self, arrays):
+        return upload_arrays(self.host,self.device,arrays)
+
     def _assert_owner(self):
         if self.closed:
             raise RuntimeError('resident battle arena is closed')
@@ -240,15 +255,15 @@ class CudaBattleArena:
             self._launch('load', args, n)
         self.loaded[:n] = True
 
-    def fork(self, sources, destinations, worlds):
+    def _validate_fork(self, sources, destinations, worlds):
         self._assert_owner()
-        sources, destinations = np.asarray(sources), np.asarray(destinations)
-        if (not len(sources) or len(sources) != len(destinations) or len(sources) != len(worlds)
-                or len(set(destinations)) != len(destinations)
-                or np.any(sources < 0) or np.any(sources >= self.capacity)
-                or np.any(destinations < 0) or np.any(destinations >= self.capacity)
-                or not self.loaded[sources].all() or np.intersect1d(sources, destinations).size):
-            raise ValueError('fork sources must be live and disjoint from unique destinations')
+        sources, destinations = np.asarray(sources,np.int64), np.asarray(destinations,np.int64)
+        if len(sources)!=len(worlds):raise ValueError('fork worlds must match sources')
+        self.host.validate_fork(sources,destinations,self.loaded,self.capacity)
+        return sources, destinations
+
+    def fork(self, sources, destinations, worlds):
+        sources, destinations = self._validate_fork(sources, destinations, worlds)
         self._launch('fork', [self.arena, self.constructed, self.prefix, self._upload(sources),
             self._upload(destinations), self._upload(worlds, np.uint64)], len(sources))
         self.loaded[destinations] = True
@@ -259,31 +274,51 @@ class CudaBattleArena:
         if self.transport_version != 2:
             raise ValueError('streaming roots require the variable state transport')
         slots = np.asarray(slots, np.int64)
-        if (len(slots) != len(snapshots) or len(slots) != len(prefixes)
-                or len(np.unique(slots)) != len(slots) or np.any(slots < 0)
-                or np.any(slots >= self.capacity)):
+        if len(slots) != len(snapshots) or len(slots) != len(prefixes):
             raise ValueError('invalid root slot lease')
         if not len(slots):
             return
-        width = max(len(s['words']) for s in snapshots)
-        words = np.zeros((len(slots), width), np.uint64)
-        for i, state in enumerate(snapshots):
-            if not state['portable']:
-                raise ValueError('pending callback root must use native fallback')
-            words[i, :len(state['words'])] = state['words']
-        data = self._upload(words, np.uint64)
-        lengths = self._upload([len(s['words']) for s in snapshots])
-        stride = self._upload([width])
+        words,sizes = self.host.pack_snapshots(snapshots,slots,self.capacity)
+        width = words.shape[1]
+        data,lengths,stride,indices,prefix = self._upload_many([
+            words.view(np.int64),sizes,
+            np.asarray([width],np.int32),slots.astype(np.int32),np.asarray(prefixes,np.int32)])
         if self.paged:
             self._launch('load_indexed',[self.arena,self.constructed,data,lengths,stride,
-                                        self._upload(slots)],len(slots))
+                                        indices],len(slots))
         else:
             for run in np.split(np.arange(len(slots)),np.flatnonzero(np.diff(slots)!=1)+1):
                 j, slot = int(run[0]), int(slots[run[0]])
                 self._launch('load_variable', [self.arena[slot:], self.constructed[slot:],
                     data[j:], lengths[j:], stride], len(run))
-        self.prefix[slots] = self._upload(prefixes)
+        self.prefix.index_copy_(0, indices.long(), prefix)
         self.loaded[slots] = True
+
+    def start_selected(self, sources, destinations, worlds, action_bits, draw_selection):
+        """The existing fork/first sequence with one shared admission transfer."""
+        sources, destinations = self._validate_fork(sources,destinations,worlds)
+        if len(action_bits)!=len(sources) or len(draw_selection)!=len(sources):
+            raise ValueError('initial actions must match admitted jobs')
+        source,destination,seeds,bits,draw,counts,offset = self._upload_many([
+            sources.astype(np.int32),destinations.astype(np.int32),
+            np.asarray(worlds,np.uint64).view(np.int64),np.asarray(action_bits,np.uint32),
+            np.asarray(draw_selection,np.int32),
+            np.asarray([min(self.observation_capacity,len(sources)-i)
+                        for i in range(0,len(sources),self.observation_capacity)],np.int32),
+            np.asarray([0],np.int64)])
+        self._launch('fork',[self.arena,self.constructed,self.prefix,source,destination,seeds],len(sources))
+        self.loaded[destinations] = True
+        for j,start in enumerate(range(0,len(sources),self.observation_capacity)):
+            stop=min(len(sources),start+self.observation_capacity)
+            ids=destination[start:stop];count=counts[j:j+1]
+            self._launch('observe_indexed',self.observe_args+[ids,count,offset],
+                self.capacity,dispatch_n=stop-start)
+            self.selected.fill_(-1)
+            self._launch('first',[self.arena,self.constructed,self.prefix,source[start:stop],ids,
+                bits[start:stop],draw[start:stop],self.bits,self.mask,self.selected],stop-start)
+            self._launch('apply_compact',self.apply_args+[ids,count,offset],
+                self.capacity,dispatch_n=stop-start)
+        return source,destination,seeds
 
     def release_slots(self, slots):
         """Destroy a retired lease before its state pages become reusable."""

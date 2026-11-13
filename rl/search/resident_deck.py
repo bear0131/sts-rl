@@ -16,15 +16,19 @@ class ResidentDeckScorer:
     # before decoding/projecting anchors, including exact-cache hits.
     anchor_batch_size = 4096
 
-    def __init__(self, policy, cache_bytes=64*1024**2, graph_capacity=128):
+    def __init__(self, policy, cache_bytes=64*1024**2, graph_capacity=128, native_host=None):
         self.policy, self.core = policy, policy.core
         self.device = next(policy.parameters()).device
         self.decoder = CudaObservationDecoder(policy.observation_space, self.device)
         self.runtime = SharedCollectionGraphs(self.core, capacity=graph_capacity)
-        self.anchor_cache = ExactInputCache(cache_bytes // 4)
+        self.anchor_cache = (ExactInputCache(cache_bytes // 4) if native_host is None
+                             else native_host.ExactValueCache(cache_bytes // 4))
         self.anchor_contexts = OrderedDict()
         self.anchor_context_bytes = 0
         self.anchor_context_limit = cache_bytes // 2
+        self.native_host = native_host
+        self.native_anchor_intern = None if native_host is None else native_host.ByteIntern(self.anchor_context_limit)
+        self.native_context_inputs = None if native_host is None else native_host.ByteIntern(cache_bytes // 2)
         self.next_anchor_context = 0
         # Keep registration owners as well as versions: replacing a parameter
         # or a child module must invalidate the frozen collection, without
@@ -85,7 +89,12 @@ class ResidentDeckScorer:
         roots retain their IDs and miss forwarding reads their current GPU
         context, so no table entry owns a live root's tensor or lifetime.
         """
-        host = contexts.detach().cpu().numpy()
+        host = contexts.detach().cpu().numpy() if isinstance(contexts,torch.Tensor) else contexts
+        if self.native_anchor_intern is not None:
+            self.native_anchor_intern.set_limit(self.anchor_context_limit)
+            ids = self.native_anchor_intern.intern([host])
+            self.anchor_context_bytes = self.native_anchor_intern.bytes
+            return ids
         ids = []
         for row in host:
             key = (row.dtype.str, row.shape, row.tobytes())
@@ -167,6 +176,16 @@ class ResidentDeckScorer:
             bank[name][:len(observations)].copy_(self.root[key])
         self.metadata_root = {key: bank['metadata:'+key] for key in ('deck_ids', 'outer_deck_misc')}
         self.changed_context = {}
+        if self.native_context_inputs is not None:
+            self.context_input_ids = self._context_input_ids(observations)
+
+    def _context_input_ids(self, observations):
+        groups = {}
+        for key in self.core.context.keys:
+            if key != 'outer_deck_misc':
+                groups.setdefault(observations[0][key].dtype,[]).append(key)
+        fields = [self.native_host.stack_fields(observations,keys) for keys in groups.values()]
+        return self.native_context_inputs.intern(fields)
 
     def _pack_stream_roots(self):
         groups = {}
@@ -188,21 +207,39 @@ class ResidentDeckScorer:
     def update_roots(self, slots, observations, context, capacity):
         """Current-model adapter for the old pool's versioned root bank."""
         from rl.policies.collection_graphs import SharedCollectionGraphs
+        identities=self._intern_anchor_contexts(context.anchor)
         if not hasattr(self, 'stream_observations'):
+            initial_context=SearchContext(*(torch.as_tensor(x,device=self.device)
+                                          for x in (context.combat,context.anchor)))
             self.stream_observations = [observations[0]] * capacity
-            initial = SearchContext(context.combat[:1].expand(capacity, -1).clone(),
-                                    context.anchor[:1].expand(capacity, -1).clone())
+            initial = SearchContext(initial_context.combat[:1].expand(capacity, -1).clone(),
+                                    initial_context.anchor[:1].expand(capacity, -1).clone())
             self.roots(self.stream_observations, initial)
             self._pack_stream_roots()
             self.root_generations = np.zeros(capacity, np.int64)
         for slot, observation in zip(slots, observations, strict=True):
             self.stream_observations[slot] = observation
             self.root_generations[slot] += 1
-        index = torch.as_tensor(slots, device=self.device, dtype=torch.long)
+        if self.native_context_inputs is not None:
+            self.context_input_ids[slots] = self._context_input_ids(observations)
+        if self.native_host is not None:
+            from env.search.cuda_battle import upload_arrays
+            host_context=[x.detach().cpu().numpy() if isinstance(x,torch.Tensor) else x
+                          for x in (context.combat,context.anchor)]
+            packed=[self.native_host.stack_fields(observations,list(layout))
+                    for _,layout in self.stream_root_banks]
+            combat,anchor,identity_rows,index,*incoming_banks=upload_arrays(self.native_host,self.device,
+                [*host_context,identities,np.asarray(slots,np.int64),*packed])
+            context=SearchContext(combat,anchor)
+        else:
+            context=SearchContext(*(torch.as_tensor(x,device=self.device) for x in (context.combat,context.anchor)))
+            index = torch.as_tensor(slots, device=self.device, dtype=torch.long)
+            identity_rows=torch.as_tensor(identities,device=self.device)
+            incoming_banks=[torch.as_tensor(np.concatenate([np.stack([o[k] for o in observations]).reshape(len(slots),-1)
+                           for k in layout],1),device=self.device) for _,layout in self.stream_root_banks]
         self.context.combat.index_copy_(0, index, context.combat)
         self.context.anchor.index_copy_(0, index, context.anchor)
-        self.anchor_context_ids.index_copy_(0, index,
-            torch.as_tensor(self._intern_anchor_contexts(context.anchor), device=self.device))
+        self.anchor_context_ids.index_copy_(0, index, identity_rows)
         width = SharedCollectionGraphs._width(np.stack([o['relics'] for o in observations]), 4)
         if width > self.relic_width:
             # The old inventory bank grows; it never truncates an owned root.
@@ -210,10 +247,7 @@ class ResidentDeckScorer:
             self._pack_stream_roots()
             return
         incoming = {}
-        for storage,layout in self.stream_root_banks:
-            packed=np.concatenate([np.stack([o[k] for o in observations]).reshape(len(slots),-1)
-                                   for k in layout],1)
-            uploaded=torch.as_tensor(packed,device=self.device)
+        for (storage,layout),uploaded in zip(self.stream_root_banks,incoming_banks,strict=True):
             storage.index_copy_(0,index,uploaded)
             for key,(start,end,shape) in layout.items():
                 incoming[key]=uploaded[:,start:end].reshape(len(slots),*shape)
@@ -281,9 +315,17 @@ class ResidentDeckScorer:
 
     def resolve_changed_context(self, owners, misc, projected, changed, anchor, *, with_ids=False):
         """Batch cache misses and copies; never index a CUDA scalar in Python."""
-        keys = torch.cat((owners[changed, None], misc[changed]), 1).cpu().numpy()
-        keys = [(int(self.root_generations[int(key[0])]), key.tobytes())
-                if hasattr(self, 'root_generations') else key.tobytes() for key in keys]
+        if self.native_context_inputs is None:
+            keys = torch.cat((owners[changed, None], misc[changed]), 1).cpu().numpy()
+            keys = [(int(self.root_generations[int(key[0])]), key.tobytes())
+                    if hasattr(self, 'root_generations') else key.tobytes() for key in keys]
+        else:
+            # Root identity is not an encoder input. Intern every actual static
+            # encoder field, then use the complete projected misc bytes. Equal
+            # inputs across roots/siblings share a result; real changes do not.
+            root_ids=self.context_input_ids[owners[changed].cpu().numpy()]
+            projected_host=projected[changed].cpu().numpy()
+            keys=self.native_context_inputs.intern([root_ids[:,None],projected_host]).tolist()
         missing = {}
         for j, key in enumerate(keys):
             if key not in self.changed_context and key not in missing:
@@ -298,10 +340,14 @@ class ResidentDeckScorer:
                 self.changed_context[key] = new.combat[j].clone(), new.anchor[j].clone(), identities[j]
             self.refreshes += len(missing)
         values = torch.stack([self.changed_context[key][int(anchor)] for key in keys])
+        identities = np.asarray([self.changed_context[key][2] for key in keys], np.int64) if with_ids else None
+        # Materialize this batch before eviction; live pipeline rows own copies.
+        while len(self.changed_context)>4096:
+            del self.changed_context[next(iter(self.changed_context))]
         if with_ids:
             if not anchor:
                 raise ValueError('context identities belong to anchor scoring')
-            return values, np.asarray([self.changed_context[key][2] for key in keys], np.int64)
+            return values, identities
         return values
 
     def run_wave(self, arena, owners, randoms, max_depth, deadline):
@@ -414,7 +460,9 @@ class ResidentDeckScorer:
         return self.core.combat_with_context(o, context, summary)
 
     @torch.no_grad()
-    def score(self, raw, owners, rows, *, anchor=False, metadata=None, uniforms=None):
+    def score(self, raw, owners, rows, *, anchor=False, metadata=None, uniforms=None, return_host=False):
+        if return_host and not anchor:
+            raise ValueError('host results belong only to the completed anchor consumer')
         if anchor and uniforms is not None:
             raise ValueError('anchor values do not sample combat actions')
         if (any(m._parameters.get(name) is not p or p._version != version
@@ -422,10 +470,11 @@ class ResidentDeckScorer:
                 or any(m._modules.get(name) is not child for m, name, child in self.module_bindings)):
             raise RuntimeError('resident search weights changed during collection')
         if anchor and len(rows) > self.anchor_batch_size:
-            values = torch.empty(len(rows), device=self.device)
+            values = (np.empty(len(rows),np.float32) if return_host
+                      else torch.empty(len(rows), device=self.device))
             for start in range(0, len(rows), self.anchor_batch_size):
                 end = start + self.anchor_batch_size
-                _, values[start:end] = self.score(raw, owners, rows[start:end], anchor=True)
+                _, values[start:end] = self.score(raw, owners, rows[start:end], anchor=True,return_host=return_host)
             return None, values
         if metadata is not None and not anchor:
             widths = np.asarray(metadata)[np.asarray(rows), 2]
@@ -520,7 +569,7 @@ class ResidentDeckScorer:
                 values = self.core.anchor_with_context(x, x.pop('context'), relics)
                 return np.empty((len(values), 0), np.float32), values.flatten().cpu().numpy()
             _, values = self.anchor_cache.forward(inputs, forward)
-            return None, torch.as_tensor(values, device=self.device)
+            return None, values if return_host else torch.as_tensor(values, device=self.device)
         if hint is None:
             required = (batch['raw:categorical'][:, 127:223] > 0) | batch['raw:mask'][:, 91:187].bool()
             columns = required.any(0).nonzero().flatten()
@@ -544,5 +593,7 @@ class ResidentDeckScorer:
         self.runtime.close()
         self.anchor_cache.clear()
         self.anchor_contexts.clear()
+        if self.native_anchor_intern is not None:self.native_anchor_intern.clear()
+        if self.native_context_inputs is not None:self.native_context_inputs.clear()
         self.anchor_context_bytes = 0
         self.compiled_gather = None

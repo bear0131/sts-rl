@@ -1023,7 +1023,9 @@ worker 持有，复用旧持续服务的 FIFO、根代际和非移动状态页�
 路径处理，保持该组的种子及目标顺序，不能接受部分搜索结果。
 
 当前产物合同为 `deck-resident-battle-v1`、transport 2，另须声明
-`observation_storage=bounded-frame-v1`、`root_import=indexed-v1`。
+`observation_storage=bounded-frame-v1`、`root_import=indexed-v1`，bridge 提供
+`host_runtime_version=1` 的主机账本/缓存/打包接口，构建与线程所有权约定见
+`env/search/README.md`。
 连续地址和状态页两种入口共用 `env/search/cuda_battle_kernels.cuh` 的逻辑，
 页寻址及有界观测帧由 `cuda_battle_paged_kernels.cuh` 适配；加载时核对
 CUDA module 与 native bridge 的 SHA。外部原生规则构建和产物仍由部署管理，

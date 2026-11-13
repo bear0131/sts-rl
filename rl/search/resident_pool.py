@@ -4,13 +4,9 @@ The ledger, page allocator and submit/receive/reap ownership are migrated from
 devicestepfull480141. Logical job addresses point into nonmoving, demand-grown
 state pages; no root or sibling is relocated when another root is admitted.
 """
-import time
-
 import numpy as np
 import torch
 
-from env.search.root_ledger import RootLedger
-from env.search.state_pages import DevicePages
 from rl.policies.deck_latent import SearchContext
 from rl.search.resident_step import ResidentStepPipeline
 
@@ -20,7 +16,7 @@ class ResidentPool:
         self.arena, self.scorer = arena, scorer
         self.capacity, self.budget_cap = capacity, budget_cap
         self.max_depth, self.timeout = max_depth, timeout
-        self.ledger = RootLedger(capacity)
+        self.ledger = arena.host.RootLedger(capacity)
         self.bank, self.page_leases, self.jobs = {}, {}, {}
         self.closed, self.pipeline = False, None
         self.n = arena.capacity-capacity
@@ -34,10 +30,9 @@ class ResidentPool:
             torch.arange(capacity,dtype=torch.int64,device=arena.device)*arena.battle_bytes)
         def allocate(count):
             return torch.empty((count,arena.battle_bytes),dtype=torch.uint8,device=arena.device)
-        self.state_pages = DevicePages(capacity, budget_cap, arena.battle_bytes,
+        self.state_pages = arena.host.DevicePages(capacity, budget_cap, arena.battle_bytes,
             allocate, growth_pages=min(256, max(1, self.n//16)))
         self.remaining = 0
-        self.root_remaining = torch.zeros(capacity, dtype=torch.int32, device=arena.device)
         self.counts = dict(chains=0, atomic_steps=0, budget_floor_overage=0,
                           max_active=0, submitted_roots=0, retired_roots=0,
                           submissions_while_pending=0, ticks=0)
@@ -59,6 +54,8 @@ class ResidentPool:
                 raise ValueError('paired budget exceeds the state-page contract')
         was_pending = self.pending
         handles = self.ledger.claim(rows)
+        self.ledger.set_deadlines(handles,np.asarray([rows[h.key]['submitted_at']+self.timeout
+                                                     for h in handles],np.float64))
         try:
             leases, pointers = self.state_pages.acquire([
                 ((h.slot,h.generation),len(rows[h.key]['worlds'])*len(rows[h.key]['root']['actions']))
@@ -76,46 +73,41 @@ class ResidentPool:
             selected = [j for j,r in enumerate(payloads) if step < len(r.get('replay',()))]
             self.arena.replay_slots([slots[j] for j in selected],
                                    [payloads[j]['replay'][step] for j in selected])
-        context = SearchContext(*(torch.as_tensor(np.stack([rows[h.key]['context'][k]
-            for h in handles]), device=self.arena.device) for k in (0,1)))
+        context = SearchContext(*(np.stack([rows[h.key]['context'][k]
+            for h in handles]) for k in (0,1)))
         self.scorer.update_roots(slots,[rows[h.key]['observation'] for h in handles],context,self.capacity)
         if self.pipeline is None:
             owners = torch.zeros(self.n,dtype=torch.long,device=self.arena.device)
             self.scorer.bind_wave(self.arena,owners,self.capacity)
-            self.pipeline = ResidentStepPipeline(self.scorer,self.arena,self.max_depth)
+            self.pipeline = ResidentStepPipeline(self.scorer,self.arena,self.max_depth,
+                                                root_stride=self.root_stride)
             self.scorer.step_pipeline = self.pipeline
             self.pipeline.begin(owners,torch.zeros((self.n,self.max_depth),
                 dtype=torch.float64,device=self.arena.device))
             self.pipeline.live.zero_()
             self.pipeline.depth.zero_()
-        source, destination, world_seeds, initial_bits, draw = [],[],[],[],[]
+        source,destination,world_seeds,initial_bits,draw,action_indices,counts = self.arena.host.pack_jobs(
+            payloads,[rows[h.key]['worlds'] for h in handles],np.asarray(slots,np.int64),
+            self.root_stride,self.capacity)
         page_addresses = []
-        for handle in handles:
+        at = 0
+        for handle,count in zip(handles,counts,strict=True):
             row = rows[handle.key]
-            root, worlds = row['root'], row['worlds']
             identity = handle.slot,handle.generation
             addresses = pointers[identity]
-            physical = self.capacity+handle.slot*((self.budget_cap+15)//16)*16+np.arange(len(addresses))
             page_addresses.append(addresses.view(np.int64))
-            actions = np.tile(np.arange(len(root['actions'])), len(worlds))
-            seeds = np.repeat(worlds,len(root['actions']))
-            source.extend([handle.slot]*len(physical)); destination.extend(physical)
-            world_seeds.extend(seeds); initial_bits.extend(root['bits'][actions])
-            draw.extend([root['draw_selection']]*len(physical))
             self.bank[handle.slot] = row
-            self.jobs[handle.slot] = physical-self.capacity,actions
-            self.counts['chains'] += len(physical)
-            self.counts['budget_floor_overage'] += max(0,len(physical)-row['budget'])
+            self.jobs[handle.slot] = destination[at:at+count]-self.capacity,action_indices[at:at+count]
+            self.counts['chains'] += count
+            self.counts['budget_floor_overage'] += max(0,count-row['budget'])
+            at += count
         # Old prepare_pages uploads the whole admission together. Root-by-root
         # copies serialize the host and GPU despite independent page ownership.
         self.arena.arena.index_copy_(0,torch.as_tensor(destination,device=self.arena.device),
             torch.as_tensor(np.concatenate(page_addresses),device=self.arena.device))
-        self.arena.fork(source,destination,world_seeds)
-        self.arena.first_selected(source,destination,initial_bits,draw)
-        self.pipeline.refill(np.asarray(destination)-self.capacity,
-            torch.as_tensor(source,device=self.arena.device),
-            torch.as_tensor(world_seeds,device=self.arena.device))
-        self.pipeline.deck[:self.capacity].copy_(self.scorer.root['deck_ids'])
+        owners,physical,seeds = self.arena.start_selected(source,destination,world_seeds,initial_bits,draw)
+        self.pipeline.refill(physical.long()-self.capacity,owners,seeds)
+        self.pipeline.deck = self.scorer.metadata_root['deck_ids']
         self.remaining += len(destination)
         self.counts['max_active'] = max(self.counts['max_active'],self.remaining)
         self.counts['submitted_roots'] += len(rows)
@@ -130,13 +122,15 @@ class ResidentPool:
         # Jobs already occupy disjoint, fixed root segments. Reducing those
         # segments avoids atomically adding thousands of inactive zeros into
         # owner zero at every receive; no root/chain identity changes.
-        self.root_remaining.copy_(pipeline.live[:self.capacity*self.root_stride]
-            .view(self.capacity,self.root_stride).sum(1,dtype=torch.int32))
-        left = self.root_remaining.cpu().numpy()
-        handles = [h for h in self.ledger.pending.values() if left[h.slot] == 0]
+        left = pipeline.completion_host
+        if left is None:
+            left = pipeline.live[:self.capacity*self.root_stride].view(
+                self.capacity,self.root_stride).sum(1,dtype=torch.int32).cpu().numpy()
+        pipeline.completion_host = None
+        handles = self.ledger.completed(left)
         if not handles:
             return {}
-        all_jobs = np.concatenate([self.jobs[h.slot][0] for h in handles])
+        all_jobs = self.arena.host.completed_jobs(handles,self.jobs)
         anchors = pipeline.anchors[all_jobs].cpu().numpy().astype(bool)
         values = pipeline.final[all_jobs].cpu().numpy()
         if anchors.any():
@@ -149,24 +143,14 @@ class ResidentPool:
                 raw=self.arena.observe_selected(self.capacity+jobs)
                 compact=self.arena.observation_slots[physical]
                 raw={k:v[compact if k in ('scalars','upgrades') else physical] for k,v in raw.items()}
-                _, score=self.scorer.score(raw,pipeline.owners[jobs],np.arange(len(jobs)),anchor=True)
-                if not torch.isfinite(score).all():
+                _, score=self.scorer.score(raw,pipeline.owners[jobs],np.arange(len(jobs)),
+                                          anchor=True,return_host=True)
+                if not np.isfinite(score).all():
                     raise FloatingPointError('nonfinite streaming anchor value')
-                scores.append(score.cpu().numpy())
+                scores.append(score)
             values[anchors] = np.concatenate(scores)
         self.counts['atomic_steps'] += int(pipeline.depth[all_jobs].sum().item())
-        out, offset = {},0
-        for handle in handles:
-            row = self.bank[handle.slot]
-            jobs, actions = self.jobs[handle.slot]
-            n = len(row['root']['actions'])
-            sums, visits = np.zeros(n,np.float64),np.zeros(n,np.int64)
-            np.add.at(sums,actions,values[offset:offset+len(jobs)])
-            np.add.at(visits,actions,1)
-            if not (visits == len(row['worlds'])).all():
-                raise RuntimeError('incomplete paired streaming teacher')
-            out[handle.key] = dict(actions=row['root']['actions'],values=sums/visits,visits=visits)
-            offset += len(jobs)
+        out = self.arena.host.complete_results(handles,self.bank,self.jobs,values)
         # Old lifecycle: destruction on the owner stream precedes page release,
         # and generation release precedes admission of the next logical root.
         self.arena.release_slots(np.r_[self.capacity+all_jobs,[h.slot for h in handles]])
@@ -182,13 +166,15 @@ class ResidentPool:
     def receive(self, steps=1):
         if steps < 0:
             raise ValueError('negative stream tick count')
-        out = self.reap()
-        if out:
-            return out
+        if steps == 0:
+            return self.reap()
+        # Every preceding tick already reaped all completed roots. Admission
+        # only adds live jobs; repeating the same host rendezvous does no work.
+        out = {}
         for _ in range(steps):
             if not self.remaining:
                 break
-            deadline = min(row['submitted_at']+self.timeout for row in self.bank.values())
+            deadline = self.ledger.deadline()
             self.remaining = self.pipeline.tick(self.remaining,deadline)
             self.counts['ticks'] += 1
             out = self.reap()

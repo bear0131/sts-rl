@@ -5,6 +5,7 @@
 #include "state_codec.h"
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
+#include "host_runtime.h"
 
 namespace py = pybind11;
 
@@ -29,6 +30,7 @@ struct HostSnapshotWriter {
 };
 
 PYBIND11_MODULE(deck_cuda_bridge, module) {
+    resident_host::bind(module);
     module.attr("cpu_battle_bytes") = sizeof(sts::BattleContext);
 #ifdef DECK_DYNAMIC_STATE_IMPORT
     module.attr("transport_version") = 2;

@@ -21,11 +21,14 @@ class ResidentStepPipeline:
     # actor. Bound only physical scoring storage; every logical job is retained.
     frame_capacity = 32768
 
-    def __init__(self, scorer, arena, max_depth, capacity=128):
+    def __init__(self, scorer, arena, max_depth, capacity=128, *, root_stride=0):
         if 'observe_live' not in arena.functions:
             raise ValueError('resident step graphs require observe_live simulator artifacts')
         self.scorer, self.arena, self.max_depth = scorer, arena, max_depth
         self.n, self.capacity = arena.capacity, capacity
+        self.root_stride = root_stride
+        self.root_count = len(scorer.root['deck_ids']) if root_stride else 0
+        self.completion_host = None
         self.graphs = OrderedDict()
         self.workspace_capacities = {}
         self.pool = torch.cuda.graph_pool_handle()
@@ -45,13 +48,13 @@ class ResidentStepPipeline:
         self.compact_simulator = all(k in arena.functions for k in ('observe_indexed', 'apply_compact'))
         self.final = empty((self.n,), torch.float64)
         self.totals = empty((triton.cdiv(self.n, 1024),))
-        self.status, self.enabled, self.counters = empty((10,)), empty(()), empty((5,), torch.int64)
+        self.status, self.enabled, self.counters = empty((10+self.root_count,)), empty(()), empty((5,), torch.int64)
         self.randoms = empty((self.n, max_depth), torch.float64)
         self.expected = empty((self.n, 96), torch.float32)
         self.context = empty((self.n, scorer.context.combat.shape[1]), torch.float32)
         # Root banks may change shape with relic width; the card identity bank
         # has a fixed capacity and address for all waves of this collection.
-        self.deck = empty((self.n, 96), torch.int64)
+        self.deck = scorer.metadata_root['deck_ids']
         self.enabled.zero_()
 
     def begin(self, owners, randoms):
@@ -63,7 +66,7 @@ class ResidentStepPipeline:
         self.randoms[:n].copy_(randoms)
         self.expected[:n].copy_(self.scorer.root['outer_deck_misc'][owners])
         self.context[:n].copy_(self.scorer.context.combat[owners])
-        self.deck[:len(self.scorer.root['deck_ids'])].copy_(self.scorer.root['deck_ids'])
+        self.deck = self.scorer.metadata_root['deck_ids']
         self.wave_n, self.owners = n, owners
         self.frame_control.zero_(); self.frame_control[1:2].fill_(1)
         self.enabled.fill_(1)
@@ -71,18 +74,15 @@ class ResidentStepPipeline:
     def refill(self, slots, owners, world_seeds):
         """Replace completed logical jobs; graph addresses and live siblings stay owned."""
         slots = torch.as_tensor(slots, device=self.arena.device, dtype=torch.long)
-        self.owners.index_copy_(0, slots, owners)
-        self.scorer.wave_owners.index_copy_(0, slots, owners)
+        self.completion_host = None
         from env.search.paired_rng import paired_uniforms
         paired_uniforms(world_seeds, slots, self.randoms)
-        self.expected.index_copy_(0, slots, self.scorer.root['outer_deck_misc'][owners])
-        self.context.index_copy_(0, slots, self.scorer.context.combat[owners])
-        self.depth[slots] = 1
-        self.cursor[slots] = 0
-        self.anchors[slots] = 0
-        self.final[slots] = 0
-        self.changed_context[slots] = 0
-        self.live[slots] = 1
+        root_misc=self.scorer.root['outer_deck_misc'];root_context=self.scorer.context.combat
+        K.refill[(len(slots),)](slots,owners,self.owners,self.scorer.wave_owners,
+            root_misc,root_context,self.expected,self.context,self.depth,self.cursor,
+            self.anchors,self.final,self.changed_context,self.live,len(slots),self.context.shape[1],
+            root_misc.stride(0),root_context.stride(0),
+            triton.next_power_of_2(max(96,self.context.shape[1])),num_warps=4)
         # A refill invalidates the previous compact pass, not its graph pool.
         self.frame_control.zero_()
         self.frame_control[1:2].fill_(1)
@@ -141,7 +141,11 @@ class ResidentStepPipeline:
         K.frame_finish[(1,)](self.active_count,self.frame_count,self.frame_control,
             self.status,self.enabled,F,width)
         self.status[4:5].zero_()
-        K.remaining_live[(nb,)](self.live, self.status, n, 1024)
+        if self.root_stride:
+            K.remaining_roots[(self.root_count,)](self.live,self.status,self.root_stride,
+                                                 triton.next_power_of_2(self.root_stride))
+        else:
+            K.remaining_live[(nb,)](self.live, self.status, n, 1024)
 
     def graph(self, count, width):
         # Persistent kernels consume device counts. Bounded physical buckets
@@ -215,7 +219,8 @@ class ResidentStepPipeline:
             for _ in range(frames):
                 graph.replay()
             self.stats['replays'] += frames
-            status = self.status.cpu().tolist()
+            snapshot = self.status.cpu().numpy()
+            status = snapshot[:10].tolist()
             self.stats['host_reads'] += 1
             if status[3]:
                 raise RuntimeError(f'resident device step failed validation {status[3]}')
@@ -235,6 +240,7 @@ class ResidentStepPipeline:
             if status[8] != 0:
                 raise RuntimeError('stream tick returned inside an unfinished pass')
             self.stream_width = max(width, status[1])
+            self.completion_host = snapshot[10:] if self.root_count else None
             return status[4]
         raise RuntimeError('resident stream overflow retry budget exhausted')
 

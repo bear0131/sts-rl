@@ -27,8 +27,10 @@ def run_worker(commands,responses,settings):
             core.get_submodule(parent)._buffers[field]=value
         core.to('cuda').eval()
         policy=SimpleNamespace(core=core,observation_space=data['space'],parameters=core.parameters)
-        scorer=ResidentDeckScorer(policy,settings['cache_bytes'])
-        folder,manifest,_=load_artifacts(settings['artifacts'])
+        folder,manifest,host=load_artifacts(settings['artifacts'])
+        if getattr(host,'host_runtime_version',None) != 1:
+            raise ValueError('resident worker requires native host runtime v1')
+        scorer=ResidentDeckScorer(policy,settings['cache_bytes'],native_host=host)
         if (manifest.get('observation_storage') != 'bounded-frame-v1'
                 or manifest.get('root_import') != 'indexed-v1'):
             raise ValueError('streaming search requires bounded-frame-v1 and indexed-v1 artifacts')

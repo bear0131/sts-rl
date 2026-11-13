@@ -588,7 +588,7 @@ def test_resident_anchor_batches_bound_projection_and_keep_exact_cache(
     payload = root_payload(root, bridge)
     arena = CudaBattleArena(folder/'deck.cubin', manifest['sha256']['deck.cubin'], 1,
         card_count=_nosl_compact_lut()['layout']['card_count'])
-    scorer = ResidentDeckScorer(policy)
+    scorer = ResidentDeckScorer(policy,native_host=bridge)
     before = root.export_training_state()
     try:
         arena.load([payload['snapshot']], [payload['prefix']])

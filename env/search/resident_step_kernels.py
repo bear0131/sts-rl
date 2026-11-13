@@ -10,6 +10,23 @@ from triton.language.extra.cuda import libdevice
 
 
 @triton.jit
+def refill(SLOTS, SOURCES, OWNERS, WAVE_OWNERS, ROOT_MISC, ROOT_CONTEXT,
+           EXPECTED, CONTEXT, DEPTH, CURSOR, ANCHORS, FINAL, CHANGED, LIVE,
+           N, C: tl.constexpr, MISC_STRIDE: tl.constexpr, CONTEXT_STRIDE: tl.constexpr,
+           B: tl.constexpr):
+    row=tl.program_id(0)
+    col=tl.arange(0,B)
+    slot=tl.load(SLOTS+row);source=tl.load(SOURCES+row)
+    tl.store(OWNERS+slot,source);tl.store(WAVE_OWNERS+slot,source)
+    misc=tl.load(ROOT_MISC+source*MISC_STRIDE+col,col<96,0.)
+    context=tl.load(ROOT_CONTEXT+source*CONTEXT_STRIDE+col,col<C,0.)
+    tl.store(EXPECTED+slot*96+col,misc,col<96)
+    tl.store(CONTEXT+slot*C+col,context,col<C)
+    tl.store(DEPTH+slot,1);tl.store(CURSOR+slot,0);tl.store(ANCHORS+slot,0)
+    tl.store(FINAL+slot,0.);tl.store(CHANGED+slot,0);tl.store(LIVE+slot,1)
+
+
+@triton.jit
 def classify(OUTCOME, MASK, CATS, MISC, EXPECTED, DECK, OWNERS, FRAME_IDS, FRAME_COUNT, DEPTH,
              KIND, FORCED, NEED, CHANGED, STATUS, OFFSET, N: tl.constexpr,
              MAX_DEPTH: tl.constexpr, MISC_SCALE: tl.constexpr, B: tl.constexpr):
@@ -35,9 +52,15 @@ def classify(OUTCOME, MASK, CATS, MISC, EXPECTED, DECK, OWNERS, FRAME_IDS, FRAME
     misc = tl.load(MISC+(offset+i[:, None])*96+d[None, :], need[:, None] & (d[None, :] < 96), -1)
     expected = tl.load(EXPECTED+i[:, None]*96+d[None, :], need[:, None] & (d[None, :] < 96), 0.)
     card = tl.load(DECK+owner[:, None]*96+d[None, :], need[:, None] & (d[None, :] < 96), 0)
-    normalized = libdevice.div_rn(misc.to(tl.float64),
-        tl.full((), MISC_SCALE, tl.float64)).to(tl.float32)
-    changed = tl.sum(((misc >= 0) & (card != 0) & (normalized != expected)).to(tl.int32), 1) > 0
+    valid = (misc >= 0) & (card != 0)
+    changed = tl.full((B,), False, tl.int1)
+    # Most blocks have no permanent-growth card. Avoid FP64 division for all
+    # their absent (-1) fields, while retaining the canonical exact conversion
+    # for every actual field; this branch does not inspect sampled outcomes.
+    if tl.sum(tl.sum(valid.to(tl.int32),1),0)>0:
+        normalized = libdevice.div_rn(misc.to(tl.float64),
+            tl.full((), MISC_SCALE, tl.float64)).to(tl.float32)
+        changed = tl.sum((valid & (normalized != expected)).to(tl.int32), 1) > 0
     tl.store(CHANGED+i, changed.to(tl.int32), active)
     tl.store(KIND+i, kind, active)
     tl.store(FORCED+i, tl.min(tl.where(mask != 0, a[None, :], 198), 1), active)
@@ -111,6 +134,14 @@ def remaining_live(LIVE, STATUS, N: tl.constexpr, B: tl.constexpr):
     i = tl.program_id(0)*B + tl.arange(0, B)
     live = tl.load(LIVE+i, i < N, 0)
     tl.atomic_add(STATUS+4, tl.sum(live, 0))
+
+
+@triton.jit
+def remaining_roots(LIVE, STATUS, STRIDE: tl.constexpr, B: tl.constexpr):
+    root=tl.program_id(0);i=tl.arange(0,B)
+    count=tl.sum(tl.load(LIVE+root*STRIDE+i,i<STRIDE,0),0)
+    tl.store(STATUS+10+root,count)
+    tl.atomic_add(STATUS+4,count)
 
 
 @triton.jit

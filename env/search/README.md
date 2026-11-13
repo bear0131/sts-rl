@@ -9,6 +9,12 @@
 
 状态传输版本2按逻辑快照实际字数分配CPU/GPU导入导出缓冲，支持超过128张的牌堆及超过8192字的状态；canonical编码不变。bridge以`DECK_DYNAMIC_STATE_IMPORT`显式构建，manifest声明`transport_version=2`，与模块layout共同校验。旧版本1仍保留原容量检查。最后一个arena关闭时恢复本组件租借的CUDA栈限制，避免搜索退出后闲置栈挤占PPO显存。
 
+连续搜索的主机端热循环位于 `host_runtime.h`，由同一 `cuda_bridge.cpp` 构建并声明 `host_runtime_version=1`。根代际、非移动页租约、完整字节缓存与 intern、快照/任务打包及配对结果按序求和由 C++ 执行；大数组循环在取好 Python 元数据后释放 GIL。所有对象仅由搜索 owner 使用，不支持多线程同时修改同一实例。Python 参考账本与缓存仍用于差分验收；模型计算和命令编排保留原 PyTorch/FIFO 路径。
+
+重新构建 bridge 必须使用现役 native 模拟器相同版本的 pybind11 头文件和 C++ ABI；不能直接改用 Torch 附带的另一个 pybind11 版本。`STS_ENABLE_RULE_TRACE`、`DECK_DYNAMIC_STATE_IMPORT` 和 native include/state codec 的构建身份必须记录。使用 `-ffp-contract=off`，禁止 fast-math，以保留原 FP64 配对累加顺序。产物 manifest 记录 bridge/cubin SHA 和 host 源码 SHA；更新 host 时可复用逐 SHA 校验的相同 cubin，不覆盖旧构建。
+
+验收入口为 `tests/integration/test_resident_host.py` 和 `test_resident_stream.py`，并与 CUDA battle、paired RNG、真实 PPO/NOSL 两轮保存恢复测试共同运行。通过显式 `STS_CUDA_BATTLE_ARTIFACTS` 指向构建；缺失构建不算通过。新 host ABI 不更改模型/Adam/环境 checkpoint schema，但旧 bridge 不满足新运行时，恢复计划须同时固定源码和产物。
+
 CPU 待执行回调不能跨设备导入。`load` 拒绝这类根；在 GPU 中产生的回调由同一
 模块持有，可随独立分支复制，直到状态销毁。调度接入必须维护真实战斗的 GPU
 镜像，或明确报告尚不能导入的根，不能跳过 continuation 或静默改变搜索预算。

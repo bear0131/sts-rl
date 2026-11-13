@@ -12,8 +12,9 @@ def root_payload(env, bridge):
     env = env.unwrapped
     legal = np.flatnonzero(env.action_masks())
     observation = env._obs()
+    joint = dict(env._joint_policy_actions())
     result = dict(snapshot=bridge.snapshot(env.thick.bc), prefix=sum(1 << k for k in (env._multi or ())),
-        actions=legal, bits=np.asarray([dict(env._joint_policy_actions())[a] for a in legal], np.uint32),
+        actions=legal, bits=np.asarray([joint[a] for a in legal], np.uint32),
         draw_selection=int(observation['select_zone'].item()) == 2, offset=env._policy_offset,
         skipped=('forced' if len(legal) <= 1 else 'hidden_current_intent'
                  if 'Runic Dome' in [r['id'] for r in env.thick.gc.relic_state()] else None))
