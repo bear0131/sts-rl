@@ -12,6 +12,15 @@ from .outer_return import MISC_SCALE
 from .run_env import _nosl_compact_lut, _nosl_card_stats
 
 
+def canonical_misc(misc):
+    """Match the native observation's integer / scale -> FP32 conversion.
+
+    FP32 reciprocal multiplication differs by one ULP for values such as
+    5/100, spuriously invalidating an unchanged root's expensive context.
+    """
+    return (misc.to(torch.float64) / MISC_SCALE).to(torch.float32)
+
+
 class CudaObservationDecoder:
     def __init__(self, space, device='cuda'):
         self.device, self.space = torch.device(device), space
@@ -145,6 +154,6 @@ class CudaObservationDecoder:
         o['relic_counters'] = self.relic_counters(s, o['relics'], o['relic_counters'])
         if not head_only:
             misc = raw['permanent_misc']
-            o['outer_deck_misc'] = torch.where((misc >= 0) & (o['deck_ids'] != 0), misc/MISC_SCALE, o['outer_deck_misc'])
+            o['outer_deck_misc'] = torch.where((misc >= 0) & (o['deck_ids'] != 0), canonical_misc(misc), o['outer_deck_misc'])
         o['combat_exit_anchor'] = torch.stack((raw['outcome'] == 1, raw['outcome'] == 3), 1).float()
         return o

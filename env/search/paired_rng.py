@@ -54,7 +54,7 @@ def _advance(hi, lo, inc_hi, inc_lo):
 
 
 @triton.jit
-def _uniforms(SEEDS, SLOTS, OUT, N: tl.constexpr, D: tl.constexpr, B: tl.constexpr):
+def _uniforms(SEEDS, SLOTS, OUT, N, D: tl.constexpr, B: tl.constexpr):
     row = tl.program_id(0)*B + tl.arange(0, B)
     seed = tl.load(SEEDS+row, row < N, 0).to(tl.uint64) ^ 0x504F4C494359
     h = tl.full((), 0x43b0d7e5, tl.uint32)

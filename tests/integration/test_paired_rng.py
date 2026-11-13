@@ -22,6 +22,15 @@ def test_paired_pcg64_all_draws_bitwise_match_numpy_at_sparse_slots(depth):
     actual=out.cpu().numpy()
     np.testing.assert_array_equal(actual[slots].view(np.uint64),expected.view(np.uint64))
     assert (np.delete(actual,slots,axis=0)==-1.).all()
+    # Admissions vary at every real rollout step. Dynamic row counts must use
+    # the same stream and may not touch slots outside the current admission.
+    for count in (1,17,32,128):
+        out.fill_(-1.)
+        paired_uniforms(torch.as_tensor(seeds[:count].view(np.int64),device='cuda'),
+                        torch.as_tensor(slots[:count],device='cuda'),out)
+        actual=out.cpu().numpy()
+        np.testing.assert_array_equal(actual[slots[:count]].view(np.uint64),expected[:count].view(np.uint64))
+        assert (np.delete(actual,slots[:count],axis=0)==-1.).all()
 
 
 def test_paired_pcg64_graph_replay_uses_new_seeds_after_allocator_release():

@@ -53,20 +53,31 @@ def run_worker(commands,responses,settings):
                 except queue.Empty: packet=None
                 # Exact old worker scheduling: bounded FIFO drain, then one
                 # engine.receive tick; incoming roots never wait for pool drain.
+                admitted={}
                 for command_index in range(64):
                     if packet is None: break
                     kind,payload,ident=pickle.loads(packet)
-                    if kind=='submit': engine.submit(payload)
-                    elif kind=='statistics': responses.put(('reply',ident,report()))
+                    if kind=='submit':
+                        if admitted.keys() & payload.keys():
+                            raise ValueError('duplicate queued root admission')
+                        admitted.update(payload)
+                    else:
+                        # Coalesce only already available FIFO submissions.
+                        # Control messages remain barriers and never overtake
+                        # a root; do not wait for a batch or for live work to end.
+                        if admitted:
+                            engine.submit(admitted); admitted={}
+                    if kind=='statistics': responses.put(('reply',ident,report()))
                     elif kind in ('close','cancel'):
                         cancelled=list(engine.ledger.pending) if kind=='cancel' else []
                         engine.close(cancel=kind=='cancel')
                         responses.put(('closed',None,dict(report(),cancelled=cancelled)))
                         return
-                    else: raise ValueError('unsupported streaming command '+kind)
+                    elif kind!='submit': raise ValueError('unsupported streaming command '+kind)
                     if command_index < 63:
                         try: packet=commands.get_nowait()
                         except queue.Empty: packet=None
+                if admitted: engine.submit(admitted)
                 if engine.pending:
                     t=time.monotonic(); ready=engine.receive(steps=1); active+=time.monotonic()-t
                     if ready: responses.put(('roots',None,ready))

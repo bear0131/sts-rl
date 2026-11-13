@@ -3,9 +3,8 @@ from collections import OrderedDict
 import numpy as np
 import torch
 
-from env.core.cuda_observation import CudaObservationDecoder
+from env.core.cuda_observation import CudaObservationDecoder, canonical_misc
 from env.core import encode
-from env.core.outer_return import MISC_SCALE
 from rl.policies.combat_summary import CombatSummary
 from rl.policies.collection_graphs import SharedCollectionGraphs
 from rl.policies.deck_latent import SearchContext
@@ -340,7 +339,7 @@ class ResidentDeckScorer:
         root = {key: value[owner] for key, value in self.metadata_root.items()}
         misc = self.arena_inputs['permanent_misc'][physical]
         changed = ((misc >= 0) & (root['deck_ids'] != 0)
-                   & (misc/MISC_SCALE != root['outer_deck_misc'])).any(1)
+                   & (canonical_misc(misc) != root['outer_deck_misc'])).any(1)
         return (torch.stack((self.arena_inputs['outcome'][physical], mask.sum(1), width, changed), 1),)
 
     @staticmethod
@@ -369,7 +368,7 @@ class ResidentDeckScorer:
         misc = raw['permanent_misc']
         original = self.root['outer_deck_misc'][owners]
         changed = ((misc >= 0) & (self.root['deck_ids'][owners] != 0)
-                   & (misc/MISC_SCALE != original)).any(1)
+                   & (canonical_misc(misc) != original)).any(1)
         return torch.stack((raw['outcome'], raw['mask'].sum(1), width, changed), 1).cpu().numpy()
 
     def _forward(self, batch, width, anchor):
@@ -475,13 +474,13 @@ class ResidentDeckScorer:
         original = self.root['outer_deck_misc'][owner]
         projected = None
         if hint is None:
-            projected = torch.where((misc >= 0) & (self.root['deck_ids'][owner] != 0), misc/MISC_SCALE, original)
+            projected = torch.where((misc >= 0) & (self.root['deck_ids'][owner] != 0), canonical_misc(misc), original)
             changed = (projected != original).any(1).nonzero().flatten()
         else:
             changed = torch.as_tensor(np.flatnonzero(hint[:, 3]), device=self.device)
         if len(changed):
             if projected is None:
-                projected = torch.where((misc >= 0) & (self.root['deck_ids'][owner] != 0), misc/MISC_SCALE, original)
+                projected = torch.where((misc >= 0) & (self.root['deck_ids'][owner] != 0), canonical_misc(misc), original)
             refreshed = self.resolve_changed_context(owner, misc, projected, changed, anchor, with_ids=anchor)
             if anchor:
                 refreshed, identities = refreshed

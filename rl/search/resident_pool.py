@@ -24,7 +24,8 @@ class ResidentPool:
         self.bank, self.page_leases, self.jobs = {}, {}, {}
         self.closed, self.pipeline = False, None
         self.n = arena.capacity-capacity
-        if self.n < capacity*((budget_cap+15)//16)*16:
+        self.root_stride = ((budget_cap+15)//16)*16
+        if self.n < capacity*self.root_stride:
             raise ValueError('arena cannot hold the declared root budgets')
         if not arena.paged:
             raise ValueError('streaming pool requires the legacy paged-state ABI')
@@ -126,7 +127,11 @@ class ResidentPool:
         if not self.pending:
             return {}
         pipeline = self.pipeline
-        self.root_remaining.zero_().index_add_(0,pipeline.owners,pipeline.live[:self.n])
+        # Jobs already occupy disjoint, fixed root segments. Reducing those
+        # segments avoids atomically adding thousands of inactive zeros into
+        # owner zero at every receive; no root/chain identity changes.
+        self.root_remaining.copy_(pipeline.live[:self.capacity*self.root_stride]
+            .view(self.capacity,self.root_stride).sum(1,dtype=torch.int32))
         left = self.root_remaining.cpu().numpy()
         handles = [h for h in self.ledger.pending.values() if left[h.slot] == 0]
         if not handles:

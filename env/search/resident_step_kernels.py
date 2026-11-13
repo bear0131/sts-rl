@@ -35,7 +35,9 @@ def classify(OUTCOME, MASK, CATS, MISC, EXPECTED, DECK, OWNERS, FRAME_IDS, FRAME
     misc = tl.load(MISC+(offset+i[:, None])*96+d[None, :], need[:, None] & (d[None, :] < 96), -1)
     expected = tl.load(EXPECTED+i[:, None]*96+d[None, :], need[:, None] & (d[None, :] < 96), 0.)
     card = tl.load(DECK+owner[:, None]*96+d[None, :], need[:, None] & (d[None, :] < 96), 0)
-    changed = tl.sum(((misc >= 0) & (card != 0) & (misc.to(tl.float32)/MISC_SCALE != expected)).to(tl.int32), 1) > 0
+    normalized = libdevice.div_rn(misc.to(tl.float64),
+        tl.full((), MISC_SCALE, tl.float64)).to(tl.float32)
+    changed = tl.sum(((misc >= 0) & (card != 0) & (normalized != expected)).to(tl.int32), 1) > 0
     tl.store(CHANGED+i, changed.to(tl.int32), active)
     tl.store(KIND+i, kind, active)
     tl.store(FORCED+i, tl.min(tl.where(mask != 0, a[None, :], 198), 1), active)

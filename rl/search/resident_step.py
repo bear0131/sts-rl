@@ -12,6 +12,7 @@ import torch
 import triton
 
 from env.core.outer_return import MISC_SCALE
+from env.core.cuda_observation import canonical_misc
 from env.search import resident_step_kernels as K
 
 
@@ -194,7 +195,7 @@ class ResidentStepPipeline:
         misc = a.misc[offset+changed]
         original = s.root['outer_deck_misc'][owners]
         projected = torch.where((misc >= 0) & (s.root['deck_ids'][owners] != 0),
-                                misc/MISC_SCALE, original)
+                                canonical_misc(misc), original)
         refreshed = s.resolve_changed_context(owners, misc, projected,
                                              torch.arange(len(changed),device=a.device), False)
         self.context.index_copy_(0, changed, refreshed)

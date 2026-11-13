@@ -14,6 +14,40 @@ from env.core.cuda_observation import CudaObservationDecoder
 pytestmark = [pytest.mark.native, pytest.mark.cuda, pytest.mark.timeout(120)]
 
 
+def test_resident_permanent_misc_matches_native_rounding_and_refreshes_only_real_changes():
+    import triton
+    from env.core.cuda_observation import canonical_misc
+    from env.core.outer_return import MISC_SCALE
+    from env.search import resident_step_kernels as K
+    values = np.r_[np.arange(512), 2**24-1, 2**24, 2**24+1, 2**31-1,
+        np.random.default_rng(20261111).integers(0,2**31-1,1024)].astype(np.int32)
+    n = len(values)
+    canonical = torch.as_tensor((values.astype(np.float64)/MISC_SCALE).astype(np.float32), device='cuda')
+    mask = torch.zeros((n,198),device='cuda',dtype=torch.int32); mask[:,:2] = 1
+    cats = torch.zeros((n,226),device='cuda',dtype=torch.int32)
+    misc = torch.full((n,96),-1,device='cuda',dtype=torch.int32); misc[:,0] = torch.as_tensor(values,device='cuda')
+    expected = torch.zeros((n,96),device='cuda'); expected[:,0] = canonical
+    deck = torch.zeros((n,96),device='cuda',dtype=torch.int64); deck[:,0] = 1
+    owners = torch.arange(n,device='cuda',dtype=torch.int64); frame = owners.int()
+    count = torch.tensor([n],device='cuda',dtype=torch.int32)
+    depth = torch.ones(n,device='cuda',dtype=torch.int32); outcome = torch.zeros_like(depth)
+    kind,forced,need,changed = [torch.zeros_like(depth) for _ in range(4)]
+    status = torch.zeros(10,device='cuda',dtype=torch.int32); offset = torch.zeros((),device='cuda',dtype=torch.int64)
+    def classify():
+        status.zero_()
+        K.classify[(triton.cdiv(n,32),)](outcome,mask,cats,misc,expected,deck,owners,
+            frame,count,depth,kind,forced,need,changed,status,offset,n,200,MISC_SCALE,32,num_warps=4)
+    torch.testing.assert_close(canonical_misc(misc[:,0]),canonical,rtol=0,atol=0)
+    classify()
+    assert not changed.any(), 'unchanged native integer values must reuse root context'
+    misc[:100,0] += 1
+    classify()
+    assert changed[:100].all() and not changed[100:].any()
+    expected[:100,0] = canonical_misc(misc[:100,0])
+    classify()
+    assert not changed.any(), 'a committed refresh must not repeat on the same integer state'
+
+
 def test_resident_relic_lookup_keeps_static_inventory_and_unbounded_live_fields():
     from rl.policies.combat_summary import AdditiveCombatInputs
     from rl.policies.shared_wholerun import LearnedCardTable
