@@ -1336,6 +1336,9 @@ class SlayTheSpireEnv(gym.Env):
                     self._invalidate_thin_cache()
                     info = self._info()
                     info['simulator_transition'] = False
+                    if self._defer_combat_observation:
+                        self._combat_observation_pending = True
+                        return {}, 0.0, False, False, info
                     return self._obs(), 0.0, False, False, info
                 if bits >> 29 == 6:
                     bits = (3 << 29) | sum(1 << i for i in self._multi)

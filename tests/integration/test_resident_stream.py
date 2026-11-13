@@ -359,6 +359,13 @@ def test_stream_accepts_new_roots_before_drain_and_reuses_only_retired_pages(
     arena=CudaBattleArena(folder/'deck.cubin',manifest['sha256']['deck.cubin'],2+128,
         card_count=_nosl_compact_lut()['layout']['card_count'],paged=True,observation_capacity=64)
     scorer=ResidentDeckScorer(policy,graph_capacity=2,native_host=bridge)
+    score_anchor = scorer._score_anchor
+    def compare_anchor(*args, **kwargs):
+        actual = score_anchor(*args, **kwargs)
+        expected = scorer._score_anchor_eager(*args, **kwargs)
+        np.testing.assert_allclose(actual[1],expected[1],rtol=3e-5,atol=3e-6)
+        return actual
+    scorer._score_anchor = compare_anchor
     pool=ResidentPool(arena,scorer,2,64,32,180)
     if page_limit is not None:
         pool.state_pages.close()

@@ -18,6 +18,7 @@ class Stream:
         self.positions, self.seeds = positions, seeds
         self.config = SearchTrainingConfig(**model.deck_search_config)
         self.meta, self.queue, self.inline = {}, [], {}
+        self.target_batches = []
         self.fallback = None
         self.exporter = ResidentRootExporter(vec.envs, self.config.cuda_artifacts,
                                              observations=vec.buf_obs)
@@ -130,10 +131,11 @@ class Stream:
                 self.buffer.search_actions[key] = action, log_prob
                 out[item['slot']] = dict(action=action, value=float(result['actor']['value']),
                     log_prob=log_prob, reward=None, campfire=None)
-            targets = improved_prior(torch.from_numpy(logits), torch.from_numpy(values),
-                torch.from_numpy(masks), torch.from_numpy(worlds), self.config.target_std).numpy()
-            for (position, slot), target in zip(keys, targets, strict=True):
-                self.buffer.add_search_target(slot, target, position=position)
+            # The auxiliary target has no acting consumer. Preserve the exact
+            # frozen inputs and evaluate independent rows together at the
+            # collection boundary, instead of launching tiny Torch reductions
+            # between every pair of real environment transitions.
+            self.target_batches.append((keys, logits, values, masks, worlds))
             self.stats['searched_roots'] += len(ready)
             self.stats['executed_search_actions'] += len(ready)
         return out
@@ -145,6 +147,15 @@ class Stream:
         if self.pending or self.service.outstanding:
             raise RuntimeError('collection boundary has unfinished search')
         report = self.service.park()
+        for start in range(0, len(self.target_batches), 128):
+            batches = self.target_batches[start:start+128]
+            keys = [key for batch in batches for key in batch[0]]
+            inputs = [torch.from_numpy(np.concatenate([b[i] for b in batches]))
+                      for i in range(1, 5)]
+            targets = improved_prior(*inputs, self.config.target_std).numpy()
+            for (position, slot), target in zip(keys, targets, strict=True):
+                self.buffer.add_search_target(slot, target, position=position)
+        self.target_batches.clear()
         self.owner_report = report
         for key in ('chains','atomic_steps','policy_rows','forced_rows','anchor_rows',
                     'cutoff_rows','terminal_rows','budget_floor_overage'):

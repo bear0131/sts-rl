@@ -23,7 +23,7 @@ def pack_actor_roots(rows, host):
                 field_order=list(observations[0]))
 
 
-def unpack_actor_roots(packet):
+def unpack_actor_roots(packet, *, row_observations=True):
     if packet.get('contract') != 'legacy-deck-roots-v1':
         observations = {k: np.stack([row['observation'][k] for row in packet.values()])
                         for k in next(iter(packet.values()))['observation']}
@@ -36,12 +36,14 @@ def unpack_actor_roots(packet):
             end = offset + int(np.prod(shape))
             field = storage[:, offset:end].reshape(len(observations), *shape)
             batched[name] = field
-            for row, observation in enumerate(observations):
-                observation[name] = field[row]
+            if row_observations:
+                for row, observation in enumerate(observations):
+                    observation[name] = field[row]
             offset = end
         if offset != storage.shape[1]:
             raise ValueError('legacy deck root field layout changed')
-    return ({key: dict(metadata, observation=observation) for key, metadata, observation
+    return ({key: (dict(metadata, observation=observation) if row_observations else dict(metadata))
+            for key, metadata, observation
             in zip(packet['keys'], packet['metadata'], observations, strict=True)},
             {key: batched[key] for key in packet['field_order']})
 

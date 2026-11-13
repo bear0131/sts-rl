@@ -81,8 +81,9 @@ class RunContextEncoder(nn.Module):
         return self._pool_tokens(tokens, mask)
 
     def _pool_tokens(self, tokens, mask, *, packed_width=None):
-        if not self.training:
-            # Keep inference shapes and qualified collection graphs unchanged.
+        if not self.training and packed_width is None:
+            # Unbound/legacy inference keeps its original full layout. A
+            # frozen owner may explicitly provide the exact live-key capacity.
             return self.norm(self.transformer(tokens, src_key_padding_mask=mask))[:, 0]
         # Only the first (always present) query is consumed. Masked keys cannot
         # affect it at any layer; their unused queries can be dropped. Public
@@ -91,6 +92,11 @@ class RunContextEncoder(nn.Module):
         positions = torch.argsort(mask.to(torch.int32), dim=1, stable=True)[:, :width]
         tokens = tokens.gather(1, positions[:, :, None].expand(-1, -1, tokens.shape[-1]))
         mask = mask.gather(1, positions)
+        if not self.training:
+            # Retain the accepted fused inference arithmetic. The training
+            # final-query layout below changes FP32 reduction order beyond
+            # the frozen-context tolerance even though its math is equivalent.
+            return self.norm(self.transformer(tokens, src_key_padding_mask=mask))[:, 0]
         bias = torch.zeros_like(mask, dtype=tokens.dtype).masked_fill(mask, float('-inf'))
         x = tokens
         for layer in self.transformer.layers[:-1]:

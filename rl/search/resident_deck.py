@@ -578,6 +578,69 @@ class ResidentDeckScorer:
 
     @torch.no_grad()
     def _score_anchor(self, raw, owner, rows, scalar_rows, *, return_host):
+        if self.native_host is None:
+            return self._score_anchor_eager(raw, owner, rows, scalar_rows, return_host=return_host)
+        if (any(m._parameters.get(name) is not p or p._version != version
+                for m,name,p,version in self.parameter_bindings)
+                or any(m._modules.get(name) is not child for m,name,child in self.module_bindings)):
+            raise RuntimeError('resident search weights changed during collection')
+        count = len(rows)
+        padded = max(8, 1 << (count-1).bit_length())
+        # Exact key preparation is itself a GPU consumer. Capture its indexed
+        # gathers and projections; a cache hit must not execute dozens of eager
+        # Torch operations before it can discover the already scored value.
+        roots = {k: self.root[k][:,:self.relic_width] if k in ('relics','relic_counters') else self.root[k]
+                 for k in ('relics','relic_counters','run_keys')}
+        def key_forward(batch):
+            owners, physical, compact = batch['owner'], batch['rows'], batch['compact']
+            obs = self.decoder.anchor_indexed(raw, roots, owners, physical, compact)
+            original = self.root['outer_deck_misc'][owners]
+            misc = raw['permanent_misc'][physical]
+            changed = ((misc >= 0) & (self.root['deck_ids'][owners] != 0)
+                       & (canonical_misc(misc) != original)).any(1)
+            floats = torch.cat((obs['player_scalars'][:,:2], obs['gold'], obs['run_keys'],
+                                obs['combat_exit_anchor'], obs['relic_counters']), 1)
+            integers = torch.cat((obs['potions'].long(), obs['relics'].long(),
+                self.anchor_context_ids[owners,None], self.anchor_relic_ids[owners,None],
+                owners[:,None], changed[:,None].long()), 1)
+            return floats, integers
+        signature = ('anchor-key', padded, self.bank_key,
+                     tuple((k,v.data_ptr(),tuple(v.shape)) for k,v in raw.items()))
+        floats, integers = self.runtime._replay(self.runtime.entries, signature,
+            dict(owner=owner, rows=rows, compact=scalar_rows), padded, key_forward, self.runtime.capacity)
+        host_f = floats[:count].cpu().numpy()
+        host_i = integers[:count].cpu().numpy()
+        if host_i[:,-1].any():
+            # Permanent card changes retain the existing exact refresh path.
+            # They are not approximated by the original root context.
+            return self._score_anchor_eager(raw, owner, rows, scalar_rows, return_host=return_host)
+        width, key_width, potion_width = self.relic_width, roots['run_keys'].shape[1], self.decoder.space['potions'].shape[0]
+        def forward(host, selected):
+            from env.search.cuda_battle import upload_arrays
+            f, i, owners = upload_arrays(self.native_host, self.device,
+                [host['floats'], host['integers'], host_i[selected,-2]])
+            n = len(selected)
+            physical = max(8, 1 << (n-1).bit_length())
+            def evaluate(batch):
+                f, i, owners = batch['f'], batch['i'], batch['owner']
+                hp_end, gold_end, keys_end = 2, 3, 3+key_width
+                x = dict(player_scalars=f[:,:hp_end], gold=f[:,hp_end:gold_end],
+                    run_keys=f[:,gold_end:keys_end], combat_exit_anchor=f[:,keys_end:keys_end+2],
+                    relic_counters=f[:,keys_end+2:], potions=i[:,:potion_width],
+                    relics=i[:,potion_width:potion_width+width])
+                dynamic = self.core.combat.summaries.relic_counter_terms(x['relics'],x['relic_counters'])
+                relics = self.root_relic_identity[owners]+(dynamic*x['relics'].ne(0)[...,None]).sum(1)
+                return (self.core.anchor_with_context(x,self.context.anchor[owners],relics),)
+            output = self.runtime._replay(self.runtime.entries,
+                ('anchor-value',physical,self.bank_key,key_width,potion_width),
+                dict(f=f,i=i,owner=owners),physical,evaluate,self.runtime.capacity)[0]
+            return np.empty((n,0),np.float32),output[:n].flatten().cpu().numpy()
+        _, values = self.anchor_cache.forward(dict(floats=host_f, integers=host_i[:,:-2]),
+            forward, namespace=('resident-anchor-packed-v1',width,key_width,potion_width), indexed=True)
+        return None, values if return_host else torch.as_tensor(values,device=self.device)
+
+    @torch.no_grad()
+    def _score_anchor_eager(self, raw, owner, rows, scalar_rows, *, return_host):
         if (any(m._parameters.get(name) is not p or p._version != version
                 for m,name,p,version in self.parameter_bindings)
                 or any(m._modules.get(name) is not child for m,name,child in self.module_bindings)):

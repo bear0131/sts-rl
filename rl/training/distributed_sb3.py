@@ -3392,6 +3392,8 @@ def main() -> None:
     try:
         for update in (count() if args.continuous else range(args.updates)):
             iteration_budget.start(update)
+            if deck_schedule is not None or getattr(model, 'deck_search_config', None) is not None:
+                model.deck_search_snapshot_dir = str(local_root / 'search-weights')
             if deck_schedule is not None:
                 from rl.training.deck_schedule import at_collection_boundary
                 at_collection_boundary(model, rank=args.rank, world_size=args.world_size,

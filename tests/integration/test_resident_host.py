@@ -5,6 +5,22 @@ import pytest
 pytestmark = [pytest.mark.native, pytest.mark.cuda, pytest.mark.timeout(120)]
 
 
+def test_actor_packet_keeps_columnar_rows_without_rebuilding_observations(cuda_battle_artifacts):
+    from env.search.resident_transport import pack_actor_roots, unpack_actor_roots
+    rows = {key: dict(slot=slot, budget=64, observation={
+        'phase':np.array([slot],np.int64), 'values':np.array([.1,slot],np.float32),
+        'mask':np.array([True,False],bool)}) for key,slot in [('later',3),('earlier',1)]}
+    packet = pack_actor_roots(rows,cuda_battle_artifacts[2])
+    metadata,columns = unpack_actor_roots(packet,row_observations=False)
+    ordinary,reference = unpack_actor_roots(packet)
+    assert list(metadata) == list(rows) == list(ordinary)
+    assert all('observation' not in row for row in metadata.values())
+    for field, column in columns.items():
+        assert column.tobytes() == np.stack([r['observation'][field] for r in rows.values()]).tobytes()
+        assert column.tobytes() == reference[field].tobytes()
+        assert any(np.shares_memory(column,storage) for _,_,storage in packet['columns'])
+
+
 def test_native_root_and_page_ownership_matches_reference(cuda_battle_artifacts):
     from env.search.root_ledger import RootLedger
     from env.search.state_pages import DevicePages

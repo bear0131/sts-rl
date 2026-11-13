@@ -61,7 +61,8 @@ class SearchRolloutBuffer(SharedRolloutBuffer):
         for j, (position, index) in enumerate(zip(positions, indices, strict=True)):
             chosen = self.search_actions.get((int(position), int(index)))
             if chosen is not None and (int(action[j]) != chosen[0]
-                    or not np.isclose(log_prob[j], chosen[1], atol=1e-6)):
+                    or not math.isfinite(float(log_prob[j]))
+                    or abs(float(log_prob[j])-chosen[1]) > 1e-6+1e-5*abs(chosen[1])):
                 raise ValueError('rollout must record the executed search action and behavior probability')
         rows = positions, indices
         if obs is not None:

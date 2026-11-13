@@ -81,8 +81,9 @@ class GpuService:
    self.poll(.05)
    if time.monotonic()>deadline:raise TimeoutError('GPU RPC '+kind)
  def submit(self,rows):
-  if self.parked or set(rows)&self.outstanding or len(self.outstanding)+len(rows)>self.capacity:
-   raise ValueError('duplicate search, parked owner or root capacity exceeded')
+  if self.parked:raise RuntimeError('cannot submit to a parked GPU owner')
+  if set(rows)&self.outstanding or len(self.outstanding)+len(rows)>self.capacity:
+   raise ValueError('duplicate search or root capacity exceeded')
   if rows:
    from env.search.resident_transport import pack_actor_roots
    if not hasattr(self,'native_host'):

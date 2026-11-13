@@ -22,10 +22,12 @@ from rl.search.resident_inference import ResidentInference
 
 class DeckWorker:
     def __init__(self, settings):
-        self.settings = settings
+        self.settings = dict(settings)
+        self.settings.setdefault('environment_capacity', settings['capacity'])
         self.core = self.engine = self.arena = self.scorer = self.inference = None
         self.compiled = None
         self.queued, self.estimates, self.actor_queue = {}, {}, {}
+        self.actor_batches = []
         self.parked_report = None
         self.generation = 0
         self.folder, self.manifest, self.host = load_artifacts(settings['artifacts'])
@@ -87,26 +89,30 @@ class DeckWorker:
 
     def submit(self, rows):
         from env.search.resident_transport import unpack_actor_roots
-        rows, obs = unpack_actor_roots(rows)
+        rows, obs = unpack_actor_roots(rows, row_observations=False)
         if self.engine is None or (self.estimates.keys() | self.actor_queue.keys()) & rows.keys():
             raise RuntimeError('parked owner or duplicate search')
         if all('context' in row and 'slot' not in row for row in rows.values()):
             # Read compatibility for retained shadow-training checkpoints. The
             # same legacy owner executes already prepared roots without actor RPCs.
+            for j, row in enumerate(rows.values()):
+                row['observation'] = {k: v[j] for k,v in obs.items()}
             self.queued.update(rows)
             self.estimates.update(dict.fromkeys(rows))
             return
         # Legacy submit only enqueues. Adapt all roots accumulated by the FIFO
         # drain together immediately before its next tick, not once per packet.
         self.actor_queue.update(rows)
+        self.actor_batches.append(obs)
 
     def _prepare_roots(self, upper=None):
         rows, self.actor_queue = self.actor_queue, {}
         if not rows:
             return self.inference.actor(upper) if upper is not None else None
         keys = list(rows)
-        obs = {k: np.stack([r['observation'][k] for r in rows.values()])
-               for k in next(iter(rows.values()))['observation']}
+        batches, self.actor_batches = self.actor_batches, []
+        obs = (batches[0] if len(batches) == 1 else
+               {k: np.concatenate([b[k] for b in batches]) for k in batches[0]})
         masks = np.stack([r['mask'] for r in rows.values()])
         slots = np.asarray([r['slot'] for r in rows.values()], np.intp)
         if upper is not None:
@@ -123,7 +129,7 @@ class DeckWorker:
             self.estimates[key] = dict(logits=actor['logprobs'][j],
                 probabilities=actor['probabilities'][j], value=actor['values'][j])
             self.queued[key] = dict(root=row['root'],
-                observation={k: row['observation'][k] for k in fields},
+                observation={k: obs[k][j] for k in fields},
                 context=tuple(v[j] for v in actor['context']),
                 worlds=row['worlds'], budget=row['budget'], submitted_at=row['submitted_at'])
         if upper is not None:
@@ -200,7 +206,8 @@ class DeckWorker:
         torch.cuda.synchronize()
         torch.cuda.empty_cache()
         report['park'] = dict(allocated=torch.cuda.memory_allocated(),
-                             reserved=torch.cuda.memory_reserved())
+                             reserved=torch.cuda.memory_reserved(),
+                             free_bytes=torch.cuda.mem_get_info()[0])
         self.parked_report = report
         return report
 
@@ -218,5 +225,6 @@ class DeckWorker:
             report = self.parked_report
         self.queued.clear()
         self.actor_queue.clear()
+        self.actor_batches.clear()
         self.estimates.clear()
         return dict(report or {}, cancelled=cancelled)

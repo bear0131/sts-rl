@@ -214,12 +214,18 @@ class SharedCollectionGraphs:
             indices = torch.as_tensor(selected, device=self.device)
             batch = {k: observations[k][indices] for k in encoder.keys}
             widths = tuple(self._width(host[k][selected], 1) for k in ('deck_ids', 'relics'))
+            live = (1+(host['deck_ids'][selected] != 0).sum(1)
+                      +(host['relics'][selected] != 0).sum(1)
+                      +((host['map_full_rooms'][selected] != 0)
+                        | host['map_full_features'][selected].any(-1)).sum(1))
+            packed_width = (int(live.max())+15)//16*16
             count = len(selected)
             padded = (1 << (count - 1).bit_length()) if count <= 16 else ((count + 15) // 16) * 16
-            signature = ('run-context', padded, widths,
+            signature = ('run-context', padded, widths, packed_width,
                          tuple((k, tuple(v.shape[1:]), v.dtype) for k, v in batch.items()))
             encoded = self._replay(self.context_entries, signature, batch, padded,
-                lambda inputs: (encoder(inputs, active_widths=widths),), min(32, self.capacity))[0][:count]
+                lambda inputs: (encoder(inputs, active_widths=widths, packed_width=packed_width),),
+                min(32, self.capacity))[0][:count]
             latent[torch.as_tensor(slots[rows], device=self.device)] = encoded[
                 torch.as_tensor(inverse, device=self.device)]
             for k in encoder.keys:

@@ -773,11 +773,16 @@ def test_cuda_actor_search_context_survives_graph_changes(latent_env):
 
 
 @pytest.mark.cuda
-def test_packed_owner_actor_matches_masked_policy_through_shapes_weights_and_eviction(latent_env,cuda_battle_artifacts):
+@pytest.mark.parametrize('context_width', [32, 512])
+def test_packed_owner_actor_matches_masked_policy_through_shapes_weights_and_eviction(
+        latent_env,cuda_battle_artifacts,context_width):
     from rl.search.resident_inference import ResidentInference
     from env.search.cuda_battle import load_artifacts
     assert torch.cuda.is_available(), 'explicit CUDA owner acceptance required'
-    policy=policy_for(latent_env,'transformer64x2').cuda().eval()
+    torch.manual_seed(20261111)
+    policy=DeckLatentPolicy(latent_env.observation_space,latent_env.action_space,lambda _:5e-5,
+        d_model=context_width,n_layers=2,n_heads=4,room_lambda=1.,reward_flow='sequential-v1',
+        deck_combat_encoder='transformer64x2').cuda().eval()
     upper,upper_mask=deepcopy(latent_env._obs()),latent_env.action_masks().copy()
     enter_combat(latent_env)
     combat,combat_mask=latent_env._obs(),latent_env.action_masks().copy()
