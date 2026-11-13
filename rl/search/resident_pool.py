@@ -11,6 +11,10 @@ from rl.policies.deck_latent import SearchContext
 from rl.search.resident_step import ResidentStepPipeline
 
 
+class StatePageOOM(torch.OutOfMemoryError):
+    """Only an atomic page allocation failed; no root has been submitted."""
+
+
 class ResidentPool:
     def __init__(self, arena, scorer, capacity, budget_cap, max_depth, timeout, *, mirror_capacity=0):
         self.arena, self.scorer = arena, scorer
@@ -35,13 +39,57 @@ class ResidentPool:
         self.state_pages = arena.host.DevicePages(capacity, budget_cap, arena.battle_bytes,
             allocate, growth_pages=min(256, max(1, self.n//16)))
         self.remaining = 0
+        self.page_pressure = False
         self.counts = dict(chains=0, atomic_steps=0, budget_floor_overage=0,
                           max_active=0, submitted_roots=0, retired_roots=0,
-                          submissions_while_pending=0, ticks=0)
+                          submissions_while_pending=0, ticks=0,
+                          page_oom_retries=0, deferred_admissions=0)
 
     @property
     def pending(self):
         return bool(len(self.ledger))
+
+    def admit(self, rows):
+        """Accept a FIFO prefix, letting live searches finish under page pressure.
+
+        Budgets and worlds belong to whole roots and are never split or redrawn.
+        After a failed growth, reuse existing pages before asking for more VRAM.
+        Other OOM sites can have committed state and must remain fatal.
+        """
+        attempt = rows
+        if self.page_pressure and rows:
+            stats = self.state_pages.statistics()
+            free, size = stats['free_pages'], stats['page_size']
+            attempt = {}
+            for key, row in rows.items():
+                needed = (len(row['worlds'])*len(row['root']['actions'])+size-1)//size
+                if needed > free:
+                    break
+                attempt[key] = row
+                free -= needed
+            if not attempt:
+                if self.pending:
+                    self.counts['deferred_admissions'] += 1
+                    return {}
+                # A first root, or a larger budget than any preceding root,
+                # must fit by itself. Fail explicitly if it cannot make progress.
+                key = next(iter(rows))
+                attempt = {key: rows[key]}
+        while attempt:
+            try:
+                accepted = self.submit(attempt)
+                self.counts['deferred_admissions'] += int(len(accepted) < len(rows))
+                return accepted
+            except StatePageOOM:
+                self.counts['page_oom_retries'] += 1
+                self.page_pressure = True
+                if len(attempt) == 1:
+                    if not self.pending:
+                        raise
+                    self.counts['deferred_admissions'] += 1
+                    return {}
+                attempt = dict(list(attempt.items())[:max(1, len(attempt)//2)])
+        return {}
 
     @torch.no_grad()
     def submit(self, rows):
@@ -63,9 +111,11 @@ class ResidentPool:
             leases, pointers = self.state_pages.acquire([
                 ((h.slot,h.generation),len(rows[h.key]['worlds'])*len(rows[h.key]['root']['actions']))
                 for h in handles])
-        except BaseException:
+        except BaseException as exc:
             for handle in handles:
                 self.ledger.release(handle)
+            if isinstance(exc, torch.OutOfMemoryError):
+                raise StatePageOOM(str(exc)) from exc
             raise
         slots = [h.slot for h in handles]
         for handle in handles:

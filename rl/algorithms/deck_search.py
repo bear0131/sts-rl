@@ -48,6 +48,7 @@ class ShadowSearchCollection:
             'resident_frame_roots_max', 'native_fallback_roots', 'native_fallback_seconds',
             'stream_submitted_roots', 'stream_retired_roots', 'stream_submissions_while_pending',
             'stream_ticks', 'stream_command_bytes', 'stream_peak_pages',
+            'stream_page_oom_retries', 'stream_deferred_admissions',
             *DECK_SEARCH_CACHE_METRICS), 0.)
         self.stats['backend_cuda_inference'] = float(self.config.backend in ('cuda-batched-native', 'cuda-resident'))
         self.stats['backend_cuda_simulation'] = float(self.config.backend == 'cuda-resident')
@@ -336,7 +337,8 @@ class ShadowSearchCollection:
             for key,value in report.get('anchor_cache',{}).items():
                 if 'anchor_cache_'+key in self.stats:
                     self.stats['anchor_cache_'+key] += value
-            for key in ('submitted_roots','retired_roots','submissions_while_pending','ticks'):
+            for key in ('submitted_roots','retired_roots','submissions_while_pending','ticks',
+                        'page_oom_retries','deferred_admissions'):
                 self.stats['stream_'+key] = pool.get(key,0)
             self.stats['stream_command_bytes'] = service.counts['command_bytes']
             self.stats['stream_peak_pages'] = pool.get('state_pages',{}).get('peak_leased_pages',0)

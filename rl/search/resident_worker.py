@@ -20,6 +20,7 @@ def run_worker(commands,responses,settings):
     engine=arena=scorer=core=compiled=None
     generation=0; parked_report=None; geometry=space=None
     active=0.; started=time.monotonic()
+    admitted={}
     try:
         torch.set_num_threads(1)
         folder,manifest,host=load_artifacts(settings['artifacts'])
@@ -78,10 +79,14 @@ def run_worker(commands,responses,settings):
             if engine is None: return parked_report
             return dict(pool=engine.statistics(),active_tick_seconds=active,
                 elapsed_seconds=time.monotonic()-started,pid=os.getpid(),
-                generation=generation,
+                generation=generation,queued_roots=len(admitted),
                 context_refreshes=scorer.refreshes,anchor_cache=dict(scorer.anchor_cache.stats),
                 torch_allocated=torch.cuda.memory_allocated(),torch_reserved=torch.cuda.memory_reserved(),
                 torch_peak=torch.cuda.max_memory_allocated())
+        def admit_available():
+            if admitted:
+                accepted=engine.admit(admitted)
+                for key in accepted: del admitted[key]
         with torch.no_grad():
             begin(settings['snapshot'])
             responses.put(('ready',None,dict(pid=os.getpid(),generation=generation,
@@ -91,7 +96,6 @@ def run_worker(commands,responses,settings):
                 except queue.Empty: packet=None
                 # Exact old worker scheduling: bounded FIFO drain, then one
                 # engine.receive tick; incoming roots never wait for pool drain.
-                admitted={}
                 for command_index in range(64):
                     if packet is None: break
                     kind,payload,ident=pickle.loads(packet)
@@ -105,11 +109,10 @@ def run_worker(commands,responses,settings):
                         # Coalesce only already available FIFO submissions.
                         # Control messages remain barriers and never overtake
                         # a root; do not wait for a batch or for live work to end.
-                        if admitted:
-                            engine.submit(admitted); admitted={}
+                        admit_available()
                     if kind=='statistics': responses.put(('reply',ident,report()))
                     elif kind=='park':
-                        if engine is None or engine.pending:
+                        if engine is None or engine.pending or admitted:
                             raise RuntimeError('park requires a drained active collection')
                         parked_report=report(); release_started=time.monotonic()
                         compiled=scorer.compiled_gather
@@ -126,10 +129,14 @@ def run_worker(commands,responses,settings):
                             free_bytes=torch.cuda.mem_get_info()[0])
                         responses.put(('reply',ident,parked_report))
                     elif kind=='begin':
+                        if admitted: raise RuntimeError('begin cannot abandon queued roots')
                         begin(payload)
                         responses.put(('reply',ident,dict(pid=os.getpid(),generation=generation)))
                     elif kind in ('close','cancel'):
-                        cancelled=list(engine.ledger.pending) if engine is not None and kind=='cancel' else []
+                        if admitted and kind=='close':
+                            raise RuntimeError('normal close cannot abandon queued roots')
+                        cancelled=(list(engine.ledger.pending)+list(admitted)
+                            if engine is not None and kind=='cancel' else [])
                         last=report()
                         if engine is not None: engine.close(cancel=kind=='cancel')
                         responses.put(('closed',None,dict(last,cancelled=cancelled)))
@@ -138,7 +145,7 @@ def run_worker(commands,responses,settings):
                     if command_index < 63:
                         try: packet=commands.get_nowait()
                         except queue.Empty: packet=None
-                if admitted: engine.submit(admitted)
+                admit_available()
                 if engine is not None and engine.pending:
                     t=time.monotonic(); ready=engine.receive(steps=1); active+=time.monotonic()-t
                     if ready: responses.put(('roots',None,ready))

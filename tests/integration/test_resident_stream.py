@@ -332,8 +332,9 @@ def test_fused_refill_and_completion_counts_keep_live_siblings():
     assert status[4].item()==3
 
 
+@pytest.mark.parametrize('page_limit', [None, 64])
 def test_stream_accepts_new_roots_before_drain_and_reuses_only_retired_pages(
-        complete_combat_factory,cuda_battle_artifacts):
+        complete_combat_factory,cuda_battle_artifacts,page_limit):
     from env.core.run_env import _nosl_compact_lut
     from env.search.cuda_battle import CudaBattleArena
     from env.search.resident_chains import root_payload
@@ -359,6 +360,17 @@ def test_stream_accepts_new_roots_before_drain_and_reuses_only_retired_pages(
         card_count=_nosl_compact_lut()['layout']['card_count'],paged=True,observation_capacity=64)
     scorer=ResidentDeckScorer(policy,graph_capacity=2,native_host=bridge)
     pool=ResidentPool(arena,scorer,2,64,32,180)
+    if page_limit is not None:
+        pool.state_pages.close()
+        allocated = 0
+        def limited_allocate(count):
+            nonlocal allocated
+            if allocated+count > page_limit:
+                raise torch.OutOfMemoryError('test: live pages exhaust available VRAM')
+            result=torch.empty((count,arena.battle_bytes),dtype=torch.uint8,device='cuda')
+            allocated+=count
+            return result
+        pool.state_pages=bridge.DevicePages(2,64,arena.battle_bytes,limited_allocate,growth_pages=4)
     def row(i):
         payload=root_payload(roots[i],bridge)
         context=policy.core.prepare_search_context({k:torch.as_tensor(v[None],device='cuda')
@@ -376,15 +388,29 @@ def test_stream_accepts_new_roots_before_drain_and_reuses_only_retired_pages(
         # Another CUDA owner needs idle allocator memory while this graph and
         # its root/page leases remain live. Replay may not borrow freed scratch.
         gc.collect(); torch.cuda.empty_cache()
-        pool.submit({'second':row(1)})
-        assert pool.counts['submissions_while_pending']==1
+        second={'second':row(1)}
+        before_failed=pool.state_pages.statistics()
+        accepted=pool.admit(second)
+        if page_limit is not None:
+            assert accepted=={} and pool.counts['page_oom_retries']==1
+            assert set(pool.ledger.pending)=={'first'}
+            assert pool.state_pages.statistics()==before_failed
+        else:
+            assert pool.counts['submissions_while_pending']==1
+            second.clear()
         actual={}
-        while pool.pending: actual.update(pool.receive(steps=1))
+        while pool.pending or second:
+            for key in pool.admit(second): del second[key]
+            actual.update(pool.receive(steps=1))
         for key,i in (('first',0),('second',1)):
             np.testing.assert_array_equal(actual[key]['actions'],expected[i]['actions'])
             np.testing.assert_array_equal(actual[key]['visits'],expected[i]['visits'])
             np.testing.assert_allclose(actual[key]['values'],expected[i]['values'],rtol=3e-5,atol=3e-6)
         assert pool.state_pages.statistics()['owners']==0
+        assert pool.counts['chains']==sum(int(x['visits'].sum()) for x in actual.values())
+        if page_limit is not None:
+            assert pool.counts['deferred_admissions']>0
+            assert allocated==64
         gc.collect(); torch.cuda.empty_cache()
         replacement=pool.submit({'replacement':row(0)})['replacement']
         assert replacement.slot==first.slot and replacement.generation>first.generation

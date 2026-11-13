@@ -742,3 +742,5 @@
 - **COMBAT49-CLOUD-CONTINUITY** — 已迁移云端只读采集到16932，保留原run第1–229轮全部值并接230–239，STS已确认stale=false。27份旧比较曲线索引保持；其历史对象从旧端拉取现返回503，未伪造空历史。Sites原version3仅轮换受限SSH及地址，env revision2部署成功；本机8774补齐1–239。搜索阶段/qualified标量已加入投影。详见worklog/2026-11-14.md。
 
 - **COMBAT49-SEARCH-NATIVE-FALLBACK** — 待优化，保留正确性回退。bc081439/v25在239来源完整full1/.1资格首轮平均29.5根native fallback/47.903秒每卡，普通恢复轮5.75根/2.789秒；GPU worker推理/模拟正常，冻结146无这些根，不能用旧82秒说明当前慢都是冷启动。路径env/search/resident_transport.py首次pending无portable origin、rl/algorithms/deck_search.py整worker组回退以保原seed/teacher位置。验收需固定失败根/原预算，保pending来源、根和兄弟隔离、动作/奖励/RNG/teacher语义，覆盖生命周期和生产长度；不删回调、不减预算、不中断健康生产抢卡。证据runs/local/nw5090-compare-20261114/search-first/resume-row-PORT.json及worklog/2026-11-14.md同ID。
+
+- **COMBAT49-SEARCH-MEMORY** — 修复候选：正式247搜索页扩容OOM导致四机退出，246完整模型/Adam/RNG/env已保护。事务性页分配失败时延迟FIFO接纳并继续在途搜索、复用回收页；每个根预算不变，其他非事务性OOM仍失败。四机native/CUDA各22回归通过；完整生产及恢复待与用户新确认的直接搜索选动作合同联合验收，尚未部署。路径rl/search/resident_pool.py、resident_worker.py；验收包含页OOM回滚/语义、两轮完整collection及普通恢复/所有样本Adam完整。随后关闭四正式训练机之外闲置资源，保留磁盘。
