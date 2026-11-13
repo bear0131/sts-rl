@@ -11,7 +11,7 @@ from triton.language.extra.cuda import libdevice
 
 @triton.jit
 def classify(OUTCOME, MASK, CATS, MISC, EXPECTED, DECK, OWNERS, FRAME_IDS, FRAME_COUNT, DEPTH,
-             KIND, FORCED, NEED, STATUS, OFFSET, N: tl.constexpr,
+             KIND, FORCED, NEED, CHANGED, STATUS, OFFSET, N: tl.constexpr,
              MAX_DEPTH: tl.constexpr, MISC_SCALE: tl.constexpr, B: tl.constexpr):
     lane = tl.program_id(0)*B + tl.arange(0, B)
     active = (lane < N) & (lane < tl.load(FRAME_COUNT))
@@ -36,6 +36,7 @@ def classify(OUTCOME, MASK, CATS, MISC, EXPECTED, DECK, OWNERS, FRAME_IDS, FRAME
     expected = tl.load(EXPECTED+i[:, None]*96+d[None, :], need[:, None] & (d[None, :] < 96), 0.)
     card = tl.load(DECK+owner[:, None]*96+d[None, :], need[:, None] & (d[None, :] < 96), 0)
     changed = tl.sum(((misc >= 0) & (card != 0) & (misc.to(tl.float32)/MISC_SCALE != expected)).to(tl.int32), 1) > 0
+    tl.store(CHANGED+i, changed.to(tl.int32), active)
     tl.store(KIND+i, kind, active)
     tl.store(FORCED+i, tl.min(tl.where(mask != 0, a[None, :], 198), 1), active)
     tl.store(NEED+lane, need.to(tl.int32), lane < N)
@@ -99,6 +100,8 @@ def frame_finish(COUNT, FRAME_COUNT, CONTROL, STATUS, ENABLED, F: tl.constexpr, 
         complete=cursor>=tl.load(COUNT)
         tl.store(CONTROL,tl.where(complete,0,cursor))
         tl.store(CONTROL+1,complete.to(tl.int32))
+    tl.store(STATUS+8, tl.load(CONTROL))
+    tl.store(STATUS+9, tl.load(COUNT))
 
 
 @triton.jit

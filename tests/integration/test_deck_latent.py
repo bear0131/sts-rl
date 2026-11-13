@@ -774,8 +774,9 @@ def test_paired_shadow_search_batches_real_anchors_without_mutating_root(latent_
         scorer([])
 
 
-@pytest.mark.parametrize('device', ['cpu', 'cuda'])
-def test_shadow_teaching_preserves_real_actions_rewards_and_sampling_rng(device):
+@pytest.mark.parametrize('device,backend', [('cpu','native-cpu'),('cuda','native-cpu'),
+                                             ('cuda','cuda-resident')])
+def test_shadow_teaching_preserves_real_actions_rewards_and_sampling_rng(device,backend,tmp_path):
     from dataclasses import asdict
     from stable_baselines3.common.vec_env import DummyVecEnv
     from stable_baselines3.common.callbacks import BaseCallback
@@ -798,19 +799,28 @@ def test_shadow_teaching_preserves_real_actions_rewards_and_sampling_rng(device)
 
     captures = []
     for searched in (False, True):
-        env = DummyVecEnv([lambda: StrategicRewardWrapper(SlayTheSpireEnv(
+        factory = lambda: StrategicRewardWrapper(SlayTheSpireEnv(
             card_language=True, global_map_view=True, upper_public_context=True,
             event_option_observation=True, combat_action_contract='autoregressive-v2',
-            combat_exit_anchor=True, reward_flow='sequential-v1', deck_latent_context=True))])
+            combat_exit_anchor=True, reward_flow='sequential-v1', deck_latent_context=True))
+        if backend == 'cuda-resident':
+            from rl.training.native_subproc_vec_env import NativeSubprocVecEnv
+            env = NativeSubprocVecEnv([factory],envs_per_worker=1,start_method='spawn')
+        else:
+            env = DummyVecEnv([factory])
         model = AccumulatingMaskablePPO(DeckLatentPolicy, env, seed=20261111,
             n_steps=24, batch_size=24, n_epochs=1, device=device, gamma=1., gae_lambda=1.,
             learning_rate=5e-5, reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
             policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
-                reward_flow='sequential-v1', combat_value_target='pre-reward-anchor'))
+                reward_flow='sequential-v1', combat_value_target='pre-reward-anchor',
+                deck_combat_encoder='transformer64x2'))
         configure_packed_updates(model, dict(token_budget=1024, max_rows=8, precision='fp32'))
         if searched:
             model.deck_search_config = asdict(SearchTrainingConfig(fraction=1., normal_budget=2,
-                boss_budget=2, max_depth=2, max_active=16, timeout_seconds=30.))
+                boss_budget=2, max_depth=2, max_active=16, timeout_seconds=30.,backend=backend,
+                cuda_artifacts=__import__('os').environ.get('STS_CUDA_BATTLE_ARTIFACTS','')
+                    if backend == 'cuda-resident' else '',cuda_wave_capacity=64))
+            model.deck_search_snapshot_dir = str(tmp_path / 'weights')
         callback = Capture()
         model.learn(24, callback=callback)
         if searched:

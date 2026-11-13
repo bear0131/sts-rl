@@ -1014,3 +1014,18 @@ Deck-latent 的原生子进程搜索复用 `NativeRootObservationBatch`：模拟
 逐步编码，供同根同预算对照。评分器只打包当前战斗头或锚点头使用的字段；
 分支永久构筑变化仍比较完整静态键并单独刷新上下文，观测和checkpoint格式不变。
 该CPU路径的语义/速度对照不能代替正式搜索的完整GPU collection与更新恢复资格。
+
+`cuda-resident` 的下层搜索由 `rl/search/resident_service.py` 的单个 CUDA
+worker 持有，复用旧持续服务的 FIFO、根代际和非移动状态页。采样器持续提交
+冻结根，旧根完成后释放页；仅在 PPO 更新边界等待全部 teacher，结果仍写回
+原来的 `(time, env)`。真实 actor、搜索选根随机流、配对 world 和辅助目标不变。
+不能移植含 CPU 回调指针的根，必须由原 worker 组的 native 分支/ GPU 评分
+路径处理，保持该组的种子及目标顺序，不能接受部分搜索结果。
+
+当前产物合同为 `deck-resident-battle-v1`、transport 2，另须声明
+`observation_storage=bounded-frame-v1`、`root_import=indexed-v1`。
+连续地址和状态页两种入口共用 `env/search/cuda_battle_kernels.cuh` 的逻辑，
+页寻址及有界观测帧由 `cuda_battle_paged_kernels.cuh` 适配；加载时核对
+CUDA module 与 native bridge 的 SHA。外部原生规则构建和产物仍由部署管理，
+不把旧地址布局的 cubin 当作兼容新适配的产物。更新源码或产物后须重新验证
+真实 collection、更新及普通恢复；组件回归通过不表示已获生产资格。

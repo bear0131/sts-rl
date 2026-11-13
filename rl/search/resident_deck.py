@@ -69,10 +69,14 @@ class ResidentDeckScorer:
         with torch._dynamo.config.patch(recompile_limit=128, accumulated_recompile_limit=256):
             return self.compiled_gather(batch, width, **kwargs)
 
+    @staticmethod
+    def root_fields(core):
+        return set(core.context.keys) | set(core.combat.scalar_keys) | {
+            'phase', 'relic_counters', 'combat_is_boss'}
+
     @torch.no_grad()
     def roots(self, observations, context=None):
-        keys = set(self.core.context.keys) | set(self.core.combat.scalar_keys) | {
-            'phase', 'relic_counters', 'combat_is_boss'}
+        keys = self.root_fields(self.core)
         self.root = {k: torch.as_tensor(np.stack([o[k] for o in observations]), device=self.device)
                      for k in keys if k in observations[0]}
         self.context = self.core.prepare_search_context(self.root) if context is None else context
@@ -131,6 +135,72 @@ class ResidentDeckScorer:
         self.metadata_root = {key: bank['metadata:'+key] for key in ('deck_ids', 'outer_deck_misc')}
         self.changed_context = {}
 
+    def _pack_stream_roots(self):
+        groups = {}
+        for key,value in self.root.items():
+            groups.setdefault(value.dtype,[]).append(key)
+        self.stream_root_banks=[]
+        for keys in groups.values():
+            count=len(self.root[keys[0]])
+            storage=torch.cat([self.root[k].reshape(count,-1) for k in keys],1)
+            layout={};offset=0
+            for key in keys:
+                shape=self.root[key].shape[1:];end=offset+int(np.prod(shape))
+                layout[key]=(offset,end,shape)
+                self.root[key]=storage[:,offset:end].reshape(count,*shape)
+                offset=end
+            self.stream_root_banks.append((storage,layout))
+
+    @torch.no_grad()
+    def update_roots(self, slots, observations, context, capacity):
+        """Current-model adapter for the old pool's versioned root bank."""
+        from rl.policies.collection_graphs import SharedCollectionGraphs
+        if not hasattr(self, 'stream_observations'):
+            self.stream_observations = [observations[0]] * capacity
+            initial = SearchContext(context.combat[:1].expand(capacity, -1).clone(),
+                                    context.anchor[:1].expand(capacity, -1).clone())
+            self.roots(self.stream_observations, initial)
+            self._pack_stream_roots()
+            self.root_generations = np.zeros(capacity, np.int64)
+        for slot, observation in zip(slots, observations, strict=True):
+            self.stream_observations[slot] = observation
+            self.root_generations[slot] += 1
+        index = torch.as_tensor(slots, device=self.device, dtype=torch.long)
+        self.context.combat.index_copy_(0, index, context.combat)
+        self.context.anchor.index_copy_(0, index, context.anchor)
+        width = SharedCollectionGraphs._width(np.stack([o['relics'] for o in observations]), 4)
+        if width > self.relic_width:
+            # The old inventory bank grows; it never truncates an owned root.
+            self.roots(self.stream_observations, self.context)
+            self._pack_stream_roots()
+            return
+        incoming = {}
+        for storage,layout in self.stream_root_banks:
+            packed=np.concatenate([np.stack([o[k] for o in observations]).reshape(len(slots),-1)
+                                   for k in layout],1)
+            uploaded=torch.as_tensor(packed,device=self.device)
+            storage.index_copy_(0,index,uploaded)
+            for key,(start,end,shape) in layout.items():
+                incoming[key]=uploaded[:,start:end].reshape(len(slots),*shape)
+        groups = {}
+        for key, (group, start, end, shape) in self.root_layout.items():
+            value = incoming[key]
+            if key in ('relics', 'relic_counters'):
+                value = value[:, :self.relic_width]
+            groups.setdefault(group, []).append(value.reshape(len(slots), -1))
+        for group, values in groups.items():
+            self.packed_root[group].index_copy_(0, index, torch.cat(values, 1))
+        ids = incoming['relics'][:, :self.relic_width].long()
+        summaries = self.core.combat.summaries
+        identity = (summaries.relic_identity(ids) * ids.ne(0)[..., None]).sum(1)
+        static = (summaries.relic_terms(ids, incoming['relic_counters'][:, :self.relic_width])
+                  * (~self.decoder.live[ids])[..., None]).sum(1)
+        self.root_relic_identity.index_copy_(0, index, identity)
+        self.banked_static_relics.index_copy_(0, index, static)
+        self.banked_context.index_copy_(0, index, context.combat)
+        for key, bank in self.metadata_root.items():
+            bank.index_copy_(0, index, incoming[key])
+
     def bind_wave(self, arena, owners, offset):
         if self.bound_arena is not arena:
             if self.bound_arena is not None:
@@ -150,12 +220,21 @@ class ResidentDeckScorer:
         owner = self.wave_owners[rows]
         physical = rows + self.wave_offset
         excluded = ('permanent_misc', 'upgrades') if row_count is not None else ('permanent_misc',)
-        gathered = {'raw:'+k: v[physical] for k, v in self.arena_inputs.items() if k not in excluded}
+        compact = (physical if self.bound_arena.observation_slots is None
+                   else self.bound_arena.observation_slots[physical])
+        piles = None
         if row_count is not None:
             from rl.policies.resident_ragged import frozen_indexed_piles
-            gathered['resident_piles'] = frozen_indexed_piles(self.arena_inputs['scalars'],
-                self.arena_inputs['upgrades'], physical, row_count, self.card_base, self.card_delta,
+            piles = frozen_indexed_piles(self.arena_inputs['scalars'],
+                self.arena_inputs['upgrades'], compact, row_count, self.card_base, self.card_delta,
                 self.core.combat.summaries.upgrade_projection, self.decoder.pile_start, encode.UPGRADE_SCALE)
+        # Keep the custom-kernel boundary before the head gathers so the
+        # compiler can fuse them into their consumers instead of retaining
+        # a full histogram tensor across that boundary.
+        gathered = {'raw:'+k: v[compact if k in ('scalars','upgrades') else physical]
+                    for k, v in self.arena_inputs.items() if k not in excluded}
+        if piles is not None:
+            gathered['resident_piles'] = piles
         gathered.update({k: v[owner] for k, v in self.packed_root.items()})
         gathered['context'] = self.banked_context[owner] if contexts is None else contexts[rows]
         gathered['static_relics'] = self.banked_static_relics[owner]
@@ -168,7 +247,8 @@ class ResidentDeckScorer:
     def resolve_changed_context(self, owners, misc, projected, changed, anchor):
         """Batch cache misses and copies; never index a CUDA scalar in Python."""
         keys = torch.cat((owners[changed, None], misc[changed]), 1).cpu().numpy()
-        keys = [key.tobytes() for key in keys]
+        keys = [(int(self.root_generations[int(key[0])]), key.tobytes())
+                if hasattr(self, 'root_generations') else key.tobytes() for key in keys]
         missing = {}
         for j, key in enumerate(keys):
             if key not in self.changed_context and key not in missing:

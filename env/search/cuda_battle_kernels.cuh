@@ -1,3 +1,11 @@
+// Included twice by the accepted contiguous and paged-state adapters.
+__device__ __forceinline__ unsigned char* deck_state_address(unsigned char*arena,int i){
+#ifdef STS_DECK_PAGED_ADDRESSING
+ return reinterpret_cast<unsigned char*>(reinterpret_cast<unsigned long long*>(arena)[i]);
+#else
+ return arena+i*sizeof(sts::BattleContext);
+#endif
+}
 // Adapter only: reuse the accepted resident simulator's generated rules.
 extern "C" __global__ void deck_layout(long long*out){
  if(threadIdx.x==0&&blockIdx.x==0){out[0]=sizeof(sts::BattleContext);out[1]=compact_leaf::kCatSize;out[2]=compact_leaf::kFloatSize;out[3]=sts::search::kAutoregressiveSize;out[4]=compact_leaf::kCardIds;out[5]=sts::Deck::MAX_SIZE;out[6]=2;out[7]=8192;}
@@ -5,7 +13,7 @@ extern "C" __global__ void deck_layout(long long*out){
 // The logical codec is unchanged; transport width follows the actual states.
 extern "C" __global__ void deck_load_variable(unsigned char*arena,int*constructed,unsigned long long*words,int*lengths,int*stride,int n){
  int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;
- auto*address=arena+i*sizeof(sts::BattleContext);
+ auto*address=deck_state_address(arena,i);
  if(constructed[i])reinterpret_cast<sts::BattleContext*>(address)->~BattleContext();
  auto&s=*new(address)sts::BattleContext{};
  device_state::Archive<true>a{words+i*(*stride),lengths[i]};a.field(s);device_state::require(a.at==lengths[i]);
@@ -25,19 +33,19 @@ struct DeckSnapshotCounter {
 extern "C" __global__ void deck_snapshot_sizes(unsigned char*arena,int*constructed,int*sizes,int n){
  int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;
  device_state::require(constructed[i]);
- auto&b=*reinterpret_cast<sts::BattleContext*>(arena+i*sizeof(sts::BattleContext));
+ auto&b=*reinterpret_cast<sts::BattleContext*>(deck_state_address(arena,i));
  DeckSnapshotCounter a;a.field(b);sizes[i]=a.at;
 }
 extern "C" __global__ void deck_snapshot_variable(unsigned char*arena,int*constructed,unsigned long long*words,int*meta,int*stride,int n){
  int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;
  device_state::require(constructed[i]);
- auto&b=*reinterpret_cast<sts::BattleContext*>(arena+i*sizeof(sts::BattleContext));
+ auto&b=*reinterpret_cast<sts::BattleContext*>(deck_state_address(arena,i));
  device_state::Archive<false>a{words+i*(*stride),*stride};a.field(b);
  meta[i*5]=a.at;meta[i*5+1]=b.actionQueue.size;meta[i*5+2]=int(a.max_vector);meta[i*5+3]=int(b.inputState);meta[i*5+4]=int(b.outcome);
 }
 extern "C" __global__ void deck_load(unsigned char*arena,int*constructed,unsigned long long*words,int*lengths,int n){
  int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;
- auto*address=arena+i*sizeof(sts::BattleContext);
+ auto*address=deck_state_address(arena,i);
  if(constructed[i])reinterpret_cast<sts::BattleContext*>(address)->~BattleContext();
  auto&s=*new(address)sts::BattleContext{};
  device_state::Archive<true>a{words+i*8192,lengths[i]};a.field(s);device_state::require(a.at==lengths[i]);
@@ -72,7 +80,7 @@ __device__ __forceinline__ void deck_observe_extras(const sts::BattleContext&b,i
 }
 __device__ __forceinline__ void deck_observe_row(unsigned char*arena,int*constructed,int*prefix,int*cat,float*scalars,unsigned*bits,int*mask,int*status,float*upgrades,int*misc,int i){
  device_state::require(constructed[i]);
- const auto&b=*reinterpret_cast<const sts::BattleContext*>(arena+i*sizeof(sts::BattleContext));
+ const auto&b=*reinterpret_cast<const sts::BattleContext*>(deck_state_address(arena,i));
  auto row=compact_leaf::pack(b);
  for(int k=0;k<compact_leaf::kCatSize;++k)cat[i*compact_leaf::kCatSize+k]=row.categorical[k];
  for(int k=0;k<compact_leaf::kFloatSize;++k)scalars[i*compact_leaf::kFloatSize+k]=row.scalars[k];
@@ -96,7 +104,7 @@ __device__ __forceinline__ void deck_observe_block(unsigned char*arena,int*const
  __syncthreads();
  if(t<=32){
   device_state::require(constructed[i]);
-  const auto&b=*reinterpret_cast<const sts::BattleContext*>(arena+i*sizeof(sts::BattleContext));
+  const auto&b=*reinterpret_cast<const sts::BattleContext*>(deck_state_address(arena,i));
   DeckOutputView row{cat+i*compact_leaf::kCatSize,scalars+i*compact_leaf::kFloatSize};
   if(t<32)compact_leaf::packInto(b,row,t,32);
   else deck_observe_extras<false>(b,prefix,bits,mask,status,upgrades,misc,i);
@@ -120,7 +128,7 @@ extern "C" __global__ void deck_observe_search_block(unsigned char*arena,int*con
  for(int k=t;k<A;k+=blockDim.x){bits[i*A+k]=0;mask[i*A+k]=0;}
  __syncthreads();
  device_state::require(constructed[i]);
- const auto&b=*reinterpret_cast<const sts::BattleContext*>(arena+i*sizeof(sts::BattleContext));
+ const auto&b=*reinterpret_cast<const sts::BattleContext*>(deck_state_address(arena,i));
  if(t==32)choices=deck_observe_actions<false>(b,prefix,bits,mask,status,i);
  __syncthreads();
  if(b.outcome!=sts::Outcome::UNDECIDED||(choices==1&&depth[logical]<*limit))return;
@@ -135,7 +143,7 @@ extern "C" __global__ void deck_observe_search_block(unsigned char*arena,int*con
 }
 __device__ __forceinline__ void deck_apply_row(unsigned char*arena,int*constructed,int*prefix,int*selected,unsigned*bits,int*mask,int i){
  if(selected[i]<0)return;
- device_state::require(constructed[i]);auto&b=*reinterpret_cast<sts::BattleContext*>(arena+i*sizeof(sts::BattleContext));
+ device_state::require(constructed[i]);auto&b=*reinterpret_cast<sts::BattleContext*>(deck_state_address(arena,i));
  int id=selected[i];device_state::require(id<sts::search::kAutoregressiveSize&&mask[i*sts::search::kAutoregressiveSize+id]&&b.outcome==sts::Outcome::UNDECIDED);
  sts::search::executeAutoregressiveAction(sts::search::Action(bits[i*sts::search::kAutoregressiveSize+id]),b,prefix[i]);
 }
@@ -149,30 +157,30 @@ extern "C" __global__ void deck_apply_compact(unsigned char*arena,int*constructe
 }
 extern "C" __global__ void deck_destroy(unsigned char*arena,int*constructed,int n){
  int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;
- if(constructed[i]){reinterpret_cast<sts::BattleContext*>(arena+i*sizeof(sts::BattleContext))->~BattleContext();constructed[i]=0;}
+ if(constructed[i]){reinterpret_cast<sts::BattleContext*>(deck_state_address(arena,i))->~BattleContext();constructed[i]=0;}
 }
 
 extern "C" __global__ void deck_snapshot(unsigned char*arena,int*constructed,unsigned long long*words,int*meta,int n){
  int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=n)return;
  device_state::require(constructed[i]);
- auto&b=*reinterpret_cast<sts::BattleContext*>(arena+i*sizeof(sts::BattleContext));
+ auto&b=*reinterpret_cast<sts::BattleContext*>(deck_state_address(arena,i));
  device_state::Archive<false>a{words+i*8192,8192};a.field(b);
  meta[i*5]=a.at;meta[i*5+1]=b.actionQueue.size;meta[i*5+2]=int(a.max_vector);meta[i*5+3]=int(b.inputState);meta[i*5+4]=int(b.outcome);
 }
 extern "C" __global__ void deck_fork(unsigned char*arena,int*constructed,int*prefix,int*source,int*dest,unsigned long long*worlds,int count){
  int j=blockIdx.x*blockDim.x+threadIdx.x;if(j>=count)return;
  int s=source[j],d=dest[j];device_state::require(s!=d&&constructed[s]);
- auto*target=reinterpret_cast<sts::BattleContext*>(arena+d*sizeof(sts::BattleContext));
+ auto*target=reinterpret_cast<sts::BattleContext*>(deck_state_address(arena,d));
  if(constructed[d])target->~BattleContext();
- new(target)sts::BattleContext(*reinterpret_cast<const sts::BattleContext*>(arena+s*sizeof(sts::BattleContext)));
+ new(target)sts::BattleContext(*reinterpret_cast<const sts::BattleContext*>(deck_state_address(arena,s)));
  constructed[d]=1;prefix[d]=prefix[s];
  sts::search::noslRedeterminize(*target,worlds[j]);
 }
 extern "C" __global__ void deck_first(unsigned char*arena,int*constructed,int*prefix,int*source,int*dest,unsigned*bits,int*draw,unsigned*available,int*mask,int*selected,int count){
  int j=blockIdx.x*blockDim.x+threadIdx.x;if(j>=count)return;
  int s=source[j],d=dest[j];device_state::require(s!=d&&constructed[s]&&constructed[d]);
- auto&target=*reinterpret_cast<sts::BattleContext*>(arena+d*sizeof(sts::BattleContext));
- const auto&root=*reinterpret_cast<const sts::BattleContext*>(arena+s*sizeof(sts::BattleContext));
+ auto&target=*reinterpret_cast<sts::BattleContext*>(deck_state_address(arena,d));
+ const auto&root=*reinterpret_cast<const sts::BattleContext*>(deck_state_address(arena,s));
  unsigned b=bits[j];if((b>>29)==2&&draw[j])b=sts::search::Action::remapDrawSelection(target,root,b);
  int found=-1;for(int k=0;k<sts::search::kAutoregressiveSize;++k)if(mask[d*sts::search::kAutoregressiveSize+k]&&available[d*sts::search::kAutoregressiveSize+k]==b)found=k;
  device_state::require(found>=0);selected[d]=found;

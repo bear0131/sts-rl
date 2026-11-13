@@ -49,8 +49,14 @@ class ResidentRootExporter:
                         shadow.close()
                     self.cached[i] = current
                 if self.cached[i] is None:
-                    raise RuntimeError('pending root has no portable replay origin')
-                root.update(self.cached[i])
+                    # A battle can enter its very first choice with callbacks
+                    # already queued (there is no earlier combat action to
+                    # replay). Keep the exact native state in its owner worker;
+                    # the learner routes this worker's paired group through the
+                    # existing native-branch/GPU-inference service.
+                    root['native_fallback'] = 'pending-without-portable-origin'
+                else:
+                    root.update(self.cached[i])
             # The following real step may extend our cached suffix after send.
             result.append(dict(root, replay=list(root['replay'])))
         return result

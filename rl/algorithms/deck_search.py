@@ -45,31 +45,41 @@ class ShadowSearchCollection:
             'terminal_rows', 'max_active', 'budget_floor_overage', 'worker_search_seconds', 'context_refreshes',
             'scoring_seconds', 'worker_and_transport_seconds', 'frontier_batches', 'frontier_rows', 'transport_bytes',
             'backend_cuda_inference', 'backend_cuda_simulation', 'resident_frames',
-            'resident_frame_roots_max', *DECK_SEARCH_CACHE_METRICS), 0.)
+            'resident_frame_roots_max', 'native_fallback_roots', 'native_fallback_seconds',
+            'stream_submitted_roots', 'stream_retired_roots', 'stream_submissions_while_pending',
+            'stream_ticks', 'stream_command_bytes', 'stream_peak_pages',
+            *DECK_SEARCH_CACHE_METRICS), 0.)
         self.stats['backend_cuda_inference'] = float(self.config.backend in ('cuda-batched-native', 'cuda-resident'))
         self.stats['backend_cuda_simulation'] = float(self.config.backend == 'cuda-resident')
         self.hook = None
         self.previous = env.step_async
         self.snapshot = None
-        self.resident_pending = []
-        self.resident_pending_roots = 0
 
     def start(self):
         self.inference_cache = DeckSearchInferenceCache(self.model.policy.core, self.config.inference_cache_bytes)
         if self.config.backend == 'cuda-resident':
-            from env.search.cuda_battle import CudaBattleArena, load_artifacts
-            from env.core.run_env import _nosl_compact_lut
+            import gc
+            from rl.search.resident_service import GpuService
             from rl.search.resident_deck import ResidentDeckScorer
-            folder, manifest, _ = load_artifacts(self.config.cuda_artifacts)
-            # Match the old queued root pool to the physical chain frame.
-            # A larger device wave must receive enough frozen roots to fill
-            # it; the number of real environments is not its queue capacity.
-            self.resident_frame_roots = max(self.env.num_envs,
-                self.config.cuda_wave_capacity // self.config.normal_budget)
-            self.resident_arena = CudaBattleArena(folder/'deck.cubin', manifest['sha256']['deck.cubin'],
-                self.resident_frame_roots+self.env.num_envs+self.config.cuda_wave_capacity,
-                card_count=_nosl_compact_lut()['layout']['card_count'])
-            self.resident_scorer = ResidentDeckScorer(self.model.policy, self.config.inference_cache_bytes)
+            self.resident_root_keys = ResidentDeckScorer.root_fields(self.model.policy.core)
+            folder = Path(self.model.deck_search_snapshot_dir)
+            folder.mkdir(parents=True, exist_ok=True)
+            self.snapshot = folder / 'stream-frozen.pt'
+            cfg = self.model.policy._core_cfg
+            torch.save(dict(space=self.model.policy.observation_space,
+                geometry=dict(width=cfg['d_model'],layers=cfg['n_layers'],heads=cfg['n_heads'],
+                              combat_encoder=self.model.policy.deck_combat_encoder),
+                state_dict={k:v.detach().cpu() for k,v in self.model.policy.core.state_dict().items()},
+                buffers={k:v.detach().cpu() for k,v in self.model.policy.core.named_buffers()}),self.snapshot)
+            torch.cuda.synchronize(); gc.collect(); torch.cuda.empty_cache()
+            root_capacity = max(self.env.num_envs,
+                (self.config.cuda_wave_capacity+self.config.normal_budget-1)//self.config.normal_budget)
+            self.resident_service = GpuService(root_capacity,self.snapshot,dict(
+                artifacts=self.config.cuda_artifacts,cache_bytes=self.config.inference_cache_bytes,
+                budget_cap=max(self.config.boss_budget,self.config.normal_budget,
+                               self.model.policy.observation_space['combat_legal'].shape[0]),
+                max_depth=self.config.max_depth,timeout=self.config.timeout_seconds))
+            self.resident_items = {}
         elif self.config.backend == 'cuda-batched-native':
             # Weights stay on the learner device for the entire frozen
             # collection. Export only the small summary tables, once.
@@ -153,53 +163,100 @@ class ShadowSearchCollection:
 
     @torch.no_grad()
     def _resident_step(self, actions):
-        # Shadow teachers never select real actions. Keep the frozen roots of
-        # several real steps in one frame, as in the original GPU pipeline.
-        # The original (time, env) and per-call worker RNG streams stay owned by
-        # each item; neither physical grouping nor flushing changes them.
         started = time.monotonic()
+        self._receive_resident()
         if self.pending is not None:
             indices, masks, logits, context = self.pending
-            observations = [{k: np.array(v[i], copy=True) for k, v in self.model._last_obs.items()}
+            observations = [{k: v[i] for k, v in self.model._last_obs.items()}
                             for i in indices]
             budgets = [self.config.boss_budget if o['combat_is_boss'].item() else self.config.normal_budget
                        for o in observations]
             seed = int(self.rng.integers(0, 2**63-1))
             roots, groups = self.env.deck_resident_roots(indices.tolist(), self.config.cuda_artifacts)
-            from rl.policies.deck_latent import SearchContext
-            context = SearchContext(context.combat.clone(), context.anchor.clone())
-            self.resident_pending.append(dict(position=self.buffer.pos, indices=indices.copy(),
+            item = dict(position=self.buffer.pos, indices=indices.copy(),
                 masks=masks.copy(), logits=logits.clone(), context=context, observations=observations,
-                roots=roots, groups=groups, budgets=budgets, seed=seed))
-            self.resident_pending_roots += len(roots)
+                roots=roots, groups=groups, budgets=budgets, seed=seed)
+            fallback_groups = {g for g, root in zip(groups, roots) if root.get('native_fallback')}
+            if fallback_groups:
+                bad = [i for i,g in enumerate(groups) if g in fallback_groups]
+                selected = ShadowSearchCollection._select_resident(item, bad)
+                fallback_start = time.monotonic()
+                scorer = DeckLatentScorer(self.model.policy, selected['observations'],
+                    context=selected['context'], inference_cache=self.inference_cache)
+                result, stats = self.env.deck_batched_search(dict(indices=selected['indices'].tolist(),
+                    budgets=selected['budgets'], seed=seed, generation=self.generation,
+                    options=search_options(self.config)), scorer)
+                self.stats['searched_roots'] += ShadowSearchCollection._store_targets(self, [selected], result)
+                self.stats['native_fallback_roots'] += len(bad)
+                self.stats['native_fallback_seconds'] += time.monotonic()-fallback_start
+                for k,v in stats.items():
+                    if k in DECK_SEARCH_CACHE_METRICS:
+                        continue
+                    k = 'worker_search_seconds' if k == 'seconds' else k
+                    self.stats[k] = max(self.stats[k],float(v)) if k == 'max_active' else self.stats[k]+float(v)
+                item = ShadowSearchCollection._select_resident(item,
+                    [i for i,g in enumerate(groups) if g not in fallback_groups])
+            # Paired world draws belong to the original CPU worker group, not
+            # to admission batches or newly leased physical pages.
+            generators, queued = {}, {}
+            host_context = tuple(x.detach().cpu().numpy() for x in
+                                 (item['context'].combat,item['context'].anchor))
+            for j, (root, group, budget) in enumerate(zip(item['roots'],item['groups'],item['budgets'])):
+                if root.get('skipped'):
+                    continue
+                if group not in generators:
+                    group_seed = int(np.random.SeedSequence([seed,int(group)]).generate_state(1,dtype=np.uint64)[0])
+                    generators[group] = np.random.default_rng(group_seed)
+                worlds = generators[group].integers(0,2**63-1,max(1,budget//len(root['actions'])),dtype=np.int64)
+                key = (self.buffer.pos,int(item['indices'][j]))
+                queued[key] = dict(root=root,observation={k:v for k,v in item['observations'][j].items()
+                                                        if k in self.resident_root_keys},
+                    context=tuple(x[j] for x in host_context),worlds=worlds,budget=budget,
+                    submitted_at=time.monotonic())
+                # The FIFO synchronously serializes the frozen root/context.
+                # Only the prior and its original buffer position survive here;
+                # do not launch per-root CUDA gathers for discarded context.
+                self.resident_items[key] = dict(position=item['position'],
+                    indices=item['indices'][j:j+1],masks=item['masks'][j:j+1],
+                    logits=item['logits'][j:j+1],roots=[None])
+            while queued:
+                self._receive_resident()
+                free = self.resident_service.capacity-len(self.resident_service.outstanding)
+                if not free:
+                    self._receive_resident(.05)
+                    continue
+                keys = list(queued)[:free]
+                self.resident_service.submit({key:queued.pop(key) for key in keys})
+                self.stats['resident_frames'] += 1
+                self.stats['resident_frame_roots_max'] = max(self.stats['resident_frame_roots_max'],
+                    len(self.resident_service.outstanding))
             self.stats['selected_roots'] += len(indices)
-        if (self.resident_pending_roots >= self.resident_frame_roots
-                or self.buffer.pos == self.buffer.buffer_size-1):
-            self._flush_resident()
+        # The PPO update is the sole drain boundary. Ordinary real actions
+        # continue while previous roots remain in the worker's owned pool.
+        if self.buffer.pos == self.buffer.buffer_size-1:
+            while self.resident_service.outstanding:
+                self._receive_resident(.05)
         self.stats['search_seconds'] += time.monotonic()-started
         return self.previous(actions)
 
-    @torch.no_grad()
-    def _flush_resident(self):
-        if not self.resident_pending:
-            return
-        from env.search.resident_chains import resident_anchor_search
+    def _receive_resident(self, timeout=0.):
+        ready = self.resident_service.receive(timeout)
+        if ready:
+            items = [self.resident_items.pop(key) for key in ready]
+            self.stats['searched_roots'] += ShadowSearchCollection._store_targets(self,items,list(ready.values()))
+
+    @staticmethod
+    def _select_resident(item, rows):
         from rl.policies.deck_latent import SearchContext
-        items = self.resident_pending
-        roots, observations, budgets, groups, group_seeds = [], [], [], [], {}
-        for frame, item in enumerate(items):
-            roots.extend(item['roots']); observations.extend(item['observations']); budgets.extend(item['budgets'])
-            for worker in item['groups']:
-                key = frame, int(worker)
-                groups.append(key)
-                group_seeds[key] = int(np.random.SeedSequence([item['seed'], int(worker)]).generate_state(1, dtype=np.uint64)[0])
-        context = SearchContext(torch.cat([i['context'].combat for i in items]),
-                                torch.cat([i['context'].anchor for i in items]))
-        self.resident_scorer.roots(observations, context)
-        result, stats = resident_anchor_search(roots, budgets, self.resident_scorer,
-            self.resident_arena, seed=0, groups=groups, group_seeds=group_seeds,
-            max_depth=self.config.max_depth, wave_capacity=self.config.cuda_wave_capacity,
-            timeout_seconds=self.config.timeout_seconds)
+        result = dict(item)
+        for name in ('indices', 'masks', 'logits'):
+            result[name] = item[name][rows]
+        for name in ('observations', 'roots', 'groups', 'budgets'):
+            result[name] = [item[name][i] for i in rows]
+        result['context'] = SearchContext(item['context'].combat[rows], item['context'].anchor[rows])
+        return result
+
+    def _store_targets(self, items, result):
         offset = 0
         target_logits, target_masks, target_rows, destinations = [], [], [], []
         for item in items:
@@ -230,29 +287,33 @@ class ShadowSearchCollection:
                 self.config.target_std).numpy()
             for (index, position), target in zip(destinations, targets, strict=True):
                 self.buffer.add_search_target(index, target, position=position)
-            self.stats['searched_roots'] += len(destinations)
-        for k, v in stats.items():
-            k = 'worker_search_seconds' if k == 'seconds' else k
-            self.stats[k] = max(self.stats[k], float(v)) if k == 'max_active' else self.stats[k]+float(v)
-        self.stats['resident_frames'] += 1
-        self.stats['resident_frame_roots_max'] = max(self.stats['resident_frame_roots_max'], len(roots))
-        self.resident_pending.clear()
-        self.resident_pending_roots = 0
+        return len(destinations)
 
     def close(self):
         if self.hook is not None:
             self.hook.remove()
         self.env.step_async = self.previous
         self.inference_cache.clear()
-        self.resident_pending.clear()  # Failed/aborted rollouts never flush a partial teacher.
-        if self.config.backend == 'cuda-resident':
-            for key, value in self.resident_scorer.anchor_cache.stats.items():
-                metric = 'anchor_cache_' + key
-                if metric in self.stats:
-                    self.stats[metric] = value
-            self.stats['context_refreshes'] = self.resident_scorer.refreshes
-            self.resident_scorer.close()
-            self.resident_arena.close()
+        if self.config.backend == 'cuda-resident' and hasattr(self,'resident_service'):
+            service = self.resident_service
+            aborted = bool(service.outstanding or self.resident_items)
+            service.close(cancel='collection aborted' if aborted else None)
+            report = service.status
+            pool = report.get('pool',{})
+            for key in ('chains','atomic_steps','policy_rows','forced_rows','anchor_rows',
+                        'cutoff_rows','terminal_rows','budget_floor_overage'):
+                self.stats[key] += pool.get(key,0)
+            self.stats['max_active'] = max(self.stats['max_active'],pool.get('max_active',0))
+            self.stats['worker_search_seconds'] += report.get('active_tick_seconds',0)
+            self.stats['context_refreshes'] += report.get('context_refreshes',0)
+            for key,value in report.get('anchor_cache',{}).items():
+                if 'anchor_cache_'+key in self.stats:
+                    self.stats['anchor_cache_'+key] += value
+            for key in ('submitted_roots','retired_roots','submissions_while_pending','ticks'):
+                self.stats['stream_'+key] = pool.get(key,0)
+            self.stats['stream_command_bytes'] = service.counts['command_bytes']
+            self.stats['stream_peak_pages'] = pool.get('state_pages',{}).get('peak_leased_pages',0)
+            self.resident_items.clear()
         self.model.deck_search_rng = self.rng.bit_generator.state
         self.model.deck_search_last_stats = self.stats
         for k, v in self.stats.items():

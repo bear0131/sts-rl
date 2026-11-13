@@ -46,7 +46,7 @@ class CudaBattleArena:
     _stack_owners = {}  # Primary CUDA context, shared by live simulator arenas.
 
     def __init__(self, cubin, sha256, capacity, *, card_count, deck_capacity=96,
-                 graph_capacity=2, device='cuda'):
+                 graph_capacity=2, device='cuda', paged=False, observation_capacity=None):
         if min(capacity, card_count, deck_capacity) < 1 or graph_capacity < 0:
             raise ValueError('invalid resident battle capacity')
         data = Path(cubin).read_bytes()
@@ -56,6 +56,10 @@ class CudaBattleArena:
         if self.device.type != 'cuda':
             raise ValueError('resident battles require CUDA')
         self.capacity, self.graph_capacity = int(capacity), int(graph_capacity)
+        self.paged = bool(paged)
+        self.observation_capacity = int(observation_capacity or capacity)
+        if not 0 < self.observation_capacity <= capacity or (not paged and self.observation_capacity != capacity):
+            raise ValueError('compact observation frames require paged states')
         self.graphs = OrderedDict()
         self.closed = False
         self.loaded = np.zeros(capacity, bool)
@@ -86,18 +90,30 @@ class CudaBattleArena:
                 image = c.create_string_buffer(data)
                 self._check(self.driver.cuModuleLoadData(c.byref(self.module), image))
                 self.functions = {}
+                symbol_prefix = 'deck_paged_' if self.paged else 'deck_'
                 for name in ('layout', 'load', 'observe', 'apply', 'snapshot', 'fork', 'destroy', 'first'):
                     f = p()
-                    self._check(self.driver.cuModuleGetFunction(c.byref(f), self.module, ('deck_' + name).encode()))
+                    self._check(self.driver.cuModuleGetFunction(c.byref(f), self.module, (symbol_prefix + name).encode()))
                     self.functions[name] = f
                 f = p()
-                if self.driver.cuModuleGetFunction(c.byref(f), self.module, b'deck_observe_live_block') == 0:
+                if self.driver.cuModuleGetFunction(c.byref(f), self.module, (symbol_prefix+'observe_live_block').encode()) == 0:
                     self.functions['observe_live'] = f
                 for name, symbol in (('observe_indexed', 'deck_observe_indexed_block'),
                                      ('observe_search', 'deck_observe_search_block'),
                                      ('apply_compact', 'deck_apply_compact')):
                     f = p()
-                    if self.driver.cuModuleGetFunction(c.byref(f), self.module, symbol.encode()) == 0:
+                    if self.driver.cuModuleGetFunction(c.byref(f), self.module, symbol.replace('deck_',symbol_prefix).encode()) == 0:
+                        self.functions[name] = f
+                if self.paged:
+                    for name in ('observe_indexed', 'observe_search'):
+                        f = p()
+                        self._check(self.driver.cuModuleGetFunction(c.byref(f), self.module,
+                            ('deck_paged_frame_'+name.removeprefix('observe_')).encode()))
+                        self.functions[name] = f
+                    for name in ('load_indexed','destroy_indexed'):
+                        f = p()
+                        self._check(self.driver.cuModuleGetFunction(c.byref(f),self.module,
+                                                                  ('deck_paged_'+name).encode()))
                         self.functions[name] = f
                 layout = self._empty((8,), torch.int64)
                 self._launch('layout', [layout])
@@ -110,21 +126,25 @@ class CudaBattleArena:
                 if version == 2:
                     for name in ('load_variable', 'snapshot_sizes', 'snapshot_variable'):
                         f = p()
-                        self._check(self.driver.cuModuleGetFunction(c.byref(f), self.module, ('deck_' + name).encode()))
+                        self._check(self.driver.cuModuleGetFunction(c.byref(f), self.module, (symbol_prefix + name).encode()))
                         self.functions[name] = f
-                self.arena = self._empty((capacity, self.battle_bytes), torch.uint8)
+                self.arena = (self._empty((capacity,), torch.int64).zero_() if self.paged
+                              else self._empty((capacity, self.battle_bytes), torch.uint8))
                 self.constructed = self._empty((capacity,)).zero_()
                 self.prefix = self._empty((capacity,)).zero_()
                 self.selected = self._empty((capacity,)).fill_(-1)
                 self.categorical = self._empty((capacity, cats))
-                self.scalars = self._empty((capacity, floats), torch.float32)
+                self.scalars = self._empty((self.observation_capacity, floats), torch.float32)
                 self.bits = self._empty((capacity, self.actions))
                 self.mask = self._empty((capacity, self.actions))
                 self.outcome = self._empty((capacity,))
-                self.upgrades = self._empty((capacity, 6, card_count), torch.float32)
+                self.upgrades = self._empty((self.observation_capacity, 6, card_count), torch.float32)
                 self.misc = self._empty((capacity, deck_capacity))
+                self.observation_slots = self._empty((capacity,), torch.int64) if self.paged else None
                 self.observe_args = [self.arena, self.constructed, self.prefix, self.categorical,
                     self.scalars, self.bits, self.mask, self.outcome, self.upgrades, self.misc]
+                if self.paged:
+                    self.observe_args.append(self.observation_slots)
                 self.apply_args = [self.arena, self.constructed, self.prefix, self.selected, self.bits, self.mask]
             except BaseException:
                 if self.module.value:
@@ -233,6 +253,62 @@ class CudaBattleArena:
             self._upload(destinations), self._upload(worlds, np.uint64)], len(sources))
         self.loaded[destinations] = True
 
+    def load_slots(self, snapshots, prefixes, slots):
+        """Import only newly leased root slots, without replacing live siblings."""
+        self._assert_owner()
+        if self.transport_version != 2:
+            raise ValueError('streaming roots require the variable state transport')
+        slots = np.asarray(slots, np.int64)
+        if (len(slots) != len(snapshots) or len(slots) != len(prefixes)
+                or len(np.unique(slots)) != len(slots) or np.any(slots < 0)
+                or np.any(slots >= self.capacity)):
+            raise ValueError('invalid root slot lease')
+        if not len(slots):
+            return
+        width = max(len(s['words']) for s in snapshots)
+        words = np.zeros((len(slots), width), np.uint64)
+        for i, state in enumerate(snapshots):
+            if not state['portable']:
+                raise ValueError('pending callback root must use native fallback')
+            words[i, :len(state['words'])] = state['words']
+        data = self._upload(words, np.uint64)
+        lengths = self._upload([len(s['words']) for s in snapshots])
+        stride = self._upload([width])
+        if self.paged:
+            self._launch('load_indexed',[self.arena,self.constructed,data,lengths,stride,
+                                        self._upload(slots)],len(slots))
+        else:
+            for run in np.split(np.arange(len(slots)),np.flatnonzero(np.diff(slots)!=1)+1):
+                j, slot = int(run[0]), int(slots[run[0]])
+                self._launch('load_variable', [self.arena[slot:], self.constructed[slot:],
+                    data[j:], lengths[j:], stride], len(run))
+        self.prefix[slots] = self._upload(prefixes)
+        self.loaded[slots] = True
+
+    def release_slots(self, slots):
+        """Destroy a retired lease before its state pages become reusable."""
+        self._assert_owner()
+        slots = np.sort(np.asarray(slots, np.int64))
+        if (len(np.unique(slots)) != len(slots) or np.any(slots < 0)
+                or np.any(slots >= self.capacity)):
+            raise ValueError('invalid state retirement')
+        if self.paged and len(slots):
+            self._launch('destroy_indexed',[self.arena,self.constructed,self._upload(slots)],len(slots))
+        else:
+            for group in np.split(slots, np.flatnonzero(np.diff(slots) != 1)+1):
+                if len(group):
+                    self._launch('destroy', [self.arena[int(group[0]):],
+                        self.constructed[int(group[0]):]], len(group))
+        self.loaded[slots] = False
+
+    def replay_slots(self, slots, actions):
+        self.observe_selected(slots)
+        self.selected.fill_(-1)
+        self.selected[self._upload(slots, np.int64)] = self._upload(actions)
+        self._launch('apply_compact', self.apply_args + [self._upload(slots),
+            self._upload([len(slots)]), self._upload([0], np.int64)], self.capacity,
+            dispatch_n=len(slots))
+
     def _graphs(self, n):
         found = self.graphs.get(n)
         if found is not None:
@@ -259,6 +335,8 @@ class CudaBattleArena:
         return observe, apply
 
     def observe(self, n):
+        if self.paged:
+            raise ValueError('paged states use explicit bounded observation frames')
         self._rows(n)
         if self.graph_capacity:
             self._graphs(n)[0].replay()
@@ -297,6 +375,37 @@ class CudaBattleArena:
             self._upload(sources), self._upload(destinations), self._upload(action_bits, np.uint32),
             self._upload(draw_selection), self.bits, self.mask, self.selected], len(sources))
         self.apply(self.selected[:n])
+
+    def observe_selected(self, indices):
+        """Refresh owned slots without touching other in-flight branches."""
+        self._assert_owner()
+        indices = np.asarray(indices, dtype=np.int64)
+        if (not len(indices) or np.any(indices < 0) or np.any(indices >= self.capacity)
+                or not self.loaded[indices].all() or len(indices) > self.observation_capacity):
+            raise ValueError('indexed observation requires live owned slots')
+        ids, count, offset = self._upload(indices), self._upload([len(indices)]), self._upload([0], np.int64)
+        self._launch('observe_indexed', self.observe_args + [ids, count, offset],
+                     self.capacity, dispatch_n=len(indices))
+        return dict(categorical=self.categorical, scalars=self.scalars, mask=self.mask,
+                    outcome=self.outcome, prefix=self.prefix, upgrades=self.upgrades,
+                    permanent_misc=self.misc)
+
+    def first_selected(self, sources, destinations, action_bits, draw_selection):
+        """Admit replacement jobs while unrelated branches retain their state."""
+        if len(destinations) > self.observation_capacity:
+            for start in range(0,len(destinations),self.observation_capacity):
+                end=start+self.observation_capacity
+                self.first_selected(sources[start:end],destinations[start:end],
+                                    action_bits[start:end],draw_selection[start:end])
+            return
+        self.observe_selected(destinations)
+        self.selected.fill_(-1)
+        self._launch('first', [self.arena, self.constructed, self.prefix,
+            self._upload(sources), self._upload(destinations), self._upload(action_bits, np.uint32),
+            self._upload(draw_selection), self.bits, self.mask, self.selected], len(sources))
+        self._launch('apply_compact', self.apply_args + [self._upload(destinations),
+            self._upload([len(destinations)]), self._upload([0], np.int64)], self.capacity,
+            dispatch_n=len(destinations))
 
     def snapshot(self, n):
         self._rows(n)

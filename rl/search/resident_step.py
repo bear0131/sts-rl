@@ -16,7 +16,7 @@ from env.search import resident_step_kernels as K
 
 
 class ResidentStepPipeline:
-    frame_capacity = 16384
+    frame_capacity = 65536
 
     def __init__(self, scorer, arena, max_depth, capacity=128):
         if 'observe_live' not in arena.functions:
@@ -32,10 +32,11 @@ class ResidentStepPipeline:
         self.live, self.depth, self.cursor, self.kind, self.forced, self.need, self.prefix, self.ids = (
             empty((self.n,)) for _ in range(8))
         self.anchors = empty((self.n,))
+        self.changed_context = empty((self.n,)).zero_()
         self.active_ids, self.active_count = empty((self.n,)), empty((1,))
         self.frame_count = empty((1,))
         self.frame_control = empty((2,)).zero_()
-        self.frame_capacity = min(self.n, type(self).frame_capacity)
+        self.frame_capacity = min(self.n, arena.observation_capacity, type(self).frame_capacity)
         self.frame_ids = empty((self.frame_capacity,))
         self.depth_limit = empty((1,)).fill_(max_depth)
         self.compact_simulator = all(k in arena.functions for k in ('observe_indexed', 'apply_compact'))
@@ -55,6 +56,7 @@ class ResidentStepPipeline:
         self.live.zero_(); self.live[:n].fill_(1)
         self.depth.zero_(); self.depth[:n].fill_(1)
         self.cursor.zero_(); self.anchors.zero_(); self.final.zero_(); self.counters.zero_()
+        self.changed_context.zero_()
         self.randoms[:n].copy_(randoms)
         self.expected[:n].copy_(self.scorer.root['outer_deck_misc'][owners])
         self.context[:n].copy_(self.scorer.context.combat[owners])
@@ -62,6 +64,24 @@ class ResidentStepPipeline:
         self.wave_n, self.owners = n, owners
         self.frame_control.zero_(); self.frame_control[1:2].fill_(1)
         self.enabled.fill_(1)
+
+    def refill(self, slots, owners, randoms):
+        """Replace completed logical jobs; graph addresses and live siblings stay owned."""
+        slots = torch.as_tensor(slots, device=self.arena.device, dtype=torch.long)
+        self.owners.index_copy_(0, slots, owners)
+        self.scorer.wave_owners.index_copy_(0, slots, owners)
+        self.randoms.index_copy_(0, slots, randoms)
+        self.expected.index_copy_(0, slots, self.scorer.root['outer_deck_misc'][owners])
+        self.context.index_copy_(0, slots, self.scorer.context.combat[owners])
+        self.depth[slots] = 1
+        self.cursor[slots] = 0
+        self.anchors[slots] = 0
+        self.final[slots] = 0
+        self.changed_context[slots] = 0
+        self.live[slots] = 1
+        # A refill invalidates the previous compact pass, not its graph pool.
+        self.frame_control.zero_()
+        self.frame_control[1:2].fill_(1)
 
     def execute(self, rows, uniforms, width, token_capacity, query_capacity):
         s, a, n, F = self.scorer, self.arena, self.n, len(rows)
@@ -90,7 +110,7 @@ class ResidentStepPipeline:
         frame_n=self.frame_capacity; frame_nb=triton.cdiv(frame_n,1024)
         K.classify[(triton.cdiv(frame_n, 32),)](a.outcome, a.mask, a.categorical, a.misc,
             self.expected, self.deck, s.wave_owners, self.frame_ids, self.frame_count, self.depth,
-            self.kind, self.forced, self.need, self.status, s.wave_offset,
+            self.kind, self.forced, self.need, self.changed_context, self.status, s.wave_offset,
             frame_n, self.max_depth, MISC_SCALE, 32, num_warps=4)
         K.compact_local[(frame_nb,)](self.need, self.prefix, self.totals, frame_n, 1024)
         K.compact_scatter[(frame_nb,)](self.need, self.prefix, self.totals, self.ids,
@@ -129,13 +149,16 @@ class ResidentStepPipeline:
         ct,cq = self.workspace_capacities.get(base, (F*32, F*16))
         key = base, ct, cq
         if key not in self.graphs:
-            if len(self.graphs) >= self.capacity:
+            # Original StepPipeline owns one frame graph. A larger inventory
+            # or workspace retires it before capturing its replacement.
+            if self.graphs:
                 torch.cuda.synchronize()
-                _, (old, _, _) = self.graphs.popitem(last=False)
-                old.reset()
-                self.stats['evictions'] += 1
-                if not self.graphs:
-                    self.pool = torch.cuda.graph_pool_handle()
+                for old, _, _ in self.graphs.values():
+                    old.reset()
+                self.stats['evictions'] += len(self.graphs)
+                self.graphs.clear()
+                del old
+                self.pool = torch.cuda.graph_pool_handle()
             rows = torch.zeros(F, device=self.arena.device, dtype=torch.long)
             uniforms = torch.empty(F, device=self.arena.device, dtype=torch.float64)
             self.enabled.zero_()
@@ -155,18 +178,57 @@ class ResidentStepPipeline:
         return self.graphs[key][0], F, width
 
     def refresh_context(self):
-        s, a, n = self.scorer, self.arena, self.wave_n
-        offset = int(s.wave_offset.cpu())
-        misc = a.misc[offset:offset+n]
-        original = s.root['outer_deck_misc'][self.owners]
-        projected = torch.where((misc >= 0) & (s.root['deck_ids'][self.owners] != 0),
-                                misc/MISC_SCALE, original)
-        changed = (projected != self.expected[:n]).any(1).nonzero().flatten()
+        s, a = self.scorer, self.arena
+        changed = self.changed_context.nonzero().flatten()
         if not len(changed):
             raise RuntimeError('device context retry did not identify a changed row')
-        refreshed = s.resolve_changed_context(self.owners, misc, projected, changed, False)
+        offset = int(s.wave_offset.cpu())
+        owners = self.owners[changed]
+        misc = a.misc[offset+changed]
+        original = s.root['outer_deck_misc'][owners]
+        projected = torch.where((misc >= 0) & (s.root['deck_ids'][owners] != 0),
+                                misc/MISC_SCALE, original)
+        refreshed = s.resolve_changed_context(owners, misc, projected,
+                                             torch.arange(len(changed),device=a.device), False)
         self.context.index_copy_(0, changed, refreshed)
-        self.expected.index_copy_(0, changed, projected[changed])
+        self.expected.index_copy_(0, changed, projected)
+        self.changed_context[changed] = 0
+
+    def tick(self, remaining, deadline):
+        """Legacy StepPipeline tick: one complete pass, bounded readonly retries."""
+        if not remaining:
+            return 0
+        width = getattr(self, 'stream_width', 1)
+        frames = max(1, triton.cdiv(remaining, self.frame_capacity))
+        for _ in range(8):
+            if time.monotonic() > deadline:
+                raise TimeoutError('resident stream budget incomplete; no partial teacher accepted')
+            graph, F, W = self.graph(self.frame_capacity, width)
+            for _ in range(frames):
+                graph.replay()
+            self.stats['replays'] += frames
+            status = self.status.cpu().tolist()
+            self.stats['host_reads'] += 1
+            if status[3]:
+                raise RuntimeError(f'resident device step failed validation {status[3]}')
+            if status[0] > F or status[1] > W or status[2] or status[7]:
+                self.stats['retries'] += 1
+                if status[2]:
+                    self.refresh_context()
+                if status[7]:
+                    self.workspace_capacities[(F,W,self.scorer.bank_key)] = (
+                        max(F*32,triton.next_power_of_2(status[5])),
+                        max(F*16,triton.next_power_of_2(status[6])))
+                width = max(width, status[1])
+                # Some earlier frames may already have committed. The device
+                # cursor owns that prefix; retry only its unfinished suffix.
+                frames = max(1, triton.cdiv(status[9]-status[8], self.frame_capacity))
+                continue
+            if status[8] != 0:
+                raise RuntimeError('stream tick returned inside an unfinished pass')
+            self.stream_width = max(width, status[1])
+            return status[4]
+        raise RuntimeError('resident stream overflow retry budget exhausted')
 
     def run(self, deadline):
         count, width = self.wave_n, 1

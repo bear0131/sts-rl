@@ -50,7 +50,6 @@ def test_deferred_resident_targets_keep_skips_world_counts_and_original_position
     from rl.algorithms.deck_search import ShadowSearchCollection
     from rl.algorithms.search_auxiliary import SearchRolloutBuffer, SearchTrainingConfig
     from rl.policies.deck_latent import SearchContext
-    import env.search.resident_chains as resident
     buffer = SearchRolloutBuffer(4, spaces.Dict(x=spaces.Box(0, 100, (1,), dtype=np.float32)),
                                  spaces.Discrete(3), device='cpu', n_envs=2)
     buffer.full = True
@@ -64,10 +63,7 @@ def test_deferred_resident_targets_keep_skips_world_counts_and_original_position
     results = [dict(actions=np.array([0, 2]), values=np.array([a, b]), visits=np.array([n, n]))
                for a, b, n in ((.2, .4, 4), (0., 0., 1), (.3, .1, 8), (.4, .5, 16))]
     results[1]['skipped'] = 'forced'
-    monkeypatch.setattr(resident, 'resident_anchor_search', lambda *args, **kwargs: (results, dict(chains=56)))
-    obj = SimpleNamespace(resident_pending=items, resident_pending_roots=4, config=SearchTrainingConfig(),
-        resident_scorer=SimpleNamespace(roots=lambda *args: None), resident_arena=None,
-        buffer=buffer, stats=Counter())
+    obj = SimpleNamespace(config=SearchTrainingConfig(),buffer=buffer,stats=Counter())
     expected = {}
     for k in (0, 2, 3):
         item, j = items[k//2], k%2
@@ -75,12 +71,56 @@ def test_deferred_resident_targets_keep_skips_world_counts_and_original_position
         expected[(item['position'], int(item['indices'][j]))] = improved_prior(
             item['logits'][j:j+1], q, torch.from_numpy(item['masks'][j:j+1]),
             torch.tensor([results[k]['visits'][0]]), obj.config.target_std)[0].numpy()
-    ShadowSearchCollection._flush_resident(obj)
+    stored = ShadowSearchCollection._store_targets(obj,items,results)
     assert set(buffer.search_targets) == set(expected)
     for key in expected:
         np.testing.assert_array_equal(buffer.search_targets[key], expected[key])
-    assert obj.stats['searched_roots'] == 3 and obj.stats['chains'] == 56
-    assert obj.resident_pending_roots == 0 and not obj.resident_pending
+    assert stored == 3
+
+
+def test_resident_native_fallback_keeps_whole_worker_group_seed_and_target_positions(monkeypatch):
+    from collections import Counter
+    from gymnasium import spaces
+    import rl.algorithms.deck_search as search
+    from rl.algorithms.search_auxiliary import SearchRolloutBuffer, SearchTrainingConfig
+    from rl.policies.deck_latent import SearchContext
+    buffer = SearchRolloutBuffer(4, spaces.Dict(x=spaces.Box(0, 100, (1,), dtype=np.float32)),
+        spaces.Discrete(2), device='cpu', n_envs=3)
+    buffer.full = True
+    context = SearchContext(torch.arange(6).reshape(3,2), torch.arange(9).reshape(3,3))
+    roots = [{}, {'native_fallback': 'pending-without-portable-origin'}, {'actions':np.array([0,1])}]
+    calls = []
+    def central(request, scorer):
+        calls.append(request)
+        return [dict(actions=np.array([0,1]),values=np.array([.1,.2]),visits=np.array([32,32]))
+                for _ in request['indices']], dict(chains=128, context_refreshes=0)
+    def make_scorer(policy, observations, **kwargs):
+        assert [int(o['x'][0]) for o in observations] == [0,1]
+        torch.testing.assert_close(kwargs['context'].combat,context.combat[:2])
+        return object()
+    monkeypatch.setattr(search, 'DeckLatentScorer', make_scorer)
+    obj = SimpleNamespace(model=SimpleNamespace(policy=object(),_last_obs=dict(
+            x=np.arange(3)[:,None],combat_is_boss=np.zeros((3,1)))),
+        env=SimpleNamespace(deck_resident_roots=lambda *args:(roots,[7,7,8]),deck_batched_search=central),
+        pending=(np.array([0,1,2]),np.ones((3,2),bool),torch.zeros(3,2),context),
+        config=SearchTrainingConfig(),rng=np.random.default_rng(20261111),inference_cache=None,
+        generation=(1,2),buffer=buffer,stats=Counter(),
+        resident_items={},resident_root_keys={'x'},previous=lambda actions:'real-step')
+    packets=[]
+    obj.resident_service=SimpleNamespace(capacity=3,outstanding=set(),submit=lambda rows:packets.append(rows))
+    obj._receive_resident=lambda *args: None
+    expected_seed=int(np.random.default_rng(20261111).integers(0,2**63-1))
+    assert search.ShadowSearchCollection._resident_step(obj,np.array([0,1,0]))=='real-step'
+    assert calls[0]['indices']==[0,1] and calls[0]['budgets']==[64,64]
+    assert calls[0]['seed']==expected_seed
+    assert set(buffer.search_targets)=={(0,0),(0,1)}
+    assert list(packets[0])==[(0,2)]
+    assert set(packets[0][(0,2)]['observation'])=={'x'}
+    group_seed=int(np.random.SeedSequence([expected_seed,8]).generate_state(1,dtype=np.uint64)[0])
+    np.testing.assert_array_equal(packets[0][(0,2)]['worlds'],
+        np.random.default_rng(group_seed).integers(0,2**63-1,32,dtype=np.int64))
+    assert obj.stats['selected_roots']==3 and obj.stats['searched_roots']==2
+    assert obj.stats['native_fallback_roots']==2 and obj.stats['chains']==128
 
 
 def test_more_worlds_strengthen_bounded_improvement_and_constant_shift_cancels():
