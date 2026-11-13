@@ -26,8 +26,18 @@ def test_deferred_teacher_keeps_real_time_and_env_through_shuffle_and_reset():
     torch.testing.assert_close(batch.observations['x'].flatten(), torch.tensor([10., 3., 0., 13.]))
     torch.testing.assert_close(batch.observations['_search_valid'], torch.tensor([1., 1., 0., 0.]))
     np.testing.assert_array_equal(batch.observations['_search_target'][:2], np.stack([target, target[::-1]]))
+    # A late target invalidates the frozen table. Duplicate sample indices and
+    # sparse missing rows keep the original env-major sample membership.
+    buffer.add_search_target(1, target[::-1], position=3)
+    second = buffer._get_samples(np.array([7, 0, 7, 4]))
+    np.testing.assert_array_equal(second.observations['_search_target'],
+                                 np.stack([target[::-1], np.zeros(2), target[::-1], target]))
+    np.testing.assert_array_equal(second.observations['_search_valid'], [1, 0, 1, 1])
+    batch.observations['_search_target'].zero_()
+    np.testing.assert_array_equal(buffer.search_targets[(0, 1)], target)
     buffer.reset()
     assert not buffer.search_targets
+    assert '_search_target' not in buffer._get_samples(np.array([0])).observations
 
 
 def test_equal_values_preserve_prior_and_illegal_atoms_have_no_gradient():
@@ -172,3 +182,21 @@ def test_auxiliary_normalizes_global_searched_rows_before_physical_chunks():
     torch.testing.assert_close(chunks, whole)
     torch.testing.assert_close(torch.autograd.grad(chunks, logits, retain_graph=True)[0],
                                torch.autograd.grad(whole, logits)[0])
+
+
+@pytest.mark.parametrize('rows', [[], [1], [0, 1, 3]])
+def test_preplanned_search_rows_preserve_loss_and_gradient_without_host_selection(rows):
+    from rl.algorithms.search_auxiliary import auxiliary_loss, SearchTrainingConfig
+    torch.manual_seed(20261113)
+    model = SimpleNamespace(deck_search_config=asdict(SearchTrainingConfig()),
+                            _deck_search_loss_normalization=4 / (len(rows) or 1))
+    x = torch.randn(4, 3, requires_grad=True)
+    legal = torch.tensor([[True, False, True]] * 4)
+    targets = torch.randn(4, 3).masked_fill(~legal, -torch.inf).log_softmax(-1)
+    valid = torch.zeros(4); valid[rows] = 1
+    obs = dict(_search_target=targets, _search_valid=valid)
+    ordinary = auxiliary_loss(model, obs, x, legal)
+    planned = auxiliary_loss(model, obs, x, legal, selected_rows=torch.tensor(rows, dtype=torch.long))
+    torch.testing.assert_close(planned, ordinary, atol=0, rtol=0)
+    torch.testing.assert_close(torch.autograd.grad(planned, x, retain_graph=True)[0],
+                               torch.autograd.grad(ordinary, x)[0], atol=0, rtol=0)

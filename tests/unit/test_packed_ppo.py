@@ -87,7 +87,8 @@ def test_direct_search_update_reuses_planned_forward_and_exact_masked_loss(devic
             deck_search_config=asdict(SearchTrainingConfig(coefficient=coefficient)))
         prepare_search_batch(model, batch, None)
         components, loss = ppo_forward(model, batch, .2, None, direct_masked_categorical=direct,
-                                      update_plan=SimpleNamespace(actor_critic=forward) if direct else None)
+            update_plan=SimpleNamespace(actor_critic=forward,
+                search_rows=lambda obs: torch.tensor([0, 2, 5], device=device)) if direct else None)
         outcomes.append((loss.detach(), torch.autograd.grad(loss, x)[0]))
         assert calls == (['plan'] if direct else [])
     torch.testing.assert_close(outcomes[1][0], outcomes[0][0], atol=0, rtol=0)

@@ -46,6 +46,7 @@ class SearchRolloutBuffer(SharedRolloutBuffer):
     def reset(self):
         super().reset()
         self.search_targets = {}
+        self._target_table = None
 
     def add_search_target(self, env_index, log_target, *, position=None):
         if ((position is None and self.full) or not 0 <= env_index < self.n_envs):
@@ -58,18 +59,34 @@ class SearchRolloutBuffer(SharedRolloutBuffer):
         if (position, env_index) in self.search_targets:
             raise ValueError('search target already supplied for this real row')
         self.search_targets[(position, env_index)] = np.array(log_target, dtype=np.float32, copy=True)
+        self._target_table = None
+
+    def _prepare_target_table(self):
+        if self._target_table is None and self.search_targets:
+            # Build once after the collector drains, before prefetch starts.
+            # Row zero represents missing teachers; targets remain side data.
+            lookup = np.zeros(self.buffer_size * self.n_envs, dtype=np.int64)
+            indices = np.fromiter((env * self.buffer_size + pos
+                                   for pos, env in self.search_targets), dtype=np.int64)
+            lookup[indices] = np.arange(1, len(indices) + 1)
+            targets = np.empty((len(indices) + 1, self.mask_dims), dtype=np.float32)
+            targets[0] = 0
+            np.stack(tuple(self.search_targets.values()), out=targets[1:])
+            self._target_table = lookup, targets
+
+    def get(self, batch_size=None, *, prefetch=False):
+        self._prepare_target_table()
+        yield from super().get(batch_size, prefetch=prefetch)
 
     def _get_samples(self, batch_inds, env=None, device_storage=None):
         result = super()._get_samples(batch_inds, env, device_storage=device_storage)
         if not self.search_targets:
             return result
-        target = np.zeros((len(batch_inds), self.mask_dims), np.float32)
-        valid = np.zeros(len(batch_inds), np.float32)
-        for row, index in enumerate(batch_inds):
-            key = (int(index % self.buffer_size), int(index // self.buffer_size))
-            if key in self.search_targets:
-                target[row] = self.search_targets[key]
-                valid[row] = 1
+        self._prepare_target_table()
+        lookup, targets = self._target_table
+        rows = lookup[batch_inds]
+        target = targets[rows]
+        valid = (rows != 0).astype(np.float32)
         result.observations['_search_target'] = self.to_torch(target, copy=False)
         result.observations['_search_valid'] = self.to_torch(valid, copy=False)
         return result
@@ -93,17 +110,18 @@ def prepare_search_batch(model, batch, average):
     model._deck_search_loss_normalization = moments['rows'] / (moments['search_count'] or 1.)
 
 
-def auxiliary_loss(model, observations, logits, legal):
+def auxiliary_loss(model, observations, logits, legal, *, selected_rows=None):
     target = observations.get('_search_target')
     valid = observations.get('_search_valid')
     if target is None or valid is None:
         return logits.sum() * 0
     config = SearchTrainingConfig(**model.deck_search_config)
-    selected = valid.bool()
     # An unsearched row's zero target is not a probability distribution.
-    if not selected.any():
+    if selected_rows is None:
+        selected_rows = valid.bool().nonzero().flatten()
+    if not len(selected_rows):
         return logits.sum() * 0
-    loss = search_kl(logits[selected], target[selected], legal[selected])
+    loss = search_kl(logits[selected_rows], target[selected_rows], legal[selected_rows])
     return (config.coefficient * model._deck_search_loss_normalization
             * loss.sum() / len(valid))
 

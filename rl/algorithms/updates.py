@@ -41,7 +41,8 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
             from rl.algorithms.search_auxiliary import auxiliary_loss
             # Both paths expose SB3's exact twice-normalized masked logits.
             # Reuse this forward and the ORIGINAL batch's searched-row scale.
-            search_loss = auxiliary_loss(model, observations, search_logits, masks.bool())
+            search_loss = auxiliary_loss(model, observations, search_logits, masks.bool(),
+                selected_rows=None if update_plan is None else update_plan.search_rows(observations))
     if after_forward is not None:
         after_forward(observations)
     components = ppo_loss_components(

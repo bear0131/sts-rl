@@ -24,6 +24,7 @@ class _Chunk:
     routes: list
     order: torch.Tensor | None
     upper_kept: int
+    search_rows: torch.Tensor
 
 
 class DeckUpdatePlan:
@@ -58,13 +59,16 @@ class DeckUpdatePlan:
         required = valid | join('combat_legal')[:, pick:pick + valid.shape[1]].bool()
 
         # A single transfer supplies metadata for every physical chunk in this original Adam group.
+        searched = torch.cat([obs['_search_valid'] if '_search_valid' in obs else torch.zeros_like(obs['phase'].flatten())
+                              for obs in groups]).bool()
         table = torch.stack((join('_deck_context_index').flatten(), phase, join('combat_exit_anchor').bool().any(1),
-                             _last_slot(deck), _last_slot(relic), lengths, _last_slot(required), tokens), dim=1)
+                             _last_slot(deck), _last_slot(relic), lengths, _last_slot(required), tokens,
+                             searched), dim=1)
         host = table.long().cpu().numpy()
         offset = 0
         for batch, _, _, name in chunks:
             n = len(batch.advantages)
-            ids, phases, anchored, dw, rw, length, choice, kept = host[offset:offset + n].T
+            ids, phases, anchored, dw, rw, length, choice, kept, searched = host[offset:offset + n].T
             offset += n
             screen = vocab.PHASE_VOCAB_INDEX[name]
             if not np.all(phases == screen):
@@ -83,7 +87,7 @@ class DeckUpdatePlan:
             order = indices(np.argsort(np.argsort(anchored, kind='stable'))) if len(routes) == 2 else None
             self.chunks[(batch.observations['phase'].data_ptr(), n)] = _Chunk(
                 indices(first), indices(inverse), int(dw.max()), int(rw.max()), int(length.max()),
-                screen, routes, order, int(kept.max()))
+                screen, routes, order, int(kept.max()), indices(np.flatnonzero(searched)))
         self.chunk_count += len(chunks)
         try:
             # A local learner has no communication to overlap. Preserve its
@@ -95,6 +99,11 @@ class DeckUpdatePlan:
     def cap_key(self, group, obs):
         chunk = self.chunks.get((obs['phase'].data_ptr(), len(obs['phase'])))
         return group if chunk is None else f'{group}/L{(chunk.length + 7) // 8}'
+
+    def search_rows(self, obs):
+        chunk = self.chunks.get((obs['phase'].data_ptr(), len(obs['phase'])))
+        # OOM subdivisions need their own row indices, never the parent plan's.
+        return None if chunk is None else chunk.search_rows
 
     def actor_critic(self, obs):
         chunk = self.chunks.get((obs['phase'].data_ptr(), len(obs['phase'])))

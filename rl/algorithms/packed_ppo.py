@@ -145,20 +145,25 @@ def packed_chunks(model, batch, config, *, planned=False):
         kind = torch.where(combat, 0, phase + 1)
     else:
         kind = torch.where(combat, 0, torch.where(selection, 1, 2))
-    host = torch.stack((kind, width)).cpu().numpy()
+    metadata = [kind, width]
+    if config.max_contexts_per_chunk is not None or config.context_grouping:
+        metadata.append(obs['_deck_context_index'].flatten())
+    if config.max_contexts_per_chunk is not None:
+        valid_map = (obs['map_full_rooms'] != 0) | obs['map_full_features'].bool().any(-1)
+        metadata.append(1 + (obs['deck_ids'] != 0).sum(1) + (obs['relics'] != 0).sum(1) + valid_map.sum(1))
+    # Preserve the existing lexicographic ordering with one host rendezvous.
+    host = torch.stack(metadata).cpu().numpy()
     context_boundaries = None
     if config.max_contexts_per_chunk is not None:
         # Count the same unmasked tokens that the context encoder pools.
         # Bucket by eight before sorting exact context IDs to reduce padding.
-        context = obs['_deck_context_index'].flatten().cpu().numpy()
-        valid_map = (obs['map_full_rooms'] != 0) | obs['map_full_features'].bool().any(-1)
-        token_count = 1 + (obs['deck_ids'] != 0).sum(1) + (obs['relics'] != 0).sum(1) + valid_map.sum(1)
+        context, token_count = host[2:4]
         bin_size = np.where(host[0] == 0, 1, 8) if planned else 8
-        order = np.lexsort((context, (token_count.cpu().numpy() + bin_size - 1) // bin_size, host[0]))
+        order = np.lexsort((context, (token_count + bin_size - 1) // bin_size, host[0]))
         ids = context[order]
         context_boundaries = np.flatnonzero(np.r_[True, ids[1:] != ids[:-1], True])
     elif config.context_grouping:
-        context = obs['_deck_context_index'].cpu().numpy()
+        context = host[2]
         order = np.lexsort((host[1], context, host[0]))
     else:
         order = np.lexsort((host[1], host[0]))
