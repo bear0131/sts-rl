@@ -9,6 +9,7 @@ import multiprocessing as mp
 import pickle
 import queue
 import time
+import weakref
 
 from rl.search.resident_worker import run_worker
 
@@ -18,10 +19,11 @@ class GpuService:
         self.capacity=capacity; self.closed=False; self.stopping=False; self.failure=None; self.finished=False
         self.seq=0; self.requests={}; self.replies={}; self.ready_roots={}; self.outstanding=set()
         self.counts=collections.Counter(); self.status={}; self.cancelled=[]
+        self.settings=dict(settings); self.parked=False
         ctx=mp.get_context('spawn')
         self.commands=ctx.Queue(maxsize=4*capacity+16); self.responses=ctx.Queue(maxsize=capacity+16)
         self.process=ctx.Process(target=run_worker,args=(self.commands,self.responses,
-            dict(settings,capacity=capacity,snapshot=str(snapshot))),name='device-search-owner')
+            dict(settings,capacity=capacity,snapshot=str(snapshot))),name='device-search-owner',daemon=True)
         self.process.start(); deadline=time.monotonic()+120
         try:
             while not self.status:
@@ -84,6 +86,7 @@ class GpuService:
         return self.replies.pop(ident)
 
     def submit(self, rows):
+        if self.parked: raise RuntimeError('submit while search owner is parked')
         if set(rows)&self.outstanding or len(self.outstanding)+len(rows)>self.capacity:
             raise ValueError('duplicate search or root capacity exceeded')
         if rows:
@@ -97,6 +100,17 @@ class GpuService:
     def statistics(self):
         if not self.closed: self.status=self.call('statistics')
         return self.status
+
+    def park(self):
+        if self.parked or self.outstanding or self.ready_roots or self.requests:
+            raise RuntimeError('park requires all collection results to be consumed')
+        self.status=self.call('park'); self.parked=True
+        return self.status
+
+    def begin(self, snapshot):
+        if not self.parked: raise RuntimeError('begin requires a parked owner')
+        self.status=self.call('begin',str(snapshot)); self.parked=False
+        self.counts.clear()
 
     def close(self, cancel=None):
         if self.closed: return
@@ -121,3 +135,30 @@ class GpuService:
         if self.failure: raise RuntimeError('GPU service failed:\n'+self.failure)
         if not self.finished or self.process.exitcode!=0:
             raise RuntimeError('GPU worker did not close normally')
+
+
+def collection_service(model, capacity, snapshot, settings):
+    """One owner across collections; only frozen compiler/model state stays idle.
+
+    Handles are excluded from checkpoints. A restored model always builds a new
+    process. The weak finalizer also closes owners used by library callers that
+    do not go through the training CLI; the child is daemonized for parent death.
+    """
+    service=getattr(model,'_resident_search_service',None)
+    if service is not None:
+        if not service.closed and (service.capacity!=capacity or service.settings!=settings):
+            service.close()
+        if service.closed:
+            model._resident_search_finalizer.detach(); service=None
+    if service is None:
+        service=GpuService(capacity,snapshot,settings)
+        model._resident_search_service=service
+        model._resident_search_finalizer=weakref.finalize(model,service.close,cancel='model released')
+    else:
+        service.begin(snapshot)
+    return service
+
+
+def close_collection_service(model):
+    finalizer=getattr(model,'_resident_search_finalizer',None)
+    if finalizer is not None: finalizer()

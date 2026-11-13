@@ -8,6 +8,74 @@ import torch
 pytestmark=[pytest.mark.native,pytest.mark.cuda,pytest.mark.timeout(240)]
 
 
+def test_completed_payload_preserves_values_order_and_integer_counts():
+    from types import SimpleNamespace
+    from rl.search.resident_step import ResidentStepPipeline
+    p=SimpleNamespace(arena=SimpleNamespace(device='cuda'),
+        final=torch.tensor([0.,-0.,.123456789012345,1e-200],device='cuda',dtype=torch.float64),
+        anchors=torch.tensor([0,1,0,1],device='cuda',dtype=torch.int32),
+        depth=torch.tensor([1,200,17,91],device='cuda',dtype=torch.int32))
+    for jobs in ([2,0,3],[1],[3,2,1,0]):
+        got=ResidentStepPipeline.completed(p,np.array(jobs))
+        np.testing.assert_array_equal(got[:,0].copy().view(np.uint64),p.final[jobs].cpu().numpy().view(np.uint64))
+        np.testing.assert_array_equal(got[:,1],p.anchors[jobs].cpu().numpy())
+        assert got[:,2].sum()==p.depth[jobs].sum().item()
+
+
+def test_parked_owner_reloads_weights_without_stale_scores(complete_combat_factory,cuda_battle_artifacts,tmp_path):
+    from rl.policies.deck_latent import DeckLatentPolicy
+    from rl.search.resident_service import GpuService
+    from env.search.resident_chains import root_payload
+    from env.search.anchored_chains import paired_anchor_search
+    from rl.search.deck_latent import DeckLatentScorer
+    root=complete_combat_factory(['STRIKE_RED','DEFEND_RED','BASH'],seed=42,
+        deck_latent_context=True,card_language=True)
+    torch.manual_seed(20261111)
+    policy=DeckLatentPolicy(root.observation_space,root.action_space,lambda _:5e-5,
+        d_model=32,n_layers=1,n_heads=4,room_lambda=1.,reward_flow='sequential-v1',
+        deck_combat_encoder='transformer64x2').cuda().eval()
+    folder,_,bridge=cuda_battle_artifacts
+    payload=root_payload(root,bridge);snapshot=tmp_path/'frozen.pt'
+    def freeze():
+        torch.save(dict(space=root.observation_space,geometry=dict(width=32,layers=1,heads=4,
+            combat_encoder='transformer64x2'),state_dict={k:v.detach().cpu() for k,v in policy.core.state_dict().items()},
+            buffers={k:v.detach().cpu() for k,v in policy.core.named_buffers()}),snapshot)
+    freeze()
+    settings=dict(artifacts=str(folder),cache_bytes=64*1024**2,budget_cap=64,max_depth=8,timeout=120)
+    torch.cuda.synchronize();gc.collect();torch.cuda.empty_cache()
+    free_before=torch.cuda.mem_get_info()[0]
+    service=GpuService(2,snapshot,settings);pid=service.process.pid
+    try:
+        for generation in (1,2):
+            if generation==2:
+                with torch.no_grad(): policy.core.combat.end.bias.add_(2.)
+                freeze();service.begin(snapshot)
+            rng=np.random.default_rng(20261111)
+            with torch.no_grad():
+                context=policy.core.prepare_search_context({k:torch.as_tensor(v[None],device='cuda') for k,v in root._obs().items()})
+            row=dict(root=payload,observation=root._obs(),context=tuple(x.cpu().numpy()[0] for x in (context.combat,context.anchor)),
+                worlds=rng.integers(0,2**63-1,max(1,64//len(payload['actions'])),dtype=np.int64),
+                budget=64,submitted_at=time.monotonic())
+            service.submit({'root':row})
+            with pytest.raises(RuntimeError,match='consumed'):service.park()
+            got={};deadline=time.monotonic()+120
+            while service.outstanding:
+                assert time.monotonic()<deadline
+                got.update(service.receive(.05))
+            parked=service.park()
+            assert service.process.pid==pid and parked['generation']==generation
+            assert parked['park']['reserved']<256*1024**2, 'idle owner must release graph/state storage'
+            assert parked['park']['free_bytes']>=free_before-2*1024**3, 'driver stack must be returned for PPO'
+            with pytest.raises(RuntimeError,match='parked'):service.submit({'bad':row})
+            expected,_=paired_anchor_search([root],[64],DeckLatentScorer(policy,[root._obs()]),
+                seed=20261111,max_depth=8,max_active=256,timeout_seconds=120)
+            np.testing.assert_array_equal(got['root']['visits'],expected[0]['visits'])
+            np.testing.assert_allclose(got['root']['values'],expected[0]['values'],rtol=3e-5,atol=3e-6)
+            gc.collect();torch.cuda.empty_cache()
+    finally:service.close(cancel='test end')
+    assert not service.process.is_alive()
+
+
 def test_stream_admission_matches_separate_fork_first(complete_combat_factory,cuda_battle_artifacts):
     from env.core.run_env import _nosl_compact_lut
     from env.search.cuda_battle import CudaBattleArena

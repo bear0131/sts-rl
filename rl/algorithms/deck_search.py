@@ -59,7 +59,7 @@ class ShadowSearchCollection:
         self.inference_cache = DeckSearchInferenceCache(self.model.policy.core, self.config.inference_cache_bytes)
         if self.config.backend == 'cuda-resident':
             import gc
-            from rl.search.resident_service import GpuService
+            from rl.search.resident_service import collection_service
             from rl.search.resident_deck import ResidentDeckScorer
             self.resident_root_keys = ResidentDeckScorer.root_fields(self.model.policy.core)
             folder = Path(self.model.deck_search_snapshot_dir)
@@ -74,7 +74,7 @@ class ShadowSearchCollection:
             torch.cuda.synchronize(); gc.collect(); torch.cuda.empty_cache()
             root_capacity = max(self.env.num_envs,
                 (self.config.cuda_wave_capacity+self.config.normal_budget-1)//self.config.normal_budget)
-            self.resident_service = GpuService(root_capacity,self.snapshot,dict(
+            self.resident_service = collection_service(self.model,root_capacity,self.snapshot,dict(
                 artifacts=self.config.cuda_artifacts,cache_bytes=self.config.inference_cache_bytes,
                 budget_cap=max(self.config.boss_budget,self.config.normal_budget,
                                self.model.policy.observation_space['combat_legal'].shape[0]),
@@ -297,7 +297,10 @@ class ShadowSearchCollection:
         if self.config.backend == 'cuda-resident' and hasattr(self,'resident_service'):
             service = self.resident_service
             aborted = bool(service.outstanding or self.resident_items)
-            service.close(cancel='collection aborted' if aborted else None)
+            if aborted or service.failure:
+                service.close(cancel='collection aborted')
+            else:
+                service.park()
             report = service.status
             pool = report.get('pool',{})
             for key in ('chains','atomic_steps','policy_rows','forced_rows','anchor_rows',

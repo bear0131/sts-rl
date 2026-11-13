@@ -16,7 +16,8 @@ class ResidentDeckScorer:
     # before decoding/projecting anchors, including exact-cache hits.
     anchor_batch_size = 4096
 
-    def __init__(self, policy, cache_bytes=64*1024**2, graph_capacity=128, native_host=None):
+    def __init__(self, policy, cache_bytes=64*1024**2, graph_capacity=128, native_host=None,
+                 *, compiled_gather=None):
         self.policy, self.core = policy, policy.core
         self.device = next(policy.parameters()).device
         self.decoder = CudaObservationDecoder(policy.observation_space, self.device)
@@ -68,8 +69,8 @@ class ResidentDeckScorer:
         # ragged kernels. Keeping their dynamic capacities outside Dynamo
         # avoids recompiling the entire model for every CUDA graph bucket.
         # The continuous service constructs this once in its CUDA owner.
-        self.compiled_gather = torch.compile(self._forward_gather, fullgraph=False,
-            dynamic=True, options={'triton.cudagraphs': False})
+        self.compiled_gather = compiled_gather if compiled_gather is not None else torch.compile(
+            self._forward_gather, fullgraph=False, dynamic=True, options={'triton.cudagraphs': False})
 
     def step_forward(self, batch, width, **kwargs):
         # Geometry variants belong to this bounded frozen runtime. Do not

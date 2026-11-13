@@ -420,6 +420,9 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         assert model.deck_search_last_stats['atomic_steps'] > model.deck_search_last_stats['searched_roots']
         if search_backend == 'cuda-resident':
             assert model.deck_search_last_stats['backend_cuda_simulation'] == 1
+            service=model._resident_search_service
+            assert service.parked and service.status['generation']==2
+            assert service.status['park']['reserved'] < 256*1024**2
         if search_backend == 'cuda-batched-native':
             assert model.deck_search_last_stats['backend_cuda_inference'] == 1
             assert model.deck_search_last_stats['backend_cuda_simulation'] == 0
@@ -431,6 +434,11 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
     source = save_bundle(model, tmp_path/'first', rank=0, world_size=1, run_id='deck-latent-test',
                          wandb_id=None, config={'ascension': 0})
     loaded = load_checkpoint(source/'model.zip', device=device)
+    assert not hasattr(loaded,'_resident_search_service')
+    if search_backend == 'cuda-resident':
+        from rl.search.resident_service import close_collection_service
+        close_collection_service(model)
+        assert not service.process.is_alive()
     assert isinstance(loaded.policy, DeckLatentPolicy)
     assert loaded.policy.deck_combat_encoder == encoder
     assert loaded.policy.core.combat_encoder == encoder
@@ -460,6 +468,10 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
     resumed = save_bundle(restored, tmp_path/'resumed', rank=0, world_size=1,
         run_id='deck-latent-test', wandb_id=None, config={'ascension': 0})
     assert resumed.is_dir()
+    if search_backend == 'cuda-resident':
+        assert restored._resident_search_service.parked
+        assert restored._resident_search_service.status['generation']==2
+        close_collection_service(restored)
     if context_mode == 'grouped' and not search:
         again = load_checkpoint(resumed/'model.zip', device='cpu')
         assert again.policy.combat_value_target == 'pre-reward-anchor'

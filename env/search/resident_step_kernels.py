@@ -10,6 +10,15 @@ from triton.language.extra.cuda import libdevice
 
 
 @triton.jit
+def completed_data(JOBS, FINAL, ANCHORS, DEPTH, OUT, N, B: tl.constexpr):
+    i=tl.program_id(0)*B+tl.arange(0,B)
+    job=tl.load(JOBS+i,i<N,0)
+    tl.store(OUT+3*i,tl.load(FINAL+job,i<N,0.),i<N)
+    tl.store(OUT+3*i+1,tl.load(ANCHORS+job,i<N,0).to(tl.float64),i<N)
+    tl.store(OUT+3*i+2,tl.load(DEPTH+job,i<N,0).to(tl.float64),i<N)
+
+
+@triton.jit
 def refill(SLOTS, SOURCES, OWNERS, WAVE_OWNERS, ROOT_MISC, ROOT_CONTEXT,
            EXPECTED, CONTEXT, DEPTH, CURSOR, ANCHORS, FINAL, CHANGED, LIVE,
            N, C: tl.constexpr, MISC_STRIDE: tl.constexpr, CONTEXT_STRIDE: tl.constexpr,

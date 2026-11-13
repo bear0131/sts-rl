@@ -167,6 +167,16 @@ Original actor actions, per-world PCG64 draws, paired budgets and PPO targets
 remain separate. Qualification requires a full collection plus update/recovery;
 small resident tests alone do not enable the production schedule gate.
 
+The continuous CUDA owner parks at the PPO boundary: all branches, pages,
+graphs and score/context caches are destroyed, its simulator stack limit is
+restored, and unused allocator memory is returned. Only model parameters and
+the compiled callable survive. The next collection copies current weights into
+the same parameter objects and rebuilds every derived table and cache. Handles
+and finalizers are excluded from checkpoints; ordinary recovery creates a new
+owner. The trainer closes it on exit, and library callers can explicitly use
+`resident_service.close_collection_service(model)`. A parked owner accepts no
+roots until its next frozen generation begins.
+
 The frozen transformer64x2 resident path packs canonical entity features directly
 into retained tokens before projection. Its feature buffer aliases graph-owned
 QKV storage only after input projection has finished. Final queries retain native

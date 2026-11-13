@@ -501,6 +501,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "_ppo_advantage_stats",
             "_native_leaf_inference",
             "_shared_collection_graphs",
+            "_resident_search_service", "_resident_search_finalizer",
             "_rollout_inference",
             "_independent_rollout_progress",
             "_nosl_leaf_batch_controller",

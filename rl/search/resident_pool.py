@@ -131,8 +131,9 @@ class ResidentPool:
         if not handles:
             return {}
         all_jobs = self.arena.host.completed_jobs(handles,self.jobs)
-        anchors = pipeline.anchors[all_jobs].cpu().numpy().astype(bool)
-        values = pipeline.final[all_jobs].cpu().numpy()
+        completed = pipeline.completed(all_jobs)
+        anchors = completed[:,1].astype(bool)
+        values = completed[:,0].copy()
         if anchors.any():
             selected = all_jobs[anchors]
             scores=[]
@@ -149,7 +150,7 @@ class ResidentPool:
                     raise FloatingPointError('nonfinite streaming anchor value')
                 scores.append(score)
             values[anchors] = np.concatenate(scores)
-        self.counts['atomic_steps'] += int(pipeline.depth[all_jobs].sum().item())
+        self.counts['atomic_steps'] += int(completed[:,2].sum())
         out = self.arena.host.complete_results(handles,self.bank,self.jobs,values)
         # Old lifecycle: destruction on the owner stream precedes page release,
         # and generation release precedes admission of the next logical root.
