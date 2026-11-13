@@ -1,4 +1,6 @@
 - **COMBAT49-STATUS-PILE-TOKENS** — 当前三个牌堆已按牌种/升级计数并各一汇总token；用户要求同状态牌合并。实际1→207状态牌CPU/CUDA回归2 passed，三个牌堆数量保留/不截断/attention宽度恒定，合同已验，保留数量/真实候选及实例身份；不改checkpoint结构。见worklog/2026-11-13.md同ID。
+
+- **COMBAT49-GPU-COST** — 进行中，Pro6000已平台关机且SSH拒绝，数据保留。用户授权4090/4090D同源128/256环境完整采样成本对照及Pro6000关机；保持模型/奖励/预算/外层训练，24GB内部容量调整单独注明。每臂连续两次768步/1200s，每卡GPU总预算7200s；先sm89语义与资源生命周期，再比较元/有效训练样本及有效搜索工作。正式deferred/qualified=false不变，多机更新同步成本未知。结果runs/local/hardware-cost-20261113，详细协议见worklog/2026-11-13.md本ID。
 - **COMBAT49-GPU-VECTOR-GROW** — 组件通过、完整生产长度待验收。范围env/search/cuda_vector.h及显式v10 CUDA产物；不截断合法生成牌，深复制/析构/图生命周期与CPU状态相同。host ASan/UBSan和native/CUDA128→130及原696失败根207牌重放通过；验收还需完整768及两轮普通恢复。证据worklog/2026-11-13.md同ID。
 # 仓库总 TODO
 
