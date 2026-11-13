@@ -57,7 +57,7 @@ class ShadowSearchCollection:
         self.previous = env.step_async
         self.snapshot = None
 
-    def start(self):
+    def start(self, *, hooks=True):
         self.inference_cache = DeckSearchInferenceCache(self.model.policy.core, self.config.inference_cache_bytes)
         if self.config.backend == 'cuda-resident':
             import gc
@@ -98,8 +98,9 @@ class ShadowSearchCollection:
                 buffers={k: v.detach().cpu() for k, v in self.model.policy.core.named_buffers()}), temporary)
             os.replace(temporary, self.snapshot)
         self.generation = (int(self.model.num_timesteps), time.time_ns())
-        self.hook = self.model.policy.register_forward_hook(self.observe, with_kwargs=True)
-        self.env.step_async = MethodType(lambda env, actions: self.step(actions), self.env)
+        if hooks:
+            self.hook = self.model.policy.register_forward_hook(self.observe, with_kwargs=True)
+            self.env.step_async = MethodType(lambda env, actions: self.step(actions), self.env)
         return self
 
     @torch.no_grad()
@@ -202,7 +203,8 @@ class ShadowSearchCollection:
                             for i in indices]
             budgets = [self.config.boss_budget if self.model._last_obs['combat_is_boss'][i].item()
                        else self.config.normal_budget for i in indices]
-            seed = int(self.rng.integers(0, 2**63-1))
+            independent = getattr(self, 'stream_positions', None) is not None
+            seed = 0 if independent else int(self.rng.integers(0, 2**63-1))
             roots, groups = self.env.deck_resident_roots(indices.tolist(), self.config.cuda_artifacts,
                                                        generation=self.generation)
             # A worker exports an origin once per collection, including roots
@@ -224,30 +226,35 @@ class ShadowSearchCollection:
             item = dict(position=self.buffer.pos, indices=indices.copy(),
                 masks=masks.copy(), logits=logits.clone(), context=context, observations=observations,
                 roots=roots, groups=groups, budgets=budgets, seed=seed)
+            if independent:
+                item['positions'] = [int(self.stream_positions[i]) for i in indices]
+                item['seeds'] = [int(self.stream_seeds[self.stream_positions[i], i]) for i in indices]
             fallback_groups = {g for g, root in zip(groups, roots) if root.get('native_fallback')}
             if fallback_groups:
-                bad = [i for i,g in enumerate(groups) if g in fallback_groups]
-                selected = ShadowSearchCollection._select_resident(item, bad)
-                # Native fallback consumes complete observations; materialize
-                # only those rows when that exceptional route is actually used.
-                selected['observations'] = [{k: v[i] for k, v in self.model._last_obs.items()}
-                                            for i in selected['indices']]
-                fallback_start = time.monotonic()
-                scorer = DeckLatentScorer(self.model.policy, selected['observations'],
-                    context=selected['context'], inference_cache=self.inference_cache)
-                result, stats = self.env.deck_batched_search(dict(indices=selected['indices'].tolist(),
-                    budgets=selected['budgets'], seed=seed, generation=self.generation,
-                    options=search_options(self.config)), scorer)
-                self.stats['searched_roots'] += ShadowSearchCollection._store_targets(self, [selected], result)
-                self.stats['native_fallback_roots'] += len(bad)
-                self.stats['native_fallback_seconds'] += time.monotonic()-fallback_start
-                for k,v in stats.items():
-                    if k in DECK_SEARCH_CACHE_METRICS:
-                        continue
-                    k = 'worker_search_seconds' if k == 'seconds' else k
-                    self.stats[k] = max(self.stats[k],float(v)) if k == 'max_active' else self.stats[k]+float(v)
+                bad = [i for i, g in enumerate(groups)
+                       if (roots[i].get('native_fallback') if independent else g in fallback_groups)]
+                batches = [[i] for i in bad] if independent else [bad]
+                for rows in batches:
+                    selected = ShadowSearchCollection._select_resident(item, rows)
+                    selected['observations'] = [{k: v[i] for k, v in self.model._last_obs.items()}
+                                                for i in selected['indices']]
+                    fallback_start = time.monotonic()
+                    scorer = DeckLatentScorer(self.model.policy, selected['observations'],
+                        context=selected['context'], inference_cache=self.inference_cache)
+                    fallback_seed = selected['seeds'][0] if independent else seed
+                    result, stats = self.env.deck_batched_search(dict(indices=selected['indices'].tolist(),
+                        budgets=selected['budgets'], seed=fallback_seed, generation=self.generation,
+                        options=search_options(self.config)), scorer)
+                    self.stats['searched_roots'] += ShadowSearchCollection._store_targets(self, [selected], result)
+                    self.stats['native_fallback_roots'] += len(rows)
+                    self.stats['native_fallback_seconds'] += time.monotonic()-fallback_start
+                    for k,v in stats.items():
+                        if k in DECK_SEARCH_CACHE_METRICS:
+                            continue
+                        k = 'worker_search_seconds' if k == 'seconds' else k
+                        self.stats[k] = max(self.stats[k],float(v)) if k == 'max_active' else self.stats[k]+float(v)
                 item = ShadowSearchCollection._select_resident(item,
-                    [i for i,g in enumerate(groups) if g not in fallback_groups])
+                    [i for i in range(len(groups)) if i not in bad])
             # Paired world draws belong to the original CPU worker group, not
             # to admission batches or newly leased physical pages.
             generators, queued = {}, {}
@@ -256,11 +263,14 @@ class ShadowSearchCollection:
             for j, (root, group, budget) in enumerate(zip(item['roots'],item['groups'],item['budgets'])):
                 if root.get('skipped'):
                     continue
-                if group not in generators:
-                    group_seed = int(np.random.SeedSequence([seed,int(group)]).generate_state(1,dtype=np.uint64)[0])
-                    generators[group] = np.random.default_rng(group_seed)
-                worlds = generators[group].integers(0,2**63-1,max(1,budget//len(root['actions'])),dtype=np.int64)
-                key = (self.buffer.pos,int(item['indices'][j]))
+                root_seed = item['seeds'][j] if independent else seed
+                generator_key = (group, j) if independent else group
+                if generator_key not in generators:
+                    group_seed = int(np.random.SeedSequence([root_seed,int(group)]).generate_state(1,dtype=np.uint64)[0])
+                    generators[generator_key] = np.random.default_rng(group_seed)
+                worlds = generators[generator_key].integers(0,2**63-1,max(1,budget//len(root['actions'])),dtype=np.int64)
+                position = item['positions'][j] if independent else self.buffer.pos
+                key = (position,int(item['indices'][j]))
                 queued[key] = dict(root=root,observation={k:v for k,v in item['observations'][j].items()
                                                         if k in self.resident_root_keys},
                     context=tuple(x[j] for x in host_context),worlds=worlds,budget=budget,
@@ -268,9 +278,9 @@ class ShadowSearchCollection:
                 # The FIFO synchronously serializes the frozen root/context.
                 # Only the prior and its original buffer position survive here;
                 # do not launch per-root CUDA gathers for discarded context.
-                self.resident_items[key] = dict(position=item['position'],
+                self.resident_items[key] = dict(position=position,
                     indices=item['indices'][j:j+1],masks=item['masks'][j:j+1],
-                    logits=item['logits'][j:j+1],roots=[None],seed=seed)
+                    logits=item['logits'][j:j+1],roots=[None],seed=root_seed)
             while queued:
                 self._receive_resident()
                 free = self.resident_service.capacity-len(self.resident_service.outstanding)
@@ -284,10 +294,11 @@ class ShadowSearchCollection:
                     len(self.resident_service.outstanding))
             self.stats['selected_roots'] += len(indices)
         direct = getattr(self, 'direct_actions', False)
-        if direct or self.buffer.pos == self.buffer.buffer_size-1:
+        streaming = getattr(self, 'stream_positions', None) is not None
+        if not streaming and (direct or self.buffer.pos == self.buffer.buffer_size-1):
             while self.resident_service.outstanding:
                 self._receive_resident(.05)
-        if self.buffer.pos == self.buffer.buffer_size-1:
+        if not streaming and self.buffer.pos == self.buffer.buffer_size-1:
             self.resident_service.park()
         self.stats['search_seconds'] += time.monotonic()-started
         return None if direct else self.previous(actions)
@@ -297,6 +308,7 @@ class ShadowSearchCollection:
         if ready:
             items = [self.resident_items.pop(key) for key in ready]
             self.stats['searched_roots'] += ShadowSearchCollection._store_targets(self,items,list(ready.values()))
+        return ready
 
     @staticmethod
     def _select_resident(item, rows):
@@ -304,7 +316,9 @@ class ShadowSearchCollection:
         result = dict(item)
         for name in ('indices', 'masks', 'logits'):
             result[name] = item[name][rows]
-        for name in ('observations', 'roots', 'groups', 'budgets'):
+        for name in ('observations', 'roots', 'groups', 'budgets', 'positions', 'seeds'):
+            if name not in item:
+                continue
             result[name] = [item[name][i] for i in rows]
         result['context'] = SearchContext(item['context'].combat[rows], item['context'].anchor[rows])
         return result
@@ -320,10 +334,12 @@ class ShadowSearchCollection:
                     continue
                 selected.append(j)
                 target_rows.append(row)
-                destinations.append((int(index), item['position']))
+                position = item.get('positions', [item['position']]*len(item['indices']))[j]
+                seed = item.get('seeds', [item['seed']]*len(item['indices']))[j]
+                destinations.append((int(index), position))
                 if self.config.action_selection != 'shadow':
-                    self._record_action(int(index), item['position'], row, item['logits'][j].numpy(),
-                                        item['seed'] ^ (int(index)*1_000_003))
+                    self._record_action(int(index), position, row, item['logits'][j].numpy(),
+                                        seed ^ (int(index)*1_000_003))
             if selected:
                 complete = len(selected) == len(item['indices'])
                 target_logits.append(item['logits'] if complete else item['logits'][selected])

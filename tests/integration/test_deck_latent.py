@@ -368,7 +368,7 @@ def test_duplicate_context_gradients_equal_full_recomputation(latent_env):
 @pytest.mark.parametrize('context_mode', ['off', 'replay', 'grouped', 'screens', 'context-limit', 'direct-mask', 'prefetch'])
 def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, transport, context_mode,
                                                        encoder='pooled-mlp', device='cpu', search_backend='native-cpu',
-                                                       action_selection='shadow'):
+                                                       action_selection='shadow', capture_result=False):
     from gymnasium.wrappers import TimeLimit
     from stable_baselines3.common.vec_env import DummyVecEnv
     from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
@@ -395,6 +395,14 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         executed_actions.append(np.array(actions,copy=True))
         return original_step(actions)
     env.step_async=record_actions
+    slot_actions=[[],[]]
+    if hasattr(env, 'step_subset'):
+        original_subset=env.step_subset
+        def record_subset(actions):
+            for i,action in actions.items():
+                slot_actions[i].append(action)
+            return original_subset(actions)
+        env.step_subset=record_subset
     model = AccumulatingMaskablePPO(DeckLatentPolicy, env, seed=20261111,
         n_steps=32, batch_size=32, n_epochs=1, device=device, gamma=1., gae_lambda=1.,
         learning_rate=5e-5, reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
@@ -439,7 +447,9 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         assert model.deck_search_last_stats['atomic_steps'] > model.deck_search_last_stats['searched_roots']
         if action_selection != 'shadow':
             assert model.deck_search_last_stats['executed_search_actions'] == len(model.rollout_buffer.search_actions)>0
-            np.testing.assert_array_equal(np.asarray(executed_actions[-32:]),model.rollout_buffer.actions[:,:,0])
+            actual=(np.asarray([row[-32:] for row in slot_actions]).T
+                    if any(slot_actions) else np.asarray(executed_actions[-32:]))
+            np.testing.assert_array_equal(actual,model.rollout_buffer.actions[:,:,0])
             for (position,index),(action,logp) in model.rollout_buffer.search_actions.items():
                 assert model.rollout_buffer.actions[position,index,0]==action
                 assert model.rollout_buffer.action_masks[position,index,action]
@@ -508,7 +518,15 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         assert again.deck_training_state['stage'] == 'anchor'
         assert again.deck_training_state['stage_start'] == 2
         assert again.deck_training_state['good_checks'] == 0
+    result = None
+    if capture_result:
+        result = dict(observations={k:v.copy() for k,v in restored.rollout_buffer.observations.items()},
+            actions=restored.rollout_buffer.actions.copy(),rewards=restored.rollout_buffer.rewards.copy(),
+            episode_starts=restored.rollout_buffer.episode_starts.copy(),
+            targets={k:v.copy() for k,v in restored.rollout_buffer.search_targets.items()},
+            rng=restored.deck_search_rng)
     env.close(); target.close()
+    return result
 
 
 def test_cpu_shadow_search_native_rounds_and_resume(tmp_path):
@@ -1310,3 +1328,28 @@ def test_search_acts_and_restores_cuda(tmp_path, cuda_battle_artifacts):
     test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, True, 'native-subproc', 'screens',
         encoder='transformer64x2', device='cuda', search_backend='cuda-resident',
         action_selection='search-filter-policy-rank-v1')
+
+
+@pytest.mark.cuda
+@pytest.mark.timeout(600)
+def test_search_stream_completion_order_keeps_slot_trajectories(tmp_path, cuda_battle_artifacts, monkeypatch):
+    from rl.algorithms import deck_stream_rollout
+    original = deck_stream_rollout.collect
+    results=[]
+    for barrier in (True, False):
+        def collect(*args, **kwargs):
+            return original(*args, **kwargs, barrier=barrier)
+        monkeypatch.setattr(deck_stream_rollout, 'collect', collect)
+        results.append(test_two_real_ppo_rounds_checkpoint_and_packed_resume(
+            tmp_path/str(barrier), True, 'native-subproc', 'screens',
+            encoder='transformer64x2', device='cuda', search_backend='cuda-resident',
+            action_selection='search-filter-policy-rank-v1', capture_result=True))
+    a,b=results
+    assert a['rng']==b['rng']
+    for k in ('actions','rewards','episode_starts'):
+        np.testing.assert_array_equal(a[k],b[k])
+    for k in a['observations']:
+        np.testing.assert_array_equal(a['observations'][k],b['observations'][k])
+    assert a['targets'].keys()==b['targets'].keys()
+    for k in a['targets']:
+        np.testing.assert_allclose(a['targets'][k],b['targets'][k],atol=2e-5,rtol=2e-5)

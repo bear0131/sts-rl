@@ -66,6 +66,15 @@ class _NativeStepPipe:
                 self.write(obs)
                 self.remote.send([(None, rewards[i], dones[i], info, self.native.reset_infos[i])
                                   for i, info in enumerate(infos)])
+            elif cmd == 'step_subset' and self.native is not None:
+                indices = list(data)
+                if self.deck_resident is not None:
+                    self.deck_resident.before_step(list(data.values()), indices)
+                obs, rewards, dones, infos = self.native.step_subset(data)
+                for key, value in obs.items():
+                    self.arrays[key][np.asarray(indices) + self.start] = value
+                self.remote.send([(None, rewards[j], dones[j], info, self.native.reset_infos[i])
+                                  for j, (i, info) in enumerate(zip(indices, infos, strict=True))])
             elif cmd == 'reset' and self.native is not None:
                 self.native._seeds = [r[0] for r in data]
                 self.native._options = [r[1] for r in data]
@@ -304,6 +313,38 @@ class NativeSubprocVecEnv(cv.GroupedCachedMaskSubprocVecEnv):
         for i, (done, info) in enumerate(zip(dones, infos, strict=True)):
             self._cached_action_masks[i] = self._info_mask(self.reset_infos[i] if done else info)
         return (self.observations(), np.asarray(rewards), np.asarray(dones), infos)
+
+    def step_subset(self, actions):
+        """Advance ready slots as in the legacy independent collector.
+
+        Search owns frozen forks. A real slot is stepped only after its own
+        result; other slots and their outstanding roots remain untouched.
+        """
+        if self.waiting:
+            raise RuntimeError('cannot partially step an in-flight vector')
+        indices = list(actions)
+        if (not indices or any(type(i) is not int or not 0 <= i < self.num_envs for i in indices)
+                or any(not self.action_space.contains(a) for a in actions.values())):
+            raise ValueError('invalid ready-slot actions')
+        pending, selected = {}, {}
+        for group_index, group in enumerate(self._groups):
+            local = {j: actions[i] for j, i in enumerate(group) if i in actions}
+            if local:
+                selected[group_index] = [group[j] for j in local]
+                remote = self.remotes[group_index]
+                remote.send(('step_subset', local))
+                pending[remote] = group_index
+        received = {}
+        reset_infos = list(self.reset_infos)
+        for group, payload in self._receive_groups(pending).items():
+            for i, (_, reward, done, info, reset) in zip(selected[group], payload, strict=True):
+                received[i] = (reward, done, info)
+                reset_infos[i] = reset
+                self._cached_action_masks[i] = self._info_mask(reset if done else info)
+        self.reset_infos = reset_infos
+        rewards, dones, infos = zip(*(received[i] for i in indices), strict=True)
+        return ({k: v[indices] for k, v in self.arrays.items()},
+                np.asarray(rewards), np.asarray(dones), list(infos))
 
     def reset(self):
         for remote, group in zip(self.remotes, self._groups, strict=True):

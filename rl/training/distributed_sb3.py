@@ -76,6 +76,17 @@ class RolloutProgressCallback(NoopCallback):
         self.started, self.completed = time.perf_counter(), 0
 
     def _on_step(self):
+        stream = getattr(self.model, '_deck_stream_progress', None)
+        if stream is not None:
+            completed = stream['slot_steps_min']
+            if completed >= self.completed + 128 or completed == self.steps:
+                self.completed = completed
+                print('ROLLOUT_PROGRESS ' + json.dumps(dict(rank=self.rank,
+                    vector_steps=completed, target_steps=self.steps,
+                    env_steps=stream['transitions'], slot_steps_max=stream['slot_steps_max'],
+                    transition_batches=stream['transition_batches'],
+                    seconds=time.perf_counter()-self.started, at=time.time()), sort_keys=True), flush=True)
+            return True
         self.completed += 1
         if self.completed % 128 == 0 or self.completed == self.steps:
             record = dict(rank=self.rank, vector_steps=self.completed, target_steps=self.steps,

@@ -909,6 +909,13 @@ class AccumulatingMaskablePPO(MaskablePPO):
         # keep this guard so an early callback/error cannot leave a compiler
         # thread racing with a later buffer reuse.
         self._wait_for_reasoning_samples()
+        search = getattr(self, 'deck_search_config', None)
+        if (search is not None and search.get('backend') == 'cuda-resident'
+                and search.get('action_selection', 'shadow') != 'shadow'):
+            from rl.algorithms.deck_stream_rollout import collect
+            if not use_masking:
+                raise ValueError('search acting requires legal action masks')
+            return collect(self, env, rollout_buffer, callback, n_rollout_steps)
         independent = getattr(self, 'independent_rollout_config', None)
         if independent is not None:
             from rl.algorithms.independent_rollout import collect

@@ -98,8 +98,10 @@ class ResidentRootExporter:
             previous['replay'].append(int(action)-env._policy_offset)
         return previous
 
-    def before_step(self, actions):
-        for i, (env, action) in enumerate(zip(self.envs, actions, strict=True)):
+    def before_step(self, actions, indices=None):
+        indices = range(len(self.envs)) if indices is None else indices
+        for i, action in zip(indices, actions, strict=True):
+            env = self.envs[i]
             mirror = self.mirrors[i]
             if mirror is not None and env.thick is not None and mirror['battle'] is env.thick.bc:
                 if env._phase() == 'combat' and not env._at_combat_exit_anchor():

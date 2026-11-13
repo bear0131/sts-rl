@@ -1034,3 +1034,17 @@ worker 持有，复用旧持续服务的 FIFO、根代际和非移动状态页�
 CUDA module 与 native bridge 的 SHA。外部原生规则构建和产物仍由部署管理，
 不把旧地址布局的 cubin 当作兼容新适配的产物。更新源码或产物后须重新验证
 真实 collection、更新及普通恢复；组件回归通过不表示已获生产资格。
+
+Search-led fixed PPO collection uses `algorithms/deck_stream_rollout.py`: the
+accepted legacy ready-slot submit/receive/step loop, with per-slot fixed-length
+storage instead of a natural-game cohort. Each searched slot waits for its own
+complete paired result; ready slots refill the existing resident worker while
+others remain pending. The worker, state pages, device compaction, ragged step
+graphs, exact anchor cache and frozen-weight lifecycle remain shared with the
+qualified resident path. A collection must fill every slot before GAE/update.
+The existing checkpointed search RNG supplies separate (time, slot) categorical,
+coverage and paired-world draws, independent of completion/batching order.
+This explicit search-acting contract changes behavior; old shadow checkpoints
+retain their vector collector and original random stream. CPU reference search
+retains synchronous direct actions. Search-executed rows retain value/teacher
+training and are excluded from a fictitious model-only PPO behavior ratio.

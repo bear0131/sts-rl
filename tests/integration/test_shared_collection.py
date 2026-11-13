@@ -261,3 +261,34 @@ def test_map_cache_tracks_content_weights_shape_and_schema(capacity, host_metada
         if graphs is not None:
             graphs.close()
         env.close()
+
+
+@pytest.mark.timeout(120)
+def test_native_subproc_ready_slots_preserve_waiting_slots_and_restore():
+    serial=NativeSearchVecEnv([_environment]*3,threads=1)
+    grouped=NativeSubprocVecEnv([_environment]*3,envs_per_worker=2,start_method='spawn')
+    try:
+        for env in (serial,grouped):
+            env.seed(20261114)
+        _equal(serial.reset(),grouped.reset())
+        retained=[]
+        for step in range(25):
+            ids=([2,0] if step%3==0 else [1] if step%3==1 else [0,1,2])
+            masks=np.stack(serial.env_method('action_masks'))
+            calls={i:int(np.flatnonzero(masks[i])[-1]) for i in ids}
+            before=grouped.env_method('export_training_state')
+            a,b=serial.step_subset(calls),grouped.step_subset(calls)
+            _equal(a,b)
+            after=grouped.env_method('export_training_state')
+            for i in set(range(3))-set(ids):
+                _equal(before[i],after[i])
+            _equal(serial.env_method('export_training_state'),after)
+            _equal(np.stack(serial.env_method('action_masks')),np.stack(grouped.env_method('action_masks')))
+            retained.append((b,deepcopy(b)))
+            if step==12:
+                _equal(grouped.restore_training_states(after),serial._obs_from_buf())
+        assert any(any(item[0][2]) for item in retained)
+        for a,b in retained:
+            _equal(a,b)
+    finally:
+        serial.close();grouped.close()
