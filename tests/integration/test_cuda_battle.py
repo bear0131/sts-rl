@@ -584,12 +584,42 @@ def test_resident_anchor_batches_bound_projection_and_keep_exact_cache(
         torch.cuda.empty_cache()
         def unexpected_projection(*args, **kwargs):
             raise AssertionError('an exact cache hit rebuilt relic counter features')
+        counter_terms = policy.core.combat.summaries.relic_counter_terms
         monkeypatch.setattr(policy.core.combat.summaries, 'relic_counter_terms', unexpected_projection)
         _, replay = scorer.score(raw, owners, rows[:33], anchor=True)
         torch.testing.assert_close(replay, actual[:33], rtol=0, atol=0)
         assert scorer.anchor_cache.stats['misses'] == misses
         assert torch.equal(rng, torch.cuda.get_rng_state())
         assert before == root.export_training_state()
+        # Re-admission of byte-identical context remains a hit. A different
+        # context at the same root slot must miss and use that new GPU row.
+        from rl.policies.deck_latent import SearchContext
+        original_context = scorer.context
+        monkeypatch.setattr(policy.core.combat.summaries, 'relic_counter_terms', counter_terms)
+        scorer.roots([root._obs()], original_context)
+        monkeypatch.setattr(policy.core.combat.summaries, 'relic_counter_terms', unexpected_projection)
+        _, same = scorer.score(raw, owners, rows[:1], anchor=True)
+        torch.testing.assert_close(same, actual[:1], rtol=0, atol=0)
+        assert scorer.anchor_cache.stats['misses'] == misses
+        monkeypatch.setattr(policy.core.combat.summaries, 'relic_counter_terms', counter_terms)
+        changed_context = SearchContext(original_context.combat, original_context.anchor + .25)
+        scorer.roots([root._obs()], changed_context)
+        _, changed = scorer.score(raw, owners, rows[:1], anchor=True)
+        with torch.no_grad():
+            expected_changed = policy.core.anchor_with_context(
+                {k:v[:1] for k,v in obs.items()}, changed_context.anchor, relics[:1]).flatten()
+        torch.testing.assert_close(changed, expected_changed, rtol=3e-5, atol=3e-6)
+        assert scorer.anchor_cache.stats['misses'] == misses + 1
+        # Force intern eviction while the value cache still has the old ID.
+        # Returning to old bytes gets a fresh ID, never a stale value alias.
+        scorer.anchor_context_limit = 256 + original_context.anchor[0].numel()*4
+        scorer.roots([root._obs()], SearchContext(original_context.combat, original_context.anchor + .5))
+        previous_id = int(scorer.anchor_context_ids[0])
+        scorer.roots([root._obs()], original_context)
+        assert int(scorer.anchor_context_ids[0]) > previous_id
+        _, restored = scorer.score(raw, owners, rows[:1], anchor=True)
+        torch.testing.assert_close(restored, actual[:1], rtol=3e-5, atol=3e-6)
+        assert scorer.anchor_context_bytes <= scorer.anchor_context_limit
     finally:
         scorer.close()
         arena.close()

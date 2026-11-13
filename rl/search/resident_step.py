@@ -16,7 +16,9 @@ from env.search import resident_step_kernels as K
 
 
 class ResidentStepPipeline:
-    frame_capacity = 65536
+    # Current anchor/context heads share the device with the unchanged PPO
+    # actor. Bound only physical scoring storage; every logical job is retained.
+    frame_capacity = 32768
 
     def __init__(self, scorer, arena, max_depth, capacity=128):
         if 'observe_live' not in arena.functions:
@@ -65,12 +67,13 @@ class ResidentStepPipeline:
         self.frame_control.zero_(); self.frame_control[1:2].fill_(1)
         self.enabled.fill_(1)
 
-    def refill(self, slots, owners, randoms):
+    def refill(self, slots, owners, world_seeds):
         """Replace completed logical jobs; graph addresses and live siblings stay owned."""
         slots = torch.as_tensor(slots, device=self.arena.device, dtype=torch.long)
         self.owners.index_copy_(0, slots, owners)
         self.scorer.wave_owners.index_copy_(0, slots, owners)
-        self.randoms.index_copy_(0, slots, randoms)
+        from env.search.paired_rng import paired_uniforms
+        paired_uniforms(world_seeds, slots, self.randoms)
         self.expected.index_copy_(0, slots, self.scorer.root['outer_deck_misc'][owners])
         self.context.index_copy_(0, slots, self.scorer.context.combat[owners])
         self.depth[slots] = 1
@@ -174,6 +177,10 @@ class ResidentStepPipeline:
             self.enabled.fill_(1)
             self.graphs[key] = graph, rows, uniforms
             self.stats['captures'] += 1
+            # The PPO actor owns another CUDA process. Eager warmup scratch
+            # cannot stay reserved here after the graph owns its live buffers;
+            # that process cannot reclaim our idle caching-allocator blocks.
+            torch.cuda.empty_cache()
         self.graphs.move_to_end(key)
         return self.graphs[key][0], F, width
 

@@ -87,7 +87,7 @@ class ResidentPool:
                 dtype=torch.float64,device=self.arena.device))
             self.pipeline.live.zero_()
             self.pipeline.depth.zero_()
-        source, destination, world_seeds, initial_bits, draw, randoms = [],[],[],[],[],[]
+        source, destination, world_seeds, initial_bits, draw = [],[],[],[],[]
         page_addresses = []
         for handle in handles:
             row = rows[handle.key]
@@ -98,11 +98,9 @@ class ResidentPool:
             page_addresses.append(addresses.view(np.int64))
             actions = np.tile(np.arange(len(root['actions'])), len(worlds))
             seeds = np.repeat(worlds,len(root['actions']))
-            uniforms = np.stack([np.random.default_rng(int(w)^0x504F4C494359).random(self.max_depth) for w in worlds])
             source.extend([handle.slot]*len(physical)); destination.extend(physical)
             world_seeds.extend(seeds); initial_bits.extend(root['bits'][actions])
             draw.extend([root['draw_selection']]*len(physical))
-            randoms.append(np.repeat(uniforms,len(root['actions']),axis=0))
             self.bank[handle.slot] = row
             self.jobs[handle.slot] = physical-self.capacity,actions
             self.counts['chains'] += len(physical)
@@ -115,7 +113,7 @@ class ResidentPool:
         self.arena.first_selected(source,destination,initial_bits,draw)
         self.pipeline.refill(np.asarray(destination)-self.capacity,
             torch.as_tensor(source,device=self.arena.device),
-            torch.as_tensor(np.concatenate(randoms),device=self.arena.device))
+            torch.as_tensor(world_seeds,device=self.arena.device))
         self.pipeline.deck[:self.capacity].copy_(self.scorer.root['deck_ids'])
         self.remaining += len(destination)
         self.counts['max_active'] = max(self.counts['max_active'],self.remaining)

@@ -49,6 +49,9 @@ def test_stream_accepts_new_roots_before_drain_and_reuses_only_retired_pages(
         with pytest.raises(RuntimeError,match='abandon'): pool.close()
         pool.receive(steps=1)
         assert pool.pending, 'fixture must leave live work before second admission'
+        # Another CUDA owner needs idle allocator memory while this graph and
+        # its root/page leases remain live. Replay may not borrow freed scratch.
+        gc.collect(); torch.cuda.empty_cache()
         pool.submit({'second':row(1)})
         assert pool.counts['submissions_while_pending']==1
         actual={}

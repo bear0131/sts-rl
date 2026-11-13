@@ -1,4 +1,5 @@
 """Frozen DeckLatent scoring directly from resident CUDA observations."""
+from collections import OrderedDict
 import numpy as np
 import torch
 
@@ -22,6 +23,10 @@ class ResidentDeckScorer:
         self.decoder = CudaObservationDecoder(policy.observation_space, self.device)
         self.runtime = SharedCollectionGraphs(self.core, capacity=graph_capacity)
         self.anchor_cache = ExactInputCache(cache_bytes // 4)
+        self.anchor_contexts = OrderedDict()
+        self.anchor_context_bytes = 0
+        self.anchor_context_limit = cache_bytes // 2
+        self.next_anchor_context = 0
         # Keep registration owners as well as versions: replacing a parameter
         # or a child module must invalidate the frozen collection, without
         # recursively enumerating the entire encoder at every combat depth.
@@ -59,7 +64,7 @@ class ResidentDeckScorer:
         # Compile the current input adapter and heads around the migrated
         # ragged kernels. Keeping their dynamic capacities outside Dynamo
         # avoids recompiling the entire model for every CUDA graph bucket.
-        # This runtime is constructed only in the learner, never env workers.
+        # The continuous service constructs this once in its CUDA owner.
         self.compiled_gather = torch.compile(self._forward_gather, fullgraph=False,
             dynamic=True, options={'triton.cudagraphs': False})
 
@@ -74,12 +79,41 @@ class ResidentDeckScorer:
         return set(core.context.keys) | set(core.combat.scalar_keys) | {
             'phase', 'relic_counters', 'combat_is_boss'}
 
+    def _intern_anchor_contexts(self, contexts):
+        """Full-byte equality once per admission; IDs are never recycled.
+
+        Evicting the host intern table can only cause a cache miss. Existing
+        roots retain their IDs and miss forwarding reads their current GPU
+        context, so no table entry owns a live root's tensor or lifetime.
+        """
+        host = contexts.detach().cpu().numpy()
+        ids = []
+        for row in host:
+            key = (row.dtype.str, row.shape, row.tobytes())
+            if key in self.anchor_contexts:
+                self.anchor_contexts.move_to_end(key)
+                identity = self.anchor_contexts[key]
+            else:
+                identity = self.next_anchor_context
+                self.next_anchor_context += 1
+                cost = len(key[2]) + 256
+                if cost <= self.anchor_context_limit:
+                    while self.anchor_contexts and self.anchor_context_bytes + cost > self.anchor_context_limit:
+                        removed, _ = self.anchor_contexts.popitem(last=False)
+                        self.anchor_context_bytes -= len(removed[2]) + 256
+                    self.anchor_contexts[key] = identity
+                    self.anchor_context_bytes += cost
+            ids.append(identity)
+        return np.asarray(ids, np.int64)
+
     @torch.no_grad()
     def roots(self, observations, context=None):
         keys = self.root_fields(self.core)
         self.root = {k: torch.as_tensor(np.stack([o[k] for o in observations]), device=self.device)
                      for k in keys if k in observations[0]}
         self.context = self.core.prepare_search_context(self.root) if context is None else context
+        self.anchor_context_ids = torch.as_tensor(self._intern_anchor_contexts(self.context.anchor),
+                                                  device=self.device)
         # Match the existing collection graph's bounded relic projection. A
         # maximum-capacity PAD suffix otherwise creates a multi-GiB basis
         # tensor for thousands of search lanes, despite only a few real relics.
@@ -168,6 +202,8 @@ class ResidentDeckScorer:
         index = torch.as_tensor(slots, device=self.device, dtype=torch.long)
         self.context.combat.index_copy_(0, index, context.combat)
         self.context.anchor.index_copy_(0, index, context.anchor)
+        self.anchor_context_ids.index_copy_(0, index,
+            torch.as_tensor(self._intern_anchor_contexts(context.anchor), device=self.device))
         width = SharedCollectionGraphs._width(np.stack([o['relics'] for o in observations]), 4)
         if width > self.relic_width:
             # The old inventory bank grows; it never truncates an owned root.
@@ -244,7 +280,7 @@ class ResidentDeckScorer:
             gathered['workspace'] = workspace
         return self._forward(gathered, width, False)
 
-    def resolve_changed_context(self, owners, misc, projected, changed, anchor):
+    def resolve_changed_context(self, owners, misc, projected, changed, anchor, *, with_ids=False):
         """Batch cache misses and copies; never index a CUDA scalar in Python."""
         keys = torch.cat((owners[changed, None], misc[changed]), 1).cpu().numpy()
         keys = [(int(self.root_generations[int(key[0])]), key.tobytes())
@@ -258,10 +294,16 @@ class ResidentDeckScorer:
             obs = {k: v[owners[selected]] for k, v in self.root.items()}
             obs['outer_deck_misc'] = projected[selected]
             new = self.core.prepare_search_context(obs)
+            identities = self._intern_anchor_contexts(new.anchor)
             for j, key in enumerate(missing):
-                self.changed_context[key] = new.combat[j].clone(), new.anchor[j].clone()
+                self.changed_context[key] = new.combat[j].clone(), new.anchor[j].clone(), identities[j]
             self.refreshes += len(missing)
-        return torch.stack([self.changed_context[key][int(anchor)] for key in keys])
+        values = torch.stack([self.changed_context[key][int(anchor)] for key in keys])
+        if with_ids:
+            if not anchor:
+                raise ValueError('context identities belong to anchor scoring')
+            return values, np.asarray([self.changed_context[key][2] for key in keys], np.int64)
+        return values
 
     def run_wave(self, arena, owners, randoms, max_depth, deadline):
         from rl.search.resident_step import ResidentStepPipeline
@@ -426,6 +468,7 @@ class ResidentDeckScorer:
                  if not anchor or k in ('categorical', 'scalars', 'outcome', 'permanent_misc')}
         batch.update({k: v[owner] for k, v in self.packed_root.items()})
         context = (self.context.anchor if anchor else self.context.combat)[owner].clone()
+        context_ids = self.anchor_context_ids[owner] if anchor else None
         # Permanent growth is rare; it owns a refreshed projection. No root or
         # sibling cache is mutated, and every card slot remains in its key.
         misc = batch['raw:permanent_misc']
@@ -439,14 +482,18 @@ class ResidentDeckScorer:
         if len(changed):
             if projected is None:
                 projected = torch.where((misc >= 0) & (self.root['deck_ids'][owner] != 0), misc/MISC_SCALE, original)
-            context.index_copy_(0, changed, self.resolve_changed_context(owner, misc, projected, changed, anchor))
+            refreshed = self.resolve_changed_context(owner, misc, projected, changed, anchor, with_ids=anchor)
+            if anchor:
+                refreshed, identities = refreshed
+                context_ids.index_copy_(0, changed, torch.as_tensor(identities, device=self.device))
+            context.index_copy_(0, changed, refreshed)
         batch['context'] = context
         if anchor:
             batch['relic_identity'] = self.root_relic_identity[owner]
             obs, identity = self._forward(batch, 1, True)
             fields = {k: obs[k] for k in
                       ('gold', 'run_keys', 'potions', 'combat_exit_anchor', 'relics', 'relic_counters')}
-            fields.update(hp=obs['player_scalars'][:, :2], context=context, relic_identity=identity)
+            fields.update(hp=obs['player_scalars'][:, :2], context_id=context_ids[:, None], relic_identity=identity)
             # One transfer per dtype retains the exact bytes/schema used by the
             # cache. Do not cast integer IDs to floats or rendezvous per field.
             groups = {}
@@ -462,7 +509,12 @@ class ResidentDeckScorer:
                     inputs[key] = host[:, offset:end].reshape(len(rows), *shape)
                     offset = end
             def forward(host):
-                x = {k: torch.as_tensor(v, device=self.device) for k, v in host.items()}
+                # Recover context rows only for misses. The small ID is an
+                # exact byte-interned reference, not a quantized/hash feature.
+                unique, first = np.unique(inputs['context_id'].reshape(-1), return_index=True)
+                selected = first[np.searchsorted(unique, host['context_id'].reshape(-1))]
+                x = {k: torch.as_tensor(v, device=self.device) for k, v in host.items() if k != 'context_id'}
+                x['context'] = context[torch.as_tensor(selected, device=self.device)]
                 x['player_scalars'] = x.pop('hp')
                 dynamic = self.core.combat.summaries.relic_counter_terms(x['relics'], x['relic_counters'])
                 relics = x.pop('relic_identity') + (dynamic * x['relics'].ne(0)[..., None]).sum(1)
@@ -492,4 +544,6 @@ class ResidentDeckScorer:
             self.step_pipeline = None
         self.runtime.close()
         self.anchor_cache.clear()
+        self.anchor_contexts.clear()
+        self.anchor_context_bytes = 0
         self.compiled_gather = None
