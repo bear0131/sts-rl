@@ -4,9 +4,9 @@ Only the deck context and current actor/value heads adapt the old messages.
 The collector never waits for a whole vector or creates another search model.
 """
 from types import SimpleNamespace
+from collections.abc import Mapping
 import numpy as np
 import torch
-from sb3_contrib.common.maskable.distributions import MaskableCategoricalDistribution
 from env.search.anchored_chains import ChainRequest
 from rl.policies.collection_graphs import SharedCollectionGraphs
 from rl.policies.deck_latent import SearchContext
@@ -14,45 +14,66 @@ from rl.search.deck_latent import DeckLatentScorer, DeckSearchInferenceCache
 from rl.training import reward_monitor, campfire_monitor
 
 
+class _PackedViews(Mapping):
+    """Only materialize CUDA views actually consumed outside captured graphs."""
+    def __init__(self, layout, banks, count):
+        self.layout, self.banks, self.count, self.views = layout, banks, count, {}
+
+    def __len__(self): return len(self.layout)
+    def __iter__(self): return iter(self.layout)
+    def __getitem__(self, key):
+        if key not in self.views:
+            group, lo, hi, shape = self.layout[key]
+            self.views[key] = self.banks[group][:,lo:hi].reshape(self.count,*shape)
+        return self.views[key]
+
+
 class ResidentInference:
     def __init__(self, core, cache_bytes, native_host):
         self.core = core
         self.native_host = native_host
         self.policy = SimpleNamespace(core=core, training=False, parameters=core.parameters)
-        self.graphs = SharedCollectionGraphs(core)
+        self.graphs = SharedCollectionGraphs(core, capacity=256)
         self.cache = DeckSearchInferenceCache(core, cache_bytes)
         self.jobs = {}
+        self.geometry = None
 
     @torch.no_grad()
     def actor(self, payload, *, context=False, values_only=False):
         obs, masks, slots, capacity = payload
         from env.search.cuda_battle import upload_arrays
-        groups = {}
-        for key, value in obs.items():
-            groups.setdefault(value.dtype.str, []).append(key)
+        geometry = tuple((k,v.shape[1:],v.dtype.str) for k,v in obs.items())
+        if geometry != self.geometry:
+            groups, layout = {}, {}
+            for key, value in obs.items():
+                groups.setdefault(value.dtype.str, []).append(key)
+            for group, names in enumerate(groups.values()):
+                offset = 0
+                for key in names:
+                    shape = obs[key].shape[1:]
+                    end = offset+int(np.prod(shape))
+                    layout[key] = 'packed'+str(group), offset, end, shape
+                    offset = end
+            self.geometry, self.groups = geometry, groups
+            self.layout = {k:layout[k] for k in obs}
         # Concatenate in native NumPy before one upload, avoiding one eager
         # Torch copy per field and a second bank assembly on the device.
         banks = [np.concatenate([obs[k].reshape(len(masks), -1) for k in names], axis=1)
-                 for names in groups.values()]
-        uploaded = upload_arrays(self.native_host, 'cuda', banks)
-        tensor, packed = {}, {}
-        for group, (names, bank) in enumerate(zip(groups.values(), uploaded, strict=True)):
-            packed['packed'+str(group)] = bank
-            offset = 0
-            for key in names:
-                shape = obs[key].shape[1:]
-                end = offset + int(np.prod(shape))
-                tensor[key] = bank[:, offset:end].reshape(len(masks), *shape)
-                offset = end
-        self.graphs.bind_host_observations(tensor, obs, context_slots=(slots, capacity), packed=packed)
-        logits, values = self.graphs(tensor)
+                 for names in self.groups.values()]
+        uploaded = upload_arrays(self.native_host, 'cuda', [*banks, np.asarray(masks,dtype=np.uint8)])
+        packed = {'packed'+str(j):v for j,v in enumerate(uploaded[:-1])}
+        tensor = _PackedViews(self.layout, packed, len(masks))
         if values_only:
+            # Only context/map consumers request views; binding shape checks
+            # are unnecessary here because the schema built the exact banks.
+            self.graphs.host_inputs = tensor, obs, (slots, capacity), packed
+            _, values = self.graphs(tensor)
             return values.flatten().cpu().numpy()
-        dist = MaskableCategoricalDistribution(masks.shape[1]).proba_distribution(action_logits=logits.float())
-        dist.apply_masking(masks)
         width = masks.shape[1]
-        packet = torch.cat((dist.distribution.probs, dist.distribution.logits,
-                            values.reshape(-1, 1)), dim=1).cpu().numpy()
+        packet = self.graphs.host_actor(tensor, obs, (slots,capacity), packed, uploaded[-1]).cpu().numpy()
+        # Monitoring consumes the already published probabilities on the CPU,
+        # without another device gather/copy for each reward or campfire batch.
+        dist = SimpleNamespace(distribution=SimpleNamespace(probs=torch.from_numpy(packet[:,:width])))
         result = dict(probabilities=packet[:, :width], logprobs=packet[:, width:2*width],
                       values=packet[:, -1], reward=reward_monitor.policy_probabilities(dist, obs),
                       campfire=campfire_monitor.policy_probabilities(dist, obs))

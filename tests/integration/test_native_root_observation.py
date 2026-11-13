@@ -819,3 +819,27 @@ def test_root_destination_preserves_rows_and_owned_default_output(combat_factory
     with pytest.raises(ValueError, match='exactly one row'):
         encoder.encode(envs[:1], destination=destination)
     assert_nested_equal(destination, before)
+
+
+def test_native_observation_row_copy_preserves_all_fields_and_rejects_partial_write(combat_factory):
+    import slaythespire as sts
+    assert hasattr(sts, 'copy_observation_rows'), 'explicit deck observation build required'
+    env = combat_factory(['STRIKE_RED','DEFEND_RED']*5, seed=42,
+                         combat_action_contract='autoregressive-v2', card_language=True)
+    source = NativeRootObservationBatch(env).encode([env,env,env])
+    destination = {k:np.full((2,4,*v.shape[1:]),7,dtype=v.dtype) for k,v in source.items()}
+    rows, selected = np.array([7,0,5],np.int64), np.array([2,1,0],np.int64)
+    expected = {k:v.copy() for k,v in destination.items()}
+    for k,v in expected.items():v.reshape(8,*source[k].shape[1:])[rows]=source[k][selected]
+    sts.copy_observation_rows(destination, source, rows, selected, 2)
+    for k,v in expected.items():assert destination[k].tobytes()==v.tobytes(),k
+    floating = {k:np.full(v.shape,7,dtype=np.float32) for k,v in destination.items()}
+    expected_floating = {k:v.copy() for k,v in floating.items()}
+    for k,v in expected_floating.items():
+        v.reshape(8,*source[k].shape[1:])[rows] = source[k][selected]
+    sts.copy_observation_rows(floating,source,rows,selected,2)
+    for k,v in floating.items():
+        np.testing.assert_array_equal(v,expected_floating[k])
+    with pytest.raises(ValueError,match='index out of range'):
+        sts.copy_observation_rows(destination,source,np.array([0,8]),np.array([0,1]),2)
+    for k,v in expected.items():assert destination[k].tobytes()==v.tobytes(),k

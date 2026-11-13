@@ -246,39 +246,52 @@ class ResidentDeckScorer:
             relic_identity_rows=torch.as_tensor(relic_identities,device=self.device)
             incoming_banks=[torch.as_tensor(np.concatenate([np.stack([o[k] for o in observations]).reshape(len(slots),-1)
                            for k in layout],1),device=self.device) for _,layout in self.stream_root_banks]
-        self.context.combat.index_copy_(0, index, context.combat)
-        self.context.anchor.index_copy_(0, index, context.anchor)
-        self.anchor_context_ids.index_copy_(0, index, identity_rows)
         width = SharedCollectionGraphs._width(relics, 4)
         if width > self.relic_width:
-            # The old inventory bank grows; it never truncates an owned root.
+            self.context.combat.index_copy_(0, index, context.combat)
+            self.context.anchor.index_copy_(0, index, context.anchor)
+            self.anchor_context_ids.index_copy_(0, index, identity_rows)
             self.roots(self.stream_observations, self.context)
             self._pack_stream_roots()
             return
-        incoming = {}
-        for (storage,layout),uploaded in zip(self.stream_root_banks,incoming_banks,strict=True):
-            storage.index_copy_(0,index,uploaded)
-            for key,(start,end,shape) in layout.items():
-                incoming[key]=uploaded[:,start:end].reshape(len(slots),*shape)
-        groups = {}
-        for key, (group, start, end, shape) in self.root_layout.items():
-            value = incoming[key]
-            if key in ('relics', 'relic_counters'):
-                value = value[:, :self.relic_width]
-            groups.setdefault(group, []).append(value.reshape(len(slots), -1))
-        for group, values in groups.items():
-            self.packed_root[group].index_copy_(0, index, torch.cat(values, 1))
-        ids = incoming['relics'][:, :self.relic_width].long()
-        summaries = self.core.combat.summaries
-        identity = (summaries.relic_identity(ids) * ids.ne(0)[..., None]).sum(1)
-        static = (summaries.relic_terms(ids, incoming['relic_counters'][:, :self.relic_width])
-                  * (~self.decoder.live[ids])[..., None]).sum(1)
-        self.root_relic_identity.index_copy_(0, index, identity)
-        self.anchor_relic_ids.index_copy_(0,index,relic_identity_rows)
-        self.banked_static_relics.index_copy_(0, index, static)
-        self.banked_context.index_copy_(0, index, context.combat)
-        for key, bank in self.metadata_root.items():
-            bank.index_copy_(0, index, incoming[key])
+        batch = dict(index=index, combat_context=context.combat, anchor_context=context.anchor,
+                     anchor_identity=identity_rows, relic_identity=relic_identity_rows)
+        batch.update({'bank'+str(i):v for i,v in enumerate(incoming_banks)})
+        def update(inputs):
+            index = inputs['index']
+            self.context.combat.index_copy_(0,index,inputs['combat_context'])
+            self.context.anchor.index_copy_(0,index,inputs['anchor_context'])
+            self.anchor_context_ids.index_copy_(0,index,inputs['anchor_identity'])
+            incoming = {}
+            for i,(storage,layout) in enumerate(self.stream_root_banks):
+                uploaded=inputs['bank'+str(i)]
+                storage.index_copy_(0,index,uploaded)
+                for key,(start,end,shape) in layout.items():
+                    incoming[key]=uploaded[:,start:end].reshape(len(index),*shape)
+            groups = {}
+            for key,(group,start,end,shape) in self.root_layout.items():
+                value=incoming[key]
+                if key in ('relics','relic_counters'):value=value[:,:self.relic_width]
+                groups.setdefault(group,[]).append(value.reshape(len(index),-1))
+            for group,values in groups.items():
+                self.packed_root[group].index_copy_(0,index,torch.cat(values,1))
+            ids=incoming['relics'][:,:self.relic_width].long()
+            summaries=self.core.combat.summaries
+            identity=(summaries.relic_identity(ids)*ids.ne(0)[...,None]).sum(1)
+            static=(summaries.relic_terms(ids,incoming['relic_counters'][:,:self.relic_width])
+                    *(~self.decoder.live[ids])[...,None]).sum(1)
+            self.root_relic_identity.index_copy_(0,index,identity)
+            self.anchor_relic_ids.index_copy_(0,index,inputs['relic_identity'])
+            self.banked_static_relics.index_copy_(0,index,static)
+            self.banked_context.index_copy_(0,index,inputs['combat_context'])
+            for key,bank in self.metadata_root.items():bank.index_copy_(0,index,incoming[key])
+            return (inputs['combat_context'],)
+        # Admission is idempotent, unlike simulator advancement. Capture its
+        # gathers/projections together; exact row counts avoid duplicate writes
+        # to live root slots in padded batches.
+        signature=('admit-roots',len(slots),self.bank_key,
+                   tuple((k,tuple(v.shape[1:]),v.dtype) for k,v in batch.items()))
+        self.runtime._replay(self.runtime.entries,signature,batch,len(slots),update,self.runtime.capacity)
 
     def bind_wave(self, arena, owners, offset):
         if self.bound_arena is not arena:

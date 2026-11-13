@@ -772,6 +772,47 @@ def test_cuda_actor_search_context_survives_graph_changes(latent_env):
         runtime.close()
 
 
+@pytest.mark.cuda
+def test_packed_owner_actor_matches_masked_policy_through_shapes_weights_and_eviction(latent_env,cuda_battle_artifacts):
+    from rl.search.resident_inference import ResidentInference
+    from env.search.cuda_battle import load_artifacts
+    assert torch.cuda.is_available(), 'explicit CUDA owner acceptance required'
+    policy=policy_for(latent_env,'transformer64x2').cuda().eval()
+    upper,upper_mask=deepcopy(latent_env._obs()),latent_env.action_masks().copy()
+    enter_combat(latent_env)
+    combat,combat_mask=latent_env._obs(),latent_env.action_masks().copy()
+    host_runtime=load_artifacts(cuda_battle_artifacts[0])[2]
+    inference=ResidentInference(policy.core,64*1024**2,host_runtime)
+    inference.graphs.capacity=2
+    retained=[]
+    try:
+        with torch.no_grad():
+            for iteration,count in enumerate((3,17,1,9,3)):
+                rows=[upper if i%3==0 else combat for i in range(count)]
+                masks=np.stack([upper_mask if i%3==0 else combat_mask for i in range(count)])
+                obs={k:np.stack([row[k] for row in rows]) for k in combat}
+                if iteration==3:
+                    policy.core.context.roles.add_(.1)
+                    policy.core.combat.value_head[-1].bias.add_(.11)
+                    torch.cuda.synchronize();torch._C._cuda_clearCublasWorkspaces();torch.cuda.empty_cache()
+                tensors=obs_as_tensor(obs,'cuda')
+                logits,values=policy.core.actor_critic(tensors)
+                dist=policy.action_dist.proba_distribution(action_logits=logits)
+                dist.apply_masking(masks)
+                expected=(dist.distribution.probs.cpu().numpy(),dist.distribution.logits.cpu().numpy(),
+                          values.flatten().cpu().numpy())
+                actual=inference.actor((obs,masks,np.arange(count),32),context=True)
+                for key,want in zip(('probabilities','logprobs','values'),expected,strict=True):
+                    np.testing.assert_allclose(actual[key],want,rtol=3e-5,atol=2e-5,err_msg=key)
+                    retained.append((actual[key],actual[key].copy()))
+                context=policy.core.prepare_search_context(tensors)
+                for x,y in zip(actual['context'],(context.combat,context.anchor),strict=True):
+                    torch.testing.assert_close(x,y,rtol=3e-5,atol=3e-6)
+            assert inference.graphs.stats['evictions']>0
+            for actual,saved in retained:np.testing.assert_array_equal(actual,saved)
+    finally:inference.close()
+
+
 @pytest.mark.parametrize('encoder', ['pooled-mlp', 'transformer64x2'])
 def test_paired_shadow_search_batches_real_anchors_without_mutating_root(latent_env, encoder):
     from env.search.anchored_chains import paired_anchor_search

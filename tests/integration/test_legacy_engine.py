@@ -183,6 +183,9 @@ def test_legacy_native_real_ppo_two_rounds_and_ordinary_restore(tmp_path,cuda_ba
         restore_learner(restored,source,rank=0,world_size=1)
         assert restored._recovery_environment_restored
         assert restored.deck_search_rng==model.deck_search_rng
+        for key, value in restored._last_obs.items():
+            np.testing.assert_array_equal(target.venv.buf_obs[key], value, err_msg=key)
+            np.testing.assert_array_equal(model._last_obs[key], value, err_msg=key)
         restored.learn(256,reset_num_timesteps=False,callback=Verify())
         assert restored.num_timesteps==512
         assert restored._resident_search_service.status['generation']==2

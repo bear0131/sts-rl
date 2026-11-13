@@ -25,7 +25,7 @@ class DeckWorker:
         self.settings = settings
         self.core = self.engine = self.arena = self.scorer = self.inference = None
         self.compiled = None
-        self.queued, self.estimates = {}, {}
+        self.queued, self.estimates, self.actor_queue = {}, {}, {}
         self.parked_report = None
         self.generation = 0
         self.folder, self.manifest, self.host = load_artifacts(settings['artifacts'])
@@ -34,7 +34,7 @@ class DeckWorker:
         self.begin(settings['snapshot'])
 
     def begin(self, snapshot):
-        if self.engine is not None or self.queued or self.estimates:
+        if self.engine is not None or self.queued or self.estimates or self.actor_queue:
             raise RuntimeError('weights may change only at a completely drained boundary')
         data = torch.load(snapshot, map_location='cpu', weights_only=False, mmap=True)
         if self.core is None:
@@ -76,18 +76,19 @@ class DeckWorker:
         self.engine = ResidentPool(self.arena, self.scorer, capacity, budget,
             self.settings['max_depth'], self.settings['timeout'], mirror_capacity=mirrors)
         self.inference = ResidentInference(self.core, self.settings['cache_bytes'], self.host)
+        self.boundary_seconds = dict(actor=0., admission=0., search=0.)
         self.generation += 1
         self.started = time.monotonic()
         return dict(pid=os.getpid(), generation=self.generation)
 
     @property
     def pending(self):
-        return bool(self.queued or (self.engine is not None and self.engine.pending))
+        return bool(self.actor_queue or self.queued or (self.engine is not None and self.engine.pending))
 
     def submit(self, rows):
         from env.search.resident_transport import unpack_actor_roots
         rows, obs = unpack_actor_roots(rows)
-        if self.engine is None or self.estimates.keys() & rows.keys():
+        if self.engine is None or (self.estimates.keys() | self.actor_queue.keys()) & rows.keys():
             raise RuntimeError('parked owner or duplicate search')
         if all('context' in row and 'slot' not in row for row in rows.values()):
             # Read compatibility for retained shadow-training checkpoints. The
@@ -95,12 +96,26 @@ class DeckWorker:
             self.queued.update(rows)
             self.estimates.update(dict.fromkeys(rows))
             return
-        # As in the old collector, a search root goes straight to the owner.
-        # The current actor/context consumer runs here once; no actor reply
-        # roundtrip is required before the same root can enter the search.
+        # Legacy submit only enqueues. Adapt all roots accumulated by the FIFO
+        # drain together immediately before its next tick, not once per packet.
+        self.actor_queue.update(rows)
+
+    def _prepare_roots(self, upper=None):
+        rows, self.actor_queue = self.actor_queue, {}
+        if not rows:
+            return self.inference.actor(upper) if upper is not None else None
         keys = list(rows)
+        obs = {k: np.stack([r['observation'][k] for r in rows.values()])
+               for k in next(iter(rows.values()))['observation']}
         masks = np.stack([r['mask'] for r in rows.values()])
         slots = np.asarray([r['slot'] for r in rows.values()], np.intp)
+        if upper is not None:
+            upper_obs, upper_masks, upper_slots, capacity = upper
+            if capacity != self.settings['environment_capacity']:
+                raise ValueError('actor batch environment capacity changed')
+            obs = {k: np.concatenate((v, upper_obs[k]), axis=0) for k, v in obs.items()}
+            masks = np.concatenate((masks, upper_masks), axis=0)
+            slots = np.concatenate((slots, upper_slots), axis=0)
         actor = self.inference.actor((obs, masks, slots, self.settings['environment_capacity']), context=True)
         fields = ResidentDeckScorer.root_fields(self.core)
         for j, key in enumerate(keys):
@@ -111,13 +126,29 @@ class DeckWorker:
                 observation={k: row['observation'][k] for k in fields},
                 context=tuple(v[j] for v in actor['context']),
                 worlds=row['worlds'], budget=row['budget'], submitted_at=row['submitted_at'])
+        if upper is not None:
+            count = len(keys)
+            result = {k: actor[k][count:] for k in ('probabilities', 'logprobs', 'values')}
+            for name in ('reward', 'campfire'):
+                indices, values = actor[name]
+                selected = indices >= count
+                result[name] = indices[selected]-count, values[selected]
+            return result
 
     def receive(self, steps=1):
+        start = time.perf_counter()
+        self._prepare_roots()
+        now = time.perf_counter()
+        self.boundary_seconds['actor'] += now-start
+        start = now
         if self.queued:
             accepted = self.engine.admit(self.queued)
             for key in accepted:
                 del self.queued[key]
+        now = time.perf_counter()
+        self.boundary_seconds['admission'] += now-start
         ready = self.engine.receive(steps=steps) if self.engine.pending else {}
+        self.boundary_seconds['search'] += time.perf_counter()-now
         for key, result in ready.items():
             actor = self.estimates.pop(key)
             if actor is not None:
@@ -128,7 +159,7 @@ class DeckWorker:
         if self.engine is None:
             raise RuntimeError('inference on parked weights')
         if kind == 'upper':
-            return self.inference.actor(payload)
+            return self._prepare_roots(payload)
         if kind == 'values':
             observations, masks, slots = payload
             return self.inference.actor((observations, masks, slots,
@@ -147,6 +178,7 @@ class DeckWorker:
             return self.parked_report
         return dict(pid=os.getpid(), generation=self.generation,
             elapsed_seconds=time.monotonic()-self.started, queued_roots=len(self.queued),
+            boundary_seconds=dict(self.boundary_seconds),
             pool=self.engine.statistics(), context_refreshes=self.scorer.refreshes,
             anchor_cache=dict(self.scorer.anchor_cache.stats),
             torch_allocated=torch.cuda.memory_allocated(),
@@ -185,5 +217,6 @@ class DeckWorker:
         else:
             report = self.parked_report
         self.queued.clear()
+        self.actor_queue.clear()
         self.estimates.clear()
         return dict(report or {}, cancelled=cancelled)

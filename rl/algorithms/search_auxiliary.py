@@ -64,8 +64,9 @@ class SearchRolloutBuffer(SharedRolloutBuffer):
                     or not np.isclose(log_prob[j], chosen[1], atol=1e-6)):
                 raise ValueError('rollout must record the executed search action and behavior probability')
         rows = positions, indices
-        for key in self.observations:
-            self.observations[key][rows] = obs[key]
+        if obs is not None:
+            for key in self.observations:
+                self.observations[key][rows] = obs[key]
         self.actions[rows] = np.asarray(action).reshape(-1, self.action_dim)
         self.rewards[rows], self.episode_starts[rows] = reward, episode_start
         self.values[rows], self.log_probs[rows] = value, log_prob

@@ -41,6 +41,7 @@ class SharedCollectionGraphs:
         self.host_inputs = None
         self.map_entries = OrderedDict()
         self.context_cache = None
+        self.context_entries = OrderedDict()
         self.weight_versions = None
         self.begin_collection()
 
@@ -102,7 +103,7 @@ class SharedCollectionGraphs:
                 # backing blocks. Finish queued replay before dropping it.
                 torch.cuda.synchronize(self.device)
                 cache.popitem(last=False)
-                if not self.entries and not self.map_entries:
+                if not self.entries and not self.map_entries and not self.context_entries:
                     # The last graph ended this pool's allocator lifetime.
                     # A retired pool token cannot start a new capture.
                     self.temporary_pool = torch.cuda.graph_pool_handle()
@@ -158,6 +159,22 @@ class SharedCollectionGraphs:
         finally:
             self.sequence_done.record(stream)
 
+    def host_actor(self, observations, host, slots, packed, masks):
+        """The same phase graphs, with categorical output inside each replay.
+
+        The frozen owner has one exact host batch. Unused observation fields
+        stay packed; no per-field CUDA views, masking or validation rendezvous
+        need to execute in Python between graph replays.
+        """
+        if self.closed:
+            raise RuntimeError('collection graphs require a live runtime')
+        stream = torch.cuda.current_stream(self.device)
+        stream.wait_event(self.sequence_done)
+        try:
+            return self._forward(observations, host, slots, packed, masks)[0]
+        finally:
+            self.sequence_done.record(stream)
+
     def _reset_map_cache(self, rooms, features):
         # These owned buffers survive switches between inference_mode and
         # no_grad callers, as well as changes to model weights.
@@ -201,8 +218,8 @@ class SharedCollectionGraphs:
             padded = (1 << (count - 1).bit_length()) if count <= 16 else ((count + 15) // 16) * 16
             signature = ('run-context', padded, widths,
                          tuple((k, tuple(v.shape[1:]), v.dtype) for k, v in batch.items()))
-            encoded = self._replay(self.entries, signature, batch, padded,
-                lambda inputs: (encoder(inputs, active_widths=widths),), self.capacity)[0][:count]
+            encoded = self._replay(self.context_entries, signature, batch, padded,
+                lambda inputs: (encoder(inputs, active_widths=widths),), min(32, self.capacity))[0][:count]
             latent[torch.as_tensor(slots[rows], device=self.device)] = encoded[
                 torch.as_tensor(inverse, device=self.device)]
             for k in encoder.keys:
@@ -212,7 +229,7 @@ class SharedCollectionGraphs:
         self.context_cache = versions, previous, latent, valid
         return latent if context_slots is None else latent[torch.as_tensor(slots, device=self.device)]
 
-    def _forward(self, observations, host=None, context_slots=None, packed=None):
+    def _forward(self, observations, host=None, context_slots=None, packed=None, actor_masks=None):
         if self.closed or self.core.training or torch.is_grad_enabled():
             raise RuntimeError('collection graphs require a live eval/no-grad scope')
         if torch.is_autocast_enabled('cuda'):
@@ -228,7 +245,8 @@ class SharedCollectionGraphs:
         if deck_model:
             self.core.publish_actor_context(context)
         phase = observations['phase'].long().flatten()
-        use_map = self.core.map_dag_enabled and 'upper_public_context' in observations
+        use_map = (self.core.map_dag_enabled and 'upper_public_context' in observations
+                   and (host is None or np.any(host['phase'] != vocab.PHASE_VOCAB_INDEX['combat'])))
         if host is not None:
             host_phase = host['phase'].reshape(-1)
             host_dirty = np.zeros(len(host_phase), dtype=bool)
@@ -311,11 +329,12 @@ class SharedCollectionGraphs:
                 encoded_map = encoded_map[slot_tensor]
         # Pack by dtype, preserving categorical integers exactly. Each phase
         # submits only a few gathers/copies; views are reconstructed in its graph.
+        geometry = host if host is not None and packed is not None else observations
         schema = tuple((key, tuple(value.shape[1:]), value.dtype)
-                       for key, value in observations.items())
+                       for key, value in geometry.items())
         if getattr(self, '_packed_schema', None) != schema:
             groups = {}
-            for key, value in observations.items():
+            for key, value in geometry.items():
                 groups.setdefault(value.dtype, []).append(key)
             layout, grouped = {}, {}
             for index, keys in enumerate(groups.values()):
@@ -323,7 +342,7 @@ class SharedCollectionGraphs:
                 grouped[group] = keys
                 offset = 0
                 for key in keys:
-                    shape = observations[key].shape[1:]
+                    shape = geometry[key].shape[1:]
                     end = offset + int(np.prod(shape))
                     layout[key] = (group, offset, end, shape)
                     offset = end
@@ -367,10 +386,14 @@ class SharedCollectionGraphs:
                     choice_width = self._width(choices, 1)
             if use_map and not combat:
                 batch['_map_encoding'] = encoded_map[selected]
+            if actor_masks is not None:
+                batch['_actor_mask'] = actor_masks[selected]
             union_width = (self.core.overworld.encoder.merged_width(host, rows, multiple=16)
                 if phase_id == MERGED_UPPER_PHASE else None)
             count = len(selected)
-            padded = (1 << (count - 1).bit_length()) if count <= 16 else ((count + 15) // 16) * 16
+            padded = (max(8, 1 << (count - 1).bit_length()) if count <= 16
+                      else ((count + 15) // 16) * 16) if actor_masks is not None else (
+                      (1 << (count - 1).bit_length()) if count <= 16 else ((count + 15) // 16) * 16)
             signature = (phase_id, padded, deck, relic, union_width, choice_width, schema,
                          tuple((key, tuple(value.shape[1:]), value.dtype) for key, value in batch.items()))
 
@@ -401,6 +424,16 @@ class SharedCollectionGraphs:
                                                if phase_id == MERGED_UPPER_PHASE else (deck, relic)),
                                            upper_map_encoding=tensors.get('_map_encoding'))
 
+            if actor_masks is not None:
+                raw_forward = forward
+                def forward(packed_batch):
+                    out, value = raw_forward(packed_batch)
+                    # Same two Categorical normalizations as MaskableCategorical:
+                    # original logits first, then the mask and normalization.
+                    normalized = out.float()-out.float().logsumexp(-1, keepdim=True)
+                    masked = normalized.masked_fill(~packed_batch['_actor_mask'].bool(), -1e8)
+                    logprob = masked-masked.logsumexp(-1, keepdim=True)
+                    return torch.cat((logprob.softmax(-1), logprob, value.reshape(-1,1)),1), value
             output = self._replay(self.entries, signature, batch, padded, forward, self.capacity)
             # Results own storage; subsequent replay/eviction cannot mutate
             # them. Register the clone's stream before releasing private pools.
@@ -410,6 +443,8 @@ class SharedCollectionGraphs:
             indices.append(selected)
             logits.append(out.float())
             values.append(value.float())
+        if len(indices) == 1:
+            return logits[0], values[0]
         order = torch.argsort(torch.cat(indices))
         return torch.cat(logits)[order], torch.cat(values)[order]
 
@@ -417,6 +452,7 @@ class SharedCollectionGraphs:
         if not self.closed:
             torch.cuda.synchronize(self.device)
             self.entries.clear()
+            self.context_entries.clear()
             self.context_cache = None
             self.map_entries.clear()
             self.map_cache = None

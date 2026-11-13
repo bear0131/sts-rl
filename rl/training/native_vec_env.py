@@ -58,6 +58,7 @@ class NativeSearchVecEnv(DummyVecEnv):
         self._strategic_observation_keys = None
         self._deferred_observation_rows = set()
         self.strategic_observation_rows_omitted = 0
+        self.step_seconds = dict(wrappers=0., encoding=0.)
         try:
             self.native_search_batch = NativeSearchBatch(self.envs, threads, direct_observations=True)
             self.native_root_observations = None
@@ -128,7 +129,7 @@ class NativeSearchVecEnv(DummyVecEnv):
             raise RuntimeError('complete subset steps cannot interrupt strategic observation collection')
         return self._step_subset(actions)
 
-    def _step_subset(self, actions, *, observation_keys=None):
+    def _step_subset(self, actions, *, observation_keys=None, borrow=False):
         indices = list(actions)
         if (not indices or any(type(i) is not int or not 0 <= i < self.num_envs for i in indices)
                 or any(not self.action_space.contains(a) for a in actions.values())):
@@ -141,7 +142,7 @@ class NativeSearchVecEnv(DummyVecEnv):
         self.actions = np.zeros(self.num_envs, dtype=np.int64)
         for i, action in actions.items():
             self.actions[i] = action
-        return self._step_indices(indices, subset=True, observation_keys=observation_keys)
+        return self._step_indices(indices, subset=True, observation_keys=observation_keys, borrow=borrow)
 
     @contextmanager
     def strategic_observations(self, keys):
@@ -198,6 +199,7 @@ class NativeSearchVecEnv(DummyVecEnv):
                 base._emit_nosl_value_observations = enabled
 
     def _step_indices(self, indices, *, subset=False, observation_keys=None, borrow=False):
+        started = time.perf_counter()
         cohort = getattr(self, 'episode_rollout_active', None)
         prefetched, self._prefetched_steps = self._prefetched_steps, {}
         self._small_step_plan = None
@@ -261,6 +263,9 @@ class NativeSearchVecEnv(DummyVecEnv):
             self._deferred_observation_rows.discard(index)
         if prefetched:
             raise RuntimeError('prefetched transition belongs to an inactive environment')
+        now = time.perf_counter()
+        self.step_seconds['wrappers'] += now-started
+        started = now
         if pending:
             encoder = (self.native_root_observations.encode if observation_keys is None
                        else self.native_root_observations.encode_progress)
@@ -288,10 +293,18 @@ class NativeSearchVecEnv(DummyVecEnv):
             # Respect the checkpoint's visible keys and leave reset/overworld
             # rows intact. The codec already returned one array per field.
             if destination is None:
-                for key in (self.keys if observation_keys is None else observations):
-                    self.buf_obs[key][pending_indices] = observations[key]
+                if observation_keys is None and hasattr(sts, 'copy_observation_rows'):
+                    sts.copy_observation_rows(self.buf_obs, {k:observations[k] for k in self.keys},
+                        pending_indices, np.arange(len(pending), dtype=np.int64), 1)
+                else:
+                    for key in (self.keys if observation_keys is None else observations):
+                        self.buf_obs[key][pending_indices] = observations[key]
+        self.step_seconds['encoding'] += time.perf_counter()-started
         if subset:
             rows = np.asarray(indices, dtype=np.intp)
+            if borrow:
+                return (self.buf_obs, self.buf_rews[rows], self.buf_dones[rows],
+                        [self.buf_infos[i] for i in indices])
             keys = (self.keys if observation_keys is None else
                     ('phase', 'act', 'floor') if len(pending) == len(indices) else observation_keys)
             # Advanced indexing copies each selected row; no second copy is needed.
@@ -370,6 +383,26 @@ class NativeSearchVecEnv(DummyVecEnv):
         if getattr(self, '_small_step_plan', None) is not None or getattr(self, '_prefetched_steps', None):
             raise RuntimeError('cannot reset before consuming a prefetched step')
         return super().reset()
+
+    def restore_training_states(self, states):
+        """Restore simulator and its resident observation bank at one boundary.
+
+        Generic VecEnv.env_method returns restored observations without writing
+        DummyVecEnv's bank. The native search exporter and borrowed PPO consumer
+        both read that bank, so it must publish the same verified observations.
+        """
+        if (len(states) != self.num_envs or self._strategic_observation_keys is not None
+                or self._small_step_plan is not None or self._prefetched_steps):
+            raise ValueError('native environment restore requires a drained matching vector')
+        restored = [self.env_method('restore_training_state', state, indices=i)[0]
+                    for i, state in enumerate(states)]
+        for i, (observation, info) in enumerate(restored):
+            self._save_obs(i, observation)
+            self.reset_infos[i] = info
+        self.buf_rews.fill(0.)
+        self.buf_dones.fill(False)
+        self.buf_infos = [{} for _ in states]
+        return self._obs_from_buf()
 
     def begin_episode_rollout(self, first_seed, *, censored_games='error'):
         if self._strategic_observation_keys is not None:

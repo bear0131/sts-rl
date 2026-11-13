@@ -6,6 +6,7 @@ state pages; no root or sibling is relocated when another root is admitted.
 """
 import numpy as np
 import torch
+import time
 
 from rl.policies.deck_latent import SearchContext
 from rl.search.resident_step import ResidentStepPipeline
@@ -43,6 +44,7 @@ class ResidentPool:
         self.counts = dict(chains=0, atomic_steps=0, budget_floor_overage=0,
                           max_active=0, submitted_roots=0, retired_roots=0,
                           submissions_while_pending=0, ticks=0,
+                          step_seconds=0., completion_seconds=0.,
                           page_oom_retries=0, deferred_admissions=0)
 
     @property
@@ -225,9 +227,13 @@ class ResidentPool:
             if not self.remaining:
                 break
             deadline = self.ledger.deadline()
+            start = time.perf_counter()
             self.remaining = self.pipeline.tick(self.remaining,deadline)
+            now = time.perf_counter()
+            self.counts['step_seconds'] += now-start
             self.counts['ticks'] += 1
             out = self.reap()
+            self.counts['completion_seconds'] += time.perf_counter()-now
             if out:
                 return out
         if not out and not self.remaining and self.pending:

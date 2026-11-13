@@ -11,11 +11,13 @@ from rl.algorithms.deck_schedule import configure, check_due, advance, apply_sta
 
 
 def at_collection_boundary(model, *, rank, world_size, local_root, ascension, average):
+    # A fixed qualification checkpoint has no schedule. Its ephemeral weights
+    # still belong to this run, never to the path serialized by the old run.
+    model.deck_search_snapshot_dir = str(Path(local_root) / 'search-weights')
     schedule = configure(model)
     if schedule is None:
         return
     completed = model.ppo_rollouts_completed
-    model.deck_search_snapshot_dir = str(Path(local_root) / 'search-weights')
     if schedule.validation_games % world_size:
         raise ValueError('fixed validation games must divide the training rank count')
     if check_due(model.deck_training_state, schedule, completed):

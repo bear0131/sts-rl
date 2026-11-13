@@ -73,24 +73,29 @@ def source_targets(HAND, POTION, MONSTER, QUERY, END, KEY_W, KEY_B, SOURCE_W,
 @triton.jit
 def selection_scores(X, MAP, QUERY, KW, KB, NW, NB, LEGAL, COUNT, STATUS, OUT,
                       EPS: tl.constexpr, C: tl.constexpr, W: tl.constexpr, N: tl.constexpr):
-    r = tl.program_id(0)*32+tl.arange(0, 32)
-    d = tl.arange(0, 64)
-    row, slot = r//96, r%96
-    valid = (row < N) & (row < tl.load(COUNT)) & (tl.load(STATUS+7) == 0)
-    legal = tl.load(LEGAL+row*198+91+slot, valid, False) & (slot < W)
-    score = tl.full((32,), -1.e9, tl.float32)
-    if tl.sum(legal.to(tl.int32), 0) > 0:
-        index = tl.load(MAP+row*C+C-W+slot, legal, -1)
-        x = tl.load(X+index[:, None]*64+d[None, :], (legal & (index >= 0))[:, None], 0.)
-        u = x-tl.sum(x, 1)[:, None]/64.
-        x = u*tl.rsqrt(tl.sum(u*u, 1)/64.+EPS)[:, None]
-        x = x*tl.load(NW+d)[None, :]+tl.load(NB+d)[None, :]
-        x = tl.where((index >= 0)[:, None], x, 0.)
-        key = tl.dot(x, tl.load(KW+d[:, None]+64*d[None, :]), input_precision='tf32x3')
-        key += tl.load(KB+d)[None, :]
-        query = tl.load(QUERY+row[:, None]*128+d[None, :], legal[:, None], 0.)
-        score = tl.where(legal, tl.sum(query*key, 1)*.125, -1.e9)
-    tl.store(OUT+row*198+91+slot, score, row < N)
+    row = tl.program_id(0)
+    live = (row < N) & (row < tl.load(COUNT)) & (tl.load(STATUS+7) == 0)
+    all_slots = tl.arange(0,128)
+    any_legal = tl.load(LEGAL+row*198+91+all_slots,live & (all_slots<96),False)
+    if tl.sum(any_legal.to(tl.int32),0)==0:return
+    for segment in tl.static_range(3):
+        d = tl.arange(0, 64)
+        slot = segment*32+tl.arange(0,32)
+        valid = (row < N) & (row < tl.load(COUNT)) & (tl.load(STATUS+7) == 0)
+        legal = tl.load(LEGAL+row*198+91+slot, valid, False) & (slot < W)
+        score = tl.full((32,), -1.e9, tl.float32)
+        if tl.sum(legal.to(tl.int32), 0) > 0:
+            index = tl.load(MAP+row*C+C-W+slot, legal, -1)
+            x = tl.load(X+index[:, None]*64+d[None, :], (legal & (index >= 0))[:, None], 0.)
+            u = x-tl.sum(x, 1)[:, None]/64.
+            x = u*tl.rsqrt(tl.sum(u*u, 1)/64.+EPS)[:, None]
+            x = x*tl.load(NW+d)[None, :]+tl.load(NB+d)[None, :]
+            x = tl.where((index >= 0)[:, None], x, 0.)
+            key = tl.dot(x, tl.load(KW+d[:, None]+64*d[None, :]), input_precision='tf32x3')
+            key += tl.load(KB+d)[None, :]
+            query = tl.load(QUERY+row[:, None]*128+d[None, :], legal[:, None], 0.)
+            score = tl.where(legal, tl.sum(query*key, 1)*.125, -1.e9)
+        tl.store(OUT+row*198+91+slot, score, legal)
 
 
 @triton.jit
@@ -145,7 +150,7 @@ def frozen_combat_logits(net, state, blocks, legal, selected, remaining, row_cou
     n = len(state)
     query = torch.empty((n, 128), device=state.device)
     end = torch.empty(n, device=state.device)
-    out = torch.empty((n, 198), device=state.device)
+    out = torch.full((n, 198), -1e9, device=state.device)
     legal, selected, remaining = legal.contiguous(), selected.contiguous(), remaining.contiguous()
     shared_queries[(triton.cdiv(n, 32),)](state, net.pointer_query.weight, net.pointer_query.bias,
         head.global_query.weight, net.end.weight, net.end.bias, row_count, status, query, end,
@@ -155,7 +160,7 @@ def frozen_combat_logits(net, state, blocks, legal, selected, remaining, row_cou
     source_targets[(n,)](hand, potion, monster, query, end, net.pointer_key.weight,
         net.pointer_key.bias, head.source_query.weight, head.target_key.weight, legal, row_count,
         status, out, hand.stride(0), num_warps=4, enable_fp_fusion=False)
-    selection_scores[(triton.cdiv(n*96, 32),)](attention, mapping, query, net.pointer_key.weight,
+    selection_scores[(n,)](attention, mapping, query, net.pointer_key.weight,
         net.pointer_key.bias, net.norm.weight, net.norm.bias, legal, row_count, status, out,
         net.norm.eps, consumers, width, n, num_warps=4, enable_fp_fusion=False)
     subset_scores[(n,)](state, hand, selected, remaining, legal, row_count, status,

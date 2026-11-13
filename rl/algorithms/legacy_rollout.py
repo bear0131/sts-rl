@@ -31,6 +31,15 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     if n_rollout_steps != rollout_buffer.buffer_size:
         raise ValueError('rollout must fill its declared sample count')
     vec = env.venv
+    import slaythespire as sts
+    if not hasattr(sts, 'copy_observation_rows'):
+        raise RuntimeError('legacy PPO consumer requires the explicit native row-copy build')
+    if any(not np.array_equal(value, vec.buf_obs[key]) for key,value in model._last_obs.items()):
+        raise RuntimeError('restored policy observation differs from live vector observation')
+    # The collector owns these slots; save each pre-action row before advancing
+    # it. No intermediate full-observation copy or copy-back is necessary.
+    model._last_obs = vec.buf_obs
+    vector_start = dict(vec.step_seconds)
     model.policy.set_training_mode(False)
     rollout_buffer.reset()
     reward_monitor.begin_collection(model)
@@ -141,7 +150,10 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             ordered = {i: actions.pop(i) for i in indices}
             rows = np.asarray(indices, np.intp)
             # Full observations are required by the current critic/learner.
-            old = {k: v[rows] for k, v in model._last_obs.items()}
+            sts.copy_observation_rows(rollout_buffer.observations, model._last_obs,
+                positions[rows]*vec.num_envs+rows, rows, 2)
+            monitor_keys = {'reward_keys'} | {key for key,_,_ in reward_monitor.KINDS.values()}
+            old = {k: model._last_obs[k][rows] for k in monitor_keys}
             action_rows = np.asarray(list(ordered.values()), np.int64)
             mask_rows = np.stack([masks.pop(i) for i in indices])
             value_rows, logp_rows = np.asarray([estimates.pop(i) for i in indices], np.float32).T
@@ -150,7 +162,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 if np.isnan(value_rows[j]):
                     deferred_values.append((int(positions[i]), i))
             stream.before(ordered)
-            observations, rewards, dones, infos = vec.step_subset(ordered)
+            observations, rewards, dones, infos = vec._step_subset(ordered, borrow=True)
             env.episode_returns[rows] += rewards
             env.episode_lengths[rows] += 1
             for j, i in enumerate(indices):
@@ -180,12 +192,10 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 ([r[0] for r in reward_rows], np.asarray([r[1] for r in reward_rows])), infos)
             campfire_monitor.record_step(model, action_rows, mask_rows,
                 ([r[0] for r in campfire_rows], np.asarray([r[1] for r in campfire_rows])), infos)
-            rollout_buffer.add_subset(rows, old, action_rows, rewards, episode_starts,
+            rollout_buffer.add_subset(rows, None, action_rows, rewards, episode_starts,
                                       value_rows, logp_rows, action_masks=mask_rows)
             model.num_timesteps += len(rows)
             model._update_info_buffer(infos, dones)
-            for key in observations:
-                model._last_obs[key][rows] = observations[key]
             model._last_episode_starts[rows] = dones
             ready.update(i for i in indices if positions[i] < n_rollout_steps)
             prefix = sum(info.get('simulator_transition') is False for info in infos)
@@ -223,6 +233,8 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
         apply_room_returns(model, rollout_buffer)
         model.deck_search_rng = rng.bit_generator.state
         stats['collection_seconds'] = time.monotonic()-started
+        stats.update({'vector_'+key+'_seconds': value-vector_start[key]
+                      for key,value in vec.step_seconds.items()})
         stats['effective_nonforced_per_second'] = stream.stats['policy_rows']/stats['collection_seconds']
         # Keep integer work and local timing before the distributed scalar
         # reducer averages ranks. This is diagnostic output, never model input.

@@ -6,9 +6,63 @@
 #include <pybind11/stl.h>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace sts::deck_observation {
 namespace py = pybind11;
+
+// Exact byte copies for complete PPO observations. The source and destination
+// keep their public dictionary schema; only the per-field Python loop moves.
+inline void copyObservationRows(py::dict destination, py::dict source,
+    py::array_t<int64_t, py::array::c_style> destination_rows,
+    py::array_t<int64_t, py::array::c_style> source_rows, int destination_axes) {
+    if (destination_axes < 1 || destination_axes > 2 || destination_rows.ndim()!=1
+        || source_rows.ndim()!=1 || destination_rows.size()!=source_rows.size()
+        || destination.size()!=source.size())
+        throw std::invalid_argument("invalid observation row copy geometry");
+    struct Field { char *destination; const char *source; size_t elements, source_bytes, destination_bytes; bool integer_to_float, bool_to_float; };
+    std::vector<Field> fields;
+    for (auto item: destination) {
+        if (!source.contains(item.first)) throw std::invalid_argument("observation copy schema mismatch");
+        auto dst=py::cast<py::array>(item.second), src=py::cast<py::array>(source[item.first]);
+        const bool integer_to_float=dst.dtype().equal(py::dtype::of<float>())
+                                    && src.dtype().equal(py::dtype::of<int64_t>());
+        const bool bool_to_float=dst.dtype().equal(py::dtype::of<float>())
+                                 && src.dtype().equal(py::dtype::of<bool>());
+        if (!dst.writeable() || !(dst.flags() & py::array::c_style)
+            || !(src.flags() & py::array::c_style) || dst.ndim()!=src.ndim()+destination_axes-1
+            || src.ndim()<1 || (!dst.dtype().equal(src.dtype()) && !integer_to_float && !bool_to_float))
+            throw std::invalid_argument("observation copy requires compatible contiguous arrays");
+        size_t elements=1;
+        for (int dim=1;dim<src.ndim();++dim) {
+            if (src.shape(dim)!=dst.shape(dim+destination_axes-1))
+                throw std::invalid_argument("observation copy field shape mismatch");
+            elements*=src.shape(dim);
+        }
+        int64_t count=dst.shape(0)*(destination_axes==2 ? dst.shape(1) : 1);
+        for (py::ssize_t row=0;row<source_rows.size();++row)
+            if (source_rows.data()[row]<0 || source_rows.data()[row]>=src.shape(0)
+                || destination_rows.data()[row]<0 || destination_rows.data()[row]>=count)
+                throw std::invalid_argument("observation row copy index out of range");
+        fields.push_back({static_cast<char*>(dst.mutable_data()),static_cast<const char*>(src.data()),
+                          elements,elements*src.itemsize(),elements*dst.itemsize(),integer_to_float,bool_to_float});
+    }
+    py::gil_scoped_release release;
+    for (const auto &field:fields)
+        for (py::ssize_t row=0;row<source_rows.size();++row) {
+            char *dst=field.destination+destination_rows.data()[row]*field.destination_bytes;
+            const char *src=field.source+source_rows.data()[row]*field.source_bytes;
+            // SB3's retained rollout storage represents categorical fields in
+            // float32. Preserve its original NumPy assignment conversion.
+            if (field.integer_to_float) {
+                auto out=reinterpret_cast<float*>(dst);auto in=reinterpret_cast<const int64_t*>(src);
+                for (size_t i=0;i<field.elements;++i)out[i]=static_cast<float>(in[i]);
+            } else if (field.bool_to_float) {
+                auto out=reinterpret_cast<float*>(dst);auto in=reinterpret_cast<const bool*>(src);
+                for (size_t i=0;i<field.elements;++i)out[i]=static_cast<float>(in[i]);
+            } else std::memcpy(dst,src,field.source_bytes);
+        }
+}
 class DeckContextEncoder {
     std::vector<int> cards_;
     int vocab_, slots_;
@@ -76,6 +130,7 @@ public:
     }
 };
 inline void bindDeckContextEncoder(py::module_ &m) {
+    m.def("copy_observation_rows", &copyObservationRows);
     py::class_<DeckContextEncoder>(m, "DeckContextEncoder")
         .def(py::init<std::vector<int>, int, int, double, double>())
         .def("encode", &DeckContextEncoder::encode);

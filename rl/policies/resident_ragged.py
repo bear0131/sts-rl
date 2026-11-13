@@ -110,6 +110,10 @@ def indexed_pile_projection(SCALARS, UPGRADES, ROWS, ROW_COUNT, BASE, DELTA, UPG
                             STRIDE: tl.constexpr, START: tl.constexpr, SCALE: tl.constexpr):
  r=tl.program_id(0)*32+tl.arange(0,32);k=tl.arange(0,32);d=tl.arange(0,64)
  active=(r<M)&(r//3<tl.load(ROW_COUNT))
+ if tl.sum(active.to(tl.int32),0)==0:
+  tl.store(OUT+r[:,None]*64+d[None,:],0.,r[:,None]<M)
+  tl.store(SIZES+r,0.,r<M)
+  return
  physical=tl.load(ROWS+r//3,active,0);zone=r%3
  base_sum=tl.zeros((32,64),tl.float32);upgraded_sum=tl.zeros((32,64),tl.float32)
  magnitude=tl.zeros((32,),tl.float32);size=tl.zeros((32,),tl.float32)
