@@ -63,6 +63,13 @@ __device__ __forceinline__ int deck_observe_actions(const sts::BattleContext&b,i
  }
  return count;
 }
+// Admission consumes legal action bits only, before the first real branch step.
+extern "C" __global__ void deck_observe_actions_indexed(unsigned char*arena,int*constructed,int*prefix,unsigned*bits,int*mask,int*status,int*indices,int*count,int n){
+ int j=blockIdx.x*blockDim.x+threadIdx.x;if(j>=n||j>=*count)return;
+ int i=indices[j];device_state::require(constructed[i]);
+ const auto&b=*reinterpret_cast<const sts::BattleContext*>(deck_state_address(arena,i));
+ deck_observe_actions<true>(b,prefix,bits,mask,status,i);
+}
 template<bool Clear>
 __device__ __forceinline__ void deck_observe_metadata(const sts::BattleContext&b,float*upgrades,int*misc,int i){
  constexpr int C=compact_leaf::kCardIds;

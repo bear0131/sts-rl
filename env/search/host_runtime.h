@@ -136,7 +136,7 @@ public:
         py::dict d;d["requests"]=requests_;d["misses"]=misses_;d["hits"]=hits_;d["batch_duplicates"]=duplicates_;
         d["evictions"]=evictions_;d["bytes"]=bytes_;d["peak_bytes"]=peak_;d["key_seconds"]=key_seconds_;d["forward_seconds"]=forward_seconds_;return d;
     }
-    py::tuple forward(py::dict observations,py::function callback,py::object name_space) {
+    py::tuple forward(py::dict observations,py::function callback,py::object name_space,bool indexed) {
         auto started=Clock::now();py::list names=py::module_::import("builtins").attr("sorted")(observations);
         if(!py::len(names))throw py::value_error("cache inputs require a nonempty batch");
         std::vector<py::array> arrays;std::vector<size_t> widths;py::list schema;
@@ -147,7 +147,7 @@ public:
             py::tuple shape(a.ndim()-1);for(int i=1;i<a.ndim();++i)shape[i-1]=a.shape(i);
             schema.append(py::make_tuple(name,shape,a.dtype().attr("str")));
             size_t row=a.nbytes()/count;arrays.push_back(a);widths.push_back(row);width+=row;}
-        if(!limit_){requests_+=count;misses_+=count;auto result=callback(observations).cast<py::tuple>();forward_seconds_+=elapsed(started);return result;}
+        if(!limit_){requests_+=count;misses_+=count;Array<int64_t> take(count);for(ssize_t i=0;i<count;++i)take.mutable_data()[i]=i;auto result=(indexed?callback(observations,take):callback(observations)).cast<py::tuple>();forward_seconds_+=elapsed(started);return result;}
         auto scope_key=py::make_tuple(name_space,py::tuple(schema));
         if(!scopes_.contains(scope_key)){if(py::len(scopes_)>=64){py::object first=py::reinterpret_borrow<py::object>(scopes_.begin()->first);scopes_.attr("pop")(first);}scopes_[scope_key]=next_scope_++;}
         uint64_t scope=scopes_[scope_key].cast<uint64_t>();
@@ -166,7 +166,7 @@ public:
         if(!missing.empty()){
             started=Clock::now();Array<int64_t> take(missing.size());std::copy(missing.begin(),missing.end(),take.mutable_data());
             py::dict selected;for(size_t j=0;j<arrays.size();++j)selected[names[j]]=arrays[j].attr("__getitem__")(take);
-            auto result=callback(selected).cast<py::tuple>();auto logits=py::array::ensure(result[0]);Array<float> values(result[1]);
+            auto result=(indexed?callback(selected,take):callback(selected)).cast<py::tuple>();auto logits=py::array::ensure(result[0]);Array<float> values(result[1]);
             if(logits.ndim()!=2||logits.shape(1)!=0||values.size()!=ssize_t(missing.size()))throw py::value_error("anchor cache requires one scalar per row");
             forward_seconds_+=elapsed(started);auto ptr=values.data();
             {py::gil_scoped_release unlocked;
@@ -296,7 +296,7 @@ inline py::dict complete_results(const std::vector<Handle>& handles,py::dict ban
 }
 
 inline void bind(py::module_& m) {
-    m.attr("host_runtime_version")=1;
+    m.attr("host_runtime_version")=2;
     py::class_<Handle>(m,"RootHandle").def_readonly("slot",&Handle::slot).def_readonly("generation",&Handle::generation).def_readonly("key",&Handle::key);
     py::class_<RootLedger>(m,"RootLedger").def(py::init<int>()).def("claim",&RootLedger::claim).def("release",&RootLedger::release)
         .def("set_deadlines",&RootLedger::set_deadlines).def("deadline",&RootLedger::deadline,py::call_guard<py::gil_scoped_release>())
@@ -305,7 +305,7 @@ inline void bind(py::module_& m) {
     py::class_<DevicePages>(m,"DevicePages").def(py::init<int,int,int,py::function,int,int>(),py::arg("root_capacity"),py::arg("budget_cap"),py::arg("state_bytes"),py::arg("allocator"),py::arg("page_size")=16,py::arg("growth_pages")=256)
         .def("acquire",&DevicePages::acquire).def("release",&DevicePages::release).def("statistics",&DevicePages::statistics).def("close",&DevicePages::close);
     py::class_<ExactValueCache>(m,"ExactValueCache").def(py::init<int64_t>()).def("clear",&ExactValueCache::clear)
-        .def_property_readonly("stats",&ExactValueCache::statistics).def("forward",&ExactValueCache::forward,py::arg("observations"),py::arg("forward"),py::kw_only(),py::arg("namespace")=py::tuple());
+        .def_property_readonly("stats",&ExactValueCache::statistics).def("forward",&ExactValueCache::forward,py::arg("observations"),py::arg("forward"),py::kw_only(),py::arg("namespace")=py::tuple(),py::arg("indexed")=false);
     py::class_<ByteIntern>(m,"ByteIntern").def(py::init<size_t>()).def("intern",&ByteIntern::intern)
         .def("clear",&ByteIntern::clear).def("set_limit",&ByteIntern::set_limit).def_property_readonly("bytes",&ByteIntern::bytes);
     m.def("pack_arrays",&pack_arrays);m.def("pack_jobs",&pack_jobs);m.def("stack_fields",&stack_fields);

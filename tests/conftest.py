@@ -86,12 +86,14 @@ def complete_combat_factory():
     """Reach a fight through the real run, retaining its complete continuation."""
     created = []
 
-    def make(deck, *, seed, **flags):
+    def make(deck, *, seed, relics=(), **flags):
         env = SlayTheSpireEnv(global_map_view=True, combat_action_contract='autoregressive-v2',
             combat_exit_anchor=True, reward_flow='sequential-v1', **flags)
         created.append(env)
         env.reset(seed=seed)
         env.thick.gc.set_deck([(card, 0) for card in deck])
+        if relics:
+            env.thick.gc.set_relics(list(relics))
         for _ in range(128):
             if env.thick.bc is not None:
                 return env

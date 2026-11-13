@@ -12,6 +12,7 @@ namespace deck_paged_storage {
 #define deck_load deck_paged_load
 #define deck_load_variable deck_paged_load_variable
 #define deck_observe deck_paged_observe
+#define deck_observe_actions_indexed deck_paged_observe_actions_indexed
 #define deck_observe_actions deck_paged_observe_actions
 #define deck_observe_block deck_paged_observe_block
 #define deck_observe_extras deck_paged_observe_extras
@@ -37,6 +38,7 @@ namespace deck_paged_storage {
 #undef deck_load_variable
 #undef deck_observe
 #undef deck_observe_actions
+#undef deck_observe_actions_indexed
 #undef deck_observe_block
 #undef deck_observe_extras
 #undef deck_observe_indexed_block
@@ -104,6 +106,27 @@ extern "C" __global__ void deck_paged_frame_search(unsigned char*arena,int*const
  DeckOutputView output{cat+i*compact_leaf::kCatSize,scalars+row*compact_leaf::kFloatSize};
  if(t<32)compact_leaf::packInto(b,output,t,32);
  else if(t==32)deck_frame_metadata<false>(b,upgrades,misc,i,row);
+}
+
+// Compact anchor projection. No legal actions, monster callbacks, upgrades or
+// histogram writes: only canonical anchor consumers and permanent card growth.
+extern "C" __global__ void deck_paged_frame_anchor(unsigned char*arena,int*constructed,int*cat,float*scalars,int*status,int*misc,long long*slots,int*indices,int n){
+ int row=blockIdx.x;if(row>=n)return;int i=indices[row],t=threadIdx.x;
+ device_state::require(constructed[i]);
+ const auto&b=*reinterpret_cast<const sts::BattleContext*>(deck_paged_state_address(arena,i));
+ if(t==0){slots[i]=row;status[i]=int(b.outcome);}
+ for(int k=t;k<compact_leaf::kPotionSlots;k+=blockDim.x)cat[i*compact_leaf::kCatSize+25+k]=0;
+ for(int k=t;k<sts::Deck::MAX_SIZE;k+=blockDim.x)misc[i*sts::Deck::MAX_SIZE+k]=-1;
+ __syncthreads();
+ DeckOutputView output{cat+i*compact_leaf::kCatSize,scalars+row*compact_leaf::kFloatSize};
+ if(t<32)compact_leaf::packInto<DeckOutputView,true>(b,output,t,32);
+ else if(t==32){
+  auto permanent=[&](const sts::CardInstance&c){if(c.getId()==sts::CardId::RITUAL_DAGGER&&c.uniqueId>=0&&c.uniqueId<sts::Deck::MAX_SIZE)misc[i*sts::Deck::MAX_SIZE+c.uniqueId]=c.specialData;};
+  for(const auto&c:b.cards.drawPile)permanent(c);
+  for(const auto&c:b.cards.discardPile)permanent(c);
+  for(const auto&c:b.cards.exhaustPile)permanent(c);
+  for(int k=0;k<b.cards.cardsInHand;++k)permanent(b.cards.hand[k]);
+ }
 }
 
 extern "C" __global__ void deck_paged_load_indexed(unsigned char*arena,int*constructed,unsigned long long*words,int*lengths,int*stride,int*indices,int n){

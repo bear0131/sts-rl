@@ -62,7 +62,7 @@ class CudaBattleArena:
         if hashlib.sha256(data).hexdigest() != sha256:
             raise ValueError('resident simulator module hash mismatch')
         self.host = load_artifacts(Path(cubin).parent)[2]
-        if getattr(self.host,'host_runtime_version',None) != 1:
+        if getattr(self.host,'host_runtime_version',None) != 2:
             raise ValueError('resident search requires the versioned native host runtime')
         self.device = torch.device(device)
         if self.device.type != 'cuda':
@@ -122,7 +122,7 @@ class CudaBattleArena:
                         self._check(self.driver.cuModuleGetFunction(c.byref(f), self.module,
                             ('deck_paged_frame_'+name.removeprefix('observe_')).encode()))
                         self.functions[name] = f
-                    for name in ('load_indexed','destroy_indexed'):
+                    for name in ('load_indexed','destroy_indexed','observe_actions_indexed','frame_anchor'):
                         f = p()
                         self._check(self.driver.cuModuleGetFunction(c.byref(f),self.module,
                                                                   ('deck_paged_'+name).encode()))
@@ -225,7 +225,7 @@ class CudaBattleArena:
         # Indexed work consumes a compact frame, but its physical indices
         # still address the full arena. Keep launch extent and bounds separate.
         extent = n if dispatch_n is None else dispatch_n
-        grid, threads = (extent, 64) if name in ('observe_live', 'observe_indexed', 'observe_search') else (((extent or 1) + 31) // 32, 32)
+        grid, threads = (extent, 64) if name in ('observe_live', 'observe_indexed', 'observe_search', 'frame_anchor') else (((extent or 1) + 31) // 32, 32)
         self._check(self.driver.cuLaunchKernel(self.functions[name], grid,
             1, 1, threads, 1, 1, 0, c.c_void_p(torch.cuda.current_stream(self.device).cuda_stream), arguments, None))
 
@@ -311,9 +311,12 @@ class CudaBattleArena:
         for j,start in enumerate(range(0,len(sources),self.observation_capacity)):
             stop=min(len(sources),start+self.observation_capacity)
             ids=destination[start:stop];count=counts[j:j+1]
-            self._launch('observe_indexed',self.observe_args+[ids,count,offset],
-                self.capacity,dispatch_n=stop-start)
-            self.selected.fill_(-1)
+            if self.paged:
+                self._launch('observe_actions_indexed',[self.arena,self.constructed,self.prefix,
+                    self.bits,self.mask,self.outcome,ids,count],stop-start)
+            else:
+                self._launch('observe_indexed',self.observe_args+[ids,count,offset],
+                    self.capacity,dispatch_n=stop-start)
             self._launch('first',[self.arena,self.constructed,self.prefix,source[start:stop],ids,
                 bits[start:stop],draw[start:stop],self.bits,self.mask,self.selected],stop-start)
             self._launch('apply_compact',self.apply_args+[ids,count,offset],
@@ -424,6 +427,20 @@ class CudaBattleArena:
         return dict(categorical=self.categorical, scalars=self.scalars, mask=self.mask,
                     outcome=self.outcome, prefix=self.prefix, upgrades=self.upgrades,
                     permanent_misc=self.misc)
+
+    def observe_anchor_selected(self, indices):
+        """Return indexed views; unconsumed combat fields deliberately stay stale."""
+        self._assert_owner()
+        indices = np.asarray(indices, dtype=np.int64)
+        if (not self.paged or not len(indices) or len(indices) > self.observation_capacity
+                or np.any(indices < 0) or np.any(indices >= self.capacity)
+                or not self.loaded[indices].all()):
+            raise ValueError('anchor observation requires live paged slots')
+        ids = self._upload(indices)
+        self._launch('frame_anchor', [self.arena,self.constructed,self.categorical,self.scalars,
+            self.outcome,self.misc,self.observation_slots,ids], len(indices))
+        return dict(categorical=self.categorical,scalars=self.scalars,outcome=self.outcome,
+                    permanent_misc=self.misc), ids.long(), torch.arange(len(indices),device=self.device)
 
     def first_selected(self, sources, destinations, action_bits, draw_selection):
         """Admit replacement jobs while unrelated branches retain their state."""

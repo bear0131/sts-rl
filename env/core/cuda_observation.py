@@ -67,7 +67,10 @@ class CudaObservationDecoder:
 
     def relic_counters(self, scalars, ids, original):
         ids = ids.long()
-        counter = scalars.gather(1, self.columns[ids])+self.add[ids]
+        return self._relic_counters(scalars.gather(1, self.columns[ids]), ids, original)
+
+    def _relic_counters(self, counter, ids, original):
+        counter = counter+self.add[ids]
         counter = torch.where(self.mod[ids] != 0, torch.fmod(counter, self.mod[ids].clamp_min(1)), counter)
         counter = torch.where((self.stop[ids] != 0) & (counter >= self.stop[ids]), 0, counter)/self.scale[ids]
         return torch.where(self.live[ids], counter, original)
@@ -81,6 +84,17 @@ class CudaObservationDecoder:
             potions=self.tables['potion'][raw['categorical'][:, 25:30].long()],
             combat_exit_anchor=torch.stack((raw['outcome'] == 1, raw['outcome'] == 3), 1).float(),
             relics=ids, relic_counters=self.relic_counters(s, ids, roots['relic_counters'][owners]))
+
+    def anchor_indexed(self, raw, roots, owners, rows, scalar_rows):
+        """Gather only head consumers, including from a reused compact frame."""
+        ids = roots['relics'][owners]
+        counters = raw['scalars'][scalar_rows[:, None], self.columns[ids.long()]]
+        status = raw['outcome'][rows]
+        return dict(player_scalars=raw['scalars'][scalar_rows, :2].clamp_max(E.HP_SCALE)/E.HP_SCALE,
+            gold=raw['scalars'][scalar_rows, 5:6]/E.GOLD_SCALE, run_keys=roots['run_keys'][owners],
+            potions=self.tables['potion'][raw['categorical'][rows, 25:30].long()],
+            combat_exit_anchor=torch.stack((status == 1, status == 3), 1).float(),
+            relics=ids, relic_counters=self._relic_counters(counters, ids.long(), roots['relic_counters'][owners]))
 
     def __call__(self, raw, roots, owners, *, head_only=False, choice_width=96, include_piles=True):
         if not 1 <= choice_width <= 96 or (not head_only and (choice_width != 96 or not include_piles)):

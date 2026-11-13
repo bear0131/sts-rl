@@ -157,3 +157,17 @@ def test_native_job_aggregation_keeps_original_paired_sum_order(cuda_battle_arti
     host.validate_fork(np.array([0, 0, 1]), np.array([2, 3, 4]), live, 5)
     for destinations in ([2, 2, 4], [0, 3, 4], [2, 3, 5]):
         with pytest.raises(ValueError): host.validate_fork(np.array([0, 0, 1]), np.array(destinations), live, 5)
+
+
+@pytest.mark.parametrize('limit', [0, 1200, 100000])
+def test_exact_cache_miss_indices_preserve_original_rows(cuda_battle_artifacts, limit):
+    from rl.search.rollout_inference import ExactInputCache
+    for cache in (ExactInputCache(limit), cuda_battle_artifacts[2].ExactValueCache(limit)):
+        for ids in ([7, 7, 3, 9, 3], [3, 5, 5, 7], [9, 3, 9]):
+            obs = dict(ids=np.asarray(ids, np.int64)[:, None])
+            def forward(selected, rows):
+                assert rows.dtype == np.int64 and np.all(rows[:-1] < rows[1:])
+                np.testing.assert_array_equal(selected['ids'], obs['ids'][rows])
+                return np.empty((len(rows), 0), np.float32), selected['ids'][:, 0].astype(np.float32)
+            _, values = cache.forward(obs, forward, indexed=True)
+            np.testing.assert_array_equal(values, ids)

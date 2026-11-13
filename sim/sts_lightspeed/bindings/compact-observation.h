@@ -173,9 +173,17 @@ inline int monsterStatusValue(const sts::Monster &monster, int status) {
     }
 }
 
+template <typename Output>
+inline void packAnchorTail(const sts::BattleContext &bc, Output &row) {
+        row.scalars[kFloatSize - 4] = bc.player.hasRelicRuntime(sts::RelicId::CENTENNIAL_PUZZLE) ? 1.0f : 0.0f;
+        row.scalars[kFloatSize - 3] = bc.player.hasRelicRuntime(sts::RelicId::LIZARD_TAIL) ? 1.0f : 0.0f;
+        row.scalars[kFloatSize - 2] = bc.postEnemyTurnBoundary ? bc.pocketwatchCardsAtBoundary : bc.player.cardsPlayedThisTurn;
+        row.scalars[kFloatSize - 1] = bc.player.neowLamentRemaining;
+}
+
 // The caller supplies zeroed categorical/scalar storage. CPU Row and the
 // cooperative GPU writer share this exact observation contract.
-template <typename Output>
+template <typename Output, bool AnchorOnly = false>
 inline void packInto(const sts::BattleContext &bc, Output &row, int lane = 0, int lanes = 1) {
     if (bc.cards.cardsInHand < 0 || bc.cards.cardsInHand > kHandSlots) {
         throw std::invalid_argument("combat hand exceeds compact observation capacity");
@@ -189,6 +197,7 @@ inline void packInto(const sts::BattleContext &bc, Output &row, int lane = 0, in
     std::array<int, kMaxMonsters> baseDamages{};
     std::array<int, kMaxMonsters> attackCounts{};
     int c = 0;
+    if constexpr (!AnchorOnly) {
     for (int i = lane; i < bc.cards.cardsInHand && i < kHandSlots; i += lanes) {
         const int card = static_cast<int>(bc.cards.hand[i].getId());
         if (card <= 0 || card >= kCardIds) {
@@ -224,6 +233,7 @@ inline void packInto(const sts::BattleContext &bc, Output &row, int lane = 0, in
             monster, baseDamages[i]);
     }
     c += kMaxMonsters;
+    } else { c = kHandSlots + 3 * kMaxMonsters; }
     for (int i = lane; i < bc.potionCapacity && i < kPotionSlots; i += lanes) {
         if (bc.potions[i] == sts::Potion::INVALID) {
             throw std::invalid_argument(
@@ -244,10 +254,11 @@ inline void packInto(const sts::BattleContext &bc, Output &row, int lane = 0, in
         row.scalars[f++] = static_cast<float>(bc.player.energy);
         row.scalars[f++] = static_cast<float>(bc.turn);
         row.scalars[f++] = static_cast<float>(bc.player.gold);
-        for (int status = 1; status <= kPlayerStatus; ++status) {
+        if constexpr (!AnchorOnly) for (int status = 1; status <= kPlayerStatus; ++status) {
             row.scalars[f++] = static_cast<float>(playerPowerObservation(bc.player,
                 static_cast<PlayerStatus>(status)));
         }
+        f = 6 + kPlayerStatus;
         // Keep this order synchronized with encode.COMBAT_COUNTER_KEYS.
         const float counters[kCombatCounters] = {
             static_cast<float>(bc.player.happyFlowerCounter),
@@ -278,6 +289,12 @@ inline void packInto(const sts::BattleContext &bc, Output &row, int lane = 0, in
         for (int i = 0; i < kCombatCounters; ++i) row.scalars[f++] = counters[i];
         row.scalars[f++] = bc.postEnemyTurnBoundary ? 1.0f : 0.0f;
 
+    }
+    // The anchor uses this same codec's resources and live counters. It has
+    // no consumer for monster intents, hand features, pile histograms or choices.
+    if constexpr (AnchorOnly) {
+        if (lane == 0) packAnchorTail(bc, row);
+        return;
     }
     constexpr int monsterBase = 6 + kPlayerStatus + kCombatCounters + 1;
     // Keep the packed layout identical to encode._empty_combat(): all
@@ -372,10 +389,7 @@ inline void packInto(const sts::BattleContext &bc, Output &row, int lane = 0, in
         }
         for (std::size_t i = 0; i < selectedCards.size(); ++i)
             row.scalars[f + 192 + i] = static_cast<float>(selectedCards[i].getUpgradeCount());
-        row.scalars[kFloatSize - 4] = bc.player.hasRelicRuntime(sts::RelicId::CENTENNIAL_PUZZLE) ? 1.0f : 0.0f;
-        row.scalars[kFloatSize - 3] = bc.player.hasRelicRuntime(sts::RelicId::LIZARD_TAIL) ? 1.0f : 0.0f;
-        row.scalars[kFloatSize - 2] = bc.postEnemyTurnBoundary ? bc.pocketwatchCardsAtBoundary : bc.player.cardsPlayedThisTurn;
-        row.scalars[kFloatSize - 1] = bc.player.neowLamentRemaining;
+        packAnchorTail(bc, row);
     }
 }
 

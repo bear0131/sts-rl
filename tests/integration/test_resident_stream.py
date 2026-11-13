@@ -228,3 +228,54 @@ def test_stream_accepts_new_roots_before_drain_and_reuses_only_retired_pages(
         assert pool.state_pages.statistics()['closed'] and pool.state_pages.statistics()['owners']==0
     finally:
         pool.close(cancel=True)
+
+
+def test_anchor_projection_matches_full_observation_without_mutating_siblings(
+        complete_combat_factory, cuda_battle_artifacts):
+    from env.core.run_env import _nosl_compact_lut
+    from env.core.cuda_observation import CudaObservationDecoder
+    from env.search.cuda_battle import CudaBattleArena
+    from env.search.resident_chains import root_payload
+    roots=[complete_combat_factory(['STRIKE_RED','DEFEND_RED','RITUAL_DAGGER','WARCRY'],seed=seed,
+        relics=['Lizard Tail','Pen Nib','Happy Flower','Centennial Puzzle'],
+        deck_latent_context=True,card_language=True) for seed in (42,43,44)]
+    folder,manifest,bridge=cuda_battle_artifacts
+    arena=CudaBattleArena(folder/'deck.cubin',manifest['sha256']['deck.cubin'],3,
+        card_count=_nosl_compact_lut()['layout']['card_count'],paged=True,observation_capacity=3)
+    storage=torch.empty((3,arena.battle_bytes),device='cuda',dtype=torch.uint8)
+    arena.arena.copy_(storage.data_ptr()+torch.arange(3,device='cuda')*arena.battle_bytes)
+    decoder=CudaObservationDecoder(roots[0].observation_space)
+    root_obs={k:torch.as_tensor(np.stack([r._obs()[k] for r in roots]),device='cuda') for k in roots[0]._obs()}
+    rng=np.random.default_rng(20261111)
+    try:
+        payload=[root_payload(r,bridge) for r in roots]
+        arena.load_slots([p['snapshot'] for p in payload],[p['prefix'] for p in payload],[0,1,2])
+        for step in range(120):
+            raw=arena.observe_selected([0,1,2])
+            full={k:v[:3].clone() for k,v in raw.items()}
+            before=arena.snapshot(3)
+            order=np.array([2,0],np.int64)
+            compact,physical,slots=arena.observe_anchor_selected(order)
+            actual=decoder.anchor_indexed(compact,root_obs,physical,physical,slots)
+            expected=decoder.anchor(full,root_obs,torch.arange(3,device='cuda'))
+            for key in expected:
+                torch.testing.assert_close(actual[key],expected[key][order],rtol=0,atol=0)
+            torch.testing.assert_close(compact['permanent_misc'][physical],full['permanent_misc'][order],rtol=0,atol=0)
+            # Sparse projection leaves other physical rows and simulator/RNG untouched.
+            for key in ('categorical','permanent_misc','outcome'):
+                torch.testing.assert_close(compact[key][1],full[key][1],rtol=0,atol=0)
+            after=arena.snapshot(3)
+            np.testing.assert_array_equal(before[1],after[1])
+            # Variable-length transport does not initialize trailing padding.
+            # Every serialized word, including simulator RNG, must be identical.
+            for i,length in enumerate(before[1][:,0]):
+                np.testing.assert_array_equal(before[0][i,:length],after[0][i,:length])
+            arena.observe_selected([0,1,2])  # Actions belong to the full reference codec.
+            masks=full['mask'].cpu().numpy(); actions=np.full(3,-1,np.int32)
+            for i in range(3):
+                if masks[i].any():actions[i]=rng.choice(np.flatnonzero(masks[i]))
+            if (actions<0).all():break
+            arena.apply(actions)
+            if step==3:gc.collect();torch.cuda.empty_cache()
+        assert step>5
+    finally:arena.close()

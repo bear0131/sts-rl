@@ -601,13 +601,13 @@ def test_resident_anchor_batches_bound_projection_and_keep_exact_cache(
             relics = policy.core.combat.summaries.relic_terms(obs['relics'], obs['relic_counters']).sum(1)
             expected = policy.core.anchor_with_context(obs, scorer.context.anchor[owners], relics).flatten()
         lengths = []
-        original = scorer._forward
-        def bounded(batch, width, anchor):
-            lengths.append(len(batch['context']))
+        original = scorer._score_anchor
+        def bounded(raw, owners, rows, scalar_rows, **kwargs):
+            lengths.append(len(rows))
             assert lengths[-1] <= 17
-            return original(batch, width, anchor)
+            return original(raw, owners, rows, scalar_rows, **kwargs)
         monkeypatch.setattr(scorer, 'anchor_batch_size', 17)
-        monkeypatch.setattr(scorer, '_forward', bounded)
+        monkeypatch.setattr(scorer, '_score_anchor', bounded)
         rng = torch.cuda.get_rng_state().clone()
         _, actual = scorer.score(raw, owners, rows, anchor=True)
         torch.testing.assert_close(actual, expected[rows], rtol=3e-5, atol=3e-6)

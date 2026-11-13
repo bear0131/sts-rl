@@ -140,12 +140,8 @@ class ResidentPool:
             batch_size=min(self.arena.observation_capacity,self.scorer.anchor_batch_size)
             for start in range(0,len(selected),batch_size):
                 jobs=selected[start:start+batch_size]
-                physical=torch.as_tensor(self.capacity+jobs,device=self.arena.device)
-                raw=self.arena.observe_selected(self.capacity+jobs)
-                compact=self.arena.observation_slots[physical]
-                raw={k:v[compact if k in ('scalars','upgrades') else physical] for k,v in raw.items()}
-                _, score=self.scorer.score(raw,pipeline.owners[jobs],np.arange(len(jobs)),
-                                          anchor=True,return_host=True)
+                raw,physical,compact=self.arena.observe_anchor_selected(self.capacity+jobs)
+                _,score=self.scorer._score_anchor(raw,pipeline.owners[jobs],physical,compact,return_host=True)
                 if not np.isfinite(score).all():
                     raise FloatingPointError('nonfinite streaming anchor value')
                 scores.append(score)

@@ -37,7 +37,7 @@ CPU 待执行回调不能跨设备导入。`load` 拒绝这类根；在 GPU 中�
 重放。PCG64 流仍按 world 生成，只有真正的策略动作前移 cursor，强制动作及深度
 截断不消耗随机数。旧不含此符号的模块继续使用已支持的逐步调度，不虚报整步图。
 同时含`deck_apply_compact`与`deck_observe_indexed_block`的构建使用稳定live索引压缩模拟器线程，状态本身不搬移，分支随机流和原始槽位不变。它是可选构建能力，是否有端到端收益仍须同机完整负载实测。
-搜索整步将等待分支池与最大16384行评分帧分开；已结束行即时补入等待分支，等待行保持状态/深度/随机cursor。`deck_observe_search_block`支持先生成动作mask/outcome，再只为策略选择及深度截断行编码完整特征；终局锚点在最终评分时仍完整观察。物理波容量只改变汇批，不改变每根预算、真实环境数或搜索目标位置。
+搜索整步将等待分支池与最大16384行评分帧分开；已结束行即时补入等待分支，等待行保持状态/深度/随机cursor。`deck_observe_search_block`支持先生成动作mask/outcome，再只为策略选择及深度截断行编码完整特征；终局锚点在最终评分时复用canonical codec的资源/活遗物计数专用投影及永久卡牌元数据；不计算无消费者的怪物意图、手牌与牌堆特征。物理波容量只改变汇批，不改变每根预算、真实环境数或搜索目标位置。
 `rl/policies/resident_ragged.py` 迁入旧2×64的融合QKV、分桶attention、mix/FFN及
 动态计数路径；第二层只查询动作实体及global，牌堆/遗物仍参与两层的key/value。
 仅冻结FP32推理使用该路径，训练及checkpoint参数布局不变。
@@ -89,3 +89,9 @@ native 规划，adapter 回退 `rules-ironclad-v3`。主要回归入口为
 `tests/integration/test_turn_planner*.py`。
 
 GPU 常驻模拟器的 shim vector 使用 `cuda_vector.h` 替换固定容量实现：常见牌堆保留内联存储，超过容量时由该实例独占堆内存并增长；复制/分支不共享可变存储，销毁时释放。该头在 shim namespace 内包含，依赖既有 `vector_capacity`、placement new、malloc/free。编译产物必须与 `cuda_battle.py` 的逻辑状态协议一起逐 SHA 验证；不能在既有 arena 中更换模块。逻辑 checkpoint 字段/顺序不变，物理对象大小由模块 layout 返回。回归包括 `tests/unit/cuda_vector_contract.cpp` 的 ASan/UBSan，以及 `tests/integration/test_cuda_vector.py` 的 CPU/GPU 状态、扩容后 fork 和图释放生命周期。
+
+常驻采样的原生host ABI现为2：精确值缓存可返回原始miss行索引；paged构建必须包含
+`deck_paged_observe_actions_indexed`和`deck_paged_frame_anchor`。更新bridge与cubin并逐SHA
+核验后才能配套加载，旧host ABI1不混用。锚点缓存键仍保留完整消费者字节；静态遗物
+向量以完整字节intern ID替代重复传输，ID不回收，只有miss才物化上下文/遗物向量。
+观测schema、状态快照、动作/RNG和训练checkpoint均未变更。
