@@ -9,6 +9,21 @@ from apps.training_site_sync import compact_rows, discover_training, public_snap
 
 
 class TrainingSiteSyncTests(unittest.TestCase):
+    def test_migration_preserves_cloud_history_references_and_current_curve(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'state.json'
+            history = dict(run_id='old', rows=[], row_count=87, history_key='a' * 64)
+            rows = [{'global_timesteps': i, 'pure_rl/value_loss': None if i == 70 else .1}
+                    for i in range(1, 230)]
+            path.write_text(json.dumps(dict(run_id='current', rows=rows,
+                                           comparisons=[history])), encoding='utf-8')
+            current = json.loads(serve_state(path, 'current'))
+            self.assertEqual(current['rows'], rows)
+            self.assertEqual(current['comparisons'], [history])
+            # Referenced cloud-only objects must not be fabricated locally.
+            with self.assertRaises(ValueError):
+                serve_state(path, 'history:' + 'a' * 64)
+
     def test_forced_ssh_requests_expose_only_public_current_and_known_history(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'state.json'
@@ -47,6 +62,7 @@ class TrainingSiteSyncTests(unittest.TestCase):
 
     def test_projection_preserves_chart_values_and_missing_data(self):
         row = {'global_timesteps': 10, 'pure_rl/value_loss': .125,
+               'deck_search/qualified': 1, 'deck_search/stage': 2,
                'upper/value_mc_mse_pre_update': .25, 'upper/policy_loss_pre_update': 0.,
                'upper/kl_epoch_2': .01, 'upper/campfire_rest_choice_rate': None,
                'upper/reward_relic_pickup_rate': .8, 'debug_dump': ['private'],
@@ -55,7 +71,7 @@ class TrainingSiteSyncTests(unittest.TestCase):
                  'ranks': [{'rank': 0, 'alive': True, 'cursor': {'offset': 5},
                             'connection_error': 'hostname and internal path'}]}
         out = public_snapshot(state)
-        for key in ['pure_rl/value_loss', 'upper/value_mc_mse_pre_update',
+        for key in ['pure_rl/value_loss', 'deck_search/qualified', 'deck_search/stage', 'upper/value_mc_mse_pre_update',
                     'upper/policy_loss_pre_update', 'upper/kl_epoch_2',
                     'upper/campfire_rest_choice_rate', 'upper/reward_relic_pickup_rate']:
             self.assertEqual(out['rows'][0][key], row[key])

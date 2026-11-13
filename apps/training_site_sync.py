@@ -38,7 +38,7 @@ small_playout_train/teacher_top1 small_playout/turn_card_limit_decisions_global
 '''.split())
 PREFIXES = ('pure_rl/', 'upper/reward_', 'upper/campfire_', 'upper/epoch_',
             'upper/policy_pre/', 'upper/value_pre/', 'upper/kl_epoch_',
-            'episode_rollout/')
+            'episode_rollout/', 'deck_search/')
 RUN_FIELDS = ('root', 'run_id', 'label', 'iteration_steps', 'rollout_mode',
               'branch_step', 'branch_round', 'continuation_of', 'followed', 'status', 'note')
 
@@ -51,8 +51,17 @@ def compact_rows(rows):
 
 
 def compact_run(run):
-    return {**{key: run[key] for key in RUN_FIELDS if key in run},
-            'rows': compact_rows(run.get('rows', []))}
+    result = {**{key: run[key] for key in RUN_FIELDS if key in run},
+              'rows': compact_rows(run.get('rows', []))}
+    # A migrated collector may have the cloud index but not every old object.
+    # Preserve that reference instead of replacing cached history with []
+    # under a new digest. Hydrated rows still receive a content-derived digest.
+    key, count = run.get('history_key'), run.get('row_count')
+    if (not result['rows'] and isinstance(key, str)
+            and re.fullmatch(r'[a-f0-9]{64}', key)
+            and type(count) is int and count >= 0):
+        result.update(history_key=key, row_count=count)
+    return result
 
 
 def public_snapshot(state):
@@ -79,6 +88,9 @@ def indexed_snapshot(state):
     objects = {}
     index = []
     for run in snapshot['comparisons']:
+        if 'history_key' in run:
+            index.append(run)
+            continue
         encoded = json.dumps(run, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
         key = hashlib.sha256(encoded.encode()).hexdigest()
         objects[key] = encoded

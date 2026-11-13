@@ -3,9 +3,9 @@
   "site_url": "https://sts-training-monitor-tony.bentmuffin.chatgpt.site",
   "plugin_id": "plugin_asdk_app_sites_8ce3141671c48191bf51d59a35b41927",
   "collector": {
-    "host": "root@connect.bjb2.seetacloud.com",
-    "port": 53841,
-    "root": "/root/autodl-tmp/sts-training-site-20261110",
+    "host": "root@connect.westc.seetacloud.com",
+    "port": 16932,
+    "root": "/root/autodl-tmp/sts-training-site-20261114",
     "pid_file": "collector.pid",
     "log_file": "collector.log",
     "poll_seconds": 30,
@@ -16,14 +16,14 @@
       "apps.training_site_sync",
       "--collect-only",
       "--config",
-      "/root/autodl-tmp/sts-training-site-20261110/config.json",
+      "/root/autodl-tmp/sts-training-site-20261114/config.json",
       "--state",
-      "/root/autodl-tmp/sts-training-site-20261110/state.json",
+      "/root/autodl-tmp/sts-training-site-20261114/state.json",
       "--poll-seconds",
       "30"
     ],
     "env": {
-      "PYTHONPATH": "/root/autodl-tmp/sts-training-site-20261110/source"
+      "PYTHONPATH": "/root/autodl-tmp/sts-training-site-20261114/source"
     }
   },
   "read_transport": {
