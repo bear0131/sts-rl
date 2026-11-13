@@ -278,12 +278,15 @@ class EntityCombatNetwork(nn.Module):
     def forward(self, obs, *, active_relic_width=None, evaluate_subsets=True, auxiliary_actions=None,
                 card_table=None):
         state, blocks = self.encode(obs, active_relic_width, card_table=card_table)
+        if '_resident_selection' in blocks:
+            from rl.policies.resident_heads import frozen_combat_logits
+            logits = frozen_combat_logits(self, state, blocks, obs['combat_legal'],
+                obs['select_hand_mask'], (obs['pick_remaining']*encode.PICK_SCALE).round(),
+                obs['_resident_rows'])
+            values, outputs = self._value(state, obs)
+            return logits, values, outputs
         if self.autoregressive_actions:
-            if '_resident_selection' in blocks:
-                from rl.policies.resident_ragged import frozen_selection_pointer
-                selection = frozen_selection_pointer(self,state,blocks['_resident_selection'])
-            else:
-                selection = self._pointer(state, blocks['select'])
+            selection = self._pointer(state, blocks['select'])
             if '_resident_rows' in obs and selection.shape[1] < 96:
                 # Only scalar logits need the native 96-slot tail. The packed
                 # output path never scatters a padded 96 x 64 entity tensor.

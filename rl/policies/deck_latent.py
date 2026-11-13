@@ -157,8 +157,12 @@ class FastCombatNetwork(ScalarCombatNetwork):
         turn = hp[:, 4:5] * encode.TURN_SCALE
         extra = torch.cat((hp[:, 1:2] - hp[:, :1], turn.clamp_min(0).log1p()/4,
                            torch.sigmoid((hp[:, 5:6] - self.hp_thresholds)*12)), -1)
-        player = self.player_projection(torch.cat(
-            [obs[k].float().reshape(batch, -1) for k in self.scalar_keys] + [extra], -1))
+        features = torch.cat([obs[k].float().reshape(batch, -1) for k in self.scalar_keys] + [extra], -1)
+        if '_resident_rows' in obs:
+            from rl.policies.resident_ragged import frozen_bounded_linear
+            player = frozen_bounded_linear(self.player_projection, features, obs['_resident_rows'])
+        else:
+            player = self.player_projection(features)
         player = player + self.turn_bucket(turn.long().flatten().clamp(0, 31))
         player = player + self.choice_reason(obs['select_context'].long().flatten())
         return player
@@ -263,10 +267,11 @@ class TransformerCombatNetwork(FastCombatNetwork):
         if context is None:
             context = self.context_projection(obs['_run_context'])
         if '_resident_rows' in obs:
-            from rl.policies.resident_ragged import frozen_entity_blocks
+            from rl.policies.resident_ragged import frozen_entity_blocks, frozen_bounded_linear
             player = self._player_inputs(dynamic)
             summary = obs['_combat_summary']
-            piles = self.pile_projection(self.summaries.features(summary).reshape(len(player), 3, 65))
+            piles = frozen_bounded_linear(self.pile_projection,
+                self.summaries.features(summary).reshape(len(player), 3, 65), obs['_resident_rows'])
             return frozen_entity_blocks(self, dynamic, player + context, summary.relics,
                 piles, valid, required, obs['_resident_rows'], obs['_resident_workspace'])
         player, entities, summary = self._dynamic_inputs(dynamic, card_table)

@@ -10,6 +10,36 @@ from triton.language.extra.cuda import libdevice
 
 
 @triton.jit
+def bounded_linear(X, W, BIAS, ROW_COUNT, OUT, M: tl.constexpr, K: tl.constexpr,
+                    PER_ROW: tl.constexpr):
+ r=tl.program_id(0)*32+tl.arange(0,32);k=tl.arange(0,32);d=tl.arange(0,64)
+ active=(r<M)&(r//PER_ROW<tl.load(ROW_COUNT))
+ value=tl.zeros((32,64),tl.float32)
+ if tl.sum(active.to(tl.int32),0)>0:
+  for block in range(tl.cdiv(K,32)):
+   col=block*32+k
+   x=tl.load(X+r[:,None]*K+col[None,:],active[:,None]&(col[None,:]<K),0.)
+   weight=tl.load(W+col[:,None]+K*d[None,:],col[:,None]<K,0.)
+   value+=tl.dot(x,weight,input_precision='tf32x3')
+  value+=tl.load(BIAS+d)[None,:]
+ tl.store(OUT+r[:,None]*64+d[None,:],tl.where(active[:,None],value,0.),r[:,None]<M)
+
+
+@torch.compiler.disable
+def frozen_bounded_linear(layer, inputs, row_count):
+    """Count-bounded player/pile projection; no work for the padded row tail."""
+    if (torch.is_grad_enabled() or layer.training or not inputs.is_cuda
+            or inputs.dtype != torch.float32 or layer.out_features != 64 or layer.bias is None):
+        raise ValueError('bounded projection requires frozen CUDA FP32 width64')
+    shape=inputs.shape
+    per_row=inputs.numel()//(shape[0]*shape[-1])
+    result=torch.empty((*shape[:-1],64),device=inputs.device,dtype=torch.float32)
+    bounded_linear[(triton.cdiv(shape[0]*per_row,32),)](inputs.contiguous(),layer.weight,
+        layer.bias,row_count,result,shape[0]*per_row,shape[-1],per_row,num_warps=4)
+    return result
+
+
+@triton.jit
 def relic_lookup(IDS, COUNTERS, LIVE, TABLE, IDENTITY, GATES, STATIC, OUT,
                  R: tl.constexpr, RR: tl.constexpr, LIMIT: tl.constexpr):
  row=tl.program_id(0);r=tl.arange(0,RR);d=tl.arange(0,64)
@@ -88,10 +118,15 @@ def indexed_pile_projection(SCALARS, UPGRADES, ROWS, ROW_COUNT, BASE, DELTA, UPG
   count=tl.load(SCALARS+physical[:,None]*STRIDE+START+zone[:,None]*K+cols[None,:],valid,0.)
   upgraded=tl.load(UPGRADES+(physical[:,None]*6+zone[:,None])*K+cols[None,:],valid,0.)
   amounts=tl.load(UPGRADES+(physical[:,None]*6+3+zone[:,None])*K+cols[None,:],valid,0.)/SCALE
-  base=tl.load(BASE+cols[:,None]*64+d[None,:],cols[:,None]<K,0.)
-  delta=tl.load(DELTA+cols[:,None]*64+d[None,:],cols[:,None]<K,0.)
-  base_sum+=tl.dot(count,base,input_precision='tf32x3')
-  upgraded_sum+=tl.dot(upgraded,delta,input_precision='tf32x3')
+  # The old scorer dispatches actual inventory entries. The current summary
+  # is still the same dense weighted sum, but empty card-type blocks have no
+  # consumer and need neither their matrix load nor tensor-core multiply.
+  if tl.sum(tl.sum((count!=0).to(tl.int32),1),0)>0:
+   base=tl.load(BASE+cols[:,None]*64+d[None,:],cols[:,None]<K,0.)
+   base_sum+=tl.dot(count,base,input_precision='tf32x3')
+  if tl.sum(tl.sum((upgraded!=0).to(tl.int32),1),0)>0:
+   delta=tl.load(DELTA+cols[:,None]*64+d[None,:],cols[:,None]<K,0.)
+   upgraded_sum+=tl.dot(upgraded,delta,input_precision='tf32x3')
   magnitude+=tl.sum(amounts,1);size+=tl.sum(tl.where(cols[None,:]!=0,count,0.),1)
  value=base_sum+upgraded_sum+magnitude[:,None]*tl.load(UPGRADE+d)[None,:]
  tl.store(OUT+r[:,None]*64+d[None,:],value,r[:,None]<M);tl.store(SIZES+r,size,r<M)
@@ -408,32 +443,6 @@ def unpack_entities(X, MAP, OUT, NW, NB, STATUS, EPS: tl.constexpr,
  # matching the original pointer-key bias and required-candidate mask.
  value=tl.where(((i%OUTC>=SELECT)&(index<0))[:,None],0.,value)
  tl.store(OUT+i[:,None]*64+d[None,:],value,i[:,None]<N)
-
-
-@triton.jit
-def selection_pointer(X, MAP, QUERY, KW, KB, NW, NB, STATUS, OUT, EPS: tl.constexpr,
-                       C: tl.constexpr, W: tl.constexpr, N: tl.constexpr):
- r=tl.program_id(0)*32+tl.arange(0,32);d=tl.arange(0,64)
- index=tl.load(MAP+(r//W)*C+(C-W)+r%W,(r<N)&(tl.load(STATUS+7)==0),-1)
- x=tl.load(X+index[:,None]*64+d[None,:],(r[:,None]<N)&(index[:,None]>=0),0.)
- x=norm64(x,NW,NB,EPS)
- x=tl.where((index>=0)[:,None],x,0.)
- weight=tl.load(KW+d[:,None]+d[None,:]*64)
- key=tl.dot(x,weight,input_precision='tf32x3')+tl.load(KB+d)[None,:]
- query=tl.load(QUERY+(r[:,None]//W)*64+d[None,:],r[:,None]<N,0.)
- score=tl.sum(query*key,1)*.125
- tl.store(OUT+r,score,r<N)
-
-
-@torch.compiler.disable
-def frozen_selection_pointer(net, state, packed):
-    attention,mapping,status,consumers,width=packed
-    query=net.pointer_query(state).contiguous()
-    result=torch.empty((len(state),width),device=state.device,dtype=torch.float32)
-    selection_pointer[(triton.cdiv(len(state)*width,32),)](attention,mapping,query,
-        net.pointer_key.weight,net.pointer_key.bias,net.norm.weight,net.norm.bias,status,result,
-        net.norm.eps,consumers,width,len(state)*width,num_warps=4,enable_fp_fusion=False)
-    return result
 
 
 def _packed_blocks(blocks, packed, keys, query, starts, lens, first, second, counts, cap, bcap, qkv=None):

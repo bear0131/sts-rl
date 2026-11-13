@@ -304,10 +304,12 @@ class ResidentDeckScorer:
         # Keep the custom-kernel boundary before the head gathers so the
         # compiler can fuse them into their consumers instead of retaining
         # a full histogram tensor across that boundary.
-        gathered = {'raw:'+k: v[compact if k in ('scalars','upgrades') else physical]
+        gathered = {'raw:'+k: (v if k == 'scalars' and row_count is not None
+                               else v[compact if k in ('scalars','upgrades') else physical])
                     for k, v in self.arena_inputs.items() if k not in excluded}
         if piles is not None:
             gathered['resident_piles'] = piles
+            gathered['scalar_rows'] = compact
         gathered.update({k: v[owner] for k, v in self.packed_root.items()})
         gathered['context'] = self.banked_context[owner] if contexts is None else contexts[rows]
         gathered['static_relics'] = self.banked_static_relics[owner]
@@ -429,7 +431,8 @@ class ResidentDeckScorer:
         o = (self.decoder.anchor(raw, roots, rows) if anchor
              else self.decoder(raw, roots, rows, head_only=True,
                                choice_width=width if 'row_count' in batch else 96,
-                               include_piles='resident_piles' not in batch))
+                               include_piles='resident_piles' not in batch,
+                               scalar_rows=batch.get('scalar_rows')))
         if anchor:
             # Counter features belong after exact-cache lookup. Merely asking
             # for a previously scored anchor must not rebuild its projection.

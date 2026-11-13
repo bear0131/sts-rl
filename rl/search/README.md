@@ -187,6 +187,21 @@ Inactive rows and capacity retries cannot advance environments or random cursors
 rebuilding the live queue, retains grown geometry within that wave, and submits
 bounded frames before a host status read. Resident selection queries project
 directly to scalar pointer logits instead of expanding padded entity outputs.
+Frozen player/pile projections consume the device's actual row count. Head
+decoding gathers only scalar fields it consumes, leaving the dense pile
+histograms in their arena. Empty card-type matrix blocks are omitted from the
+same additive summary. The resident-only scoring heads share the state query,
+project legal selection candidates, evaluate conditional target factors only
+for sources with multiple legal targets, and evaluate prefix factors only on
+multi-selection rows. Their private illegal logits are masked scratch; legal
+logits retain the current model's probability formulas, within the tested FP32
+component tolerance (rtol 3e-5, atol 3e-6). Reordered floating-point reductions
+can cross a categorical CDF boundary and change a search trajectory; neither
+bitwise trajectories nor identical completed-search targets are promised.
+The paired FP64 CDF sampler,
+action-slot identities, value target, model parameters and training heads do
+not change. This path supports frozen CUDA FP32 transformer64x2 with the
+198-action autoregressive contract and 32-wide prefix decoder.
 Anchor cache transfers batch fields by dtype while retaining their exact schema
 and bytes. These inference changes do not alter checkpoint parameters or the
 training decoder. The legacy token-regret hash-feature encoder, action head,

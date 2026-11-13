@@ -96,10 +96,19 @@ class CudaObservationDecoder:
             combat_exit_anchor=torch.stack((status == 1, status == 3), 1).float(),
             relics=ids, relic_counters=self._relic_counters(counters, ids.long(), roots['relic_counters'][owners]))
 
-    def __call__(self, raw, roots, owners, *, head_only=False, choice_width=96, include_piles=True):
+    def __call__(self, raw, roots, owners, *, head_only=False, choice_width=96, include_piles=True,
+                 scalar_rows=None):
         if not 1 <= choice_width <= 96 or (not head_only and (choice_width != 96 or not include_piles)):
             raise ValueError('only the frozen head may narrow trailing selection padding')
+        if scalar_rows is not None and (not head_only or include_piles):
+            raise ValueError('indexed scalars require the frozen head with separately projected piles')
         c, s, n = raw['categorical'].long(), raw['scalars'], len(owners)
+        def scalars(columns):
+            # Slice before the row gather. In particular the three full card
+            # histograms never cross a compiled/custom-kernel boundary just to
+            # be discarded by a head that consumes their projected summaries.
+            field = s[:, columns]
+            return field if scalar_rows is None else field[scalar_rows]
         # Only public context and the head consumers, not unused reward pages.
         keys = ('phase', 'ascension', 'act', 'floor', 'next_boss', 'character', 'run_keys',
                 'combat_is_boss', 'deck_ids', 'deck_upgrades', 'outer_deck_misc', 'relics',
@@ -116,31 +125,31 @@ class CudaObservationDecoder:
                  potions=lookup('potion', slice(25, 30)), select_context=lookup('select_context', slice(30, 31)),
                  select_card_ids=lookup('card', slice(31, 31+choice_width)),
                  select_native_indices=c[:, 127:127+choice_width],
-                 select_zone=c[:, 223:224], combat_legal=raw['mask'].bool(), gold=s[:, 5:6]/E.GOLD_SCALE)
-        o['player_scalars'] = torch.stack((s[:, 0].clamp_max(E.HP_SCALE)/E.HP_SCALE,
-            s[:, 1].clamp_max(E.HP_SCALE)/E.HP_SCALE, s[:, 2]/E.BLOCK_SCALE,
-            s[:, 3]/E.ENERGY_SCALE, (s[:, 4]+1)/E.TURN_SCALE,
-            torch.where(s[:, 1] != 0, s[:, 0]/s[:, 1], 0)), 1)
+                 select_zone=c[:, 223:224], combat_legal=raw['mask'].bool(), gold=scalars(slice(5, 6))/E.GOLD_SCALE)
+        o['player_scalars'] = torch.stack((scalars(0).clamp_max(E.HP_SCALE)/E.HP_SCALE,
+            scalars(1).clamp_max(E.HP_SCALE)/E.HP_SCALE, scalars(2)/E.BLOCK_SCALE,
+            scalars(3)/E.ENERGY_SCALE, (scalars(4)+1)/E.TURN_SCALE,
+            torch.where(scalars(1) != 0, scalars(0)/scalars(1), 0)), 1)
         o['player_buffs'] = zeros('player_buffs')
         src, dst = self.status['player']
-        o['player_buffs'][:, dst] = s[:, 6+src]/E.BUFF_SCALE
-        counters = s[:, 6+self.ps:6+self.ps+E.COMBAT_COUNTERS]
+        o['player_buffs'][:, dst] = scalars(6+src)/E.BUFF_SCALE
+        counters = scalars(slice(6+self.ps, 6+self.ps+E.COMBAT_COUNTERS))
         o['combat_counters'] = counters/E.COUNTER_SCALE
         o['combat_counters'][:, self.binary] = (counters[:, self.binary] != 0).float()
         start = 6+self.ps+E.COMBAT_COUNTERS
-        o['post_enemy_turn_boundary'] = s[:, start:start+1]
-        m = s[:, start+1:start+31].reshape(n, 5, 6)
+        o['post_enemy_turn_boundary'] = scalars(slice(start, start+1))
+        m = scalars(slice(start+1, start+31)).reshape(n, 5, 6)
         o['monster_scalars'] = torch.stack((m[:, :, 0], m[:, :, 1].clamp_max(E.HP_SCALE)/E.HP_SCALE,
             torch.where(m[:, :, 2] != 0, m[:, :, 1]/m[:, :, 2], 0), m[:, :, 3]/E.BLOCK_SCALE,
             m[:, :, 4]/E.DMG_SCALE, m[:, :, 5]/E.HITS_SCALE), -1)
         o['monster_buffs'] = zeros('monster_buffs')
         src, dst = self.status['monster']
-        powers = s[:, start+31:self.hand_start].reshape(n, 5, self.ms)
+        powers = scalars(slice(start+31, self.hand_start)).reshape(n, 5, self.ms)
         o['monster_buffs'][:, :, dst] = torch.where(m[:, :, :1] > 0, powers[:, :, src]/E.BUFF_SCALE, 0)
         explosion = o['monster_move'] == E.V.MOVE_VOCAB_INDEX['EXPLODER_EXPLODE']
         o['monster_intent_cat'].masked_fill_(explosion, 0)
         o['monster_scalars'][:, :, 4:6].masked_fill_(explosion[:, :, None], 0)
-        hand = s[:, self.hand_start:self.pile_start].reshape(n, 10, 2)
+        hand = scalars(slice(self.hand_start, self.pile_start)).reshape(n, 10, 2)
         up = hand[:, :, 0]
         o['hand_upgrades'] = up/E.UPGRADE_SCALE
         o['hand_costs'] = torch.where(hand[:, :, 1] == -3, -2, hand[:, :, 1])/E.ENERGY_SCALE
@@ -148,12 +157,12 @@ class CudaObservationDecoder:
         o['hand_damage'] = torch.where(ids == self.searing, 12+up*(up+7)/2, self.damage[ids, levels])/E.DMG_SCALE
         o['hand_block'] = self.block[ids, levels]/E.BLOCK_SCALE
         if include_piles:
-            pile = s[:, self.pile_start:self.select_start].reshape(n, 3, self.cards)
+            pile = scalars(slice(self.pile_start, self.select_start)).reshape(n, 3, self.cards)
             for i, name in enumerate(('draw', 'discard', 'exhaust')):
                 o[name+'_counts'] = pile[:, i]
             o['pile_upgraded_counts'] = raw['upgrades'][:, :3]
             o['pile_upgrade_sums'] = raw['upgrades'][:, 3:]/E.UPGRADE_SCALE
-        selection = s[:, self.select_start:]
+        selection = scalars(slice(self.select_start, None))
         o['select_card_upgrades'] = selection[:, 4:4+choice_width]/E.UPGRADE_SCALE
         cost = selection[:, 100:100+choice_width]
         o['select_card_costs'] = torch.where(cost == -3, -2, cost)/E.ENERGY_SCALE
@@ -165,7 +174,12 @@ class CudaObservationDecoder:
             o['selected_card_ids'][:, :2] = lookup('card', slice(224, 226))
             o['selected_card_upgrades'] = zeros('selected_card_upgrades')
             o['selected_card_upgrades'][:, :2] = selection[:, 196:198]/E.UPGRADE_SCALE
-        o['relic_counters'] = self.relic_counters(s, o['relics'], o['relic_counters'])
+        if scalar_rows is None:
+            o['relic_counters'] = self.relic_counters(s, o['relics'], o['relic_counters'])
+        else:
+            ids = o['relics'].long()
+            counter = s[scalar_rows[:, None], self.columns[ids]]
+            o['relic_counters'] = self._relic_counters(counter, ids, o['relic_counters'])
         if not head_only:
             misc = raw['permanent_misc']
             o['outer_deck_misc'] = torch.where((misc >= 0) & (o['deck_ids'] != 0), canonical_misc(misc), o['outer_deck_misc'])

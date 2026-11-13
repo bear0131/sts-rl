@@ -389,15 +389,112 @@ def test_resident_compact_features_preserve_slots_queries_and_retry(complete_com
                 mask = required[:active, :width]
                 torch.testing.assert_close(blocks['select'][:active][mask],
                     entities['select'][:active, :width][mask], rtol=3e-5, atol=3e-6)
-                from rl.policies.resident_ragged import frozen_selection_pointer
                 state, compact = net.encode(dict(resident, _resident_project_selection=True))
                 assert compact['select'].shape[1] == 0
-                pointer = frozen_selection_pointer(net,state,compact['_resident_selection'])
-                expected_pointer = net._pointer(actual,blocks['select'])
-                torch.testing.assert_close(pointer[:active],expected_pointer[:active],rtol=3e-5,atol=3e-6)
             gc.collect();torch.cuda.empty_cache()
     finally:
         scorer.close()
+
+
+@pytest.mark.parametrize('width', [1, 16, 96])
+def test_resident_legal_heads_match_current_factors_after_release(
+        complete_combat_factory, width):
+    from rl.policies.deck_latent import DeckLatentPolicy
+    from rl.policies.resident_heads import frozen_combat_logits
+    from rl.search.resident_deck import ResidentDeckScorer
+    root = complete_combat_factory(['STRIKE_RED', 'DEFEND_RED', 'BASH'], seed=42,
+        deck_latent_context=True, card_language=True)
+    torch.manual_seed(20261113)
+    policy = DeckLatentPolicy(root.observation_space, root.action_space, lambda _: 5e-5,
+        d_model=32, n_layers=1, n_heads=4, room_lambda=1., reward_flow='sequential-v1',
+        deck_combat_encoder='transformer64x2').cuda().eval()
+    net = policy.core.combat
+    n = 33
+    with torch.no_grad():
+        # Nonzero target/prefix factors: their uniform initialization cannot
+        # prove the conditional projections or selected-prefix math correct.
+        for parameter in net.complete_head.parameters():
+            parameter.normal_(0, .08)
+        fixed = torch.randn(n, 21, 64, device='cuda')
+        state = fixed[:, 0]
+        attention = torch.randn(n*width, 64, device='cuda')
+        mapping = torch.full((n, 21+width), -1, device='cuda', dtype=torch.int64)
+        mapping[:, 21:] = torch.arange(n*width, device='cuda').view(n, width)
+        if width > 1:
+            mapping[:, 21::3] = -1
+        status = torch.zeros(10, device='cuda', dtype=torch.int32)
+        count = torch.tensor([n], device='cuda', dtype=torch.int32)
+        legal = torch.zeros(n, 198, device='cuda', dtype=torch.bool)
+        legal[0::3, 0] = True
+        legal[0::3, 1:4] = True  # One source with three conditional targets.
+        legal[0::3, 12] = True   # Another source with a sole no-target action.
+        legal[0::3, 62:64] = True  # Potion targets retain their own source slot.
+        legal[1::3, 91:91+width] = mapping[1::3, 21:] >= 0
+        legal[2::3, 187:193] = True
+        legal[2::3, 197] = True
+        selected = torch.randint(0, 2, (n, 10), device='cuda').float()
+        remaining = torch.arange(n, device='cuda').reshape(-1, 1).float() % 14
+        blocks = dict(hand=fixed[:, 1:11], monster=fixed[:, 11:16], potion=fixed[:, 16:21],
+            _resident_selection=(attention, mapping, status, 21+width, width))
+
+        def reference():
+            entities = net.norm(attention[mapping[:, 21:].clamp_min(0)])
+            entities *= (mapping[:, 21:] >= 0)[..., None]
+            choice = net._pointer(state, entities)
+            if width < 96:
+                padding = net._pointer(state, torch.zeros(n, 1, 64, device='cuda'))
+                choice = torch.cat((choice, padding.expand(-1, 96-width)), -1)
+            source = torch.cat((net.end(state), net._pointer(state, blocks['hand']),
+                                net._pointer(state, blocks['potion']), choice), -1)
+            return net.complete_head(source, state, torch.cat((blocks['hand'], blocks['potion']), 1),
+                blocks['monster'], legal, selected=selected, remaining=remaining)
+
+        def execute():
+            return frozen_combat_logits(net, state, blocks, legal, selected, remaining, count)
+
+        def verify(got, active):
+            expected = reference()
+            mask = legal[:active]
+            torch.testing.assert_close(got[:active][mask], expected[:active][mask], rtol=3e-5, atol=3e-6)
+            if active:
+                uniform = torch.linspace(.003, .997, active, device='cuda', dtype=torch.float64)
+                actual_action = ResidentDeckScorer._sample(got[:active], mask, uniform)
+                expected_action = ResidentDeckScorer._sample(expected[:active], mask, uniform)
+                torch.testing.assert_close(actual_action, expected_action, rtol=0, atol=0)
+            assert torch.isfinite(got).all()
+            assert torch.all(got[active:] == -1.e9)
+
+        execute(); execute(); torch.cuda.synchronize()
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            got = execute()
+        for active in (n, 17, 0, n):
+            count.fill_(active)
+            # Same cached graph, changed weights/inputs, temporary memory freed.
+            attention.add_(.001)
+            net.pointer_key.bias.add_(.001)
+            gc.collect(); torch.cuda.empty_cache()
+            graph.replay(); torch.cuda.synchronize()
+            verify(got, active)
+        graph.reset(); del graph, got
+        gc.collect(); torch.cuda.empty_cache()
+        verify(execute(), n)
+
+
+@pytest.mark.parametrize('features,per_row', [(65, 3), (173, 1)])
+def test_resident_input_projections_bound_real_rows(features, per_row):
+    from rl.policies.resident_ragged import frozen_bounded_linear
+    torch.manual_seed(20261113)
+    layer = torch.nn.Linear(features, 64).cuda().eval()
+    x = torch.randn(33, per_row, features, device='cuda')
+    count = torch.tensor(33, device='cuda')
+    with torch.no_grad():
+        expected = layer(x)
+        for active in (33, 17, 0):
+            count.fill_(active)
+            actual = frozen_bounded_linear(layer, x, count)
+            torch.testing.assert_close(actual[:active], expected[:active], rtol=3e-5, atol=3e-6)
+            assert torch.count_nonzero(actual[active:]) == 0
 
 
 def test_resident_ragged_capacity_retry_preserves_selected_outputs():
@@ -505,6 +602,14 @@ def test_resident_forks_atomic_masks_rng_and_graph_lifetime(complete_combat_fact
                     torch.testing.assert_close(raw[key], expected_raw[key], rtol=0, atol=0)
             decoded = {k: v.cpu().numpy() for k, v in decoder(raw, root_tensors,
                 torch.arange(6, device='cuda')).items()}
+            order = torch.tensor([5, 2, 0, 5, 1], device='cuda')
+            gathered = {k: v[order] for k, v in raw.items()}
+            head = decoder(gathered, root_tensors, order, head_only=True, include_piles=False)
+            indexed = decoder(dict(gathered, scalars=raw['scalars']), root_tensors, order,
+                              head_only=True, include_piles=False, scalar_rows=order)
+            assert head.keys() == indexed.keys()
+            for key in head:
+                torch.testing.assert_close(indexed[key], head[key], rtol=0, atol=0, msg=key)
             anchored = decoder.anchor(raw, root_tensors, torch.arange(6, device='cuda'))
             for key, value in anchored.items():
                 expected = decoded[key][:, :2] if key == 'player_scalars' else decoded[key]
