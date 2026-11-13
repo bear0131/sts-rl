@@ -294,18 +294,18 @@ class CudaBattleArena:
         self.prefix.index_copy_(0, indices.long(), prefix)
         self.loaded[slots] = True
 
-    def start_selected(self, sources, destinations, worlds, action_bits, draw_selection):
+    def start_selected(self, sources, destinations, worlds, action_bits, draw_selection, *, owners=None):
         """The existing fork/first sequence with one shared admission transfer."""
         sources, destinations = self._validate_fork(sources,destinations,worlds)
         if len(action_bits)!=len(sources) or len(draw_selection)!=len(sources):
             raise ValueError('initial actions must match admitted jobs')
-        source,destination,seeds,bits,draw,counts,offset = self._upload_many([
+        source,destination,seeds,bits,draw,counts,offset,owner = self._upload_many([
             sources.astype(np.int32),destinations.astype(np.int32),
             np.asarray(worlds,np.uint64).view(np.int64),np.asarray(action_bits,np.uint32),
             np.asarray(draw_selection,np.int32),
             np.asarray([min(self.observation_capacity,len(sources)-i)
                         for i in range(0,len(sources),self.observation_capacity)],np.int32),
-            np.asarray([0],np.int64)])
+            np.asarray([0],np.int64),sources.astype(np.int32) if owners is None else np.asarray(owners,np.int32)])
         self._launch('fork',[self.arena,self.constructed,self.prefix,source,destination,seeds],len(sources))
         self.loaded[destinations] = True
         for j,start in enumerate(range(0,len(sources),self.observation_capacity)):
@@ -321,7 +321,7 @@ class CudaBattleArena:
                 bits[start:stop],draw[start:stop],self.bits,self.mask,self.selected],stop-start)
             self._launch('apply_compact',self.apply_args+[ids,count,offset],
                 self.capacity,dispatch_n=stop-start)
-        return source,destination,seeds
+        return owner,destination,seeds
 
     def release_slots(self, slots):
         """Destroy a retired lease before its state pages become reusable."""
@@ -340,11 +340,24 @@ class CudaBattleArena:
         self.loaded[slots] = False
 
     def replay_slots(self, slots, actions):
-        self.observe_selected(slots)
+        self._assert_owner()
+        slots=np.asarray(slots,np.int32)
+        if (len(slots)!=len(actions) or len(np.unique(slots))!=len(slots)
+                or np.any(slots<0) or np.any(slots>=self.capacity)
+                or not self.loaded[slots].all()):
+            raise ValueError('real action replay requires distinct live slots')
+        if not len(slots):return
+        indices,count,offset = self._upload_many([np.asarray(slots,np.int32),
+            np.asarray([len(slots)],np.int32),np.asarray([0],np.int64)])
+        if self.paged:
+            # Actual-action replay consumes the codec, not a neural observation.
+            self._launch('observe_actions_indexed',[self.arena,self.constructed,self.prefix,
+                self.bits,self.mask,self.outcome,indices,count],len(slots))
+        else:
+            self.observe_selected(slots)
         self.selected.fill_(-1)
-        self.selected[self._upload(slots, np.int64)] = self._upload(actions)
-        self._launch('apply_compact', self.apply_args + [self._upload(slots),
-            self._upload([len(slots)]), self._upload([0], np.int64)], self.capacity,
+        self.selected[indices.long()] = self._upload(actions)
+        self._launch('apply_compact', self.apply_args + [indices,count,offset], self.capacity,
             dispatch_n=len(slots))
 
     def _graphs(self, n):

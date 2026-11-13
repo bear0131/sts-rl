@@ -29,9 +29,10 @@ def pack_roots(rows, host):
     roots = [r['root'] for r in values]
     metadata = [{k: v for k, v in r.items() if k not in ('snapshot', 'actions', 'bits', 'replay')}
                 for r in roots]
-    snapshots = [{k: v for k, v in r['snapshot'].items() if k != 'words'} for r in roots]
+    snapshots = [None if r['snapshot'] is None else
+                 {k: v for k, v in r['snapshot'].items() if k != 'words'} for r in roots]
     ragged = []
-    for arrays in ([r['snapshot']['words'] for r in roots],
+    for arrays in ([np.empty(0, np.uint64) if r['snapshot'] is None else r['snapshot']['words'] for r in roots],
                    [r['actions'] for r in roots], [r['bits'] for r in roots],
                    [np.asarray(r.get('replay', ()), np.int64) for r in roots],
                    [r['worlds'] for r in values]):
@@ -68,7 +69,8 @@ def unpack_roots(packet):
         ragged.append([storage[offsets[i]:offsets[i+1]] for i in range(count)])
     words, actions, bits, replay, worlds = ragged
     return {key: dict(root=dict(packet['metadata'][i],
-                               snapshot=dict(packet['snapshots'][i], words=words[i]),
+                               snapshot=(None if packet['snapshots'][i] is None else
+                                         dict(packet['snapshots'][i], words=words[i])),
                                actions=actions[i], bits=bits[i], replay=replay[i]),
                       observation=observations[i],
                       context=tuple(x[i] for x in packet['context']),
@@ -83,6 +85,8 @@ class ResidentRootExporter:
         _, _, self.bridge = load_artifacts(artifacts)
         self.cached = [None]*len(envs)
         self.observations = observations
+        self.mirrors = [None]*len(envs)
+        self.serial = 0
 
     def _remember(self, env, previous, action):
         if env._phase() != 'combat' or env._at_combat_exit_anchor():
@@ -96,9 +100,47 @@ class ResidentRootExporter:
 
     def before_step(self, actions):
         for i, (env, action) in enumerate(zip(self.envs, actions, strict=True)):
+            mirror = self.mirrors[i]
+            if mirror is not None and env.thick is not None and mirror['battle'] is env.thick.bc:
+                if env._phase() == 'combat' and not env._at_combat_exit_anchor():
+                    mirror['replay'].append(int(action)-env._policy_offset)
+                    continue
+            self.mirrors[i] = None
             self.cached[i] = self._remember(env, self.cached[i], action)
 
-    def export(self, indices):
+    def export(self, indices, generation=None):
+        if generation is not None:
+            return self._export_mirrors(indices, generation)
+        return self._export_snapshots(indices)
+
+    def _export_mirrors(self, indices, generation):
+        result = []
+        for i in indices:
+            env, mirror = self.envs[i], self.mirrors[i]
+            if mirror is None or mirror['battle'] is not env.thick.bc:
+                root = self._export_snapshots([i])[0]
+                if root.get('native_fallback'):
+                    result.append(root)
+                    continue
+                self.serial += 1
+                mirror = dict(snapshot=root['snapshot'], prefix=root['prefix'],
+                              replay=list(root['replay']), serial=self.serial,
+                              battle=env.thick.bc, emitted=None)
+                self.mirrors[i] = mirror
+                # Legacy direct callers can still replay this exact origin.
+                self.cached[i] = {k: mirror[k] for k in ('snapshot', 'prefix', 'replay')}
+            else:
+                observation = (None if self.observations is None else
+                               {'select_zone': self.observations['select_zone'][i]})
+                root = root_payload(env, self.bridge, observation=observation, snapshot=mirror['snapshot'])
+            root.update(prefix=mirror['prefix'], replay=list(mirror['replay']),
+                        mirror=dict(env=i, serial=mirror['serial'], version=len(mirror['replay'])))
+            root['snapshot'] = mirror['snapshot'] if mirror['emitted'] != generation else None
+            mirror['emitted'] = generation
+            result.append(root)
+        return result
+
+    def _export_snapshots(self, indices):
         result = []
         for i in indices:
             env = self.envs[i]

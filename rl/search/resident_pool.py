@@ -12,14 +12,14 @@ from rl.search.resident_step import ResidentStepPipeline
 
 
 class ResidentPool:
-    def __init__(self, arena, scorer, capacity, budget_cap, max_depth, timeout):
+    def __init__(self, arena, scorer, capacity, budget_cap, max_depth, timeout, *, mirror_capacity=0):
         self.arena, self.scorer = arena, scorer
         self.capacity, self.budget_cap = capacity, budget_cap
         self.max_depth, self.timeout = max_depth, timeout
         self.ledger = arena.host.RootLedger(capacity)
         self.bank, self.page_leases, self.jobs = {}, {}, {}
         self.closed, self.pipeline = False, None
-        self.n = arena.capacity-capacity
+        self.n = arena.capacity-capacity-mirror_capacity
         self.root_stride = ((budget_cap+15)//16)*16
         if self.n < capacity*self.root_stride:
             raise ValueError('arena cannot hold the declared root budgets')
@@ -28,6 +28,8 @@ class ResidentPool:
         self.roots = torch.empty((capacity,arena.battle_bytes),dtype=torch.uint8,device=arena.device)
         arena.arena[:capacity].copy_(self.roots.data_ptr()+
             torch.arange(capacity,dtype=torch.int64,device=arena.device)*arena.battle_bytes)
+        from env.search.resident_mirror import ResidentBattleMirror
+        self.mirror = ResidentBattleMirror(arena,capacity+self.n,mirror_capacity)
         def allocate(count):
             return torch.empty((count,arena.battle_bytes),dtype=torch.uint8,device=arena.device)
         self.state_pages = arena.host.DevicePages(capacity, budget_cap, arena.battle_bytes,
@@ -48,7 +50,8 @@ class ResidentPool:
         if not rows:
             return {}
         for row in rows.values():
-            if row['root'].get('native_fallback') or not row['root']['snapshot']['portable']:
+            if row['root'].get('native_fallback') or (row['root']['snapshot'] is not None
+                                                   and not row['root']['snapshot']['portable']):
                 raise ValueError('nonportable root belongs to native fallback')
             if not 0 < len(row['worlds'])*len(row['root']['actions']) <= self.budget_cap:
                 raise ValueError('paired budget exceeds the state-page contract')
@@ -68,11 +71,6 @@ class ResidentPool:
         for handle in handles:
             self.page_leases[handle.slot]=leases[(handle.slot,handle.generation)]
         payloads = [rows[h.key]['root'] for h in handles]
-        self.arena.load_slots([r['snapshot'] for r in payloads], [r['prefix'] for r in payloads], slots)
-        for step in range(max((len(r.get('replay',())) for r in payloads), default=0)):
-            selected = [j for j,r in enumerate(payloads) if step < len(r.get('replay',()))]
-            self.arena.replay_slots([slots[j] for j in selected],
-                                   [payloads[j]['replay'][step] for j in selected])
         context = SearchContext(*(np.stack([rows[h.key]['context'][k]
             for h in handles]) for k in (0,1)))
         self.scorer.update_roots(slots,[rows[h.key]['observation'] for h in handles],context,self.capacity)
@@ -80,7 +78,7 @@ class ResidentPool:
             owners = torch.zeros(self.n,dtype=torch.long,device=self.arena.device)
             self.scorer.bind_wave(self.arena,owners,self.capacity)
             self.pipeline = ResidentStepPipeline(self.scorer,self.arena,self.max_depth,
-                                                root_stride=self.root_stride)
+                                                root_stride=self.root_stride,lane_capacity=self.n)
             self.scorer.step_pipeline = self.pipeline
             self.pipeline.begin_empty(owners)
         source,destination,world_seeds,initial_bits,draw,action_indices,counts = self.arena.host.pack_jobs(
@@ -102,8 +100,14 @@ class ResidentPool:
         # copies serialize the host and GPU despite independent page ownership.
         self.arena.arena.index_copy_(0,torch.as_tensor(destination,device=self.arena.device),
             torch.as_tensor(np.concatenate(page_addresses),device=self.arena.device))
-        owners,physical,seeds = self.arena.start_selected(source,destination,world_seeds,initial_bits,draw)
-        self.pipeline.refill(physical.long()-self.capacity,owners,seeds)
+        for group in self.mirror.groups(payloads):
+            group_slots=np.asarray([slots[i] for i in group],np.int64)
+            actual_sources=self.mirror.prepare([payloads[i] for i in group],group_slots)
+            lookup=np.arange(self.capacity,dtype=np.int64);lookup[group_slots]=actual_sources
+            selected=np.isin(source,group_slots)
+            owners,physical,seeds = self.arena.start_selected(lookup[source[selected]],destination[selected],
+                world_seeds[selected],initial_bits[selected],draw[selected],owners=source[selected])
+            self.pipeline.refill(physical.long()-self.capacity,owners,seeds)
         self.pipeline.deck = self.scorer.metadata_root['deck_ids']
         self.remaining += len(destination)
         self.counts['max_active'] = max(self.counts['max_active'],self.remaining)
@@ -179,7 +183,7 @@ class ResidentPool:
         return out
 
     def statistics(self):
-        result = dict(self.counts,state_pages=self.state_pages.statistics())
+        result = dict(self.counts,state_pages=self.state_pages.statistics(),mirror=dict(self.mirror.counts))
         if self.pipeline is not None:
             result.update(zip(('terminal_rows','anchor_rows','cutoff_rows','forced_rows','policy_rows'),
                               self.pipeline.counters.cpu().tolist()))

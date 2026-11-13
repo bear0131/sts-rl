@@ -172,7 +172,24 @@ class ShadowSearchCollection:
             budgets = [self.config.boss_budget if o['combat_is_boss'].item() else self.config.normal_budget
                        for o in observations]
             seed = int(self.rng.integers(0, 2**63-1))
-            roots, groups = self.env.deck_resident_roots(indices.tolist(), self.config.cuda_artifacts)
+            roots, groups = self.env.deck_resident_roots(indices.tolist(), self.config.cuda_artifacts,
+                                                       generation=self.generation)
+            # A worker exports an origin once per collection, including roots
+            # whose whole worker group subsequently takes the native fallback.
+            # Keep that origin until its GPU admission actually occurs.
+            if not hasattr(self, 'resident_origins'):
+                self.resident_origins = {}
+            for root in roots:
+                identity = root.get('mirror')
+                if identity is None:
+                    continue
+                env_id, serial = identity['env'], identity['serial']
+                if root['snapshot'] is not None:
+                    self.resident_origins[env_id] = serial, root['snapshot']
+                cached_serial, snapshot = self.resident_origins[env_id]
+                if cached_serial != serial:
+                    raise ValueError('missing resident battle origin')
+                root['snapshot'] = snapshot
             item = dict(position=self.buffer.pos, indices=indices.copy(),
                 masks=masks.copy(), logits=logits.clone(), context=context, observations=observations,
                 roots=roots, groups=groups, budgets=budgets, seed=seed)

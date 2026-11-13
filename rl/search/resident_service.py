@@ -20,6 +20,7 @@ class GpuService:
         self.seq=0; self.requests={}; self.replies={}; self.ready_roots={}; self.outstanding=set()
         self.counts=collections.Counter(); self.status={}; self.cancelled=[]
         self.settings=dict(settings); self.parked=False
+        self.mirror_sent={}
         from env.search.cuda_battle import load_artifacts
         self.transport_host=load_artifacts(settings['artifacts'])[2]
         ctx=mp.get_context('spawn')
@@ -93,7 +94,19 @@ class GpuService:
             raise ValueError('duplicate search or root capacity exceeded')
         if rows:
             from env.search.resident_transport import pack_roots
-            self.send('submit',pack_roots(rows,self.transport_host)); self.outstanding.update(rows)
+            packet_rows={}
+            for key,row in rows.items():
+                identity=row['root'].get('mirror')
+                if identity is not None:
+                    env_id,serial=identity['env'],identity['serial']
+                    if self.mirror_sent.get(env_id)==serial:
+                        row=dict(row,root=dict(row['root'],snapshot=None))
+                    else:
+                        if row['root']['snapshot'] is None:
+                            raise ValueError('first GPU mirror admission needs its origin')
+                        self.mirror_sent[env_id]=serial
+                packet_rows[key]=row
+            self.send('submit',pack_roots(packet_rows,self.transport_host)); self.outstanding.update(rows)
 
     def receive(self, timeout=0.):
         self.poll(timeout); out,self.ready_roots=self.ready_roots,{}
@@ -113,6 +126,7 @@ class GpuService:
     def begin(self, snapshot):
         if not self.parked: raise RuntimeError('begin requires a parked owner')
         self.status=self.call('begin',str(snapshot)); self.parked=False
+        self.mirror_sent.clear()
         self.counts.clear()
 
     def close(self, cancel=None):
@@ -147,6 +161,7 @@ def collection_service(model, capacity, snapshot, settings):
     process. The weak finalizer also closes owners used by library callers that
     do not go through the training CLI; the child is daemonized for parent death.
     """
+    settings=dict(settings,environment_capacity=model.n_envs)
     service=getattr(model,'_resident_search_service',None)
     if service is not None:
         if not service.closed and (service.capacity!=capacity or service.settings!=settings):

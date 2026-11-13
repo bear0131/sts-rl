@@ -64,12 +64,14 @@ def run_worker(commands,responses,settings):
                 # No old root, graph, context ID or score cache survives park.
                 scorer.__init__(policy,settings['cache_bytes'],native_host=host,compiled_gather=compiled)
             capacity=settings['capacity']; budget=settings['budget_cap']
+            mirror_capacity=settings.get('environment_capacity',0)
             arena=CudaBattleArena(folder/'deck.cubin',manifest['sha256']['deck.cubin'],
-                capacity+capacity*((budget+15)//16)*16,
+                capacity+capacity*((budget+15)//16)*16+mirror_capacity,
                 card_count=_nosl_compact_lut()['layout']['card_count'],paged=True,
                 observation_capacity=min(capacity+capacity*((budget+15)//16)*16,
                                          ResidentStepPipeline.frame_capacity))
-            engine=ResidentPool(arena,scorer,capacity,budget,settings['max_depth'],settings['timeout'])
+            engine=ResidentPool(arena,scorer,capacity,budget,settings['max_depth'],settings['timeout'],
+                                mirror_capacity=mirror_capacity)
             active=0.; started=time.monotonic(); generation+=1
 
         def report():

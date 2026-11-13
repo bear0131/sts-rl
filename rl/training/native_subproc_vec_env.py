@@ -82,7 +82,7 @@ class _NativeStepPipe:
                     from env.search.resident_transport import ResidentRootExporter
                     self.deck_resident = ResidentRootExporter(self.envs, data['artifacts'],
                         observations=self.native.buf_obs if self.native is not None else None)
-                self.remote.send(self.deck_resident.export(data['indices']))
+                self.remote.send(self.deck_resident.export(data['indices'], data.get('generation')))
             elif cmd in ('deck_frontier_start', 'deck_frontier_advance', 'deck_frontier_close'):
                 if self.deck_frontier is None:
                     from env.search.frontier_transport import FrontierSession
@@ -169,7 +169,7 @@ class NativeSubprocVecEnv(cv.GroupedCachedMaskSubprocVecEnv):
                 totals[key] = totals.get(key, 0.) + value
         return results, totals
 
-    def deck_resident_roots(self, indices, artifacts):
+    def deck_resident_roots(self, indices, artifacts, generation=None):
         if self.waiting:
             raise RuntimeError('cannot export resident roots during real transitions')
         positions = {index: j for j, index in enumerate(indices)}
@@ -178,11 +178,14 @@ class NativeSubprocVecEnv(cv.GroupedCachedMaskSubprocVecEnv):
             local = [j for j, i in enumerate(group) if i in positions]
             if local:
                 selected[group_index] = [positions[group[j]] for j in local]
-                self.remotes[group_index].send(('deck_resident_roots', dict(indices=local, artifacts=artifacts)))
+                self.remotes[group_index].send(('deck_resident_roots',
+                    dict(indices=local, artifacts=artifacts, generation=generation)))
                 pending[self.remotes[group_index]] = group_index
         roots, groups = [None]*len(indices), [None]*len(indices)
         for group, response in self._receive_groups(pending).items():
             for row, root in zip(selected[group], response, strict=True):
+                if 'mirror' in root:
+                    root['mirror']['env'] = int(indices[row])
                 roots[row], groups[row] = root, group
         return roots, groups
 

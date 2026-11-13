@@ -1,6 +1,15 @@
 # Worker 搜索基础
 
 `cuda_battle.py` 是无模型 CUDA 常驻战斗组件，通过显式 `cuda-resident` 后端接入影子搜索；生产资格须单独验收。
+
+训练的真实战斗镜像由 `resident_mirror.py` 持有：首次导入可迁移状态，之后重放
+CPU 实际选择的动作（含选择前缀），搜索从对应版本分叉。每个环境有独立的战斗
+身份和单调动作版本；同环境多个排队版本逐个分叉后才能推进下一版本。回调队列
+保留在原 GPU 模块中，不跨设备复制函数指针。搜索的世界随机数只用于分支，不能
+改写真实镜像 RNG。换 collection 会销毁镜像，普通恢复从 CPU 环境重新发送来源；
+首次状态不可迁移且没有合法回放来源时仍走原 native fallback。
+`resident_transport.py` 的列式 FIFO 保留字段字节、候选顺序和版本，首次来源即使
+暂被整组 fallback 阻挡也由采样器保留，直到 GPU 实际接收；它不构成新 checkpoint 格式。
 它要求调用方提供固定 SHA256 的 `deck-resident-battle-v1` 模块；模块包含
 `cuda_battle_kernels.cuh`，并使用与当前原生环境一致的规则、compact v9 观测及
 逻辑状态序列化器构建。私有模拟器源码、生成文件和编译产物不入 Git。

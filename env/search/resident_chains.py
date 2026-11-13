@@ -8,7 +8,7 @@ import numpy as np
 import torch
 
 
-def root_payload(env, bridge, *, observation=None):
+def root_payload(env, bridge, *, observation=None, snapshot=None):
     env = env.unwrapped
     legal = np.flatnonzero(env.action_masks())
     # The native vector already owns the observation of this exact real root.
@@ -17,7 +17,8 @@ def root_payload(env, bridge, *, observation=None):
     if observation is None:
         observation = env._obs()
     joint = dict(env._joint_policy_actions())
-    result = dict(snapshot=bridge.snapshot(env.thick.bc), prefix=sum(1 << k for k in (env._multi or ())),
+    result = dict(snapshot=bridge.snapshot(env.thick.bc) if snapshot is None else snapshot,
+        prefix=sum(1 << k for k in (env._multi or ())),
         actions=legal, bits=np.asarray([joint[a] for a in legal], np.uint32),
         draw_selection=int(observation['select_zone'].item()) == 2, offset=env._policy_offset,
         skipped=('forced' if len(legal) <= 1 else 'hidden_current_intent'

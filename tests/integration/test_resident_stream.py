@@ -8,6 +8,115 @@ import torch
 pytestmark=[pytest.mark.native,pytest.mark.cuda,pytest.mark.timeout(240)]
 
 
+def test_real_mirror_replays_policy_actions_and_preserves_rng_and_prefix(
+        complete_combat_factory, cuda_battle_artifacts):
+    import pickle
+    from env.core.run_env import _nosl_compact_lut
+    from env.search.cuda_battle import CudaBattleArena
+    from env.search.resident_mirror import ResidentBattleMirror
+    from env.search.resident_transport import ResidentRootExporter, pack_roots, unpack_roots
+    folder, manifest, host = cuda_battle_artifacts
+    roots = [complete_combat_factory(['DEFEND_RED','WARCRY','HEADBUTT','TRUE_GRIT','EXHUME'],
+        seed=seed, deck_latent_context=True, card_language=True) for seed in (42,43)]
+    exporter = ResidentRootExporter(roots, folder)
+    arena = CudaBattleArena(folder/'deck.cubin',manifest['sha256']['deck.cubin'],4,
+        card_count=_nosl_compact_lut()['layout']['card_count'],paged=True,observation_capacity=4)
+    mirror = ResidentBattleMirror(arena,0,2)
+    siblings = torch.empty((2,arena.battle_bytes),dtype=torch.uint8,device='cuda')
+    arena.arena[2:4].copy_(siblings.data_ptr()+torch.arange(2,device='cuda')*arena.battle_bytes)
+    rng = np.random.default_rng(20261111)
+    steps = 0
+    try:
+        with pytest.raises(ValueError,match='distinct live slots'):
+            arena.replay_slots([0],[0])
+        for steps in range(60):
+            payloads = exporter.export([0,1],generation=(1,2))
+            assert not any(p.get('native_fallback') for p in payloads)
+            if steps:
+                assert all(p['snapshot'] is None for p in payloads)
+            rows={i:dict(root=p,observation=r._obs(),context=(np.zeros(64,np.float32),)*2,
+                        worlds=np.array([71+i],np.int64),budget=64,submitted_at=1.)
+                  for i,(r,p) in enumerate(zip(roots,payloads))}
+            received=unpack_roots(pickle.loads(pickle.dumps(pack_roots(rows,host),protocol=5)))
+            sources=mirror.prepare([received[i]['root'] for i in range(2)],[0,1])
+            words,meta=arena.snapshot(2)
+            for i,r in enumerate(roots):
+                expected=host.snapshot(r.thick.bc)
+                np.testing.assert_array_equal(words[i,:len(expected['words'])],expected['words'])
+                assert arena.prefix[i].item()==sum(1<<k for k in (r._multi or ()))
+            before=words.copy(),meta.copy()
+            arena.fork(sources,[2,3],[123,456])
+            after=arena.snapshot(2)
+            for a,b in zip(before,after):np.testing.assert_array_equal(a,b)
+            actions=[int(rng.choice(np.flatnonzero(r.action_masks()))) for r in roots]
+            exporter.before_step(actions)
+            outcomes=[r.step(a) for r,a in zip(roots,actions)]
+            if (any(x[2] or x[3] for x in outcomes)
+                    or any(r._phase()!='combat' or r._at_combat_exit_anchor() for r in roots)):
+                break
+            if steps==4:gc.collect();torch.cuda.empty_cache()
+        assert steps>=5
+        assert mirror.counts['loads']==2 and mirror.counts['actual_actions']==2*steps
+        # A restored collection gets its origin again; no state is checkpointed
+        # as a CUDA address or dependent on the previous GPU owner.
+        if all(r.thick is not None and r.thick.bc is not None
+               and r._phase()=='combat' and not r._at_combat_exit_anchor() for r in roots):
+            assert all(p['snapshot'] is not None for p in exporter.export([0,1],generation=(3,4)))
+    finally:arena.close()
+
+
+def test_mirror_clones_each_queued_version_before_advancing_next(
+        complete_combat_factory, cuda_battle_artifacts):
+    from env.core.run_env import _nosl_compact_lut
+    from env.search.cuda_battle import CudaBattleArena
+    from env.search.resident_transport import ResidentRootExporter
+    from env.search.resident_mirror import ResidentBattleMirror
+    from env.search.anchored_chains import paired_anchor_search
+    from rl.policies.deck_latent import DeckLatentPolicy
+    from rl.search.deck_latent import DeckLatentScorer
+    from rl.search.resident_deck import ResidentDeckScorer
+    from rl.search.resident_pool import ResidentPool
+    root=complete_combat_factory(['STRIKE_RED','DEFEND_RED','WARCRY'],seed=42,
+        deck_latent_context=True,card_language=True)
+    folder,manifest,host=cuda_battle_artifacts
+    exporter=ResidentRootExporter([root],folder)
+    torch.manual_seed(20261111)
+    policy=DeckLatentPolicy(root.observation_space,root.action_space,lambda _:5e-5,
+        d_model=32,n_layers=1,n_heads=4,room_lambda=1.,reward_flow='sequential-v1',
+        deck_combat_encoder='transformer64x2').cuda().eval()
+    rows={};expected=[]
+    for i in range(2):
+        obs=root._obs();payload=exporter.export([0],generation=(1,2))[0]
+        context=policy.core.prepare_search_context({k:torch.as_tensor(v[None],device='cuda') for k,v in obs.items()})
+        values,_=paired_anchor_search([root],[64],DeckLatentScorer(policy,[obs]),
+            seed=20261111+i,max_depth=16,max_active=256,timeout_seconds=90)
+        expected.append(values[0])
+        rows[i]=dict(root=payload,observation=obs,context=tuple(x.detach().cpu().numpy()[0]
+            for x in (context.combat,context.anchor)),worlds=np.random.default_rng(20261111+i).integers(
+                0,2**63-1,max(1,64//len(payload['actions'])),dtype=np.int64),budget=64,submitted_at=time.monotonic())
+        if i==0:
+            action=int(np.flatnonzero(root.action_masks())[0]);exporter.before_step([action]);root.step(action)
+    assert list(ResidentBattleMirror.groups([r['root'] for r in rows.values()]))==[[0],[1]]
+    state=root.export_training_state()
+    arena=CudaBattleArena(folder/'deck.cubin',manifest['sha256']['deck.cubin'],131,
+        card_count=_nosl_compact_lut()['layout']['card_count'],paged=True,observation_capacity=64)
+    scorer=ResidentDeckScorer(policy,native_host=host)
+    pool=ResidentPool(arena,scorer,2,64,16,180,mirror_capacity=1)
+    try:
+        pool.submit(rows);actual={}
+        gc.collect();torch.cuda.empty_cache()
+        while pool.pending:actual.update(pool.receive())
+        for i in range(2):
+            np.testing.assert_array_equal(actual[i]['actions'],expected[i]['actions'])
+            np.testing.assert_array_equal(actual[i]['visits'],expected[i]['visits'])
+            np.testing.assert_allclose(actual[i]['values'],expected[i]['values'],rtol=3e-5,atol=3e-6)
+        assert root.export_training_state()==state
+        assert pool.mirror.counts['loads']==1 and pool.mirror.counts['actual_actions']==1
+        with pytest.raises(ValueError,match='backwards'):
+            pool.mirror.prepare([rows[0]['root']],[0])
+    finally:pool.close(cancel=True)
+
+
 def test_stream_column_transport_preserves_every_byte_and_ragged_root(
         complete_combat_factory, cuda_battle_artifacts):
     import pickle

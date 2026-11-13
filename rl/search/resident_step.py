@@ -21,11 +21,11 @@ class ResidentStepPipeline:
     # actor. Bound only physical scoring storage; every logical job is retained.
     frame_capacity = 32768
 
-    def __init__(self, scorer, arena, max_depth, capacity=128, *, root_stride=0):
+    def __init__(self, scorer, arena, max_depth, capacity=128, *, root_stride=0, lane_capacity=None):
         if 'observe_live' not in arena.functions:
             raise ValueError('resident step graphs require observe_live simulator artifacts')
         self.scorer, self.arena, self.max_depth = scorer, arena, max_depth
-        self.n, self.capacity = arena.capacity, capacity
+        self.n, self.capacity = arena.capacity if lane_capacity is None else lane_capacity, capacity
         self.root_stride = root_stride
         self.root_count = len(scorer.root['deck_ids']) if root_stride else 0
         self.completion_host = None
