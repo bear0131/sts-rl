@@ -367,7 +367,8 @@ def test_duplicate_context_gradients_equal_full_recomputation(latent_env):
 @pytest.mark.parametrize('transport', ['dummy', 'native-subproc'])
 @pytest.mark.parametrize('context_mode', ['off', 'replay', 'grouped', 'screens', 'context-limit', 'direct-mask', 'prefetch'])
 def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, transport, context_mode,
-                                                       encoder='pooled-mlp', device='cpu', search_backend='native-cpu'):
+                                                       encoder='pooled-mlp', device='cpu', search_backend='native-cpu',
+                                                       action_selection='shadow'):
     from gymnasium.wrappers import TimeLimit
     from stable_baselines3.common.vec_env import DummyVecEnv
     from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
@@ -388,6 +389,12 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         from rl.training.native_subproc_vec_env import NativeSubprocVecEnv
         return NativeSubprocVecEnv([factory, factory], envs_per_worker=1, start_method='spawn')
     env = vector()
+    executed_actions=[]
+    original_step=env.step_async
+    def record_actions(actions):
+        executed_actions.append(np.array(actions,copy=True))
+        return original_step(actions)
+    env.step_async=record_actions
     model = AccumulatingMaskablePPO(DeckLatentPolicy, env, seed=20261111,
         n_steps=32, batch_size=32, n_epochs=1, device=device, gamma=1., gae_lambda=1.,
         learning_rate=5e-5, reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
@@ -406,6 +413,7 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         model.policy.combat_value_target = 'pre-reward-anchor'
         model.policy_kwargs['combat_value_target'] = 'pre-reward-anchor'
         model.deck_search_config = asdict(SearchTrainingConfig(fraction=1., normal_budget=2,
+            action_selection=action_selection,
             boss_budget=2, max_depth=2, max_active=16, timeout_seconds=30., backend=search_backend,
             cuda_artifacts=__import__('os').environ.get('STS_CUDA_BATTLE_ARTIFACTS', '') if search_backend == 'cuda-resident' else '',
             cuda_wave_capacity=64,
@@ -429,6 +437,13 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         assert len(model.rollout_buffer.search_targets) > 0
         assert model._deck_search_loss_normalization > 0
         assert model.deck_search_last_stats['atomic_steps'] > model.deck_search_last_stats['searched_roots']
+        if action_selection != 'shadow':
+            assert model.deck_search_last_stats['executed_search_actions'] == len(model.rollout_buffer.search_actions)>0
+            np.testing.assert_array_equal(np.asarray(executed_actions[-32:]),model.rollout_buffer.actions[:,:,0])
+            for (position,index),(action,logp) in model.rollout_buffer.search_actions.items():
+                assert model.rollout_buffer.actions[position,index,0]==action
+                assert model.rollout_buffer.action_masks[position,index,action]
+                assert model.rollout_buffer.log_probs[position,index]==pytest.approx(logp,abs=1e-6)
         if search_backend == 'cuda-resident':
             assert model.deck_search_last_stats['backend_cuda_simulation'] == 1
             service=model._resident_search_service
@@ -1281,3 +1296,17 @@ def test_planned_anchor_search_loss_gradients_and_adam_after_graph_release(laten
     finally:
         plan.graphs.entries.clear()
         previous.wait_stream(stream)
+
+@pytest.mark.parametrize('transport', ['dummy', 'native-subproc'])
+@pytest.mark.timeout(240)
+def test_search_acts_and_restores_cpu(tmp_path, transport):
+    test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, True, transport, 'screens',
+        action_selection='search-filter-policy-rank-v1')
+
+
+@pytest.mark.cuda
+@pytest.mark.timeout(300)
+def test_search_acts_and_restores_cuda(tmp_path, cuda_battle_artifacts):
+    test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, True, 'native-subproc', 'screens',
+        encoder='transformer64x2', device='cuda', search_backend='cuda-resident',
+        action_selection='search-filter-policy-rank-v1')

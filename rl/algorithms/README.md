@@ -18,3 +18,17 @@ NOSL CUDA learner 对至少32768条的有效 batch 用最多4个线程提取独�
 
 
 `budget_calibration.py` 提供成熟策略的独立预算头附加、审计特征保存及有界拟合；复用 `updates.optimizer_step`，不执行 PPO 或下层动作监督。特征由 `AdaptiveTokenRegretPolicy.budget_features` 统一生成并 detach。预算头以单独文件绑定原模型 SHA 和 tensor digest，不能替代完整训练恢复文件。采集和冻结评测复用现有 episode runner/策略与 eval CLI，支持范围见 `rl/evaluation/README.md`。
+
+Deck-latent 的 `SearchTrainingConfig.action_selection` 默认 `shadow`，用于兼容
+历史旁路教学 checkpoint。显式 `search-filter-policy-rank-v1` 则在真实环境推进前
+完成当前根搜索：保留已访问动作中 Q 距最大值不超过 .005 的集合，选择模型
+logit 最大者，完全同分用独立 nonce 均匀选择。此规则与 `PairedTokenBatch`
+共用 `env/search/action_selection.py`，不增加搜索预算或丢弃候选槽。
+调度配置对应 `search_action_selection`，训练目标标记为
+`deck-latent-search-acting-v1`；改变此字段是采样行为迁移，不能称等价加速。
+
+真实动作和同分选择概率写入 rollout；`_search_executed` 区分确定性搜索决策。
+这些行参加真实回报 value 与原搜索辅助损失，不参加模型随机采样的 PPO
+actor ratio、entropy 或 KL。其余行保持 PPO，逻辑 batch、全行分母和 Adam
+边界不变。当前固定步长 vector 入口在动作前等待当步搜索，不能用旁路搜索
+跨时间步并行的历史采样速度作为此模式的性能验收。

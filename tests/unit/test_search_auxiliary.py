@@ -101,7 +101,7 @@ def test_resident_native_fallback_keeps_whole_worker_group_seed_and_target_posit
     monkeypatch.setattr(search, 'DeckLatentScorer', make_scorer)
     obj = SimpleNamespace(model=SimpleNamespace(policy=object(),_last_obs=dict(
             x=np.arange(3)[:,None],combat_is_boss=np.zeros((3,1)))),
-        env=SimpleNamespace(deck_resident_roots=lambda *args:(roots,[7,7,8]),deck_batched_search=central),
+        env=SimpleNamespace(deck_resident_roots=lambda *args,**kwargs:(roots,[7,7,8]),deck_batched_search=central),
         pending=(np.array([0,1,2]),np.ones((3,2),bool),torch.zeros(3,2),context),
         config=SearchTrainingConfig(),rng=np.random.default_rng(20261111),inference_cache=None,
         generation=(1,2),buffer=buffer,stats=Counter(),

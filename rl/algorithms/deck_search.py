@@ -1,8 +1,7 @@
-"""On-policy real actions with frozen, off-trajectory search teaching.
+"""Frozen paired search: legacy shadow teaching or explicit search-led actions.
 
-No search action replaces a sampled PPO action. No simulated transition is
-written into the rollout buffer. A collection failure never accepts a partial
-paired teacher. The auxiliary loss shares the existing PPO optimizer steps.
+Only real executed transitions enter PPO storage. Search-led actions retain
+their own behavior probability/source and are excluded from the actor ratio.
 """
 from dataclasses import asdict
 from pathlib import Path
@@ -25,6 +24,7 @@ class ShadowSearchCollection:
     def __init__(self, model, env, buffer):
         self.model, self.env, self.buffer = model, env, buffer
         self.config = SearchTrainingConfig(**model.deck_search_config)
+        self.direct_actions = self.config.action_selection != 'shadow'
         if getattr(model.policy.core, 'model_contract', None) != MODEL_CONTRACT:
             raise ValueError('shadow search is only supported by deck-latent-combat-v1')
         if not isinstance(buffer, SearchRolloutBuffer) or model.ppo_update_config is None:
@@ -49,6 +49,7 @@ class ShadowSearchCollection:
             'stream_submitted_roots', 'stream_retired_roots', 'stream_submissions_while_pending',
             'stream_ticks', 'stream_command_bytes', 'stream_peak_pages',
             'stream_page_oom_retries', 'stream_deferred_admissions',
+            'executed_search_actions', 'changed_policy_actions',
             *DECK_SEARCH_CACHE_METRICS), 0.)
         self.stats['backend_cuda_inference'] = float(self.config.backend in ('cuda-batched-native', 'cuda-resident'))
         self.stats['backend_cuda_simulation'] = float(self.config.backend == 'cuda-resident')
@@ -109,24 +110,43 @@ class ShadowSearchCollection:
         self.stats['eligible_roots'] += int(legal.sum())
         indices = np.flatnonzero(legal & (self.rng.random(len(legal)) < self.config.fraction))
         self.pending = None
-        if not len(indices):
-            return
-        rows = torch.as_tensor(indices, device=self.model.device)
-        logits = policy.action_dist.distribution.logits[rows].detach().cpu()
-        # The ordinary action forward has just produced this exact context.
-        # Reuse its output, without rerunning E or consuming policy RNG.
-        context = policy.core.actor_search_context(rows)
-        self.pending = (indices, masks[indices], logits, context)
+        if len(indices):
+            rows = torch.as_tensor(indices, device=self.model.device)
+            logits = policy.action_dist.distribution.logits[rows].detach().cpu()
+            context = policy.core.actor_search_context(rows)
+            self.pending = (indices, masks[indices], logits, context)
+        if self.direct_actions:
+            # Finish selected current roots before SB3 can advance any real
+            # environment. Returning changed forward outputs also changes the
+            # action and log probability that SB3 records in its rollout.
+            self._search_step(None)
+            actions, values, log_prob = output
+            actions, log_prob = actions.clone(), log_prob.clone()
+            chosen = [(i, self.buffer.search_actions[(self.buffer.pos, int(i))])
+                      for i in indices if (self.buffer.pos, int(i)) in self.buffer.search_actions]
+            if chosen:
+                ids = torch.as_tensor([i for i, _ in chosen], device=actions.device)
+                picked = torch.as_tensor([v[0] for _, v in chosen], device=actions.device)
+                self.stats['changed_policy_actions'] += int((actions.flatten()[ids] != picked).sum())
+                actions.flatten()[ids] = picked
+                log_prob.flatten()[ids] = torch.as_tensor([v[1] for _, v in chosen], device=log_prob.device)
+                self.stats['executed_search_actions'] += len(chosen)
+            return actions, values, log_prob
 
     def step(self, actions):
+        if self.direct_actions:
+            return self.previous(actions)
+        return self._search_step(actions)
+
+    def _search_step(self, actions):
         if self.config.backend == 'cuda-resident':
             return self._resident_step(actions)
         if self.pending is not None:
             started = time.monotonic()
             indices, masks, logits, context = self.pending
             observations = [{k: v[i] for k, v in self.model._last_obs.items()} for i in indices]
-            budgets = [self.config.boss_budget if o['combat_is_boss'].item() else self.config.normal_budget
-                       for o in observations]
+            budgets = [self.config.boss_budget if self.model._last_obs['combat_is_boss'][i].item()
+                       else self.config.normal_budget for i in indices]
             seed = int(self.rng.integers(0, 2**63 - 1))
             if self.config.backend == 'cuda-batched-native':
                 scorer = DeckLatentScorer(self.model.policy, observations, context=context, tables=self.tables,
@@ -154,13 +174,23 @@ class ShadowSearchCollection:
                 target = improved_prior(logits[j:j+1], q, torch.from_numpy(masks[j:j+1]),
                     torch.tensor([int(row['visits'][0])]), self.config.target_std)[0].numpy()
                 self.buffer.add_search_target(int(index), target)
+                if self.direct_actions:
+                    self._record_action(int(index), self.buffer.pos, row, logits[j].numpy(),
+                                        seed ^ (int(index)*1_000_003))
                 self.stats['searched_roots'] += 1
             self.stats['selected_roots'] += len(indices)
             self.stats['search_seconds'] += time.monotonic() - started
             for k, v in stats.items():
                 k = 'worker_search_seconds' if k == 'seconds' else k
                 self.stats[k] = max(self.stats[k], float(v)) if k == 'max_active' else self.stats[k] + float(v)
-        return self.previous(actions)
+        return None if self.direct_actions else self.previous(actions)
+
+    def _record_action(self, index, position, row, logits, nonce):
+        from env.search.action_selection import search_filtered_choice
+        choices = np.asarray(row['actions'])
+        chosen, log_prob = search_filtered_choice(logits[choices], np.asarray(row['values'],np.float64),
+                                                  row['visits'], nonce)
+        self.buffer.search_actions[(position,index)] = int(choices[chosen]), log_prob
 
     @torch.no_grad()
     def _resident_step(self, actions):
@@ -170,8 +200,8 @@ class ShadowSearchCollection:
             indices, masks, logits, context = self.pending
             observations = [{k: self.model._last_obs[k][i] for k in self.resident_root_keys}
                             for i in indices]
-            budgets = [self.config.boss_budget if o['combat_is_boss'].item() else self.config.normal_budget
-                       for o in observations]
+            budgets = [self.config.boss_budget if self.model._last_obs['combat_is_boss'][i].item()
+                       else self.config.normal_budget for i in indices]
             seed = int(self.rng.integers(0, 2**63-1))
             roots, groups = self.env.deck_resident_roots(indices.tolist(), self.config.cuda_artifacts,
                                                        generation=self.generation)
@@ -240,7 +270,7 @@ class ShadowSearchCollection:
                 # do not launch per-root CUDA gathers for discarded context.
                 self.resident_items[key] = dict(position=item['position'],
                     indices=item['indices'][j:j+1],masks=item['masks'][j:j+1],
-                    logits=item['logits'][j:j+1],roots=[None])
+                    logits=item['logits'][j:j+1],roots=[None],seed=seed)
             while queued:
                 self._receive_resident()
                 free = self.resident_service.capacity-len(self.resident_service.outstanding)
@@ -253,15 +283,14 @@ class ShadowSearchCollection:
                 self.stats['resident_frame_roots_max'] = max(self.stats['resident_frame_roots_max'],
                     len(self.resident_service.outstanding))
             self.stats['selected_roots'] += len(indices)
-        # Ordinary real actions continue while earlier searches remain live.
-        # Release the drained pool before the final real step: SB3 may evaluate
-        # terminal/tail values immediately afterwards, before collection.close.
-        if self.buffer.pos == self.buffer.buffer_size-1:
+        direct = getattr(self, 'direct_actions', False)
+        if direct or self.buffer.pos == self.buffer.buffer_size-1:
             while self.resident_service.outstanding:
                 self._receive_resident(.05)
+        if self.buffer.pos == self.buffer.buffer_size-1:
             self.resident_service.park()
         self.stats['search_seconds'] += time.monotonic()-started
-        return self.previous(actions)
+        return None if direct else self.previous(actions)
 
     def _receive_resident(self, timeout=0.):
         ready = self.resident_service.receive(timeout)
@@ -292,6 +321,9 @@ class ShadowSearchCollection:
                 selected.append(j)
                 target_rows.append(row)
                 destinations.append((int(index), item['position']))
+                if self.config.action_selection != 'shadow':
+                    self._record_action(int(index), item['position'], row, item['logits'][j].numpy(),
+                                        item['seed'] ^ (int(index)*1_000_003))
             if selected:
                 complete = len(selected) == len(item['indices'])
                 target_logits.append(item['logits'] if complete else item['logits'][selected])

@@ -161,22 +161,26 @@ def ppo_loss_components(
             clip_range_vf,
         )
 
-    ratio = th.exp(log_prob - old_log_prob)
+    # Search-filter/greedy-rank actions are not samples from the differentiable
+    # actor. They train value and the existing search teacher, never a fictitious
+    # on-policy ratio. Preserve the original all-row denominator and Adam groups.
+    searched = observations.get('_search_executed')
+    actor_valid = th.ones_like(log_prob, dtype=th.bool) if searched is None else ~searched.bool()
+    log_ratio = th.where(actor_valid, log_prob-old_log_prob, 0.)
+    ratio = th.exp(log_ratio)
     clipped_ratio = th.clamp(ratio, 1 - clip_range, 1 + clip_range)
-    entropy_per_sample = log_prob if entropy is None else -entropy
-    kl_per_sample = (th.exp(log_prob - old_log_prob) - 1) - (
-        log_prob - old_log_prob
-    )
+    entropy_per_sample = th.where(actor_valid, log_prob if entropy is None else -entropy, 0.)
+    kl_per_sample = (ratio - 1) - log_ratio
     clipped_per_sample = (th.abs(ratio - 1) > clip_range).float()
 
     if not hierarchical:
         normalized_advantages = advantages
         if normalize_advantage:
             normalized_advantages = normalize_ppo_advantages(advantages, normalization_group_size)
-        policy_loss = -th.min(
+        policy_loss = -th.where(actor_valid, th.min(
             normalized_advantages * ratio,
             normalized_advantages * clipped_ratio,
-        ).mean()
+        ), 0.).mean()
         value_loss = F.mse_loss(returns, values_pred)
         return PPOLossComponents(
             policy_loss=policy_loss,

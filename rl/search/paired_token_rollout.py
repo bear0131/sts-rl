@@ -70,12 +70,9 @@ class PairedTokenBatch(SmallPlayoutBatch):
                     )
                 visits = np.asarray(z["visits"])
                 q = np.asarray(z["values"], np.float64)
-                eligible = np.flatnonzero(
-                    (visits > 0) & (q >= q[visits > 0].max() - 0.005)
-                )
-                tied = eligible[logits[eligible] == logits[eligible].max()]
-                rng = np.random.default_rng(job[3] ^ 0x524F4F54544945)
-                z["action"] = int(bits[rng.choice(tied)])
+                from env.search.action_selection import search_filtered_choice
+                chosen, _ = search_filtered_choice(logits, q, visits, job[3])
+                z["action"] = int(bits[chosen])
                 units = (
                     100.0 if job[2].boss else float(round(float(row["state"][1]) * 200))
                 )

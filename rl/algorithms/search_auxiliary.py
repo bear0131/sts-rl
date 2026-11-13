@@ -23,8 +23,11 @@ class SearchTrainingConfig:
     inference_cache_bytes: int = 0
     cuda_artifacts: str = ''
     cuda_wave_capacity: int = 4096
+    action_selection: str = 'shadow'
 
     def __post_init__(self):
+        if self.action_selection not in ('shadow', 'search-filter-policy-rank-v1'):
+            raise ValueError('unknown search action selection contract')
         if self.inference_cache_bytes < 0:
             raise ValueError('search inference cache capacity must be nonnegative')
         if self.backend not in ('native-cpu', 'cuda-batched-native', 'cuda-resident'):
@@ -46,6 +49,18 @@ class SearchRolloutBuffer(SharedRolloutBuffer):
     def reset(self):
         super().reset()
         self.search_targets = {}
+        self.search_actions = {}
+
+    def add(self, obs, action, reward, episode_start, value, log_prob, *, action_masks=None):
+        if self.search_actions:
+            log_prob = log_prob.detach().cpu()
+        for env_index in range(self.n_envs):
+            chosen = self.search_actions.get((self.pos, env_index))
+            if chosen is not None:
+                actual = int(np.asarray(action).reshape(-1)[env_index])
+                if actual != chosen[0] or not np.isclose(float(log_prob[env_index]), chosen[1], atol=1e-6):
+                    raise ValueError('rollout must record the executed search action and behavior probability')
+        return super().add(obs, action, reward, episode_start, value, log_prob, action_masks=action_masks)
 
     def add_search_target(self, env_index, log_target, *, position=None):
         if ((position is None and self.full) or not 0 <= env_index < self.n_envs):
@@ -65,13 +80,16 @@ class SearchRolloutBuffer(SharedRolloutBuffer):
             return result
         target = np.zeros((len(batch_inds), self.mask_dims), np.float32)
         valid = np.zeros(len(batch_inds), np.float32)
+        executed = np.zeros(len(batch_inds), np.float32)
         for row, index in enumerate(batch_inds):
             key = (int(index % self.buffer_size), int(index // self.buffer_size))
             if key in self.search_targets:
                 target[row] = self.search_targets[key]
                 valid[row] = 1
+            executed[row] = float(key in self.search_actions)
         result.observations['_search_target'] = self.to_torch(target, copy=False)
         result.observations['_search_valid'] = self.to_torch(valid, copy=False)
+        result.observations['_search_executed'] = self.to_torch(executed, copy=False)
         return result
 
 
