@@ -19,6 +19,7 @@ import urllib.request
 from urllib.parse import urlsplit
 
 from apps.training_monitor import Monitor, clean
+from apps.training_worklog import public_text, collect_worklog, publish_worklog
 
 
 METRICS = frozenset('''global_timesteps rollout_round transitions_global
@@ -71,8 +72,9 @@ def public_snapshot(state):
         'active_target', 'target_error', 'search_budget_rows') if key in state})
     result['comparisons'] = [compact_run(run) for run in state.get('comparisons', [])]
     result['ranks'] = [{key: clean(rank[key]) for key in (
-        'rank', 'alive', 'step', 'progress', 'checked_at', 'attempted_at') if key in rank}
-        | {'connection_error': '暂时无法连接这台机器' if rank.get('connection_error') else None}
+        'rank', 'alive', 'step', 'progress', 'checked_at', 'attempted_at', 'log_mtime') if key in rank}
+        | {'connection_error': '暂时无法连接这台机器' if rank.get('connection_error') else None,
+           'log_tail': public_text(rank.get('log_tail', ''))[-32000:]}
         for rank in state.get('ranks', [])]
     # Resource telemetry is useful to GPT, but only the latest record is needed.
     result['resources'] = clean(state.get('resources', {}))
@@ -101,7 +103,15 @@ def indexed_snapshot(state):
 
 
 def serve_state(path, command):
-    """Forced SSH command: fixed file and two read-only requests, no shell input."""
+    """Forced SSH command: fixed files and read-only requests, no shell input."""
+    if command == 'worklog':
+        data = path.with_suffix('.worklog.json').read_bytes()
+        if len(data) > 6 * 1024 * 1024:
+            raise ValueError('Worklog too large')
+        state = json.loads(data)
+        if state.get('schema_version') != 1 or not isinstance(state.get('sources'), list):
+            raise ValueError('Invalid worklog')
+        return json.dumps(state, ensure_ascii=False, allow_nan=False)
     if command != 'current' and not re.fullmatch(r'history:[a-f0-9]{64}', command):
         raise ValueError('Only current or history:<sha256> is allowed')
     state, history = indexed_snapshot(json.loads(path.read_text(encoding='utf-8')))
@@ -224,6 +234,8 @@ def main():
                         help='Forced SSH command: only serve this fixed public snapshot')
     parser.add_argument('--collect-only', action='store_true',
                         help='Persist remote snapshots for an authenticated Site to pull')
+    parser.add_argument('--worklog-only', action='store_true',
+                        help='Relay the existing local worklog and selected Git branches to the Site collector')
     parser.add_argument('--poll-seconds', type=float, default=30)
     parser.add_argument('--max-polls', type=int, default=0)
     args = parser.parse_args()
@@ -234,11 +246,32 @@ def main():
             print('Snapshot request rejected', file=sys.stderr)
             raise SystemExit(1)
         return
-    if not args.config or not args.state or (not args.collect_only and not args.credentials):
+    if not args.config or not args.state or (not args.collect_only and not args.worklog_only and not args.credentials):
         parser.error('config/state required; uploads also require credentials')
     if not math.isfinite(args.poll_seconds) or args.poll_seconds < 10 or args.max_polls < 0:
         parser.error('poll-seconds must be >=10 and max-polls >=0 (0 means continuous)')
     config = json.loads(args.config.read_text())
+    if args.worklog_only:
+        previous = json.loads(args.state.read_text(encoding='utf-8')) if args.state.exists() else {}
+        attempts = 0
+        while not args.max_polls or attempts < args.max_polls:
+            started = time.monotonic()
+            try:
+                snapshot = collect_worklog(config, previous)
+                receipt = publish_worklog(config, snapshot)
+                args.state.parent.mkdir(parents=True, exist_ok=True)
+                tmp = args.state.with_suffix('.tmp')
+                tmp.write_text(json.dumps(snapshot, ensure_ascii=False), encoding='utf-8')
+                os.replace(tmp, args.state)
+                previous = snapshot
+                status = dict(ok=True, at=time.time(), **receipt)
+            except Exception as exc:
+                status = dict(ok=False, at=time.time(), error_type=type(exc).__name__)
+            print(json.dumps(status), flush=True)
+            attempts += 1
+            if not args.max_polls or attempts < args.max_polls:
+                time.sleep(max(1, args.poll_seconds - (time.monotonic() - started)))
+        return
     cache_file = args.state.with_suffix('.uploaded.json')
     uploaded = json.loads(cache_file.read_text()) if cache_file.exists() else {}
     target = {key: config[key] for key in RUN_FIELDS if key in config}

@@ -30,9 +30,19 @@
     "mode": "site-pulls-restricted-ssh",
     "allowed_commands": [
       "current",
+      "worklog",
       "history:<sha256>"
     ],
     "private_key_location": "Sites secret REMOTE_MONITOR_PRIVATE_KEY",
     "host_hash": "962677eaf342b0d70d757796b387fe83964884f33f66284ff37e2fc6cf1496a7"
+  },
+  "worklog": {
+    "page": "/worklog",
+    "local_feed": "http://127.0.0.1:8773/api/worklog",
+    "current_branch": "codex/combat49-maintenance",
+    "poll_seconds": 60,
+    "remote_file": "/root/autodl-tmp/sts-training-site-20261114/state.worklog.json",
+    "local_config": "runs/local/cloud-reconnect-20261114/worklog-config.json",
+    "local_state": "runs/local/cloud-reconnect-20261114/worklog-state.json"
   }
 }

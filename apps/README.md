@@ -129,3 +129,9 @@ Site以部署secret保存专用私钥，并固定校验训练机host key；
 可选直接上传仍使用`--credentials CREDENTIALS`和CONFIG的`site_url`，
 CREDENTIALS含0600权限的service_token；只向精确HTTPS站点origin发送授权，
 不跟随重定向。当前训练机直连Sites被边缘403拒绝，生产使用上述只读拉取。
+
+### 云端工作日志
+
+`python -m apps.training_site_sync --worklog-only --config <local-config> --state <local-cache> --poll-seconds 60` 将已有本地 `/api/worklog` 与明确列出的 Git 分支已提交日志，脱敏后原子同步到监控机的固定 `state.worklog.json`。配置只存来源、受信 SSH 目标和现有 key/known-hosts 的路径，不存私钥正文。Git 读取不 checkout、不执行日志中的命令。
+
+每来源最多最近3天、每天末尾30万字符；云端 `/worklog` 保留来源提交、成功同步时间、日期/关键词过滤。失败继续显示缓存并标明过期，本地电脑关闭后工作日志不再刷新；训练曲线的远端采集独立继续。云端仅允许固定 `worklog` 只读请求，不提供本地发言/推送接口。四rank训练输出来自现有监控，每台最多120行/32000字符，上传前脱敏；输出时间与进程存活分别显示。

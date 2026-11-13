@@ -73,7 +73,8 @@ steps=[]
 for p in (run/'recovery'/f'rank{RANK}').glob('step-*'):
     if (p/'manifest.json').exists(): steps.append(int(p.name[5:]))
 print(json.dumps(dict(rank=RANK,pid=pid,alive=alive,step=max(steps,default=0),
-    progress=progress,log_mtime=st.st_mtime,errors=errors[-3:],rows=rows,budget_records=budget_records,
+    progress=progress,log_mtime=st.st_mtime,log_tail='\n'.join(tail[-120:])[-32000:],
+    errors=errors[-3:],rows=rows,budget_records=budget_records,
     cursor=dict(inode=st.st_ino,offset=offset,budget_offset=budget_offset),checked_at=time.time())))
 '''
 
