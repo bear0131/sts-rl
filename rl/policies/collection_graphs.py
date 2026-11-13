@@ -46,7 +46,8 @@ class SharedCollectionGraphs:
 
     def begin_collection(self):
         self.host_inputs = None
-        self.stats = dict(captures=0, hits=0, evictions=0, capture_seconds=0.)
+        self.stats = dict(captures=0, hits=0, evictions=0, capture_seconds=0.,
+                          context_rows=0, map_rows=0)
 
     def compatible(self, core):
         return (self.core is core and not self.closed
@@ -123,7 +124,7 @@ class SharedCollectionGraphs:
             tensor.record_stream(torch.cuda.current_stream(self.device))
         return output
 
-    def bind_host_observations(self, tensors, observations):
+    def bind_host_observations(self, tensors, observations, *, context_slots=None):
         """Bind the source of one immediate forward, never a later tensor view.
 
         The collector calls this after converting this exact observation.
@@ -132,7 +133,14 @@ class SharedCollectionGraphs:
         if tensors.keys() != observations.keys() or any(
                 tuple(tensors[key].shape) != observations[key].shape for key in tensors):
             raise ValueError('host observation binding must match the converted batch')
-        self.host_inputs = tensors, observations
+        if context_slots is not None:
+            indices, capacity = context_slots
+            indices = np.asarray(indices, dtype=np.intp)
+            if (len(indices) != len(observations['phase']) or len(np.unique(indices)) != len(indices)
+                    or (indices < 0).any() or (indices >= capacity).any()):
+                raise ValueError('invalid collection context slots')
+            context_slots = indices, capacity
+        self.host_inputs = tensors, observations, context_slots
 
     def __call__(self, observations):
         if self.closed:
@@ -145,7 +153,7 @@ class SharedCollectionGraphs:
         try:
             pending, self.host_inputs = self.host_inputs, None
             host = pending[1] if pending is not None and pending[0] is observations else None
-            return self._forward(observations, host)
+            return self._forward(observations, host, pending[2] if host is not None else None)
         finally:
             self.sequence_done.record(stream)
 
@@ -158,22 +166,24 @@ class SharedCollectionGraphs:
                             device=rooms.device))
             self.map_valid = torch.zeros(len(rooms), dtype=torch.bool, device=rooms.device)
 
-    def _run_context(self, observations, host):
+    def _run_context(self, observations, host, context_slots=None):
         encoder = self.core.context
         versions = tuple(p._version for p in encoder.parameters())
         cached = self.context_cache
         count = len(host['phase'])
+        slots, capacity = (np.arange(count), count) if context_slots is None else context_slots
         if cached is None or cached[0] != versions or any(
-                cached[1][k].shape != host[k].shape for k in encoder.keys):
-            previous = {k: host[k].copy() for k in encoder.keys}
+                cached[1][k].shape != (capacity, *host[k].shape[1:])
+                or cached[1][k].dtype != host[k].dtype for k in encoder.keys):
+            previous = {k: np.zeros((capacity, *host[k].shape[1:]), dtype=host[k].dtype) for k in encoder.keys}
             with torch.inference_mode(False), torch.no_grad():
-                latent = torch.empty(count, self.core.upper_config.width, device=self.device)
-            dirty = np.ones(count, dtype=bool)
+                latent = torch.empty(capacity, self.core.upper_config.width, device=self.device)
+            valid = np.zeros(capacity, dtype=bool)
         else:
-            _, previous, latent = cached
-            dirty = np.zeros(count, dtype=bool)
-            for k in encoder.keys:
-                dirty |= (host[k] != previous[k]).reshape(count, -1).any(1)
+            _, previous, latent, valid = cached
+        dirty = ~valid[slots]
+        for k in encoder.keys:
+            dirty |= (host[k] != previous[k][slots]).reshape(count, -1).any(1)
         rows = np.flatnonzero(dirty)
         if len(rows):
             # Only the expensive attention is deduplicated. Identity includes
@@ -187,15 +197,16 @@ class SharedCollectionGraphs:
             batch = {k: observations[k][indices] for k in encoder.keys}
             widths = tuple(self._width(host[k][selected], 1) for k in ('deck_ids', 'relics'))
             encoded = encoder(batch, active_widths=widths)
-            latent[torch.as_tensor(rows, device=self.device)] = encoded[
+            latent[torch.as_tensor(slots[rows], device=self.device)] = encoded[
                 torch.as_tensor(inverse, device=self.device)]
             for k in encoder.keys:
-                previous[k][rows] = host[k][rows]
+                previous[k][slots[rows]] = host[k][rows]
+            valid[slots[rows]] = True
             self.stats['context_rows'] = self.stats.get('context_rows', 0) + len(selected)
-        self.context_cache = versions, previous, latent
-        return latent
+        self.context_cache = versions, previous, latent, valid
+        return latent if context_slots is None else latent[torch.as_tensor(slots, device=self.device)]
 
-    def _forward(self, observations, host=None):
+    def _forward(self, observations, host=None, context_slots=None):
         if self.closed or self.core.training or torch.is_grad_enabled():
             raise RuntimeError('collection graphs require a live eval/no-grad scope')
         if torch.is_autocast_enabled('cuda'):
@@ -207,7 +218,7 @@ class SharedCollectionGraphs:
         deck_model = getattr(self.core, 'model_contract', None) == 'deck-latent-combat-v1'
         if deck_model and host is None:
             return self.core.eager_actor_critic(observations)
-        context = self._run_context(observations, host) if deck_model else None
+        context = self._run_context(observations, host, context_slots) if deck_model else None
         if deck_model:
             self.core.publish_actor_context(context)
         phase = observations['phase'].long().flatten()
@@ -217,27 +228,30 @@ class SharedCollectionGraphs:
             host_dirty = np.zeros(len(host_phase), dtype=bool)
             if use_map:
                 rooms, features = observations['map_full_rooms'], observations['map_full_features']
+                slots, capacity = (np.arange(len(host_phase)), len(host_phase)) if context_slots is None else context_slots
+                slot_tensor = torch.as_tensor(slots, device=self.device)
                 versions = tuple(p._version for p in self.parameters)
                 valid_shape = (self.map_cache is not None
-                               and self.map_cache[0].shape == rooms.shape
-                               and self.map_cache[1].shape == features.shape)
+                               and self.map_cache[0].shape == (capacity, *rooms.shape[1:])
+                               and self.map_cache[1].shape == (capacity, *features.shape[1:]))
                 if not valid_shape:
-                    self._reset_map_cache(rooms, features)
+                    self._reset_map_cache(rooms[:1].expand(capacity, *rooms.shape[1:]),
+                                          features[:1].expand(capacity, *features.shape[1:]))
                 previous_rooms, previous_features, encoded_map = self.map_cache
                 cached = self.host_map_cache
                 if not valid_shape or versions != self.weight_versions or cached is None:
-                    cached = (np.zeros_like(host['map_full_rooms']),
-                              np.zeros_like(host['map_full_features']),
-                              np.zeros(len(host_phase), dtype=bool))
+                    cached = (np.zeros((capacity, *host['map_full_rooms'].shape[1:]), dtype=host['map_full_rooms'].dtype),
+                              np.zeros((capacity, *host['map_full_features'].shape[1:]), dtype=host['map_full_features'].dtype),
+                              np.zeros(capacity, dtype=bool))
                     self.host_map_cache = cached
                     self.map_valid.zero_()
                 self.weight_versions = versions
-                same = ((host['map_full_rooms'] == cached[0]).reshape(len(phase), -1).all(1)
-                        & (host['map_full_features'] == cached[1]).reshape(len(phase), -1).all(1))
-                host_dirty = (~same | ~cached[2]) & (host_phase != vocab.PHASE_VOCAB_INDEX['combat'])
-                cached[0][host_dirty] = host['map_full_rooms'][host_dirty]
-                cached[1][host_dirty] = host['map_full_features'][host_dirty]
-                cached[2][host_dirty] = True
+                same = ((host['map_full_rooms'] == cached[0][slots]).reshape(len(phase), -1).all(1)
+                        & (host['map_full_features'] == cached[1][slots]).reshape(len(phase), -1).all(1))
+                host_dirty = (~same | ~cached[2][slots]) & (host_phase != vocab.PHASE_VOCAB_INDEX['combat'])
+                cached[0][slots[host_dirty]] = host['map_full_rooms'][host_dirty]
+                cached[1][slots[host_dirty]] = host['map_full_features'][host_dirty]
+                cached[2][slots[host_dirty]] = True
             meta = np.concatenate([host_phase[:, None], host['relics'], host['deck_ids'],
                                    host_dirty[:, None]], axis=1)
         else:
@@ -280,12 +294,15 @@ class SharedCollectionGraphs:
                                            tensors['features'].float()),)
                 output = self._replay(self.map_entries, signature, batch, padded,
                                       map_forward, min(16, self.capacity))
-                encoded_map[selected] = output[0][:count]
+                destination = slot_tensor[selected] if host is not None else selected
+                encoded_map[destination] = output[0][:count]
                 output[0].record_stream(torch.cuda.current_stream(self.device))
-                previous_rooms[selected] = rooms[selected]
-                previous_features[selected] = features[selected]
-                self.map_valid[selected] = True
+                previous_rooms[destination] = rooms[selected]
+                previous_features[destination] = features[selected]
+                self.map_valid[destination] = True
                 self.stats['map_rows'] = self.stats.get('map_rows', 0) + count
+            if host is not None and context_slots is not None:
+                encoded_map = encoded_map[slot_tensor]
         # Pack by dtype, preserving categorical integers exactly. Each phase
         # submits only a few gathers/copies; views are reconstructed in its graph.
         schema = tuple((key, tuple(value.shape[1:]), value.dtype)

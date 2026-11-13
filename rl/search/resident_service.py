@@ -79,14 +79,28 @@ class GpuService:
                 if time.monotonic()>deadline: raise TimeoutError('GPU command queue remained full')
         self.counts['commands_sent']+=1; self.counts['command_bytes']+=len(packet)
 
-    def call(self, kind, payload=None, timeout=300):
+    def begin_call(self, kind, payload=None):
+        # The accepted legacy service's asynchronous RPC contract. Actor and
+        # native-frontier inference share the same owner as device search.
         self.seq+=1; ident=self.seq; self.requests[ident]=kind
-        self.send(kind,payload,ident); deadline=time.monotonic()+timeout
-        while ident not in self.replies:
+        try: self.send(kind,payload,ident)
+        except BaseException: self.requests.pop(ident); raise
+        return ident
+
+    def take_reply(self, ident):
+        if ident not in self.requests: raise ValueError('unknown or consumed RPC')
+        self.poll()
+        if ident not in self.replies: return False,None
+        del self.requests[ident]
+        return True,self.replies.pop(ident)
+
+    def call(self, kind, payload=None, timeout=300):
+        ident=self.begin_call(kind,payload); deadline=time.monotonic()+timeout
+        while True:
+            ready,value=self.take_reply(ident)
+            if ready: return value
             self.poll(.05)
             if time.monotonic()>deadline: raise TimeoutError('GPU RPC '+kind)
-        del self.requests[ident]
-        return self.replies.pop(ident)
 
     def submit(self, rows):
         if self.parked: raise RuntimeError('submit while search owner is parked')

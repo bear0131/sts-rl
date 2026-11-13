@@ -27,6 +27,7 @@ def collect(model, env, buffer, callback, n_rollout_steps, *, barrier=False):
     """
     from rl.training.native_subproc_vec_env import NativeSubprocVecEnv
     from rl.policies.collection_graphs import SharedCollectionGraphs
+    from rl.policies.deck_latent import SearchContext
     vec = env.venv if isinstance(env, VecMonitor) else env
     if (type(vec) is not NativeSubprocVecEnv or model.device.type != 'cuda'
             or model.nosl_supervision_contract != 'shared-wholerun-ppo-room-v1'
@@ -51,6 +52,8 @@ def collect(model, env, buffer, callback, n_rollout_steps, *, barrier=False):
     session.stream_positions, session.stream_seeds = positions, root_seeds
     current_masks = get_action_masks(env)
     ready, waiting, actions = set(range(n_envs)), set(), {}
+    ready_at = dict.fromkeys(ready, time.monotonic())
+    policy_pending = None
     estimates, monitor_rows = {}, {}
     graphs = getattr(model, '_shared_collection_graphs', None)
     if graphs is not None and not graphs.compatible(model.policy.core):
@@ -64,7 +67,10 @@ def collect(model, env, buffer, callback, n_rollout_steps, *, barrier=False):
     success = False
     stats = dict(policy_seconds=0., environment_seconds=0., receive_seconds=0.,
                  policy_batches=0, transition_batches=0, transitions=0,
-                 transitions_with_search_pending=0, slot_steps_min=0, slot_steps_max=0)
+                 transitions_with_search_pending=0, slot_steps_min=0, slot_steps_max=0,
+                 policy_pending_seconds=0., transitions_with_policy_pending=0,
+                 actor_graph_captures=0., actor_graph_hits=0., actor_graph_evictions=0., actor_graph_capture_seconds=0.,
+                 actor_graph_context_rows=0., actor_graph_map_rows=0.)
     model._deck_stream_progress = stats
     model._reasoning_rollout_samples = []
     started = time.monotonic()
@@ -74,22 +80,28 @@ def collect(model, env, buffer, callback, n_rollout_steps, *, barrier=False):
         while not buffer.full:
             # Same submit/receive/ready loop as the accepted legacy collector.
             # No vector-wide search barrier and no speculative real action.
-            if ready:
+            eligible = ready - session.native_stream.blocked()
+            # Legacy upper RPC batching: 64 ready rows or a 2 ms deadline;
+            # searches keep ticking while the next actor packet is assembled.
+            if (eligible and policy_pending is None and (len(eligible) >= 64 or not waiting
+                    or time.monotonic()-min(ready_at[i] for i in eligible) >= .002)):
                 before = time.monotonic()
-                ids = np.asarray(sorted(ready), dtype=np.intp)
-                ready.clear()
+                ids = np.asarray(sorted(eligible)[:64], dtype=np.intp)
+                ready.difference_update(ids)
+                for i in ids: del ready_at[i]
                 obs = {k: v[ids] for k, v in model._last_obs.items()}
                 masks = current_masks[ids]
-                tensor = obs_as_tensor(obs, model.device)
-                graphs.bind_host_observations(tensor, obs)
-                with torch.no_grad():
-                    _, values, _ = model.policy(tensor, action_masks=masks, deterministic=True)
-                    distribution = model.policy.action_dist.distribution
-                    logits = distribution.logits.detach().cpu().numpy()
-                    probabilities = distribution.probs.detach().cpu().numpy()
-                    values = values.flatten().cpu().numpy()
-                    reward_rows = dict(zip(*reward_monitor.policy_probabilities(model.policy.action_dist, obs)))
-                    campfire_rows = dict(zip(*campfire_monitor.policy_probabilities(model.policy.action_dist, obs)))
+                ident = session.resident_service.begin_call('actor', (obs, masks, ids, n_envs))
+                policy_pending = ident, ids, obs, masks, before
+                stats['policy_seconds'] += time.monotonic()-before
+            if policy_pending is not None:
+                before = time.monotonic()
+                ident, ids, obs, masks, submitted = policy_pending
+                received, packet = session.resident_service.take_reply(ident)
+                if received:
+                    logits, probabilities, values = packet['logprobs'], packet['probabilities'], packet['values']
+                    reward_rows = dict(zip(*packet['reward']))
+                    campfire_rows = dict(zip(*packet['campfire']))
                     cumulative = np.cumsum(probabilities, axis=1, dtype=np.float64)
                     uniforms = draws[positions[ids], ids, 0] * cumulative[:, -1]
                     picked = (cumulative <= uniforms[:, None]).sum(axis=1)
@@ -106,17 +118,18 @@ def collect(model, env, buffer, callback, n_rollout_steps, *, barrier=False):
                     selected = np.flatnonzero(legal & (draws[positions[ids], ids, 1] < session.config.fraction))
                     if len(selected):
                         global_ids = ids[selected]
-                        context = model.policy.core.actor_search_context(
-                            torch.as_tensor(selected, device=model.device))
+                        context = SearchContext(*(v[selected] for v in packet['context']))
                         session.pending = (global_ids, masks[selected], torch.from_numpy(logits[selected]), context)
                         waiting.update(int(i) for i in global_ids)
                         session._resident_step(None)
                     else:
                         session.pending = None
+                    policy_pending = None
+                    stats['policy_pending_seconds'] += time.monotonic()-submitted
+                    stats['policy_batches'] += 1
                 stats['policy_seconds'] += time.monotonic()-before
-                stats['policy_batches'] += 1
             before = time.monotonic()
-            session._receive_resident(.001 if waiting and len(actions) == len(waiting) else 0.)
+            session._receive_resident(.001 if (waiting and len(actions) == len(waiting)) or policy_pending else 0.)
             stats['receive_seconds'] += time.monotonic()-before
             for i in list(waiting):
                 key = (int(positions[i]), i)
@@ -129,7 +142,7 @@ def collect(model, env, buffer, callback, n_rollout_steps, *, barrier=False):
                     session.stats['executed_search_actions'] += 1
                     actions[i] = chosen[0]
                     estimates[i] = (estimates[i][0], chosen[1])
-            available = sorted(actions.keys()-waiting)
+            available = sorted(actions.keys()-waiting-session.native_stream.blocked())
             if not available or (barrier and waiting):
                 continue
             before = time.monotonic()
@@ -182,10 +195,13 @@ def collect(model, env, buffer, callback, n_rollout_steps, *, barrier=False):
                 model._last_obs[key][ids] = observations[key]
             model._last_episode_starts[ids] = dones
             current_masks[ids] = np.asarray([vec._cached_action_masks[i] for i in ids])
-            ready.update(i for i in available if positions[i] < n_rollout_steps)
+            for i in available:
+                if positions[i] < n_rollout_steps:
+                    ready.add(i); ready_at[i] = time.monotonic()
             stats['transitions'] += len(ids)
             stats['transition_batches'] += 1
             stats['transitions_with_search_pending'] += len(ids) if waiting else 0
+            stats['transitions_with_policy_pending'] += len(ids) if policy_pending is not None else 0
             stats['environment_seconds'] += time.monotonic()-before
             stats['slot_steps_min'] = int(positions.min())
             stats['slot_steps_max'] = int(positions.max())
@@ -193,12 +209,15 @@ def collect(model, env, buffer, callback, n_rollout_steps, *, barrier=False):
             callback.update_locals(locals())
             if not callback.on_step():
                 return False
-        if waiting or actions or ready or session.resident_items or session.resident_service.outstanding:
+        if policy_pending is not None or waiting or actions or ready or session.resident_items or session.resident_service.outstanding:
             raise RuntimeError('complete rollout retained pending work')
         session.resident_service.park()
+        for k, v in session.resident_service.status.get('inference', {}).get('graphs', {}).items():
+            stats['actor_graph_'+k] = v
         with torch.no_grad():
             values = model.policy.predict_values(obs_as_tensor(model._last_obs, model.device))
         buffer.compute_returns_and_advantage(last_values=values, dones=model._last_episode_starts)
+        session.close()  # Publish this collection's counts before return/metric construction.
         apply_room_returns(model, buffer)
         callback.update_locals(locals())
         callback.on_rollout_end()
@@ -214,7 +233,7 @@ def collect(model, env, buffer, callback, n_rollout_steps, *, barrier=False):
         for key, value in graphs.stats.items():
             model.logger.record('pure_rl/collection_graph_'+key, value)
         for key, value in stats.items():
-            model.logger.record('deck_stream/'+key, value)
+            model.logger.record('pure_rl/stream_'+key, value)
         model._performance_rollout = dict(policy=stats['policy_seconds'], env=stats['environment_seconds'],
             mask=0., overhead=max(0., time.monotonic()-started-stats['policy_seconds']-stats['environment_seconds']),
             total=time.monotonic()-started, transitions=stats['transitions'],

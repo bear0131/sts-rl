@@ -17,7 +17,7 @@ def run_worker(commands,responses,settings):
     from rl.search.resident_pool import ResidentPool
     from rl.search.resident_step import ResidentStepPipeline
     from env.search.resident_transport import unpack_roots
-    engine=arena=scorer=core=compiled=None
+    engine=arena=scorer=core=compiled=inference=None
     generation=0; parked_report=None; geometry=space=None
     active=0.; started=time.monotonic()
     admitted={}
@@ -30,7 +30,7 @@ def run_worker(commands,responses,settings):
                 or manifest.get('root_import') != 'indexed-v1'):
             raise ValueError('streaming search requires bounded-frame-v1 and indexed-v1 artifacts')
         def begin(snapshot):
-            nonlocal core,scorer,arena,engine,generation,geometry,space,active,started
+            nonlocal core,scorer,arena,engine,generation,geometry,space,active,started,inference
             if engine is not None:
                 raise RuntimeError('new weights require a fully parked search owner')
             data=torch.load(snapshot,map_location='cpu',weights_only=False,mmap=True)
@@ -115,6 +115,8 @@ def run_worker(commands,responses,settings):
                         if engine is None or engine.pending or admitted:
                             raise RuntimeError('park requires a drained active collection')
                         parked_report=report(); release_started=time.monotonic()
+                        if inference is not None:
+                            parked_report['inference'] = inference.close(); inference=None
                         compiled=scorer.compiled_gather
                         engine.close()
                         # The pipeline has back-references into scorer/arena.
@@ -132,12 +134,21 @@ def run_worker(commands,responses,settings):
                         if admitted: raise RuntimeError('begin cannot abandon queued roots')
                         begin(payload)
                         responses.put(('reply',ident,dict(pid=os.getpid(),generation=generation)))
+                    elif kind in ('actor','fallback_begin','fallback','fallback_end'):
+                        if engine is None: raise RuntimeError('inference while owner is parked')
+                        if inference is None:
+                            from rl.search.resident_inference import ResidentInference
+                            inference=ResidentInference(core,settings['cache_bytes'])
+                        answer=getattr(inference,kind)(payload)
+                        responses.put(('reply',ident,answer))
                     elif kind in ('close','cancel'):
                         if admitted and kind=='close':
                             raise RuntimeError('normal close cannot abandon queued roots')
                         cancelled=(list(engine.ledger.pending)+list(admitted)
                             if engine is not None and kind=='cancel' else [])
                         last=report()
+                        if inference is not None:
+                            inference.close(cancel=kind=='cancel'); inference=None
                         if engine is not None: engine.close(cancel=kind=='cancel')
                         responses.put(('closed',None,dict(last,cancelled=cancelled)))
                         return
@@ -153,6 +164,7 @@ def run_worker(commands,responses,settings):
         responses.put(('error',None,traceback.format_exc()))
         raise
     finally:
+        if inference is not None: inference.close(cancel=True)
         if engine is not None and not engine.closed:
             engine.close(cancel=True)
         elif arena is not None and not arena.closed:

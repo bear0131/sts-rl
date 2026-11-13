@@ -98,6 +98,12 @@ class ShadowSearchCollection:
                 buffers={k: v.detach().cpu() for k, v in self.model.policy.core.named_buffers()}), temporary)
             os.replace(temporary, self.snapshot)
         self.generation = (int(self.model.num_timesteps), time.time_ns())
+        if not hooks and self.config.backend == 'cuda-resident':
+            from rl.training.native_frontier_stream import NativeFrontierStream
+            from stable_baselines3.common.vec_env import VecMonitor
+            vec = self.env.venv if isinstance(self.env, VecMonitor) else self.env
+            self.native_stream = NativeFrontierStream(vec, self.resident_service,
+                self.model.policy.core, self.config, self.generation)
         if hooks:
             self.hook = self.model.policy.register_forward_hook(self.observe, with_kwargs=True)
             self.env.step_async = MethodType(lambda env, actions: self.step(actions), self.env)
@@ -238,6 +244,12 @@ class ShadowSearchCollection:
                     selected = ShadowSearchCollection._select_resident(item, rows)
                     selected['observations'] = [{k: v[i] for k, v in self.model._last_obs.items()}
                                                 for i in selected['indices']]
+                    if independent:
+                        self.native_stream.submit(selected)
+                        key = (selected['positions'][0], int(selected['indices'][0]))
+                        self.resident_items[key] = selected
+                        self.stats['native_fallback_roots'] += 1
+                        continue
                     fallback_start = time.monotonic()
                     scorer = DeckLatentScorer(self.model.policy, selected['observations'],
                         context=selected['context'], inference_cache=self.inference_cache)
@@ -258,7 +270,7 @@ class ShadowSearchCollection:
             # Paired world draws belong to the original CPU worker group, not
             # to admission batches or newly leased physical pages.
             generators, queued = {}, {}
-            host_context = tuple(x.detach().cpu().numpy() for x in
+            host_context = tuple(x.detach().cpu().numpy() if torch.is_tensor(x) else x for x in
                                  (item['context'].combat,item['context'].anchor))
             for j, (root, group, budget) in enumerate(zip(item['roots'],item['groups'],item['budgets'])):
                 if root.get('skipped'):
@@ -304,6 +316,14 @@ class ShadowSearchCollection:
         return None if direct else self.previous(actions)
 
     def _receive_resident(self, timeout=0.):
+        if hasattr(self, 'native_stream'):
+            for item, result, stats in self.native_stream.poll():
+                key = (item['positions'][0], int(item['indices'][0]))
+                self.resident_items.pop(key)
+                self.stats['searched_roots'] += ShadowSearchCollection._store_targets(self, [item], result)
+                for k, v in stats.items():
+                    k = 'worker_search_seconds' if k == 'seconds' else k
+                    self.stats[k] = max(self.stats[k], float(v)) if k == 'max_active' else self.stats[k]+float(v)
         ready = self.resident_service.receive(timeout)
         if ready:
             items = [self.resident_items.pop(key) for key in ready]
@@ -363,18 +383,23 @@ class ShadowSearchCollection:
         return len(destinations)
 
     def close(self):
+        if getattr(self, '_closed', False): return
+        self._closed = True
         if self.hook is not None:
             self.hook.remove()
         self.env.step_async = self.previous
         self.inference_cache.clear()
         if self.config.backend == 'cuda-resident' and hasattr(self,'resident_service'):
             service = self.resident_service
-            aborted = bool(service.outstanding or self.resident_items)
+            aborted = bool(service.outstanding or self.resident_items or service.requests)
+            if hasattr(self, 'native_stream'): self.native_stream.close()
             if aborted or service.failure:
                 service.close(cancel='collection aborted')
             elif not service.parked:
                 service.park()
             report = service.status
+            for k, v in report.get('inference', {}).get('cache', {}).items():
+                self.stats[k] += v
             pool = report.get('pool',{})
             for key in ('chains','atomic_steps','policy_rows','forced_rows','anchor_rows',
                         'cutoff_rows','terminal_rows','budget_floor_overage'):

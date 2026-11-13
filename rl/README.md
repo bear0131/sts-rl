@@ -1048,3 +1048,10 @@ This explicit search-acting contract changes behavior; old shadow checkpoints
 retain their vector collector and original random stream. CPU reference search
 retains synchronous direct actions. Search-executed rows retain value/teacher
 training and are excluded from a fictitious model-only PPO behavior ratio.
+Actor/value inference and exceptional native-frontier scoring use the same
+resident owner's legacy asynchronous RPC queue as device search. Native workers
+hold only their own exceptional group; other groups continue. The extra run
+context and map cache are indexed by original environment slot, so changing a
+ready batch's order or size does not rerun the large encoder. Full input equality
+and weight versions still invalidate cached values. The owner releases these
+inference graphs and caches at park before PPO update or checkpoint recovery.

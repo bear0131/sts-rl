@@ -438,7 +438,13 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         learner.policy.predict_values = predict_values
     if search_backend == 'cuda-resident':
         check_bootstrap_memory(model)
-    model.learn(128)
+    from stable_baselines3.common.callbacks import BaseCallback
+    class SearchMetrics(BaseCallback):
+        def _on_step(self): return True
+        def _on_rollout_end(self):
+            if search_backend == 'cuda-resident' and action_selection != 'shadow':
+                assert self.model.logger.name_to_value['pure_rl/search_simulations'] == self.model.deck_search_last_stats['chains'] > 0
+    model.learn(128, callback=SearchMetrics())
     assert model.num_timesteps == 128
     if search:
         assert model.deck_search_last_stats['searched_roots'] > 0
@@ -524,7 +530,7 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
             actions=restored.rollout_buffer.actions.copy(),rewards=restored.rollout_buffer.rewards.copy(),
             episode_starts=restored.rollout_buffer.episode_starts.copy(),
             targets={k:v.copy() for k,v in restored.rollout_buffer.search_targets.items()},
-            rng=restored.deck_search_rng)
+            rng=restored.deck_search_rng, search_stats=dict(restored.deck_search_last_stats))
     env.close(); target.close()
     return result
 
@@ -1353,3 +1359,59 @@ def test_search_stream_completion_order_keeps_slot_trajectories(tmp_path, cuda_b
     assert a['targets'].keys()==b['targets'].keys()
     for k in a['targets']:
         np.testing.assert_allclose(a['targets'][k],b['targets'][k],atol=2e-5,rtol=2e-5)
+
+
+@pytest.mark.cuda
+@pytest.mark.timeout(600)
+def test_search_stream_native_fallback_and_resume(tmp_path, cuda_battle_artifacts, monkeypatch):
+    from rl.training.native_subproc_vec_env import NativeSubprocVecEnv
+    original = NativeSubprocVecEnv.deck_resident_roots
+    forced = []
+    def roots(self, indices, artifacts, generation=None):
+        rows, groups = original(self, indices, artifacts, generation)
+        # Keep one worker on native frontiers while its sibling uses CUDA.
+        for i, row in zip(indices, rows):
+            if i == 0 and not row.get('skipped'):
+                row['native_fallback'] = True
+                forced.append((generation, i))
+        return rows, groups
+    monkeypatch.setattr(NativeSubprocVecEnv, 'deck_resident_roots', roots)
+    result = test_two_real_ppo_rounds_checkpoint_and_packed_resume(
+        tmp_path, True, 'native-subproc', 'screens', encoder='transformer64x2',
+        device='cuda', search_backend='cuda-resident',
+        action_selection='search-filter-policy-rank-v1', capture_result=True)
+    assert forced and result['search_stats']['native_fallback_roots'] > 0
+    assert result['search_stats']['stream_submitted_roots'] > 0
+
+
+@pytest.mark.cuda
+def test_resident_actor_caches_original_slots_across_reordering_and_release(latent_env, cuda_battle_artifacts):
+    import gc
+    from rl.search.resident_inference import ResidentInference
+    enter_combat(latent_env)
+    policy = policy_for(latent_env, 'transformer64x2').cuda().eval()
+    inference = ResidentInference(policy.core, 1024**2)
+    inference.graphs.capacity = 1
+    host = {k: np.repeat(v[None], 3, axis=0) for k,v in latent_env._obs().items()}
+    masks = np.repeat(latent_env.action_masks()[None], 3, axis=0)
+    def check(ids):
+        obs = {k:v[ids] for k,v in host.items()}
+        with torch.no_grad():
+            packet = inference.actor((obs, masks[ids], np.asarray(ids), 3))
+            _, values, _ = policy(obs_as_tensor(obs, 'cuda'), deterministic=True, action_masks=masks[ids])
+            np.testing.assert_allclose(packet['values'], values.flatten().cpu().numpy(), atol=2e-5, rtol=2e-5)
+            np.testing.assert_allclose(packet['probabilities'], policy.action_dist.distribution.probs.cpu().numpy(), atol=2e-5, rtol=2e-5)
+    try:
+        check([0,1,2]); initial=inference.graphs.stats['context_rows']
+        check([2]); check([1,0]); check([2,1,0])
+        assert inference.graphs.stats['context_rows']==initial
+        host['floor'][1] += 1
+        check([2,1]); assert inference.graphs.stats['context_rows']==initial+1
+        gc.collect(); torch.cuda.synchronize(); torch.cuda.empty_cache()
+        check([0,1,2])
+        assert inference.graphs.stats['context_rows']==initial+1
+        with torch.no_grad(): next(policy.core.context.parameters()).add_(.0001)
+        check([2,1,0])
+        assert inference.graphs.stats['context_rows']>initial+1
+        assert inference.graphs.stats['evictions']>0
+    finally: inference.close()
