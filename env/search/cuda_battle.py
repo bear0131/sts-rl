@@ -358,14 +358,20 @@ class CudaBattleArena:
             self.counts['graph_evictions'] += 1
         stream = torch.cuda.Stream(device=self.device)
         stream.wait_stream(self.stream)
-        with torch.cuda.stream(stream):
-            self._launch('observe', self.observe_args, n)
+        # Paged observations own a bounded, explicitly indexed frame. The
+        # unframed kernel neither accepts its slot mapping nor fits its storage;
+        # apply must use the action bits already produced by observe_selected.
+        if not self.paged:
+            with torch.cuda.stream(stream):
+                self._launch('observe', self.observe_args, n)
         stream.synchronize()
-        observe, apply = torch.cuda.CUDAGraph(), torch.cuda.CUDAGraph()
+        observe = None if self.paged else torch.cuda.CUDAGraph()
+        apply = torch.cuda.CUDAGraph()
         # Capture does not advance state. Each graph has its own pool and owns
         # no model/cuBLAS workspace; its only mutable inputs are arena buffers.
-        with torch.cuda.graph(observe, stream=stream):
-            self._launch('observe', self.observe_args, n)
+        if observe is not None:
+            with torch.cuda.graph(observe, stream=stream):
+                self._launch('observe', self.observe_args, n)
         with torch.cuda.graph(apply, stream=stream):
             self._launch('apply', self.apply_args, n)
         self.graphs[n] = (observe, apply)

@@ -230,6 +230,51 @@ def test_stream_accepts_new_roots_before_drain_and_reuses_only_retired_pages(
         pool.close(cancel=True)
 
 
+def test_paged_apply_graph_keeps_bounded_observation_frame(
+        complete_combat_factory, cuda_battle_artifacts, monkeypatch):
+    from env.core.run_env import _nosl_compact_lut
+    from env.search.cuda_battle import CudaBattleArena
+    from env.search.resident_chains import root_payload
+    roots=[complete_combat_factory(['STRIKE_RED','DEFEND_RED','BASH'],seed=s,
+        deck_latent_context=True,card_language=True) for s in (42,43,44)]
+    folder,manifest,bridge=cuda_battle_artifacts
+    payload=[root_payload(r,bridge) for r in roots]
+    arenas=[];storage=[]
+    try:
+        for graphs in (0,1):
+            arena=CudaBattleArena(folder/'deck.cubin',manifest['sha256']['deck.cubin'],3,
+                card_count=_nosl_compact_lut()['layout']['card_count'],paged=True,
+                observation_capacity=1,graph_capacity=graphs)
+            arenas.append(arena)
+            storage.append(torch.empty((3,arena.battle_bytes),device='cuda',dtype=torch.uint8))
+            arena.arena.copy_(storage[-1].data_ptr()+torch.arange(3,device='cuda')*arena.battle_bytes)
+            arena.load_slots([p['snapshot'] for p in payload],[p['prefix'] for p in payload],[0,1,2])
+        for arena in arenas:
+            original=arena._launch
+            def checked(name,*args,_launch=original,**kwargs):
+                assert name!='observe', 'paged apply must not launch an unbounded observer'
+                return _launch(name,*args,**kwargs)
+            monkeypatch.setattr(arena,'_launch',checked)
+        for n in (3,2,3,1,3):
+            for arena in arenas:
+                actions=[]
+                for row in range(n):
+                    raw=arena.observe_selected([row])
+                    legal=torch.nonzero(raw['mask'][row]).flatten().cpu().tolist()
+                    actions.append(legal[0] if legal else -1)
+                frame=arena.scalars.clone()
+                arena.apply(actions)
+                torch.testing.assert_close(arena.scalars,frame,rtol=0,atol=0)
+            a,b=[arena.snapshot(3) for arena in arenas]
+            np.testing.assert_array_equal(a[1],b[1])
+            for row,length in enumerate(a[1][:,0]):
+                np.testing.assert_array_equal(a[0][row,:length],b[0][row,:length])
+            gc.collect();torch.cuda.empty_cache()
+        assert arenas[1].counts['graph_evictions']>=2
+    finally:
+        for arena in reversed(arenas):arena.close()
+
+
 def test_anchor_projection_matches_full_observation_without_mutating_siblings(
         complete_combat_factory, cuda_battle_artifacts):
     from env.core.run_env import _nosl_compact_lut
