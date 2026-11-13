@@ -123,6 +123,23 @@ def test_resident_native_fallback_keeps_whole_worker_group_seed_and_target_posit
     assert obj.stats['native_fallback_roots']==2 and obj.stats['chains']==128
 
 
+@pytest.mark.parametrize('position', [0, 3])
+def test_resident_pool_released_before_last_real_step_and_bootstrap(position):
+    from collections import Counter
+    from rl.algorithms.deck_search import ShadowSearchCollection
+    calls = []
+    outstanding = {'root'}
+    def receive(*args):
+        calls.append('receive')
+        outstanding.clear()
+    service = SimpleNamespace(outstanding=outstanding, park=lambda: calls.append('park'))
+    obj = SimpleNamespace(pending=None, buffer=SimpleNamespace(pos=position, buffer_size=4),
+        stats=Counter(), resident_service=service, _receive_resident=receive,
+        previous=lambda actions: calls.append('real-step'))
+    ShadowSearchCollection._resident_step(obj, np.array([0]))
+    assert calls == (['receive', 'park', 'real-step'] if position == 3 else ['receive', 'real-step'])
+
+
 def test_more_worlds_strengthen_bounded_improvement_and_constant_shift_cancels():
     logits = torch.tensor([[.5, 0.]])
     legal = torch.ones(1, 2, dtype=torch.bool)

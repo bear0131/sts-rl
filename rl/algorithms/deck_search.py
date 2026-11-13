@@ -231,11 +231,13 @@ class ShadowSearchCollection:
                 self.stats['resident_frame_roots_max'] = max(self.stats['resident_frame_roots_max'],
                     len(self.resident_service.outstanding))
             self.stats['selected_roots'] += len(indices)
-        # The PPO update is the sole drain boundary. Ordinary real actions
-        # continue while previous roots remain in the worker's owned pool.
+        # Ordinary real actions continue while earlier searches remain live.
+        # Release the drained pool before the final real step: SB3 may evaluate
+        # terminal/tail values immediately afterwards, before collection.close.
         if self.buffer.pos == self.buffer.buffer_size-1:
             while self.resident_service.outstanding:
                 self._receive_resident(.05)
+            self.resident_service.park()
         self.stats['search_seconds'] += time.monotonic()-started
         return self.previous(actions)
 
@@ -299,7 +301,7 @@ class ShadowSearchCollection:
             aborted = bool(service.outstanding or self.resident_items)
             if aborted or service.failure:
                 service.close(cancel='collection aborted')
-            else:
+            elif not service.parked:
                 service.park()
             report = service.status
             pool = report.get('pool',{})

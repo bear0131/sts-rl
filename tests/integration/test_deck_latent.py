@@ -411,6 +411,17 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
             cuda_wave_capacity=64,
             inference_cache_bytes=64 * 1024**2))
         model.deck_search_snapshot_dir = str(tmp_path / 'weights')
+    bootstrap_checks = []
+    def check_bootstrap_memory(learner):
+        original = learner.policy.predict_values
+        def predict_values(obs):
+            if learner.rollout_buffer.full:
+                assert learner._resident_search_service.parked, 'tail bootstrap needs the search pool released'
+                bootstrap_checks.append(learner.num_timesteps)
+            return original(obs)
+        learner.policy.predict_values = predict_values
+    if search_backend == 'cuda-resident':
+        check_bootstrap_memory(model)
     model.learn(128)
     assert model.num_timesteps == 128
     if search:
@@ -463,12 +474,16 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         schedule = configure(restored, dict(anchor_start_round=2))
         apply_stage(restored, schedule, 2)
         assert restored.policy.combat_value_target == 'pre-reward-anchor'
+    if search_backend == 'cuda-resident':
+        assert set(bootstrap_checks) == {64, 128}
+        check_bootstrap_memory(restored)
     restored.learn(128, reset_num_timesteps=False)
     assert restored.num_timesteps == 256
     resumed = save_bundle(restored, tmp_path/'resumed', rank=0, world_size=1,
         run_id='deck-latent-test', wandb_id=None, config={'ascension': 0})
     assert resumed.is_dir()
     if search_backend == 'cuda-resident':
+        assert set(bootstrap_checks) == {64, 128, 192, 256}
         assert restored._resident_search_service.parked
         assert restored._resident_search_service.status['generation']==2
         close_collection_service(restored)
