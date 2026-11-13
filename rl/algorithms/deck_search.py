@@ -167,7 +167,7 @@ class ShadowSearchCollection:
         self._receive_resident()
         if self.pending is not None:
             indices, masks, logits, context = self.pending
-            observations = [{k: v[i] for k, v in self.model._last_obs.items()}
+            observations = [{k: self.model._last_obs[k][i] for k in self.resident_root_keys}
                             for i in indices]
             budgets = [self.config.boss_budget if o['combat_is_boss'].item() else self.config.normal_budget
                        for o in observations]
@@ -180,6 +180,10 @@ class ShadowSearchCollection:
             if fallback_groups:
                 bad = [i for i,g in enumerate(groups) if g in fallback_groups]
                 selected = ShadowSearchCollection._select_resident(item, bad)
+                # Native fallback consumes complete observations; materialize
+                # only those rows when that exceptional route is actually used.
+                selected['observations'] = [{k: v[i] for k, v in self.model._last_obs.items()}
+                                            for i in selected['indices']]
                 fallback_start = time.monotonic()
                 scorer = DeckLatentScorer(self.model.policy, selected['observations'],
                     context=selected['context'], inference_cache=self.inference_cache)
@@ -271,8 +275,9 @@ class ShadowSearchCollection:
                 target_rows.append(row)
                 destinations.append((int(index), item['position']))
             if selected:
-                target_logits.append(item['logits'][selected])
-                target_masks.append(item['masks'][selected])
+                complete = len(selected) == len(item['indices'])
+                target_logits.append(item['logits'] if complete else item['logits'][selected])
+                target_masks.append(item['masks'] if complete else item['masks'][selected])
             offset += len(item['roots'])
         if target_rows:
             # The legacy GPU pipeline finalizes a frame in bulk. These are

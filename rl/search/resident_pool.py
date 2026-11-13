@@ -82,10 +82,7 @@ class ResidentPool:
             self.pipeline = ResidentStepPipeline(self.scorer,self.arena,self.max_depth,
                                                 root_stride=self.root_stride)
             self.scorer.step_pipeline = self.pipeline
-            self.pipeline.begin(owners,torch.zeros((self.n,self.max_depth),
-                dtype=torch.float64,device=self.arena.device))
-            self.pipeline.live.zero_()
-            self.pipeline.depth.zero_()
+            self.pipeline.begin_empty(owners)
         source,destination,world_seeds,initial_bits,draw,action_indices,counts = self.arena.host.pack_jobs(
             payloads,[rows[h.key]['worlds'] for h in handles],np.asarray(slots,np.int64),
             self.root_stride,self.capacity)

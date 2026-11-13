@@ -71,6 +71,19 @@ class ResidentStepPipeline:
         self.frame_control.zero_(); self.frame_control[1:2].fill_(1)
         self.enabled.fill_(1)
 
+    def begin_empty(self, owners):
+        """Waiting lanes have no consumer; refill initializes every live lane."""
+        self.live.zero_(); self.depth.zero_(); self.cursor.zero_()
+        self.anchors.zero_(); self.final.zero_(); self.counters.zero_()
+        self.changed_context.zero_()
+        # Padded neural rows gather lane zero even when no job owns it yet.
+        # Keep that context finite without materializing unused random tapes.
+        self.context.zero_()
+        self.wave_n, self.owners = len(owners), owners
+        self.deck = self.scorer.metadata_root['deck_ids']
+        self.frame_control.zero_(); self.frame_control[1:2].fill_(1)
+        self.enabled.fill_(1)
+
     def refill(self, slots, owners, world_seeds):
         """Replace completed logical jobs; graph addresses and live siblings stay owned."""
         slots = torch.as_tensor(slots, device=self.arena.device, dtype=torch.long)
@@ -210,7 +223,9 @@ class ResidentStepPipeline:
         """Legacy StepPipeline tick: one complete pass, bounded readonly retries."""
         if not remaining:
             return 0
-        width = getattr(self, 'stream_width', 1)
+        # Legal consumers are device-bounded. Capturing successively larger
+        # choice padding repeats compilation without changing the 96-slot contract.
+        width = getattr(self, 'stream_width', 96)
         frames = max(1, triton.cdiv(remaining, self.frame_capacity))
         for _ in range(8):
             if time.monotonic() > deadline:

@@ -20,6 +20,8 @@ class GpuService:
         self.seq=0; self.requests={}; self.replies={}; self.ready_roots={}; self.outstanding=set()
         self.counts=collections.Counter(); self.status={}; self.cancelled=[]
         self.settings=dict(settings); self.parked=False
+        from env.search.cuda_battle import load_artifacts
+        self.transport_host=load_artifacts(settings['artifacts'])[2]
         ctx=mp.get_context('spawn')
         self.commands=ctx.Queue(maxsize=4*capacity+16); self.responses=ctx.Queue(maxsize=capacity+16)
         self.process=ctx.Process(target=run_worker,args=(self.commands,self.responses,
@@ -90,7 +92,8 @@ class GpuService:
         if set(rows)&self.outstanding or len(self.outstanding)+len(rows)>self.capacity:
             raise ValueError('duplicate search or root capacity exceeded')
         if rows:
-            self.send('submit',rows); self.outstanding.update(rows)
+            from env.search.resident_transport import pack_roots
+            self.send('submit',pack_roots(rows,self.transport_host)); self.outstanding.update(rows)
 
     def receive(self, timeout=0.):
         self.poll(timeout); out,self.ready_roots=self.ready_roots,{}

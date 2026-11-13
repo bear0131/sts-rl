@@ -138,7 +138,9 @@ class ResidentDeckScorer:
         ids = head_root['relics'].long()
         self.root_relic_identity = (self.core.combat.summaries.relic_identity(ids)
                                    * ids.ne(0)[..., None]).sum(1)
-        self.anchor_relic_ids = torch.as_tensor(self._intern_anchor_contexts(self.root_relic_identity),
+        # The frozen identity sum is a pure function of these exact IDs. Key
+        # them on the host, avoiding a GPU-to-host rendezvous for every root.
+        self.anchor_relic_ids = torch.as_tensor(self._intern_anchor_contexts(relics[:, :self.relic_width]),
                                                 device=self.device)
         # Inventory and non-live counters are invariant inside this battle.
         # Live fields (including consumed Lizard Tail) keep their own lookup.
@@ -215,6 +217,8 @@ class ResidentDeckScorer:
             initial_context=SearchContext(*(torch.as_tensor(x,device=self.device)
                                           for x in (context.combat,context.anchor)))
             self.stream_observations = [observations[0]] * capacity
+            for slot, observation in zip(slots, observations, strict=True):
+                self.stream_observations[slot] = observation
             initial = SearchContext(initial_context.combat[:1].expand(capacity, -1).clone(),
                                     initial_context.anchor[:1].expand(capacity, -1).clone())
             self.roots(self.stream_observations, initial)
@@ -225,25 +229,28 @@ class ResidentDeckScorer:
             self.root_generations[slot] += 1
         if self.native_context_inputs is not None:
             self.context_input_ids[slots] = self._context_input_ids(observations)
+        relics = np.stack([o['relics'] for o in observations])
+        relic_identities = self._intern_anchor_contexts(relics[:, :self.relic_width])
         if self.native_host is not None:
             from env.search.cuda_battle import upload_arrays
             host_context=[x.detach().cpu().numpy() if isinstance(x,torch.Tensor) else x
                           for x in (context.combat,context.anchor)]
             packed=[self.native_host.stack_fields(observations,list(layout))
                     for _,layout in self.stream_root_banks]
-            combat,anchor,identity_rows,index,*incoming_banks=upload_arrays(self.native_host,self.device,
-                [*host_context,identities,np.asarray(slots,np.int64),*packed])
+            combat,anchor,identity_rows,relic_identity_rows,index,*incoming_banks=upload_arrays(self.native_host,self.device,
+                [*host_context,identities,relic_identities,np.asarray(slots,np.int64),*packed])
             context=SearchContext(combat,anchor)
         else:
             context=SearchContext(*(torch.as_tensor(x,device=self.device) for x in (context.combat,context.anchor)))
             index = torch.as_tensor(slots, device=self.device, dtype=torch.long)
             identity_rows=torch.as_tensor(identities,device=self.device)
+            relic_identity_rows=torch.as_tensor(relic_identities,device=self.device)
             incoming_banks=[torch.as_tensor(np.concatenate([np.stack([o[k] for o in observations]).reshape(len(slots),-1)
                            for k in layout],1),device=self.device) for _,layout in self.stream_root_banks]
         self.context.combat.index_copy_(0, index, context.combat)
         self.context.anchor.index_copy_(0, index, context.anchor)
         self.anchor_context_ids.index_copy_(0, index, identity_rows)
-        width = SharedCollectionGraphs._width(np.stack([o['relics'] for o in observations]), 4)
+        width = SharedCollectionGraphs._width(relics, 4)
         if width > self.relic_width:
             # The old inventory bank grows; it never truncates an owned root.
             self.roots(self.stream_observations, self.context)
@@ -268,7 +275,7 @@ class ResidentDeckScorer:
         static = (summaries.relic_terms(ids, incoming['relic_counters'][:, :self.relic_width])
                   * (~self.decoder.live[ids])[..., None]).sum(1)
         self.root_relic_identity.index_copy_(0, index, identity)
-        self.anchor_relic_ids.index_copy_(0,index,torch.as_tensor(self._intern_anchor_contexts(identity),device=self.device))
+        self.anchor_relic_ids.index_copy_(0,index,relic_identity_rows)
         self.banked_static_relics.index_copy_(0, index, static)
         self.banked_context.index_copy_(0, index, context.combat)
         for key, bank in self.metadata_root.items():

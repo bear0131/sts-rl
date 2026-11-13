@@ -8,6 +8,65 @@ import torch
 pytestmark=[pytest.mark.native,pytest.mark.cuda,pytest.mark.timeout(240)]
 
 
+def test_stream_column_transport_preserves_every_byte_and_ragged_root(
+        complete_combat_factory, cuda_battle_artifacts):
+    import pickle
+    from env.search.resident_chains import root_payload
+    from env.search.resident_transport import pack_roots, unpack_roots
+    _, _, host = cuda_battle_artifacts
+    rows = {}
+    for i, cards in enumerate((['STRIKE_RED', 'BASH'], ['DEFEND_RED', 'WARCRY', 'ANGER'])):
+        env = complete_combat_factory(cards, seed=42+i, deck_latent_context=True, card_language=True)
+        obs = env._obs()
+        obs['transport_bits'] = np.array([0., -0., np.nan], np.float32)
+        root = root_payload(env, host)
+        root['replay'] = list(range(i))
+        rows[(27, i)] = dict(root=root, observation=obs,
+            context=(np.arange(64, dtype=np.float32)+i, np.arange(128, dtype=np.float32)-i),
+            worlds=np.array([2**62+i, i], np.int64)[:i+1], budget=64+192*i,
+            submitted_at=1234567.125+i)
+    expected = pickle.loads(pickle.dumps(rows, protocol=5))
+    packed = pack_roots(rows, host)
+    decoded = unpack_roots(pickle.loads(pickle.dumps(packed, protocol=5)))
+    assert list(decoded) == list(expected)
+    def equal(a, b):
+        if isinstance(a, np.ndarray):
+            assert a.dtype == b.dtype and a.shape == b.shape and a.tobytes() == b.tobytes()
+        elif isinstance(a, dict):
+            assert a.keys() == b.keys()
+            for key in a: equal(a[key], b[key])
+        elif isinstance(a, (tuple, list)):
+            assert len(a) == len(b)
+            for x, y in zip(a, b, strict=True): equal(x, y)
+        else:
+            assert a == b
+    for key in expected:
+        expected[key]['root']['replay'] = np.asarray(expected[key]['root']['replay'], np.int64)
+        equal(expected[key], decoded[key])
+
+
+def test_stream_root_export_consumes_saved_select_zone_without_reencoding(
+        complete_combat_factory, cuda_battle_artifacts, monkeypatch):
+    from env.search.resident_chains import root_payload
+    from env.search.resident_transport import ResidentRootExporter
+    folder, _, host = cuda_battle_artifacts
+    root = complete_combat_factory(['STRIKE_RED', 'DEFEND_RED', 'WARCRY'], seed=42,
+        deck_latent_context=True, card_language=True)
+    obs = root._obs()
+    expected = root_payload(root, host)
+    exporter = ResidentRootExporter([root], folder,
+        observations={'select_zone': obs['select_zone'][None].copy()})
+    def forbidden():
+        raise AssertionError('root export must not rebuild the current observation')
+    monkeypatch.setattr(root, '_obs', forbidden)
+    actual = exporter.export([0])[0]
+    for field in ('actions', 'bits'):
+        np.testing.assert_array_equal(expected[field], actual[field])
+    for field in ('prefix', 'draw_selection', 'offset', 'skipped'):
+        assert expected[field] == actual[field]
+    np.testing.assert_array_equal(expected['snapshot']['words'], actual['snapshot']['words'])
+
+
 def test_completed_payload_preserves_values_order_and_integer_counts():
     from types import SimpleNamespace
     from rl.search.resident_step import ResidentStepPipeline

@@ -8,10 +8,14 @@ import numpy as np
 import torch
 
 
-def root_payload(env, bridge):
+def root_payload(env, bridge, *, observation=None):
     env = env.unwrapped
     legal = np.flatnonzero(env.action_masks())
-    observation = env._obs()
+    # The native vector already owns the observation of this exact real root.
+    # Its select-zone is all the exporter consumes; rebuilding the full map,
+    # deck and combat observation for every search has no additional consumer.
+    if observation is None:
+        observation = env._obs()
     joint = dict(env._joint_policy_actions())
     result = dict(snapshot=bridge.snapshot(env.thick.bc), prefix=sum(1 << k for k in (env._multi or ())),
         actions=legal, bits=np.asarray([joint[a] for a in legal], np.uint32),

@@ -80,7 +80,8 @@ class _NativeStepPipe:
             elif cmd == 'deck_resident_roots':
                 if self.deck_resident is None:
                     from env.search.resident_transport import ResidentRootExporter
-                    self.deck_resident = ResidentRootExporter(self.envs, data['artifacts'])
+                    self.deck_resident = ResidentRootExporter(self.envs, data['artifacts'],
+                        observations=self.native.buf_obs if self.native is not None else None)
                 self.remote.send(self.deck_resident.export(data['indices']))
             elif cmd in ('deck_frontier_start', 'deck_frontier_advance', 'deck_frontier_close'):
                 if self.deck_frontier is None:

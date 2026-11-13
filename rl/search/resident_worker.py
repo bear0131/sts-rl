@@ -16,6 +16,7 @@ def run_worker(commands,responses,settings):
     from rl.search.resident_deck import ResidentDeckScorer
     from rl.search.resident_pool import ResidentPool
     from rl.search.resident_step import ResidentStepPipeline
+    from env.search.resident_transport import unpack_roots
     engine=arena=scorer=core=compiled=None
     generation=0; parked_report=None; geometry=space=None
     active=0.; started=time.monotonic()
@@ -94,6 +95,7 @@ def run_worker(commands,responses,settings):
                     kind,payload,ident=pickle.loads(packet)
                     if kind=='submit':
                         if engine is None: raise RuntimeError('submit while search owner is parked')
+                        payload=unpack_roots(payload)
                         if admitted.keys() & payload.keys():
                             raise ValueError('duplicate queued root admission')
                         admitted.update(payload)
