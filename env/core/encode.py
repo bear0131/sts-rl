@@ -69,6 +69,7 @@ OBS_VERSION = 20  # owned/claimable Act-4 keys are explicit, not inferred
 
 # Sparse split-upper transport uses the same public observation fields.
 OVERWORLD_OBSERVATION_KEYS = frozenset({
+    "reward_stage",
     "upper_public_context",
     "act",
     "arg_step",
@@ -1080,6 +1081,19 @@ def _encode_global(o, canon):
     _encode_card_sequence(o, "deck", deck)
 
 
+def _map_choice_ids(nodes, capacity):
+    """Validate the complete live candidates before projecting any preview."""
+    _require_capacity("options.nodes", nodes, capacity)
+    choices = {}
+    for x, room in nodes:
+        if type(x) is not int or not 0 <= x < MAP_COLS or x in choices:
+            raise ValueError(f"invalid/duplicate map choice column: {x!r}")
+        if room in {"PAD", "NONE", "INVALID"}:
+            raise ValueError(f"map choice has no actual room: {room!r}")
+        choices[x] = _idx(V.ROOM_VOCAB_INDEX, room)
+    return choices
+
+
 def _encode_options(o, canon, *, _map_observation=None):
     """Fill phase-gated decision-context groups from canon['options'] /
     canon['global']['boss_relics']. Each group is only meaningful in its phase;
@@ -1151,15 +1165,7 @@ def _encode_options(o, canon, *, _map_observation=None):
                 o[key][...] = value
             return
         nodes = opts.get("nodes", [])
-        _require_capacity("options.nodes", nodes,
-                          MAP_COLS if "map_full_rooms" in o else MAP_EDGES)
-        choices = {}
-        for x, room in nodes:
-            if type(x) is not int or not 0 <= x < MAP_COLS or x in choices:
-                raise ValueError(f"invalid/duplicate map choice column: {x!r}")
-            if room in {"PAD", "NONE", "INVALID"}:
-                raise ValueError(f"map choice has no actual room: {room!r}")
-            choices[x] = _idx(V.ROOM_VOCAB_INDEX, room)
+        choices = _map_choice_ids(nodes, MAP_COLS if "map_full_rooms" in o else MAP_EDGES)
         if "map_full_rooms" in o:
             full_map = opts.get("full_map")
             if not isinstance(full_map, list) or not full_map:

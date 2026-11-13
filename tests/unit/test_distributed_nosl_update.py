@@ -271,3 +271,52 @@ def test_optimizer_rejects_nonfinite_norm_before_mutating_parameters():
         optimizer_step(model)
     assert torch.equal(model.parameter, before)
     assert not model.policy.optimizer.state
+
+
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_single_rank_gradients_and_adam_match_file_transport_without_io(tmp_path, monkeypatch, device):
+    from copy import deepcopy
+    if device == 'cuda':
+        assert torch.cuda.is_available(), 'explicit CUDA gradient qualification required'
+    torch.manual_seed(20261113)
+    policy = torch.nn.Linear(4, 2).to(device)
+    reference = deepcopy(policy)
+    models = [SimpleNamespace(policy=p, device=torch.device(device)) for p in (reference, policy)]
+    optimizers = [torch.optim.Adam(m.policy.parameters(), lr=5e-5) for m in models]
+    # Warm momentum, then an unused bias: leaving grad=None would change Adam.
+    for m, opt in zip(models, optimizers):
+        for p in m.policy.parameters():
+            p.grad = torch.ones_like(p)
+        opt.step(); opt.zero_grad(set_to_none=True)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('single rank must not stage or transmit a gradient file')
+    monkeypatch.setattr(distributed, 'save_gradients', forbidden)
+    monkeypatch.setattr(distributed, 'sync_file_to_peers', forbidden)
+    tiny = torch.finfo(torch.float32).tiny
+    for iteration in range(2):
+        for m in models:
+            m.policy.weight.grad = torch.tensor([[-0., 0., tiny / 2, -tiny / 2],
+                                                 [.25, -.125, 1e-10, -1e-10]], device=device)
+            m.policy.bias.grad = None
+        flat = distributed.pack_gradients(models[0])
+        distributed.average_peer_gradients(models[0], flat, [], rank=0, world_size=1)
+        result = distributed.synchronize_gradient_step(models[1], rank=0, world_size=1, peers=[],
+            key=tmp_path/'unused', control_dir=tmp_path, local_root=tmp_path,
+            remote_root='unused', run_id='test', tag=str(iteration), ring_transport=None, barrier_timeout=1)
+        for left, right in zip(reference.parameters(), policy.parameters(), strict=True):
+            assert torch.equal(left.grad.view(torch.int32), right.grad.view(torch.int32))
+        assert result['local_nonfinite_gradients'] == result['synchronized_nonfinite_gradients'] == 0
+        assert result['sync_mbps'] == 0 and result['first_local_nonfinite_parameter'] is None
+        for opt in optimizers:
+            opt.step(); opt.zero_grad(set_to_none=True)
+        for left, right in zip(reference.parameters(), policy.parameters(), strict=True):
+            torch.testing.assert_close(left, right, atol=0, rtol=0)
+            for key, value in optimizers[0].state[left].items():
+                torch.testing.assert_close(value, optimizers[1].state[right][key], atol=0, rtol=0)
+    policy.bias.grad = torch.tensor([float('nan'), float('inf')], device=device)
+    result = distributed.synchronize_gradient_step(models[1], rank=0, world_size=1, peers=[],
+        key=tmp_path/'unused', control_dir=tmp_path, local_root=tmp_path,
+        remote_root='unused', run_id='test', tag='bad', ring_transport=None, barrier_timeout=1)
+    assert result['first_local_nonfinite_parameter'] == 'bias'
+    assert result['local_nonfinite_gradients'] == result['synchronized_nonfinite_gradients'] == 2
+    assert not list(tmp_path.iterdir())

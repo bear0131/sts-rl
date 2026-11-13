@@ -76,6 +76,8 @@ class EntityEncoderLayer(nn.TransformerEncoderLayer):
 
 
 class EntityCombatNetwork(nn.Module):
+    encoder_type = nn.TransformerEncoder
+
     def __init__(self, space, config, *, card_embedding=None):
         super().__init__()
         self.config = config
@@ -109,6 +111,8 @@ class EntityCombatNetwork(nn.Module):
                             'can_pick_zero','can_pick_any')
         if 'run_keys' in space.spaces:
             self.scalar_keys += ('run_keys',)
+        if 'combat_exit_anchor' in space.spaces:
+            self.scalar_keys += ('combat_exit_anchor',)
         if config.boss_win_weight:
             self.scalar_keys += ('combat_is_boss',)
         # Additional HP deficit, log turn, and soft threshold features.
@@ -121,7 +125,7 @@ class EntityCombatNetwork(nn.Module):
         self.role = nn.Embedding(8, width)
         layer = EntityEncoderLayer(width, config.heads, 4*width,
             dropout=0., activation='gelu', batch_first=True, norm_first=True)
-        self.transformer = nn.TransformerEncoder(layer, config.layers, enable_nested_tensor=False)
+        self.transformer = self.encoder_type(layer, config.layers, enable_nested_tensor=False)
         self.norm = nn.LayerNorm(width)
         self.pointer_query = nn.Linear(width, width)
         self.pointer_key = nn.Linear(width, width)
@@ -250,10 +254,13 @@ class EntityCombatNetwork(nn.Module):
         for role, (name, block, mask) in enumerate(blocks):
             tokens.append(block + self.role.weight[role]); masks.append(mask)
             spans[name] = (offset, offset+block.shape[1]); offset += block.shape[1]
-        encoded = self.norm(self.transformer(torch.cat(tokens,1),src_key_padding_mask=torch.cat(masks,1)))
+        encoded = self._encode_tokens(torch.cat(tokens, 1), torch.cat(masks, 1), spans, obs)
         result = {name:encoded[:,lo:hi] for name,(lo,hi) in spans.items()}
         result['select'] = choices
         return result['global'][:,0], result
+
+    def _encode_tokens(self, source, pad_mask, spans, obs):
+        return self.norm(self.transformer(source, src_key_padding_mask=pad_mask))
 
     def _pointer(self, state, entities):
         return torch.einsum('bd,bnd->bn',self.pointer_query(state),self.pointer_key(entities))*self.config.width**-.5
@@ -271,9 +278,22 @@ class EntityCombatNetwork(nn.Module):
     def forward(self, obs, *, active_relic_width=None, evaluate_subsets=True, auxiliary_actions=None,
                 card_table=None):
         state, blocks = self.encode(obs, active_relic_width, card_table=card_table)
+        if '_resident_selection' in blocks:
+            from rl.policies.resident_heads import frozen_combat_logits
+            logits = frozen_combat_logits(self, state, blocks, obs['combat_legal'],
+                obs['select_hand_mask'], (obs['pick_remaining']*encode.PICK_SCALE).round(),
+                obs['_resident_rows'])
+            values, outputs = self._value(state, obs)
+            return logits, values, outputs
         if self.autoregressive_actions:
-            source = torch.cat((self.end(state), *(self._pointer(state, blocks[role])
-                for role in ('hand', 'potion', 'select'))), -1)
+            selection = self._pointer(state, blocks['select'])
+            if '_resident_rows' in obs and selection.shape[1] < 96:
+                # Only scalar logits need the native 96-slot tail. The packed
+                # output path never scatters a padded 96 x 64 entity tensor.
+                padding = self._pointer(state, state.new_zeros((len(state), 1, state.shape[-1])))
+                selection = torch.cat((selection, padding.expand(-1, 96-selection.shape[1])), -1)
+            pointers = (self._pointer(state, blocks['hand']), self._pointer(state, blocks['potion']), selection)
+            source = torch.cat((self.end(state), *pointers), -1)
         else:
             source = state.new_zeros((state.shape[0], C.JOINT_END))
             source[:, A.END_TURN] = self.end(state).flatten()

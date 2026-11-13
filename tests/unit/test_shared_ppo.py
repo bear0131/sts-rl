@@ -4,6 +4,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 from gymnasium import spaces
+import numpy as np
 import pytest
 import torch
 
@@ -49,3 +50,169 @@ def test_nosl_combat_excluded_from_local_and_distributed_gradients(only_combat, 
     assert torch.equal(local.policy.scores.grad, distributed.policy.scores.grad)
     assert torch.count_nonzero(local.policy.scores.grad[0]) == 0
     assert bool(torch.count_nonzero(local.policy.scores.grad[1])) == (not only_combat)
+
+
+def test_fused_ppo_preserves_normalization_groups_gradient_and_adam():
+    from rl.algorithms.ppo import ppo_loss_components
+    torch.manual_seed(47)
+    original = torch.nn.Parameter(torch.randn(16, 3, dtype=torch.float64) * .1)
+    fused = torch.nn.Parameter(original.detach().clone())
+    # Deliberately different scales/means: whole-batch normalization would
+    # materially change this objective despite identical optimizer batch size.
+    advantage = torch.arange(16, dtype=torch.float64).reshape(4, 4)
+    advantage = (advantage * torch.tensor([1., 10., .1, 100.])[:, None]).flatten()
+    def loss(parameter, sl, group=None):
+        x = parameter[sl]
+        c = ppo_loss_components(hierarchical=False, normalize_advantage=True,
+            observations={}, advantages=advantage[sl], returns=advantage[sl] * .001,
+            old_values=torch.zeros_like(x[:, 0]), old_log_prob=torch.zeros_like(x[:, 0]),
+            values=x[:, 0], log_prob=x[:, 1], entropy=x[:, 2],
+            clip_range=.2, clip_range_vf=None, normalization_group_size=group)
+        return c.policy_loss + .5*c.value_loss + .02*c.entropy_loss
+    expected = sum(loss(original, slice(i, i+4)) for i in range(0, 16, 4)) / 4
+    actual = loss(fused, slice(None), 4)
+    torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
+    expected.backward(); actual.backward()
+    torch.testing.assert_close(original.grad, fused.grad, rtol=1e-12, atol=1e-12)
+    for parameter in (original, fused):
+        torch.optim.Adam([parameter], lr=1e-4).step()
+    torch.testing.assert_close(original, fused, rtol=1e-12, atol=1e-12)
+    with pytest.raises(ValueError, match='complete advantage'):
+        loss(fused, slice(0, 15), 4)
+
+
+def test_oom_retry_preserves_prior_and_partial_backward_gradients(monkeypatch):
+    from rl.algorithms import updates
+    class Policy(torch.nn.Module):
+        ppo_advantage_group_size = 4
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.tensor([.3, -.7], dtype=torch.float64))
+    original = SimpleNamespace(policy=Policy(), device=torch.device('cpu'))
+    retry = deepcopy(original)
+    batch = SimpleNamespace(advantages=torch.arange(16, dtype=torch.float64))
+    def forward(model, data, *args):
+        x = data.advantages[:, None] * model.policy.weight[None, :]
+        loss = x.square().mean()
+        return SimpleNamespace(policy_loss=loss, value_loss=loss,
+            entropy_loss=-loss, approx_kl=loss * 0, clip_fraction=loss * 0), loss
+    monkeypatch.setattr(updates, 'ppo_forward', forward)
+    for model in (original, retry):
+        model.policy.weight.grad = torch.tensor([2., 3.], dtype=torch.float64)
+    expected_loss = updates.ppo_chunked_backward(original, batch, .2, None)
+    class PartialFailedBackward:
+        def __mul__(self, scale):
+            return self
+        def backward(self):
+            retry.policy.weight.grad = torch.full_like(retry.policy.weight, 999.)
+            raise torch.OutOfMemoryError('injected after a partial gradient write')
+    def failing_forward(model, data, *args):
+        if len(data.advantages) > 8:
+            return None, PartialFailedBackward()
+        return forward(model, data, *args)
+    monkeypatch.setattr(updates, 'ppo_forward', failing_forward)
+    actual_loss = updates.ppo_chunked_backward(retry, batch, .2, None)
+    assert actual_loss == pytest.approx(expected_loss, rel=1e-12)
+    torch.testing.assert_close(original.policy.weight.grad, retry.policy.weight.grad,
+                               rtol=1e-12, atol=1e-12)
+    assert retry._ppo_microbatch_stats == dict(chunks=2, rows=16, oom_retries=1,
+                                              min_rows=8, max_rows=8)
+    assert retry._ppo_microbatch_cap == 8
+    from rl.algorithms.ppo_metrics import update_moments, finalize_metrics
+    assert retry._ppo_update_metric_count == original._ppo_update_metric_count == 16
+    assert finalize_metrics(update_moments(retry)) == pytest.approx(
+        finalize_metrics(update_moments(original)), rel=1e-12)
+    for model in (original, retry):
+        torch.optim.Adam(model.policy.parameters(), lr=1e-4).step()
+    torch.testing.assert_close(original.policy.weight, retry.policy.weight,
+                               rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.parametrize('fail_after_combat', [False, True])
+@pytest.mark.parametrize('normalization', ['group256', 'rollout'])
+def test_phase_backward_keeps_original_advantage_groups_and_discards_failed_metrics(
+        monkeypatch, fail_after_combat, normalization):
+    from rl.algorithms import updates
+    from rl.algorithms.ppo_metrics import accumulate_update_metrics, update_moments, finalize_metrics
+
+    class Policy(torch.nn.Module):
+        ppo_advantage_group_size = 4
+
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.tensor([.3, -.7], dtype=torch.float64))
+
+        def evaluate_actions(self, obs, actions, action_masks=None):
+            value = obs['x'] @ self.weight
+            distribution = torch.distributions.Categorical(
+                logits=torch.stack((value, -value, value * .5), dim=-1))
+            return value[:, None], distribution.log_prob(actions), distribution.entropy()
+
+    original = SimpleNamespace(policy=Policy(), device=torch.device('cpu'),
+        action_space=spaces.Discrete(3), hierarchical_combat_hp=False,
+        normalize_advantage=True, ent_coef=.02, vf_coef=.5, autocast_context=nullcontext)
+    routed = deepcopy(original)
+    x = torch.arange(16, dtype=torch.float64) / 10
+    advantage = (torch.arange(16, dtype=torch.float64).reshape(4, 4) *
+                 torch.tensor([.1, 10., 1., 100.], dtype=torch.float64)[:, None]).flatten()
+    batch = SimpleNamespace(observations={
+        'phase': torch.tensor([V.PHASE_VOCAB_INDEX['combat'], V.PHASE_VOCAB_INDEX['map']] * 8),
+        'x': torch.stack((x, x.square()), dim=-1)},
+        actions=torch.arange(16) % 3, action_masks=torch.ones(16, 3, dtype=torch.bool),
+        advantages=advantage, returns=x / 5, old_values=torch.zeros(16, dtype=torch.float64),
+        old_log_prob=torch.full((16,), -1.1, dtype=torch.float64))
+    for model in (original, routed):
+        if normalization == 'rollout':
+            from rl.algorithms.ppo import prepare_advantage_normalization
+            model.ppo_advantage_normalization = normalization
+            model.num_timesteps = 20
+            model.rollout_buffer = SimpleNamespace(full=True, normalization_generation=1,
+                advantages=np.concatenate([advantage.numpy(), [2000., 3000., 4000., 5000.]]))
+            model.logger = SimpleNamespace(record=lambda *args: None)
+            prepare_advantage_normalization(model)
+        model.policy.weight.grad = torch.tensor([2., 3.], dtype=torch.float64)
+    components, expected = updates.ppo_forward(original, batch, .2, None)
+    expected.backward()
+    accumulate_update_metrics(original, components, 16)
+    forward = updates.ppo_forward
+    failed = False
+
+    class PartialFailure:
+        def __mul__(self, scale):
+            return self
+
+        def backward(self):
+            routed.policy.weight.grad = torch.full_like(routed.policy.weight, 999.)
+            raise torch.OutOfMemoryError('injected after successful combat backward')
+
+    def try_forward(model, data, *args, **kwargs):
+        nonlocal failed
+        result = forward(model, data, *args, **kwargs)
+        indices = kwargs.get('indices')
+        if (fail_after_combat and not failed and len(data.advantages) > 8
+                and indices is not None
+                and (data.observations['phase'][indices] == V.PHASE_VOCAB_INDEX['map']).all()):
+            failed = True
+            return result[0], PartialFailure()
+        return result
+
+    monkeypatch.setattr(updates, 'ppo_forward', try_forward)
+    actual = updates.ppo_chunked_backward(routed, batch, .2, None)
+    assert actual == pytest.approx(expected.item(), rel=1e-12)
+    assert failed == fail_after_combat and routed.normalize_advantage
+    torch.testing.assert_close(original.policy.weight.grad, routed.policy.weight.grad,
+                               rtol=1e-12, atol=1e-12)
+    assert routed._ppo_microbatch_stats['rows'] == 16
+    assert routed._ppo_microbatch_stats['oom_retries'] == int(fail_after_combat)
+    assert routed._ppo_update_metric_count == 16
+    assert finalize_metrics(update_moments(routed)) == pytest.approx(
+        finalize_metrics(update_moments(original)), rel=1e-12)
+    optimizers = [torch.optim.Adam(model.policy.parameters(), lr=1e-4, eps=1e-5)
+                  for model in (original, routed)]
+    for optimizer in optimizers:
+        optimizer.step()
+    torch.testing.assert_close(original.policy.weight, routed.policy.weight, rtol=1e-12, atol=1e-12)
+    for field in ('step', 'exp_avg', 'exp_avg_sq'):
+        torch.testing.assert_close(optimizers[0].state_dict()['state'][0][field],
+                                   optimizers[1].state_dict()['state'][0][field],
+                                   rtol=1e-12, atol=1e-12)

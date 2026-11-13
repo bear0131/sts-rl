@@ -1,0 +1,11 @@
+{
+  "token_budget": 196608,
+  "max_rows": 1024,
+  "precision": "fp32",
+  "context_grouping": true,
+  "upper_screen_max_rows": 384,
+  "max_contexts_per_chunk": 320,
+  "direct_masked_categorical": true,
+  "prefetch_groups": true,
+  "execution": "deck-latent-448"
+}

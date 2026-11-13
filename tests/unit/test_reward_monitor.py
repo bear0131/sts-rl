@@ -131,3 +131,25 @@ def test_other_relic_acquisition_phases_are_not_free_reward_claims(phase):
     distribution = SimpleNamespace(distribution=SimpleNamespace(probs=torch.zeros((1,A.N_ACTIONS))))
     indices,masses=M.policy_probabilities(distribution,{'phase':np.array([[V.PHASE_VOCAB_INDEX[phase]]])})
     assert len(indices)==0 and masses.shape==(0,3)
+
+
+def test_sequential_skip_and_replacement_count_resolved_offers_once():
+    model = SimpleNamespace()
+    state = scene(relics=(1,), potions=(3,))
+    def event(kind, *, taken=False, resolved=True, available=True, decision=True):
+        return dict(simulator_transition=False, reward_flow=dict(stage=kind, kind=kind,
+            taken=taken, resolved=resolved, available=available, decision=decision,
+            key_exchanged=False))
+    step(model, state, A._PROCEED, event('relic'))
+    assert M.counts(model)['reward_gold_resolved'] == 0
+    # Selecting a full-belt offer opens replacement; it does not take it yet.
+    step(model, state, A._RPOTION, event('potion', resolved=False))
+    assert M.counts(model)['reward_potion_resolved'] == 0
+    step(model, state, A._POTION + 1, event('potion', taken=True, decision=False))
+    step(model, state, A._PROCEED, event('potion', available=False))
+    out = M.metrics(M.counts(model))
+    assert out['reward_relic_resolved'] == 1 and out['reward_relic_taken'] == 0
+    assert out['reward_potion_resolved'] == 2 and out['reward_potion_taken'] == 1
+    assert out['reward_potion_policy_decisions'] == 1
+    assert out['reward_potion_unavailable_left'] == 1
+    assert out['reward_potion_policy_probability'] == pytest.approx(.2)

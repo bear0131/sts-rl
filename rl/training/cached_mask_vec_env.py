@@ -596,6 +596,8 @@ class GroupedCachedMaskSubprocVecEnv(VecEnv):
     logical env order, so rollout buffers and action masks are unchanged.
     """
 
+    _worker_target = staticmethod(_group_worker)
+
     def __init__(
         self,
         env_fns: list[Callable[[], gym.Env]],
@@ -634,7 +636,7 @@ class GroupedCachedMaskSubprocVecEnv(VecEnv):
         )):
             wrappers = [CloudpickleWrapper(env_fns[index]) for index in group]
             process = ctx.Process(
-                target=_group_worker,
+                target=self._worker_target,
                 args=(work_remote, remote, wrappers, group_index),
                 name=f"sts-env-group-{group_index}",
                 daemon=True,

@@ -1,0 +1,5 @@
+{
+  "token_budget": 130000,
+  "max_rows": 8192,
+  "precision": "fp32"
+}

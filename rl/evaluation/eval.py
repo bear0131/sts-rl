@@ -28,6 +28,10 @@ def build_parser():
                         help='Audit first N combat starts against rules, policy and native on identical forks')
     parser.add_argument('--resource-response', action='store_true',
                         help='Audit frozen-upper HP/potion/gold responses and exit; requires --output')
+    parser.add_argument('--anchor-readiness', action='store_true',
+                        help='Validate deck-latent anchors against actual natural-game future returns')
+    parser.add_argument('--anchor-hp-response', action='store_true',
+                        help='With --anchor-readiness, audit fixed-anchor current-HP response curves')
     parser.add_argument('--trace', type=Path, help='Combat states, chosen actions and rule explanations as JSONL')
     parser.add_argument('--card-vector-checkpoint', type=Path)
     parser.add_argument('--task', choices=['wholerun', 'combat'], default='wholerun')
@@ -127,6 +131,10 @@ def make_scenario(model, args, combat_model=None, combat_action_contract='legacy
             raise ValueError('Boss evaluation episodes must equal the dataset size')
     def make(backend_factory=None):
         return SlayTheSpireEnv(
+            combat_exit_anchor=('combat_exit_anchor' in model.observation_space.spaces
+                                if model is not None else False),
+            reward_flow=getattr(model.policy, 'reward_flow', 'full'),
+            deck_latent_context='deck_latent_context' in model.observation_space.spaces,
             backend_factory=backend_factory,
             ascension=args.ascension,
             outer_return_context=any(getattr(getattr(m.policy, 'core', None), 'frozen_upper', False) for m in models),
@@ -202,6 +210,20 @@ def main():
     if args.budget_dataset and (args.search_cost_price is not None or args.solver == 'fixed-budget-token'):
         raise ValueError('budget audit collection cannot also override its allocation')
     model.set_random_seed(args.seed)
+    if args.anchor_hp_response and not args.anchor_readiness:
+        raise ValueError('--anchor-hp-response requires --anchor-readiness')
+    if args.anchor_readiness:
+        from env.core.native_actions import policy_contract
+        from rl.evaluation.anchor_readiness import anchor_readiness, readiness_metrics
+        if not args.output or args.task != 'wholerun' or args.solver != 'policy' or args.combat_checkpoint:
+            raise ValueError('anchor readiness requires output and one whole-run policy checkpoint')
+        scenario = make_scenario(model, args, combat_action_contract=policy_contract(model.observation_space))
+        result = anchor_readiness(model, scenario, config, hp_response=args.anchor_hp_response)
+        result['metrics'] = readiness_metrics(result)
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(result, indent=2), encoding='utf-8')
+        print(json.dumps(result), flush=True)
+        return
     if args.resource_response:
         from rl.evaluation.resource_response import audit
         from env.core.native_actions import policy_contract
@@ -220,7 +242,9 @@ def main():
         return
     combat_model = model
     if args.combat_checkpoint:
-        if args.task != 'wholerun' or args.solver not in ('policy', 'native', 'value', 'rules', 'turn-planner'):
+        if args.task != 'wholerun' or args.solver not in (
+                'policy', 'native', 'value', 'rules', 'turn-planner',
+                'small-playout', 'paired-worldlines'):
             raise ValueError('--combat-checkpoint requires a supported wholerun solver')
         combat_model = load_checkpoint(args.combat_checkpoint, device=args.device,
                                        card_vector_checkpoint=args.card_vector_checkpoint,

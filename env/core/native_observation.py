@@ -99,6 +99,14 @@ class NativeRootObservationBatch:
             {key: self.prototypes[key] for key in self.global_keys},
             *_global_projection_schema(encode.V.PHASE_VOCAB_INDEX['combat']))
             if hasattr(sts, 'CombatGlobalObservationEncoder') else None)
+        self.deck_encoder = None
+        if first.deck_latent_context and hasattr(sts, 'DeckContextEncoder'):
+            from schemas.combat_state import _sim_card_id
+            from .outer_return import MISC_SCALE
+            cards = [-1 if str(name) == 'INVALID' else encode._card_id_idx(_sim_card_id(str(name)))
+                     for name in _nosl_compact_lut()['layout']['card_names']]
+            self.deck_encoder = sts.DeckContextEncoder(cards, encode.N_CARDS,
+                encode.DECK_SLOTS, encode.UPGRADE_SCALE, MISC_SCALE)
         self.stats = _nosl_card_stats()
         self.decoder = sts.NeuralObservationDecoder(
             self.prototypes, _nosl_compact_lut(), self.stats,
@@ -128,7 +136,10 @@ class NativeRootObservationBatch:
             result['floor'][row, 0] = env.thick.gc.floor_num / encode.FLOOR_SCALE
         return result
 
-    def encode(self, envs):
+    def encode(self, envs, *, destination=None):
+        """Encode owned rows, or fill an internal caller's exact-sized buffers."""
+        if destination is not None and any(len(value) != len(envs) for value in destination.values()):
+            raise ValueError('native root destination must have exactly one row per environment')
         if not envs:
             raise ValueError('native root observation batch must not be empty')
         for env in envs:
@@ -165,7 +176,17 @@ class NativeRootObservationBatch:
         for row, env in enumerate(envs):
             if env.outer_return_context:
                 globals['outer_deck_misc'][row] = permanent_misc(env.thick.gc, env.thick.bc)
-        result = self.decoder.decode(payload, globals)
+        result = self.decoder.decode(payload, globals, destination)
+        if self.deck_encoder is not None:
+            extension = self.deck_encoder.encode([e.thick.gc for e in envs], [e.thick.bc for e in envs])
+            result['deck_latent_context'].fill(1.)
+            for key, values in extension.items():
+                result[key][...] = values
+        if 'combat_exit_anchor' in result:
+            # Anchor rows use the canonical codec; all native live rows are zero.
+            result['combat_exit_anchor'].fill(0.)
+        if 'reward_stage' in result:
+            result['reward_stage'].fill(0.)
         if 'upper_public_context' in result:
             result['upper_public_context'].fill(1.)
         # The canonical encoder leaves untargetable monsters' power rows at
@@ -191,6 +212,14 @@ class NativeRootObservationBatch:
                 count = max(0, int(payload['scalars'][row, select_start]) - len(env._multi))
                 result['pick_remaining'][row, 0] = count / encode.PICK_SCALE
             result['combat_legal'][row] = env.action_masks()[env._policy_offset:]
+            if env.deck_latent_context:
+                if self.deck_encoder is None:
+                    from .deck_context import project_native_root
+                    project_native_root(env, {key: values[row] for key, values in result.items()})
+                else:
+                    view = env.thick.encoding_map_observation(dict(phase='map'))
+                    for key, values in view.items():
+                        result[key][row] = values
             if env.outer_return_context:
                 env._nosl_current_context = {key: result[key][row].copy() for key in CONTEXT_KEYS}
         return result

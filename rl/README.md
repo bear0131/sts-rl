@@ -16,6 +16,133 @@
 新代码使用 canonical 包路径。`_compat/` 仅保留历史 checkpoint 所需的 20 个库别名；旧 CLI 包装已删除。不会导入两套类，不在这里实现新功能。映射/退役说明见 ../tools/validation/migrations.json。
 训练/评估参数放 ../configs；启动环境放 ../experiments/launchers；输出放 ../runs/local。不要在 rl 根目录增加实验脚本或测试。
 
+### 统一整局纯 PPO
+
+`shared-wholerun-ppo-room-v1` 使用随机初始化的共享 Transformer 与卡牌表，
+战斗和外层复用同一组注意力层，保留各自输入适配和动作/标量价值头。
+`--arch shared-wholerun` 的 `--n-layers` 是实际共享层数，不再按上下层平分。
+一个 Adam 仅登记每个共享参数一次，所有实际动作均进入普通 PPO；没有搜索、
+蒸馏、预训练卡向量或辅助监督。支持 FP32、autoregressive-v2、native/dummy
+向量环境、`native-subproc`及既有 SSH ring；评估复用 `PolicyStrategy`，不新增搜索分支。
+
+奖励直接复用 `outer_return.strategic_reward`：每层 .002、跨幕 .1/.2、通关1，
+不是通用 PPO 的旧 ShapedReward。恢复包把 `strategic_reward` wrapper 独立标记，
+拒绝与旧奖励 wrapper 混用；共享主干和独立旧模型权重不兼容，应从头初始化。
+`SharedWholeRunPolicy.room_lambda` 随模型配置保存，默认 .9；gamma 必须为1。
+同(act,floor)转移 lambda=1，换房间 .9，跨幕只算一次边界，死亡/胜利零自举。
+GAE同时产生actor优势与固定critic标签，使用采样旧V、FP64递推；不在更新中重算。
+固定步数rollout尾部以旧V自举，游戏状态跨轮保留，未把rollout尾部当作整局结束。
+TimeLimit保持标准PPO终局观察自举；此类删失局不计自然胜率，计数单列。
+
+`configs/train/shared_wholerun_anchor.args` 是独立的256×4从头训练合同：
+lambda=1、LR5e-5、`combat-value-target=pre-reward-anchor`、
+`reward-flow=sequential-v1`。仅支持原生共享纯PPO，无搜索/outer-return/reasoning。
+胜利或逃跑在 `bc.exit_battle(gc)` 前显式停一行，尚未结算、生成或揭示奖励；
+保留末尾战斗实体并增加 `combat_exit_anchor=[win,escape]`。此时唯一合法动作
+autoregressive-v2的0只表示继续结算。死亡照常终止；连续战斗也逐场保留锚点。
+普通战斗行使用截至锚点的奖励加采样旧V(anchor)，锚点自身和所有上层行仍使用
+原始lambda=1整局目标；不能用局部截断递推切断更早的上层标签。rollout未完成的
+战斗用末尾旧V自举。标签和优势在更新前冻结；新增锚点行无动作选择梯度，但训练
+价值并参与全局优势统计。每轮768行包含这些强制继续行，不能全称非强制决策。
+`pure_rl/combat_anchor_{samples,wins,escapes}` 与 `value_pre/anchor/*` 单列；
+combat样本和误差组排除锚点，all仍包含，return_version=2。
+
+顺序奖励按遗物（含蓝钥匙交换）→独立钥匙→金币→药水→卡牌→离开推进；
+金币可领取或跳过，满药水先决定领取再选替换槽。只有当前候选进入观测，未来
+类别的奖励字段清零，实体物理槽位不重排。`reward_stage` 是7项one-hot：
+relic/key/gold/potion/replace_potion/card/done。PROCEED在普通阶段只跳过当前
+候选、done才离开；卡牌使用原生REWARD_SKIP（含歌唱碗效果）。replace_potion
+阶段的POTION+槽位表示丢弃该槽并领取，不表示饮用。遗物引发的选牌保留原生流程。
+原奖励数值、领取效果与RNG生成仍归模拟器。恢复包保存两个合同并拒绝混用；
+旧checkpoint默认whole-run/full，形状不变，新合同需重新初始化。评估环境按
+checkpoint建同合同，真实bridge不支持这些模拟训练专用阶段。
+分布式入口沿用下述配置并显式覆盖 `--learning-rate 0.00005`
+`--ppo-advantage-normalization rollout`。FP32紧凑更新配置为
+`configs/train/shared_wholerun_packed_fp32.json`，不改变每Adam的样本成员。
+
+`configs/train/shared_wholerun_lambda1_sequential.args` 保留同一256×4、LR5e-5
+和遗物优先顺序奖励，但采用 `combat-value-target=whole-run`、lambda=1。
+战斗与上层均学习整局回报，不插入战斗锚点行或对应观察字段；固定采样段尾部
+仍以旧V自举。此配置用于前期从头训练，未设置自动切回锚点的轮数或稳定阈值。
+两个配置的战斗输入形状不同，后期若切换须显式迁移与验收，不能直接普通恢复。
+
+初始化参数见 `configs/train/shared_wholerun_256x4.args`（现有trainer可用`--steps 0`），
+四机配置见 `configs/train/shared_wholerun_distributed.args`。每机256环境×768动作、
+micro1536×累积8×四rank=49152有效batch、1遍，共16次Adam/轮，LR1e-4。
+全局每轮786432实际动作；原128×512两遍配置为262144动作、同样16次更新。
+物理微批可以合并多个256样本统计组；优势仍在每组内归一化，避免扩大微批时
+悄悄改变目标。分布式共享PPO遇到显存不足会按完整统计组拆分，丢弃失败反向的
+部分梯度后重试，保留此前累积梯度；日志记录请求/实际块大小和重试数。
+普通恢复可显式使用`--resume-grow-environments`追加环境，原有在途游戏、Adam
+和learner随机流保持；新槽使用独立种子。仅用于此次扩容，等量恢复不带此参数。
+共享PPO保存独立`rollout_round`，环境数/步长变化后监控轮次仍连续。
+动作前缀仍算真实策略决策，不把它或强制动作误称搜索simulation。
+分布式纯PPO的 `pure_rl/value_pre/{all,combat,upper}/mse` 比较采样时的旧V
+与本轮冻结λ-return，不额外前推。先跨rank归约sum/count再求MSE、偏差与解释方差；
+目标无方差不显示解释方差，零样本不补零。`pure_rl/{policy_loss,value_loss,entropy,
+approx_kl,clip_fraction}` 汇总更新过程中成功反向的真实样本，OOM失败尝试不计入。
+这些不是最终权重的重测，也不能与旧上层MC标签的误差直接比较。
+
+`native-subproc --envs-per-worker 8 --start-method spawn` 将每组环境留在独立
+CPU进程内用原生批步进，完整当前观测通过共享内存回传。逻辑槽位、RNG、mask、
+终局观测及恢复journal不变，返回给采样器的数组拥有独立存储。当前仅支持上述
+共享纯PPO；初始化进程开销单列，不包含在稳态rollout计时内。
+Linux显式选择`--start-method forkserver`时，训练环境入口在干净的CPU服务器
+预加载Torch和环境模块，共享只读库页并减少每worker重复导入；不fork持有CUDA的
+训练父进程。Windows继续spawn。分组数依硬件实测，更多worker不保证更快。
+CUDA/FP32采样自动使用有容量限制的分phase执行图，保留全部有效token，只裁剪
+末尾padding并对独立batch补齐。图在采样间复用、更新时从core解绑，不进入checkpoint；
+采样异常或策略参数对象替换时释放。phase图最多128项、地图图最多16项，分别LRU淘汰。
+同dtype输入打包后在图内还原原字段和槽位，不转换整数精度。地图编码缓存逐行比较
+完整房间/特征数组，并在参数版本或batch形状变化时失效；无跨样本信息混合。
+输入打包布局按完整字段/shape/dtype缓存；phase批次大于16时补至16行倍数，
+合并上层query也按16补齐，减少两倍幂分档的无效计算，不删除有效槽位。
+浮点验证容差为rtol/atol 2e-5；不宣称不同形状的矩阵运算逐位相等。更新仍走
+原有FP32前后向，图不会改变学习率、样本分组或Adam次数。
+
+纯PPO使用`SharedRolloutBuffer`复用已分配的time×env存储。更新时按原SB3的
+env-major随机排列映射到(time, env)双索引，避免整批转置/复制；样本次序、RNG、
+统计组和返回的batch字段保持。公开buffer数组在get后仍为time-major，只支持此
+纯PPO路径，不用于旧NOSL内部buffer索引。环境worker只在同步写入共享内存/发送
+完成前借用内部步进结果，公共VecEnv返回仍独立持有数据。纯PPO不再生成未消费的
+旧NOSL辅助边界观测，真实终局观察、动作、奖励、λ-return及监控信息保持。
+连续的原生战斗行可直接解码到vector的最终观测存储，省去中间数组与scatter；
+缺少字段的旧checkpoint、不连续行和战略稀疏观察仍走原路径。目标行数必须精确
+匹配；公开环境返回仍拥有独立数组，终局观察在自动重置前保留。
+目的地切片view最多缓存16个连续区间，关闭vector时释放；底层存储仍属于vector。
+RunMap按原生地图对象缓存只读数值拓扑和后代关系，每次位置/合法列变化重建动态
+标记与原三槽preview；完整七列候选仍通过唯一codec校验，地图对象替换即失效。
+
+共享纯PPO更新只保留战斗遗物序列到最后一个有效槽，中间空位与对应计数位置
+保持；末尾PAD不参与任何动作或value头。开启完整外层公开上下文时，同一微批
+的全部上层行先合批执行地图DAG，再按原行号交给各phase的Transformer和动作头。
+地图编码仍保留梯度，不跨更新缓存，也不跨样本混合信息。普通推理和旧独立上下层
+策略保持原路径；参数名、checkpoint、统计组、损失权重与Adam次数均保持。
+
+共享纯PPO的上层训练还可移除无动作头消费的masked query：deck/relic/selected
+空槽，以及不是地图choice的空地图槽。所有pointer候选（包括PAD卡对应的跳过）
+与地图choice均保留，按原槽位回填结果；旧独立策略的编码器继续使用dense路径。
+这不等同于删除所有masked query，key被屏蔽的候选仍可能需要输出评分。
+
+FP32采样图的输入/发布输出位于池外，只有不跨forward存活的临时张量共用显存池。
+捕获使用同一CUDA stream，完整调用以event串行，淘汰先等待在途工作；一个collector
+拥有一个runtime，不支持多CPU线程同时调用。调用者保留的结果独占storage，
+图缓存不进入checkpoint，更新后的参数/地图缓存和变形重放按现有契约失效。
+
+共享PPO更新可在显存允许时保留本轮完整不可变数据集（上限设备显存的1/4），
+分配失败在任何更新前退回host路径，随机排列与样本所有权不变。先按原256行组
+归一化优势，再分别反向战斗/上层子批释放activation，按原行数加权；OOM失败
+丢弃整块本次梯度和指标并恢复已有累积。6144×2仍是原12288本地/49152全局批次。
+`update_sec`从采样结束量至全部learner工作结束，包含取批/前后向/同步/Adam，
+不含保存；`update_sec_max`为最慢rank。不能把`backward_sec`当完整更新时间。
+
+纯PPO的`pure_rl_game_totals`保存每rank累计自然结束/删失数及计数起点，随
+model.zip普通保存恢复。跨rank汇总为`pure_rl/natural_games_global`与
+`pure_rl/censored_games_global`；仅当起点为0时发布监控兼容字段
+`completed_full_games_global`。旧checkpoint没有计数时从恢复步开始计，不能
+直接冒称从训练开始累计；补齐历史需核对VecMonitor持久计数与全部分段日志。
+
+
 训练异常在关闭 resident 环境前，将现场 JSON 与单槽环境 journal 写入
 `training_state_dir/failure-scenes/rankN/`。有明确故障槽时只保存该槽；否则最多保存
 4个在途槽，并列出全部在途索引。native 连续采样的截断在自动 reset 前留档，
@@ -530,10 +657,11 @@ MC搜索尺度由两部分共同决定：根/叶保持raw V/M，Full-Gumbel再�
 是存在合法对应领取动作时，已有 masked 策略分配给这一类动作的概率质量均值，
 并非整张奖励页最终领取的概率。日志同时保留 resolved/taken/policy_decisions/
 policy_probability_sum；跨 rank 先聚合计数再除，无分母时省略比例，旧日志不补零。
-当前支持 joint-upper 的 NOSL/小网整局采样入口；计数不参与损失、动作或 RNG，
+当前支持 joint-upper 的 NOSL/小网整局采样，以及共享纯PPO分布式入口。
+后者观察标准SB3已经用于选动作的masked分布，不额外前推。计数不参与损失、动作或 RNG，
 无需新增 pending 状态，尚未处理的奖励通过原环境保存恢复。
 
-同一 joint-upper 入口记录火堆七种主选择（rest/smith/recall/lift/toke/dig/skip）。
+这些入口同样记录火堆七种主选择（rest/smith/recall/lift/toke/dig/skip）。
 `upper/campfire_{option}_choice_rate` 是实际选择次数除以该项合法的主选择次数；
 `policy_probability` 是这些相同状态上已有 masked 策略的平均概率，先在合法火堆
 选项内归一化，排除药水等其他操作。仅实际提交合法主选择时计数，升级/删牌后的
@@ -642,6 +770,18 @@ actor 的冻结 GAE、奖励、终局定义、搜索、样本遍数和上下层 
 记录1秒资源采样及精确Torch峰值；固定有效batch/样本顺序时可比较microbatch执行分块。
 CPU资源缺GPU项填null；单次诊断吞吐不是完整训练资格，也不能证明同墙钟学习收益。
 
+同一协议可选 `lower_arms`，各臂只允许改变下层 `learning_rate` 和 `epochs`。
+`small_playout_probe` 仅支持 `token-root-64x2` 的完整局 cohort，每个环境必须对应一局，
+与上层按相同整局划分训练/留出。调用原 `small_playout.update_online` 和梯度传输，
+逐臂恢复模型、非空 Adam、RNG、样本和更新计数，再运行上层诊断。
+报告反向/正向目标 KL、top1、原策略漂移，以及轻量头对当前/冻结根策略的 KL，
+区分学习目标与变化中的蒸馏 teacher；原始逐样本结果带环境 ID 供整局配对统计。
+没有 `lower_arms` 时保持原只测上层行为。离线更新结果不等同于整局胜率或长期最优配置。
+默认仍要求全部请求游戏自然结束。诊断现役带战斗回合上限的采集时，可显式设置
+`diagnostic.allow_combat_turn_censoring: true`：沿用模型当前上限，核对完整局与剔除槽
+恰好覆盖请求槽、理由/种子匹配、上下层无被剔除游戏样本，再仅对保留完整局分割。
+它不允许墙钟/总动作预算剔除或隐瞒缺失游戏；任一 rank 验证失败时全体在更新前退出。
+
 独立完整游戏采集的原生 small-playout 路径可省去未被消费的战斗观测：
 战斗中内部传输只保证 `phase/act/floor` 当前有效，非战斗传输完整上层字段；
 下层搜索仍读取完整模拟器状态，终局 `info` 保留完整观测。该路径仅在具体回调类
@@ -745,3 +885,153 @@ source_rows 只引用动态实体行，target_slots 对应原生怪物槽位，-
 `python -m rl.evaluation.eval MODEL --task wholerun --solver fixed-budget-token --simulations N ...`，
 N支持0..4096；学习预算使用`--solver paired-worldlines`。两者共用模型、
 根选择、guide和runner，manifest明确记录覆盖值；训练路径拒绝固定覆盖。
+
+
+SSH ring可用`--ring-streams 2/4/8`把每个原始exchange的字节区间分到独立通道；
+保留原rank分块和FP32累加顺序，不重新切分数学规约。各通道占用从ring-port开始
+的连续监听端口，每通道有独立就绪屏障；小于65536元素的统计量仍只走首通道。
+默认单通道兼容旧配置。需要同硬件测量，更多连接不能保证同比增加网络吞吐。
+
+
+共享纯PPO在具有完整上层公开上下文时，可将普通上层界面的角色token合批经过
+同一Transformer，再按原角色与槽位评分。长选择序列仍独立处理；采样时真实phase
+不变，只把执行路由合并。PAD skip、药水与地图choice查询保持，其他界面的角色
+既不作为key，也不成为本界面的动作分数。训练只构造批内实际出现的界面分支，
+保持未参与参数的None梯度与既有Adam状态，优势分组、样本权重和更新数保持。
+
+采样器在CPU观察刚转换成GPU输入时为同一次forward绑定元数据，避免将phase、
+牌堆宽度和地图变化信息再读回CPU。只接受同一输入dict的即时绑定；bootstrap、
+任意GPU调用及未知输入pre-hook使用原GPU元数据路径。地图仍核对全部内容、
+shape与权重版本。缓存的输入/发布输出使用普通持久张量，允许inference_mode与
+no_grad交替，临时图内张量不跨forward存活。分布式入口自有的统计callback可在
+inference_mode下采样；库调用中的任意用户callback保留原autograd行为。
+
+共享PPO的大型连续rollout buffer可并行清零既有存储，每块相互独立，reset后的
+公开字段与默认值不变。CUDA无梯度分类分布保留设备端finite检查，避免为重复
+校验同步主机；CPU和训练反向仍使用原校验路径。
+
+较大容量配置 configs/train/shared_wholerun_512x6.args 使用512宽、6个共享Pre-LN层、8头、FFN宽2048及跨房间lambda=.97；仍为同一观测/动作/奖励合同。该文件用于生成随机初值，实际分布式采样继续复用shared_wholerun_distributed.args。1536物理微批×8梯度累积×4rank维持49152有效batch和16次Adam；模型权重形状不同，不能当作256×4 checkpoint的普通恢复。现有trainer --steps 0输出位于--out下的时间戳子目录，分布式checkpoint路径应避免与同名目录冲突。
+
+共享纯PPO可用 `--ppo-advantage-normalization rollout` 对一次完整采样的所有rank
+统一计算优势均值与样本标准差，整个更新阶段固定使用；跨rank需要ssh-ring。
+本地以FP64累积，现有ring用FP32传输两次小统计量，按样本数加权。原始优势和
+lambda-return不改写，不按房间/phase分别归一化。该设置是统计方法实验，不是
+等价性能优化；与物理微批和Adam有效batch独立。默认保留checkpoint设置，旧
+checkpoint保持group256；统计量每轮重新计算，不保存缓存。监控记录全局
+count/mean/std及normalization_group_size，恢复后的模式由checkpoint继承。
+
+共享纯PPO可用 `--ppo-update-config configs/train/shared_wholerun_packed_update.json`
+选择按token数量分块的更新路径。配置包含 `token_budget`、`max_rows` 与
+`precision`（fp32/fp16）；本地learner使用相同的 `ppo_update_config` 数据对象。
+每个原始Adam组内先按原统计范围归一化，再按phase/长度排序，所有块按真实样本数
+加权。原 `batch_size × gradient_accumulation_steps`、Adam成员与次数不变；只支持
+完整Adam组、无辅助监督/target-KL提前停止的共享纯PPO，多rank需要ssh-ring。
+战斗压紧仅移除没有消费者的masked query，保留合法PAD候选、目标槽与多选prefix。
+配置和当前梯度缩放随checkpoint保存；省略参数继承，JSON字符串 `"off"` 可显式
+恢复原更新路径并清除旧物理块上限。旧checkpoint默认保持原路径。
+
+fp16仅用于训练Transformer内部，master权重、Adam、输出头、loss和采样保持FP32。
+初始loss scale为65536，梯度在通信前还原FP32尺度；任一rank非有限时全部rank减半
+scale并重算相同Adam组，失败尝试的梯度与样本指标丢弃，不跳过更新。最多回退到1，
+仍失败则明确报错。该精度选择须独立评估数值/策略误差，不宣称逐位等价；FP16
+训练需要CUDA，但保存的模型仍可在CPU用FP32推理。更新记录loss scale和溢出重试数。
+
+
+### Deck latent 的整批上下文梯度重算
+FP32 packed PPO 配置 `context_gradient_replay=true` 仅支持 DeckLatentPolicy。
+在一个原始 Adam 样本组内按完整静态输入去重，先无梯度计算唯一 latent，
+各物理小批保留自己的动态动作/value 计算，将 latent 梯度按原行映射汇总；
+同步和 Adam 之前重新执行大编码器并反向传播汇总梯度。共享卡表同时接收两部分
+梯度，不冻结编码器，不跨 optimizer step 缓存，不改变 PPO 样本、优势或更新次数。
+编码器须确定性（dropout=0）；始终保持训练前向路径。异常清理批次缓存，
+前向/反向 OOM 缩块重试，失败的局部参数及 latent 梯度不重复计入。
+旧配置默认关闭，旧模型加载/推理不变。指标 context_input_rows/context_unique_rows
+为每轮实际 Adam 输入行与唯一构筑上下文行，不能当作环境 transition 或搜索叶子。
+
+
+同一配置的context_grouping=true将相同静态上下文的样本尽量放在一起，
+先在原始Adam组上比较完整key，生成仅该组有效的整数ID。后续物理分块只需
+比较这些ID，大编码器在每块内保留普通可微去重；无需latent重算反向。
+分phase及原优势统计保持，长度上界取整块最大值。两个选项默认均关闭，
+可以独立比较；不能把重排/不同矩阵形状声称为逐位等价。
+
+
+context行数指标按单rank统计，分布式聚合沿用rank平均口径。
+
+上下文分组路径按战斗、选牌、其他外层分别保存OOM缩块上限；某类局面显存不足
+不会降低其他类别后续整轮的批量。旧checkpoint的全局上限只用于旧非分组路径，
+分组路径按新类别重新适应；类别上限随checkpoint保存，改变打包配置时清除。
+
+DeckLatentPolicy 的 FP32 上下文分组可选 `upper_screen_max_rows`。设置正整数后，
+每个原始 Adam 组内先按实际上层界面分组，再按构筑上下文及长度排序。地图、奖励、
+事件、商店和选牌各自遵循该物理行数上限，并独立记录显存退避。战斗沿用原
+`max_rows` 和 token 预算。省略该字段会使用原分组，普通恢复沿用已保存的上限。
+
+设置 `max_contexts_per_chunk` 后，每个原始 Adam 组先按界面排序，再把构筑有效
+token 数按每八个一档分组，组内按精确上下文 ID 排序。牌、遗物、房间及仅有公开特征的地图槽
+均按构筑网络的掩码计入长度。物理块同时满足行数、token 预算及不同上下文数量上限。
+相同配置恢复时保留已学习的显存退避，旧模型默认沿用保存的分块顺序。
+
+FP32 DeckLatentPolicy 的 packed 配置可启用 `direct_masked_categorical`。纯 PPO
+更新在设备上按 SB3 的归一化顺序计算离散动作的 log-prob 和熵，非法输入进入
+Adam 之前的全局有限值检查。带搜索监督时直接复用同一次前向、按同一顺序归一化的
+掩码 logits，搜索行归一化仍以原始 Adam 组为单位。该选项随 checkpoint 保存，旧配置默认关闭。
+
+使用 `SharedRolloutBuffer` 的 packed 更新可设置 `prefetch_groups`。CUDA
+学习器按原置换从主机提取下一组，在独立流上传输，消费流等待就绪后开始计算。
+这只需在显存中保留当前组和一个预取组。若预取遇到显存不足，学习器完成当前组后
+同步读取尚未消费的原组。CPU 使用原取批路径，旧配置默认关闭。
+
+四机 `transformer64x2` 的 FP32 预热阶段可用
+`--ppo-update-config configs/train/deck_latent_448_fp32.json`。每个原始 Adam 组内，
+战斗按构筑实际长度排序，每块最多 448 个不同构筑；上层每块最多 320 个构筑和
+384 行。上层专属梯度经 SSH 环归约时可以计算战斗梯度，共享参数仍按原块顺序
+累加。战斗头和奖励头各自最多使用一组 CUDA 前后向图，按实测形状重放，
+从当前块复制输入，权重与 Adam 共享存储。显存不足时先释放图、重试同一块，
+仍然不足才拆块。各 rank 的更新记录 `planned_ppo` 给出实际分块、图命中和
+退避次数。每轮更新结束释放这些图；checkpoint 保存配置和分块上限。
+单 CUDA 学习器的预热、战后锚点和搜索阶段也使用上述计划；没有跨卡通信时按原块顺序
+计算，不建立上层梯度传输/延后队列。锚点路由仍使用独立价值头，搜索KL复用当前策略前向。
+CPU和多卡锚点/搜索仍沿用常规 packed 更新。单rank梯度在设备内物化缺失项并保留原零加/乘1
+和Adam动量语义，不再写梯度文件或经CPU往返；`grad_bytes`表示梯度向量大小，`sync_mbps=0`。
+
+Deck训练阶段配置可显式设置`anchor_start_round`，在指定已完成轮数后从预热切到
+战后锚点PPO。这是操作者决定，记录`configured-anchor-start`，不伪造准备度通过
+次数或覆盖验证结果；恢复后不重复重置适应期，也不能绕过搜索的资格开关。
+省略此字段仍沿用连续准备度验证的自动门槛。
+
+Deck-latent新训练可用`--deck-combat-encoder transformer64x2`：复用旧实体
+`EntityBlock`的2层、64宽、4头、128宽ReLU前馈/合并QKV/SDPA，逐张手牌、
+逐个敌人/药水/候选做注意力；构筑latent投影加入玩家token，动态遗物和三个
+牌堆各一token。固定动作槽位不重排，只裁掉末尾无效候选，输入补齐8的倍数，
+普通战斗32token，大候选界面继续扩展。所有候选仍映射回完整动作头；不能把
+PAD卡ID等同于无效native候选。缓存、稀疏摘要接口、标量critic、独立战后锚点
+和原PPO/搜索辅助生命周期保持。现役新配置仍FP32，不直接加载旧专用Triton
+权重布局/内核。`pooled-mlp`是旧checkpoint缺省几何；新旧权重互不兼容，几何
+写入policy构造参数和搜索worker冻结快照，旧checkpoint仍按原MLP恢复。
+
+Deck-latent 的原生子进程搜索复用 `NativeRootObservationBatch`：模拟动作仍经
+环境的原奖励、终局和动作编解码路径执行，将活跃战斗观测推迟到待评分分支
+集合形成后统一编码；强制动作中间帧不送评分器。战后锚点、终局和薄动作前缀
+保持普通观测路径。`paired_anchor_search` 不传 `observation_batch` 时保留参考
+逐步编码，供同根同预算对照。评分器只打包当前战斗头或锚点头使用的字段；
+分支永久构筑变化仍比较完整静态键并单独刷新上下文，观测和checkpoint格式不变。
+该CPU路径的语义/速度对照不能代替正式搜索的完整GPU collection与更新恢复资格。
+
+`cuda-resident` 的下层搜索由 `rl/search/resident_service.py` 的单个 CUDA
+worker 持有，复用旧持续服务的 FIFO、根代际和非移动状态页。实际选动作模式
+由 `algorithms/legacy_rollout.py` 的旧执行循环拥有采样；各根搜索完成后立即
+推进对应环境，结果仍写回原来的 `(time, env)`，每个环境填满原采样长度。
+当前冻结模型、配对 world 和辅助目标由消费者适配，旧模型/旧目标不替换它们。
+不能移植含 CPU 回调指针的根，须走持久 native 分支 wave / 同 GPU owner 评分，
+保持根与兄弟隔离、原种子/预算和目标顺序，不能接受部分搜索结果。
+
+当前产物合同为 `deck-resident-battle-v1`、transport 2，另须声明
+`observation_storage=bounded-frame-v1`、`root_import=indexed-v1`，bridge 提供
+`host_runtime_version=2` 的主机账本/缓存/打包接口，构建与线程所有权约定见
+`env/search/README.md`。
+连续地址和状态页两种入口共用 `env/search/cuda_battle_kernels.cuh` 的逻辑，
+页寻址及有界观测帧由 `cuda_battle_paged_kernels.cuh` 适配；加载时核对
+CUDA module 与 native bridge 的 SHA。外部原生规则构建和产物仍由部署管理，
+不把旧地址布局的 cubin 当作兼容新适配的产物。更新源码或产物后须重新验证
+真实 collection、更新及普通恢复；组件回归通过不表示已获生产资格。

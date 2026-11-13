@@ -1,35 +1,206 @@
 """Shared differentiable batches and optimizer boundary; orchestration stays outside."""
 from __future__ import annotations
+from dataclasses import replace
 import time
 import numpy as np
 import torch as th
 from gymnasium import spaces
-from rl.algorithms.ppo import ppo_loss_components
+from rl.algorithms.ppo import masked_categorical_statistics, ppo_loss_components, model_normalized_advantages
 from rl.search.native import observation_as_tensor
 
 
-def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_forward=None):
+def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_forward=None,
+                pre_normalized_advantages=None, direct_masked_categorical=False, update_plan=None):
+    if (pre_normalized_advantages is None and model.normalize_advantage
+            and getattr(model, 'ppo_advantage_normalization', 'group256') == 'rollout'):
+        pre_normalized_advantages = model_normalized_advantages(model, batch.advantages)
     def select(value):
         return value if indices is None else value.index_select(0, indices)
     observations = {key: select(value) for key, value in batch.observations.items()}
     actions = select(batch.actions)
     if isinstance(model.action_space, spaces.Discrete):
         actions = actions.long().flatten()
+    categorical_valid = None
     with model.autocast_context():
-        values, log_prob, entropy = model.policy.evaluate_actions(
-            observations, actions, action_masks=select(batch.action_masks))
+        policy_obs = {k: v for k, v in observations.items() if not k.startswith('_search_')}
+        masks = select(batch.action_masks)
+        search = getattr(model, 'deck_search_config', None) is not None
+        if direct_masked_categorical:
+            actor_critic = model.policy.core.actor_critic if update_plan is None else update_plan.actor_critic
+            logits, values = actor_critic(policy_obs)
+            statistics = masked_categorical_statistics(logits.float(), actions, masks, return_logits=search)
+            log_prob, entropy, categorical_valid = statistics[:3]
+            if search:
+                search_logits = statistics[3]
+        else:
+            values, log_prob, entropy = model.policy.evaluate_actions(policy_obs, actions, action_masks=masks)
+            if search:
+                search_logits = model.policy.action_dist.distribution.logits
+        search_loss = None
+        if search:
+            from rl.algorithms.search_auxiliary import auxiliary_loss
+            # Both paths expose SB3's exact twice-normalized masked logits.
+            # Reuse this forward and the ORIGINAL batch's searched-row scale.
+            search_loss = auxiliary_loss(model, observations, search_logits, masks.bool())
     if after_forward is not None:
         after_forward(observations)
     components = ppo_loss_components(
         hierarchical=model.hierarchical_combat_hp,
-        normalize_advantage=model.normalize_advantage, observations=observations,
-        advantages=select(batch.advantages), returns=select(batch.returns),
+        normalize_advantage=model.normalize_advantage and pre_normalized_advantages is None,
+        observations=observations,
+        advantages=select(batch.advantages if pre_normalized_advantages is None
+                          else pre_normalized_advantages), returns=select(batch.returns),
         old_values=select(batch.old_values), old_log_prob=select(batch.old_log_prob),
         values=values.flatten(), log_prob=log_prob, entropy=entropy,
         clip_range=clip_range, clip_range_vf=clip_range_vf,
-        skip_combat=bool(getattr(model, 'nosl_is_az', False)))
+        skip_combat=bool(getattr(model, 'nosl_is_az', False)),
+        normalization_group_size=getattr(model.policy, 'ppo_advantage_group_size', None))
     loss = components.policy_loss + model.ent_coef * components.entropy_loss + model.vf_coef * components.value_loss
+    if search_loss is not None:
+        loss = loss + search_loss
+    if categorical_valid is not None:
+        loss = loss.masked_fill(~categorical_valid, float('nan'))
     return components, loss
+
+
+def ppo_chunked_backward(model, batch, clip_range, clip_range_vf, *,
+                         pre_normalized_advantages=None, backward_scale=1.0, oom_group=None,
+                         after_physical_chunk=None, direct_masked_categorical=False, update_plan=None):
+    """Fuse statistical groups; retry smaller chunks without corrupting accumulation.
+
+    Only the shared whole-run policy uses this path (no dropout/running stats).
+    A failed backward may already have written some gradients. Keep prior
+    accumulation separate until an entire chunk succeeds, then add it once.
+    The optional observer sees only these committed pieces, including OOM splits.
+    """
+    evaluate_options = dict(direct_masked_categorical=True) if direct_masked_categorical else {}
+    if update_plan is not None:
+        evaluate_options['update_plan'] = update_plan
+    parameters = list(model.policy.parameters())
+    replay = getattr(getattr(model.policy, 'core', None), '_context_gradient_batch', None)
+    if replay is not None:
+        # The adjoint is transactional just like parameter gradients: a later
+        # failed phase must not double-count earlier phases on an OOM retry.
+        parameters.append(replay.latents)
+    total = len(batch.advantages)
+    group = 1 if pre_normalized_advantages is not None else model.policy.ppo_advantage_group_size
+    stats = model.__dict__.setdefault('_ppo_microbatch_stats',
+        dict(chunks=0, rows=0, oom_retries=0, min_rows=total, max_rows=0))
+    losses = []
+    def part(start, count):
+        data = batch._asdict() if hasattr(batch, '_asdict') else vars(batch)
+        return type(batch)(**{k: ({n: v[start:start+count] for n, v in x.items()}
+            if isinstance(x, dict) else x[start:start+count]) for k, x in data.items()})
+    def backward(start, count):
+        # Packed phases have different memory costs. An expensive upper block
+        # must not permanently shrink every subsequent combat block/round.
+        caps = model.__dict__.setdefault('_ppo_microbatch_caps', {}) if oom_group is not None else None
+        cap_key = oom_group if update_plan is None else update_plan.cap_key(oom_group, batch.observations)
+        cap = (caps.get(cap_key, total) if caps is not None else
+               getattr(model, '_ppo_microbatch_cap', total))
+        if count > cap:
+            backward(start, cap)
+            backward(start + cap, count - cap)
+            return
+        previous = [p.grad for p in parameters]
+        for p in parameters:
+            p.grad = None
+        components = loss = phase_loss = pending_metrics = phase_losses = None
+        failed = False
+        try:
+            chunk = part(start, count)
+            if (update_plan is None and 'phase' in getattr(chunk, 'observations', {})
+                    and not getattr(model, 'hierarchical_combat_hp', False)):
+                from env.core import vocab
+                # Normalize BEFORE splitting combat/upper rows. Re-normalizing
+                # either subset would change the chosen statistical objective.
+                advantages = (pre_normalized_advantages[start:start + count]
+                    if pre_normalized_advantages is not None else
+                    model_normalized_advantages(model, chunk.advantages)
+                    if model.normalize_advantage else chunk.advantages)
+                combat = chunk.observations['phase'].long().flatten() == vocab.PHASE_VOCAB_INDEX['combat']
+                pending_metrics, phase_losses = [], []
+                for mask in (combat, ~combat):
+                    indices = mask.nonzero().flatten()
+                    rows = len(indices)
+                    if not rows:
+                        continue
+                    components, phase_loss = ppo_forward(model, chunk, clip_range, clip_range_vf,
+                        indices=None if rows == count else indices, pre_normalized_advantages=advantages,
+                        **evaluate_options)
+                    (phase_loss * (rows / total * backward_scale)).backward()
+                    phase_losses.append(phase_loss.detach() * (rows / count))
+                    # Retain only detached metrics until the entire chunk
+                    # succeeds. A failed later phase must discard earlier
+                    # gradients AND metrics before the existing OOM retry.
+                    pending_metrics.append((replace(components, **{
+                        key: value.detach() for key, value in vars(components).items()
+                        if isinstance(value, th.Tensor)}), rows))
+                    components = phase_loss = None
+                loss = th.stack(phase_losses).sum()
+            else:
+                kwargs = ({} if pre_normalized_advantages is None else
+                          dict(pre_normalized_advantages=pre_normalized_advantages[start:start + count]))
+                components, loss = ppo_forward(model, chunk, clip_range, clip_range_vf, **kwargs, **evaluate_options)
+                (loss * (count / total * backward_scale)).backward()
+                pending_metrics = [(components, count)]
+        except th.OutOfMemoryError:
+            failed = True
+        except BaseException as exc:
+            if (update_plan is not None and isinstance(exc, getattr(th, 'AcceleratorError', ()))
+                    and 'out of memory' in str(exc).lower()):
+                failed = True
+            else:
+                for p, old in zip(parameters, previous, strict=True):
+                    p.grad = old
+                raise
+        if failed:
+            components = loss = phase_loss = pending_metrics = phase_losses = None
+            for p, old in zip(parameters, previous, strict=True):
+                p.grad = old
+            retired = update_plan is not None and update_plan.graphs.recover_oom()
+            if count <= group and not retired:
+                raise th.OutOfMemoryError('PPO minimum statistical group does not fit device memory')
+            # Leave the exception scope before clearing its failed autograd graph.
+            import gc
+            gc.collect()
+            if model.device.type == 'cuda':
+                th.cuda.empty_cache()
+            if retired:
+                stats['oom_retries'] += 1
+                backward(start, count)
+                return
+            cap = max(group, (count // group // 2) * group)
+            if caps is None:
+                model._ppo_microbatch_cap = cap
+            else:
+                caps[cap_key] = cap
+            stats['oom_retries'] += 1
+            backward(start, cap)
+            backward(start + cap, count - cap)
+            return
+        old_grads, additions = [], []
+        for p, old in zip(parameters, previous, strict=True):
+            if old is not None:
+                if p.grad is not None:
+                    old_grads.append(old)
+                    additions.append(p.grad)
+                p.grad = old
+        if old_grads:
+            th._foreach_add_(old_grads, additions)
+        losses.append(loss.detach() * (count / total))
+        from rl.algorithms.ppo_metrics import accumulate_update_metrics
+        for components, rows in pending_metrics:
+            accumulate_update_metrics(model, components, rows)
+        stats['chunks'] += 1
+        stats['rows'] += count
+        stats['min_rows'] = min(stats['min_rows'], count)
+        stats['max_rows'] = max(stats['max_rows'], count)
+        if after_physical_chunk is not None:
+            after_physical_chunk(oom_group, count, total)
+    backward(0, total)
+    total_loss = th.stack(losses).sum()
+    return total_loss.double() if update_plan is not None else float(total_loss.cpu())
 
 
 def optimizer_step(model, micro_batches=1, *, value_only=False, optimizer=None, max_grad_norm=None,

@@ -29,7 +29,8 @@ from rl.search.native import (
     complete_searches_streaming,
     observation_as_tensor as _leaf_observation_as_tensor,
 )
-from rl.algorithms.ppo import PPOLossComponents, ppo_loss_components
+from rl.algorithms.ppo import (PPOLossComponents, ppo_loss_components,
+    configure_advantage_normalization, prepare_advantage_normalization)
 from rl.algorithms.updates import ppo_forward, optimizer_step, reasoning_microbatch_backward
 from rl.search.native import apply_strict_training_settings
 from rl.algorithms.hierarchical_returns import compute_hierarchical_returns
@@ -115,6 +116,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self,
         *args,
         gradient_accumulation_steps: int = 1,
+        ppo_advantage_normalization: str = 'group256',
+        ppo_update_config: dict | None = None,
         performance_profile: bool = False,
         amp_mode: str = "off",
         hierarchical_combat_hp: bool = False,
@@ -288,8 +291,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
             master_nonce=int(rulebase_planner_nonce),
         )
         self.gradient_accumulation_steps = int(gradient_accumulation_steps)
+        self.ppo_advantage_normalization = ppo_advantage_normalization
         self.performance_profile = bool(performance_profile)
         self.amp_mode = amp_mode
+        self.ppo_update_config = ppo_update_config
         # Combat AZ targets are fight-local terminal-HP values.  Keep the
         # overworld/combat return split enabled automatically so combat PPO can
         # be removed without changing the strategic return calculation.
@@ -428,6 +433,14 @@ class AccumulatingMaskablePPO(MaskablePPO):
             raise ValueError("bf16 AMP requires a CUDA device")
 
     def _setup_model(self) -> None:
+        from rl.policies.shared_wholerun import SharedWholeRunPolicy
+        if issubclass(self.policy_class, SharedWholeRunPolicy):
+            from rl.algorithms.shared_buffer import SharedRolloutBuffer
+            self.rollout_buffer_class = SharedRolloutBuffer
+        from rl.policies.deck_latent import DeckLatentPolicy
+        if issubclass(self.policy_class, DeckLatentPolicy):
+            from rl.algorithms.search_auxiliary import SearchRolloutBuffer
+            self.rollout_buffer_class = SearchRolloutBuffer
         super()._setup_model()
         from env.core.encode import OBS_VERSION
         self.observation_version = OBS_VERSION
@@ -435,11 +448,18 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.nosl_action_group_contract = (CONTRACT if self.nosl_is_az and
             self.nosl_is_az_merge_equivalent_actions else 'individual-actions')
         self.nosl_supervision_contract = getattr(self.policy.core,'training_objective','scalar-hp-v1') if hasattr(self.policy,'core') else 'scalar-hp-v1'
+        configure_advantage_normalization(self)
+        from rl.algorithms.packed_ppo import configure_packed_updates
+        configure_packed_updates(self)
         from rl.algorithms.combat_distribution import OUTCOME_CONTRACTS
         # Both heads share observed outcome labels and the combat replay pipeline.
         self._combat_distribution = self.nosl_supervision_contract in OUTCOME_CONTRACTS
         self._outer_return = self.nosl_supervision_contract in outer.SCALAR_OBJECTIVES
         self._frozen_upper = bool(getattr(getattr(self.policy, 'core', None), 'frozen_upper', False))
+        if self.nosl_supervision_contract == 'shared-wholerun-ppo-room-v1':
+            if (self.nosl_is_az or self.hierarchical_combat_hp or self.gamma != 1
+                    or self.reasoning_coef or self.reasoning_updates):
+                raise ValueError('pure whole-run PPO requires gamma1, no search, HP returns or auxiliary updates')
         if self._outer_return:
             if self._hierarchical_hp_requested:
                 raise ValueError('outer return cannot enable hierarchical HP targets')
@@ -478,7 +498,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
         """
         return [
             *super()._excluded_save_params(),
+            "_ppo_advantage_stats",
             "_native_leaf_inference",
+            "_shared_collection_graphs",
+            "_resident_search_service", "_resident_search_finalizer",
             "_rollout_inference",
             "_independent_rollout_progress",
             "_nosl_leaf_batch_controller",
@@ -886,6 +909,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
         # keep this guard so an early callback/error cannot leave a compiler
         # thread racing with a later buffer reuse.
         self._wait_for_reasoning_samples()
+        search = getattr(self, 'deck_search_config', None)
+        if (search and search.get('backend') == 'cuda-resident'
+                and search.get('action_selection') == 'search-filter-policy-rank-v1'):
+            from rl.algorithms.legacy_rollout import collect
+            return collect(self, env, callback, rollout_buffer, n_rollout_steps, use_masking)
         independent = getattr(self, 'independent_rollout_config', None)
         if independent is not None:
             from rl.algorithms.independent_rollout import collect
@@ -899,6 +927,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 "and log-probabilities"
             )
         captured = []
+        pure_ppo = self.nosl_supervision_contract == 'shared-wholerun-ppo-room-v1'
+        if pure_ppo:
+            reward_monitor.begin_collection(self)
+            campfire_monitor.begin_collection(self)
         if joint_upper(self):
             self._upper_completed = []
             self._upper_censored = 0
@@ -972,7 +1004,72 @@ class AccumulatingMaskablePPO(MaskablePPO):
             env.step_async = MethodType(capture_reasoning_step_async, env)
             env.step_wait = MethodType(capture_reasoning_step_wait, env)
 
+        choice_hook = None
+        if pure_ppo:
+            # Standard SB3 owns action sampling. Observe that exact masked
+            # distribution without a second forward or another RNG draw.
+            pending_choice = {}
+            def observe_choice(policy, args, kwargs, output):
+                pending_choice['masks'] = kwargs['action_masks']
+                pending_choice['reward'] = reward_monitor.policy_probabilities(
+                    policy.action_dist, self._last_obs)
+                pending_choice['campfire'] = campfire_monitor.policy_probabilities(
+                    policy.action_dist, self._last_obs)
+            choice_hook = self.policy.register_forward_hook(observe_choice, with_kwargs=True)
+            choice_step_async, choice_step_wait = env.step_async, env.step_wait
+            def capture_choice_async(_env, actions):
+                pending_choice['actions'] = np.asarray(actions).reshape(-1).copy()
+                return choice_step_async(actions)
+            def capture_choice_wait(_env):
+                result = choice_step_wait()
+                reward_monitor.record_step(self, self._last_obs, pending_choice['actions'],
+                    pending_choice['masks'], pending_choice['reward'], result[3])
+                campfire_monitor.record_step(self, pending_choice['actions'],
+                    pending_choice['masks'], pending_choice['campfire'], result[3])
+                return result
+            env.step_async = MethodType(capture_choice_async, env)
+            env.step_wait = MethodType(capture_choice_wait, env)
+
+        if pure_ppo:
+            from rl.algorithms.independent_rollout import _callback_uses_observations
+            if (hasattr(rollout_buffer, 'prefill_observation')
+                    and not _callback_uses_observations(callback)):
+                prefill_async = env.step_async
+
+                def overlapped_async(_env, actions):
+                    result = prefill_async(actions)
+                    rollout_buffer.prefill_observation(self._last_obs)
+                    return result
+
+                env.step_async = MethodType(overlapped_async, env)
+
+        collection_graphs = None
+        host_observation_hook = None
+        shadow_search = None
+        result = False
         try:
+            if getattr(self, 'deck_search_config', None) is not None:
+                from rl.algorithms.deck_search import ShadowSearchCollection
+                shadow_search = ShadowSearchCollection(self, env, rollout_buffer).start()
+            if (pure_ppo and self.device.type == 'cuda' and self.amp_mode == 'off'
+                    and getattr(self.policy.core, 'collection_graphs_supported', True)):
+                from rl.policies.collection_graphs import SharedCollectionGraphs
+                self.policy.set_training_mode(False)
+                collection_graphs = getattr(self, '_shared_collection_graphs', None)
+                if collection_graphs is not None and not collection_graphs.compatible(self.policy.core):
+                    collection_graphs.close()
+                    collection_graphs = None
+                if collection_graphs is None:
+                    collection_graphs = SharedCollectionGraphs(self.policy.core)
+                    self._shared_collection_graphs = collection_graphs
+                collection_graphs.begin_collection()
+                self.policy.core._collection_graphs = collection_graphs
+                # Unknown hooks may mutate the converted tensors. Keep the
+                # GPU-derived metadata path for those callers.
+                if not self.policy._forward_pre_hooks:
+                    def bind_host(_policy, args):
+                        collection_graphs.bind_host_observations(args[0], self._last_obs)
+                    host_observation_hook = self.policy.register_forward_pre_hook(bind_host)
             if self._outer_return:
                 from rl.search.rollout_inference import RolloutInference
                 self._rollout_inference = RolloutInference(self, upper_value_only=True)
@@ -990,6 +1087,19 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         env, callback, rollout_buffer, n_rollout_steps, use_masking
                     )
         finally:
+            if shadow_search is not None:
+                shadow_search.close()
+            if host_observation_hook is not None:
+                host_observation_hook.remove()
+            if collection_graphs is not None:
+                self.policy.core.__dict__.pop('_collection_graphs', None)
+                if not result:
+                    collection_graphs.close()
+                    self.__dict__.pop('_shared_collection_graphs', None)
+                for key, value in collection_graphs.stats.items():
+                    self.logger.record('pure_rl/collection_graph_' + key, value)
+            if choice_hook is not None:
+                choice_hook.remove()
             env.step_wait = original_step_wait
             env.step_async = original_step_async
             runtime = self.__dict__.pop('_rollout_inference', None)
@@ -1000,6 +1110,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 finally:
                     runtime.clear()
 
+        if result and self.nosl_supervision_contract == 'shared-wholerun-ppo-room-v1':
+            from rl.algorithms.room_returns import apply_room_returns
+            apply_room_returns(self, rollout_buffer)
         if (result and self.hierarchical_combat_hp
                 and self.nosl_is_az_combat_strategy != 'small-playout'):
             self._apply_hierarchical_returns(rollout_buffer, captured)
@@ -2898,6 +3011,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
     def train(self) -> None:
         """Update the policy, accumulating gradients across micro-batches."""
+        prepare_advantage_normalization(self)
         if self.performance_profile:
             self._sync_device()
             train_started = time.perf_counter()
@@ -2920,7 +3034,27 @@ class AccumulatingMaskablePPO(MaskablePPO):
         approx_kl_divs = []
 
         inner_only = bool(getattr(self, "nosl_is_az_inner_only", False))
-        ppo_epochs = 0 if inner_only else self.n_epochs
+        from rl.algorithms.packed_ppo import configure_packed_updates, packed_ppo_epoch
+        packed = configure_packed_updates(self)
+        if packed is not None:
+            self._ppo_update_metric_sums = None
+            self._ppo_update_metric_count = 0
+            self._ppo_microbatch_stats = dict(chunks=0, rows=0, oom_retries=0,
+                                              min_rows=self.batch_size, max_rows=0)
+            for epoch in range(self.n_epochs):
+                result = packed_ppo_epoch(self, clip_range,
+                    clip_range_vf if self.clip_range_vf is not None else None)
+                for field in ('context_input_rows', 'context_unique_rows', 'context_oom_retries'):
+                    self.logger.record('pure_rl/' + field, result[field])
+                for policy, value, entropy, kl, clipped in result['metrics']:
+                    pg_losses.append(policy); value_losses.append(value)
+                    entropy_losses.append(-entropy); approx_kl_divs.append(kl)
+                    clip_fractions.append(clipped)
+                loss = th.as_tensor(result['losses'][-1], device=self.device)
+                optimizer_steps += result['optimizer_steps']
+                self._n_updates += 1
+            self.logger.record('pure_rl/update_loss_scale', self.ppo_update_loss_scale)
+        ppo_epochs = 0 if inner_only or packed is not None else self.n_epochs
         for epoch in range(ppo_epochs):
             approx_kl_divs = []
             accumulated = 0

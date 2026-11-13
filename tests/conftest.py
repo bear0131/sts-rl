@@ -1,5 +1,8 @@
 """Shared deterministic native fixtures; missing native builds are errors."""
 import os
+import hashlib
+import importlib.util
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -15,6 +18,24 @@ import numpy as np
 from env.core import _BUILD
 from env.core.run_env import SlayTheSpireEnv
 import slaythespire as sts
+
+
+@pytest.fixture(scope='session')
+def cuda_battle_artifacts():
+    """Explicit resident simulator build, never a skipped native/GPU test."""
+    assert torch.cuda.is_available(), 'resident simulator qualification requires CUDA'
+    folder = os.environ.get('STS_CUDA_BATTLE_ARTIFACTS')
+    assert folder, 'set STS_CUDA_BATTLE_ARTIFACTS to an explicit verified build'
+    folder = Path(folder)
+    manifest = json.loads((folder / 'artifacts.json').read_text())
+    assert manifest['contract'] == 'deck-resident-battle-v1'
+    for name in ('deck.cubin', 'deck_cuda_bridge.cpython-311-x86_64-linux-gnu.so'):
+        assert hashlib.sha256((folder / name).read_bytes()).hexdigest() == manifest['sha256'][name]
+    path = folder / 'deck_cuda_bridge.cpython-311-x86_64-linux-gnu.so'
+    spec = importlib.util.spec_from_file_location('deck_cuda_bridge', path)
+    bridge = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bridge)
+    return folder, manifest, bridge
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -61,6 +82,30 @@ def combat_factory():
 
 
 @pytest.fixture
+def complete_combat_factory():
+    """Reach a fight through the real run, retaining its complete continuation."""
+    created = []
+
+    def make(deck, *, seed, relics=(), **flags):
+        env = SlayTheSpireEnv(global_map_view=True, combat_action_contract='autoregressive-v2',
+            combat_exit_anchor=True, reward_flow='sequential-v1', **flags)
+        created.append(env)
+        env.reset(seed=seed)
+        env.thick.gc.set_deck([(card, 0) for card in deck])
+        if relics:
+            env.thick.gc.set_relics(list(relics))
+        for _ in range(128):
+            if env.thick.bc is not None:
+                return env
+            env.step(int(np.flatnonzero(env.action_masks())[0]))
+        raise AssertionError('fixed native fixture did not enter a fight')
+
+    yield make
+    for env in created:
+        env.close()
+
+
+@pytest.fixture
 def short_combat_env_type():
     class ShortCombatEnv(SlayTheSpireEnv):
         def reset(self, **kwargs):
@@ -81,7 +126,7 @@ def short_combat_env_type():
 def upper_search_env_factory():
     """Real public room entries with native callbacks, not a saved-run claim."""
     created = []
-    def make(kind, *, relics=()):
+    def make(kind, *, relics=(), room_type=None):
         env = SlayTheSpireEnv(global_map_view=True, upper_public_context=True,
             event_option_observation=True, combat_action_contract='autoregressive-v2')
         created.append(env)
@@ -90,7 +135,7 @@ def upper_search_env_factory():
         for seed in range(1, 65):
             env.reset(seed=seed)
             gc = env.thick.gc
-            room = 'MONSTER' if kind == 'combat_reward' else kind.upper()
+            room = room_type or ('MONSTER' if kind == 'combat_reward' else kind.upper())
             choices = [(x, y) for y in range(15) for x in range(7)
                        if env.thick.rmap.room_type(x, y) == room]
             if not choices:
@@ -119,8 +164,8 @@ def run_combat_factory():
     """Controlled battle with a real run exit continuation; seed 42101."""
     from env.core.game_env import SimGameEnv
 
-    def make(encounter='Looter', potions=()):
-        env = SimGameEnv()
+    def make(encounter='Looter', potions=(), **env_options):
+        env = SimGameEnv(**env_options)
         env.reset(seed=42101)
         for _ in range(64):
             if env.bc is not None:
@@ -476,3 +521,32 @@ def finite_curve_bank(frozen_upper_source):
                     [base+.025*p+slope*x for x in (.01, .5, 1.)] for p in range(6)]
     return dict(schema=SCHEMA, teacher_sha256=teacher.assert_integrity(),
                 hp_fractions=[.01, .5, 1.], potion_counts=list(range(6)), curves=curves)
+
+
+@pytest.fixture
+def upper_phase_batch():
+    """Mixed real observation schema, including PAD pointer candidates and map choices."""
+    from copy import deepcopy
+    from env.core import vocab
+    from env.core.run_env import SlayTheSpireEnv
+    env = SlayTheSpireEnv(card_language=True, global_map_view=True, upper_public_context=True,
+        event_option_observation=True, neow_observation=True,
+        combat_action_contract='autoregressive-v2')
+    frame, _ = env.reset(seed=20261109)
+    frames = []
+    for name in ('shop', 'map', 'combat_reward', 'card_select', 'event', 'boss_relic', 'rest', 'chest'):
+        row = deepcopy(frame)
+        row['phase'][0] = vocab.PHASE_VOCAB_INDEX[name]
+        row['relics'][:] = 0
+        row['relics'][3] = 1
+        row['relic_counters'][:] = .7
+        row['deck_ids'][1::2] = 0
+        row['selected_card_ids'][:] = 0
+        row['select_card_ids'][:] = 0
+        row['select_native_indices'][:] = 0
+        row['select_native_indices'][0] = 1  # Executable skip carries PAD card ID.
+        row['map_full_rooms'][-1] = 0
+        row['map_full_features'][-1, 3] = 1  # Choice at a PAD map slot.
+        frames.append(row)
+    yield env, frames
+    env.close()

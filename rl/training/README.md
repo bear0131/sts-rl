@@ -6,6 +6,25 @@
 
 当前实验入口为 `python -m rl.training.distributed_sb3`。算法参数、机器地址、结果目录分别见 configs/train、experiments/launchers 和忽略的 runs/local。
 
+## 在现有纯 PPO 训练上启用战斗结束锚点
+
+先在共同更新边界停止并保护每个 rank 的完整恢复包，再用现有 checkpoint 工具迁移：
+
+```text
+python -m tools.checkpoints.replace_combat --mode anchor-bundle --source SOURCE_BUNDLE --out NEW_BUNDLE
+```
+
+仅支持 shared whole-run、sequential-v1、gamma/lambda=1、无搜索的 CPU checkpoint 迁移。
+每个 rank 独立迁移后，以同一个 run ID 和 `--resume-state NEW_BUNDLE` 继续分布式训练。
+已有权重、Adam、RNG、步数、自然局计数和未结束对局均保留；只在战斗 scalar projection 的
+六个派生特征之前插入两个零权重输入，并对 Adam 一二阶矩做相同插入。迁移逐局检查旧观察和
+合法动作完全相等，比较 CPU FP32 策略概率/value（绝对及相对容差 2e-5），记录实际最大误差。
+
+环境恢复状态的可选 `combat_exit_anchor_start_action` 标记旧动作日志中启用锚点的位置。
+历史前缀仍按无锚点规则重放，后缀按锚点规则重放；新对局从位置 0 启用。旧恢复包缺少该字段时
+默认 0，因此兼容既有无锚点及从头有锚点训练。迁移后的包必须用支持该字段的运行时代码恢复。
+奖励仍由同一结算流程提供：战斗动作目标截到奖励揭示前的旧 V，锚点自身与上层仍用 lambda=1 整局回报。
+
 ## COMBAT04：保留context的TRAIN47目标对照
 
 `configs/train/combat_train47_context_876_4x5090.json` 沿用上述入口的

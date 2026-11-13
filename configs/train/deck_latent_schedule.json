@@ -1,0 +1,15 @@
+{
+  "first_check": 100,
+  "check_interval": 20,
+  "consecutive_checks": 3,
+  "anchor_rounds": 20,
+  "ramp_rounds": 20,
+  "validation_games": 64,
+  "validation_max_steps": 20000,
+  "validation_seconds": 900,
+  "validation_seed": 27182818,
+  "minimum_natural": 32,
+  "minimum_anchors": 64,
+  "minimum_ev": 0.05,
+  "search_qualified": false
+}

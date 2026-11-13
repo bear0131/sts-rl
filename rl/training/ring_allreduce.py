@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import socket
+import hashlib
+import json
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -57,17 +59,36 @@ class RingAllReduce:
         self._recv_exact(self.incoming, receive)
         future.result()
 
-    def average(self, flat: torch.Tensor) -> tuple[torch.Tensor, int]:
+    def _check_scalar_schema(self, schema, size):
+        # Fixed-size headers cannot spill a rank-local extra metric into the
+        # next collective (notably the stop vote). Forward every header before
+        # raising so all ranks reject the same call and leave sockets aligned.
+        encoded = json.dumps([size, schema], separators=(',', ':')).encode()
+        own = np.frombuffer(hashlib.sha256(encoded).digest(), dtype=np.uint8).copy()
+        send, mismatch = own, False
+        for _ in range(self.world_size - 1):
+            received = np.empty_like(own)
+            self._exchange(send, received)
+            mismatch |= not np.array_equal(received, own)
+            send = received
+        if mismatch:
+            raise ValueError('scalar schema differs across ranks; payload was not reduced')
+
+    def average(self, flat: torch.Tensor, *, chunk_sizes=None, schema=None) -> tuple[torch.Tensor, int]:
         if flat.device.type != "cpu" or flat.dtype != torch.float32:
             raise TypeError("ring input must be a CPU float32 tensor")
         if not flat.is_contiguous():
             raise ValueError("ring input must be contiguous")
+        if schema is not None:
+            self._check_scalar_schema(schema, flat.numel())
 
         values = flat.numpy()
-        chunk_sizes = [
-            (values.size + self.world_size - index - 1) // self.world_size
-            for index in range(self.world_size)
-        ]
+        if chunk_sizes is None:
+            chunk_sizes = [(values.size + self.world_size - i - 1) // self.world_size
+                           for i in range(self.world_size)]
+        elif (len(chunk_sizes) != self.world_size or sum(chunk_sizes) != values.size
+              or any(type(s) is not int or s < 0 for s in chunk_sizes)):
+            raise ValueError("ring chunk sizes must partition the flat input")
         offsets = np.cumsum([0, *chunk_sizes], dtype=np.int64)
         receive_buffer = np.empty(max(chunk_sizes), dtype=np.float32)
         bytes_sent = 0
@@ -104,6 +125,52 @@ class RingAllReduce:
             except OSError:
                 pass
             sock.close()
+
+
+class ParallelRingAllReduce(RingAllReduce):
+    """Stripe each exchange over independent links, retaining reduction order.
+
+    Each link must connect the same neighboring ranks. Small scalar collectives
+    use the first link; average() calls are serial, just like the original ring.
+    """
+
+    def __init__(self, links):
+        self.links = tuple(links)
+        if len(self.links) not in (2, 4, 8):
+            raise ValueError("parallel ring requires two, four or eight links")
+        self.rank, self.world_size = self.links[0].rank, self.links[0].world_size
+        if any((link.rank, link.world_size) != (self.rank, self.world_size)
+               for link in self.links):
+            raise ValueError("parallel links must have identical rank topology")
+        self._exchanges = ThreadPoolExecutor(max_workers=len(self.links),
+                                            thread_name_prefix=f"ring-stripe-{self.rank}")
+        self._parallel = False
+
+    def average(self, flat, *, chunk_sizes=None, schema=None):
+        # Validate on a fixed link before tensor length selects striping: a
+        # mismatched schema may itself straddle the parallel threshold.
+        self._parallel = False
+        if schema is not None:
+            self._check_scalar_schema(schema, flat.numel())
+        # Every rank has the same tensor length; decide once per collective,
+        # never from individual uneven chunks at a threshold boundary.
+        self._parallel = flat.numel() >= 65536
+        return super().average(flat, chunk_sizes=chunk_sizes)
+
+    def _exchange(self, send, receive):
+        if not self._parallel:
+            return self.links[0]._exchange(send, receive)
+        sends = np.array_split(send, len(self.links))
+        receives = np.array_split(receive, len(self.links))
+        futures = [self._exchanges.submit(link._exchange, a, b)
+                   for link, a, b in zip(self.links, sends, receives, strict=True)]
+        for future in futures:
+            future.result()
+
+    def close(self):
+        self._exchanges.shutdown(wait=True, cancel_futures=True)
+        for link in self.links:
+            link.close()
 
 
 class SshRingAllReduce(RingAllReduce):

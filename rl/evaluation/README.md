@@ -26,6 +26,11 @@ actor动作、lower V、搜索动作/V；真实受控击杀后的奖励页另测
 
 统一 episode 入口：`python -m rl.evaluation.eval CHECKPOINT --task wholerun --solver native --search-mode strict --num-envs 4 --episodes 10 --timeout 1800 --output runs/local/eval.json`。
 
+独立上层也可通过 `--combat-checkpoint LOWER.zip --solver paired-worldlines`
+组合在线共享链下层（`small-playout` 同样支持），沿用下层 checkpoint 的搜索合同和预算。
+环境的顺序奖励与战后锚点合同由上层决定；锚点交回上层执行唯一的继续动作，
+不送入已结束战斗的搜索。该比较同时替换下层与搜索，不能解释为等算力模型容量消融。
+
 要保留可对照的局外历史（不记录战斗逐动作），加上
 `--trajectory-output runs/local/<run-dir>`。入口会写出 `report.json`、
 `episodes.jsonl`、`episodes.md`、`summary.md`；历史包含地图路线、问号事件的
@@ -138,6 +143,14 @@ JSON suite schema=2 包含 checkpoint/corpus SHA-256、每条完整曲线、局�
 该协议没有结算回血，pre/post HP 相同；输出每状态预测/误差及 MAE（HP单位）。
 当前仅支持单敌人、能被该固定攻击直接击杀的场景；条件不成立时明确报错。
 native search 对终局本来就直接返回精确 HP，所以网络的 terminal 误差反映监督/校准情况，不能单独当作搜索返回值错误。
+## Deck latent 战后锚点血量响应
+
+Deck latent 的 `--anchor-readiness --anchor-hp-response` 在固定种子的自然游戏中，
+对真实奖励前战后锚点扫描当前HP。保持maxHP、卡组、遗物、计数及药水不变，
+同步修改player/run的HP和派生比例；仅自然完成游戏的样本写入JSON的
+`hp_response.rows`，包含原HP预测和实际未来战略回报。它衡量模型输入响应，
+不是不同HP下重新模拟的胜率，也不强制所有遗物组合单调。
+
 # 评测轨迹显示约定
 
 轨迹 Markdown 使用中文时间线排版：地图、问号事件、战斗摘要、战斗奖励、商店、宝箱和首领遗物按发生顺序混排；战斗不展开逐动作，只记录战斗前后生命与资源变化。生命和金币使用颜色标记，牌名、遗物和药水使用不同颜色。显示名称在报告层维护，特别保证 `Combust` 显示为“自燃”，`Inflame` 显示为“燃烧”。

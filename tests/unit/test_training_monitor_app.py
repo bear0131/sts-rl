@@ -70,6 +70,27 @@ def test_ssh_stdin_uses_literal_lf_on_windows(tmp_path):
     assert script.endswith(b'\nPY_MONITOR\n')
 
 
+def test_rank_destinations_can_use_distinct_hosts_without_disabling_host_key_checks(tmp_path):
+    config = dict(run_id='example', iteration_steps=10, ports=[2200, 3300], ssh_key='key',
+                  root='/repo', hosts=['root@westc.example', 'root@weste.example'],
+                  ssh_known_hosts='verified-hosts')
+    monitor = Monitor(config, tmp_path / 'state.json', 30)
+    with patch('apps.training_monitor.subprocess.run', return_value=SimpleNamespace(
+            returncode=0, stdout=b'{"rank": 1, "alive": true}', stderr=b'')) as run:
+        assert monitor.read_rank(1)['alive']
+    command = run.call_args.args[0]
+    assert command[-4:] == ['-p', '3300', 'root@weste.example', 'bash -se']
+    assert 'StrictHostKeyChecking=yes' in command
+    assert 'UserKnownHostsFile=verified-hosts' in command
+
+
+def test_rank_host_count_must_match_ports(tmp_path):
+    import pytest
+    with pytest.raises(ValueError, match='one SSH destination per rank'):
+        Monitor(dict(run_id='example', iteration_steps=10, ports=[2200, 3300],
+                     hosts=['root@westc.example']), tmp_path / 'state.json', 30)
+
+
 def test_comparison_keeps_same_steps_separate_and_survives_restart(tmp_path):
     old = tmp_path / 'old.json'
     old.write_text(json.dumps(dict(run_id='old', iteration_steps=10,
@@ -197,6 +218,11 @@ assert.ok($('chart0').previousElementSibling.children[0].textContent.includes('�
 assert.ok($('comparison-status').children.some(n=>n.textContent.includes('legacy')&&n.textContent.includes('最近400个完成局')));
 assert.equal(JSON.stringify(state),before); // Display must not rewrite raw/history data.
 assert.ok(!specs.flatMap(s=>s[1]).some(k=>['game/win_rate','game/floor_mean','upper/policy_loss','upper/value_loss','upper/kl'].includes(k)));
+const pure={'pure_rl/value_pre/all/mse':.25,'pure_rl/value_loss':.2,'pure_rl/approx_kl':.001};
+assert.equal(displayRow(pure)['pure_rl/value_pre/all/mse'],.25);
+assert.equal(displayRow(old)['pure_rl/value_pre/all/mse'],undefined);
+assert.ok(specs.some(s=>s[1].includes('pure_rl/value_pre/combat/mse')));
+assert.ok(specs.some(s=>s[1].includes('pure_rl/policy_loss')));
 const reference={...first,global_timesteps:8,rollout_round:1};
 state.comparisons.push({run_id:'lambda-reference',label:'lambda-reference',rollout_mode:'complete_games',branch_step:0,branch_round:0,rows:[reference]});
 render();
@@ -212,6 +238,15 @@ state.rollout_mode='fixed_steps';state.iteration_steps=1;render();
 assert.equal($('win').textContent,'100.00%');assert.equal($('floor').textContent,'99');
 assert.equal($('win-label').textContent,'最近400个完成局胜率');
 assert.ok($('winavg').textContent.includes('连续补局滚动窗口'));
+state.rows=[{...old,completed_full_games_global:12345}];render();
+assert.equal($('games').textContent,'12,345');
+state.rows=[old];render();assert.equal($('games').textContent,'—');
+const grown={rollout_mode:'fixed_steps',iteration_steps:786432,branch_step:0,branch_round:0,
+ rows:[{global_timesteps:1048576,transitions_global:262144},
+       {global_timesteps:1835008,transitions_global:786432,rollout_round:5}]};
+assert.equal(roundAt(grown,1048576),4);
+assert.equal(roundAt(grown,1835008),5);
+assert.equal(roundAt(grown,0),0);
 `,context);
 '''.replace('SCRIPT', json.dumps(script))
     path = tmp_path / 'dashboard.cjs'

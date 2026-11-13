@@ -26,7 +26,7 @@ From the repository root:
     cmake --build sim/sts_lightspeed/build-ci --target slaythespire --parallel 2
     export STS_LIGHTSPEED_BUILD_DIR="$(pwd)/sim/sts_lightspeed/build-ci"
     python -c "from env.core import _BUILD; import slaythespire; print(_BUILD, slaythespire.__file__)"
-    python -m pytest -q
+    python -m pytest -q -m "not cuda"
 
 Set STS_LIGHTSPEED_BUILD_DIR to that absolute build directory before running
 Python. If reusing a build directory from another interpreter/compiler, use a
@@ -38,15 +38,16 @@ Windows 若加载 `.pyd` 报找不到依赖 DLL，将 `STS_LIGHTSPEED_DLL_DIRS` 
 
 ## Correctness layers
 
-    python -m pytest -q
-    python -m pytest tests -q
+    python -m pytest -q -m "not cuda"
+    python -m pytest tests -q -m "not cuda"
     python -m pytest tests/integration/test_training_smoke.py -q
     python -m tests.integration.test_combat
     python -m tests.integration.test_game
     python -m tests.integration.test_run_v2 --episodes 20 --seed 0
 
 The main suite collects tests/unit and tests/integration, including the relocated
-legacy tests. Native fixtures
+legacy tests. These commands select CPU-compatible tests; run the separately
+documented CUDA qualification on a GPU. Native fixtures
 require the native extension: a missing native build is an error, not a skipped
 success. pytest-timeout bounds each test to 120 seconds; native deadlocks can
 terminate the test process, so CI also has a job timeout.
@@ -96,8 +97,16 @@ The training tests enter short fights through the real run state machine and
 verify native PUCT/strict Full Gumbel targets reach the learner. Neither these
 tests nor benchmarks cover real multi-machine synchronization or long-term convergence.
 The `training` marker also includes a real replay/Adam comparison between the
-local learner and a single-rank loopback ring adapter; CI selects the complete
-marker group so new training regressions are not omitted by a fixed file list.
+local learner and a single-rank loopback ring adapter; CPU CI selects
+`training and not cuda` so CPU training regressions are not omitted by a fixed
+file list. CUDA-only tests are explicitly marked `cuda` and fail if invoked
+without a GPU; CPU CI is not GPU qualification. On the production CUDA runtime,
+run `python -m pytest -q tests/integration/test_packed_update_graphs.py tests/integration/test_deck_readiness_cuda.py` with
+`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` and
+`CUBLAS_WORKSPACE_CONFIG=:4096:8`. These tests compare forward/gradients after
+workspace release, allocation reuse, shape changes, sibling eviction and weight
+updates. Complete production-length collection/update/recovery remains a
+separate bounded deployment gate.
 
 JSON records configuration, commit/dirty state, actual native path/hash, dependency
 versions and hardware, setup/warmup/process/measurement time, rollout and
@@ -150,3 +159,17 @@ continuity of a live remote experiment.
 
 Archive verification hashes each file against the pre-move manifest; archived
 user material deliberately retains original whitespace via .gitattributes.
+
+Deck-latent search frontier encoding and head projection can be checked on CPU
+with the explicitly selected native extension:
+
+    python -m pytest -q tests/integration/test_deck_latent.py::test_native_search_frontiers_match_reference_observations_and_results tests/integration/test_deck_latent.py::test_search_head_projection_refreshes_branch_context_and_preserves_siblings tests/integration/test_deck_latent.py::test_cpu_shadow_search_native_rounds_and_resume
+
+These cover complete observation bytes, branch context changes, paired search
+results, and two real PPO rounds plus ordinary restore. They do not qualify a
+production-length GPU search collection or replace the CUDA lifecycle tests.
+
+Search fork journal isolation and replay (including JSON pending-action lists)
+use the supported full-map observation configuration:
+
+    python -m pytest -q tests/integration/test_environment_recovery.py::test_run_fork_history_isolation_and_replay

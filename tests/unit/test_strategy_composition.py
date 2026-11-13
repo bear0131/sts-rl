@@ -33,6 +33,37 @@ def test_separate_combat_model_never_takes_upper_requests(monkeypatch):
     assert lower.phases == ['combat', 'combat']
 
 
+def test_separate_search_does_not_receive_pre_reward_exit_anchor(monkeypatch):
+    upper, lower = Sentinel('upper'), Sentinel('lower')
+    upper.observation_space = SimpleNamespace(spaces={'combat_exit_anchor': object()})
+    upper.combat_action_contract = lower.combat_action_contract = 'autoregressive-v2'
+    monkeypatch.setattr(S, 'policy_strategy', lambda model, args: model)
+    monkeypatch.setitem(S.STRATEGIES, 'paired-worldlines', lambda model, args: model)
+    args = Namespace(solver='paired-worldlines', upper_strategy='model', route='model')
+    strategy = S.compose_strategy(upper, args, lower)
+    batch = [S.DecisionRequest(None, observation, {'phase': phase}, 1, i)
+             for i, (phase, observation) in enumerate([
+                 ('combat', {'combat_exit_anchor': [0, 0]}),
+                 ('combat', {'combat_exit_anchor': [1, 0]}),
+                 ('combat', {'combat_exit_anchor': [0, 1]}),
+                 ('combat_reward', {'combat_exit_anchor': [0, 0]}),
+                 ('combat', {}),
+             ])]
+    assert strategy.combat_action_contract == 'autoregressive-v2'
+    assert [r.source for r in strategy.decide(batch)] == ['lower', 'upper', 'upper', 'upper', 'lower']
+    assert lower.phases == ['combat', 'combat']
+
+
+def test_separate_models_without_anchor_keep_independent_combat_contract(monkeypatch):
+    upper, lower = Sentinel('upper'), Sentinel('lower')
+    upper.combat_action_contract, lower.combat_action_contract = 'autoregressive-v2', 'legacy'
+    monkeypatch.setattr(S, 'policy_strategy', lambda model, args: model)
+    monkeypatch.setitem(S.STRATEGIES, 'fixture', lambda model, args: model)
+    strategy = S.compose_strategy(upper, Namespace(solver='fixture', upper_strategy='model', route='model'), lower)
+    assert strategy.combat_action_contract == 'legacy'
+    assert [r.source for r in strategy.decide(requests())] == ['upper', 'lower', 'upper', 'lower']
+
+
 def test_upper_rules_composition_has_explicit_fallback_and_no_combat_calls(monkeypatch):
     upper, lower = Sentinel('upper-model'), Sentinel('lower')
     class UpperRules(Sentinel):

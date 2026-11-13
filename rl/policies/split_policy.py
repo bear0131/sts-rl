@@ -45,6 +45,7 @@ def _active_prefix_width(ids: torch.Tensor) -> int:
 # Runtime routing is deliberately stricter than the unified Gym Dict space.
 # A specialist cannot accidentally consume fields owned by the other phase.
 COMBAT_OBSERVATION_KEYS = frozenset({
+    "combat_exit_anchor",
     "combat_is_boss",
     "combat_legal",
     "arg_step",
@@ -273,6 +274,7 @@ class _SpecialistEncoder(nn.Module):
         self,
         batch_size: int,
         blocks: list[tuple[str, torch.Tensor, torch.Tensor]],
+        *, map_features=None, packed_width=None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         device = self.cls.device
         tokens = [self._role(self.cls.expand(batch_size, -1, -1), "cls")]
@@ -287,9 +289,13 @@ class _SpecialistEncoder(nn.Module):
             offset += token.shape[1]
         source = torch.cat(tokens, dim=1)
         pad_mask = torch.cat(masks, dim=1)
-        out = self.transformer(source, src_key_padding_mask=pad_mask)
+        options = {} if packed_width is None else dict(packed_width=packed_width)
+        out = self._transform_tokens(source, pad_mask, spans, map_features=map_features, **options)
         contextual = {role: out[:, start:end] for role, (start, end) in spans.items()}
         return out[:, 0], contextual
+
+    def _transform_tokens(self, source, pad_mask, spans, *, map_features=None, packed_width=None):
+        return self.transformer(source, src_key_padding_mask=pad_mask)
 
 
 class CombatEncoder(_SpecialistEncoder):
@@ -583,7 +589,7 @@ class OverworldEncoder(_SpecialistEncoder):
         self.global_category_keys = global_category_keys
         scalar_keys = [
             "run_hp", "ascension", "act", "floor", "gold", "pick_remaining",
-            "can_pick_zero", "can_pick_any", "shop_remove_cost", "run_keys",
+            "can_pick_zero", "can_pick_any", "shop_remove_cost", "run_keys", "reward_stage",
         ]
         scalar_keys = [
             key for key in scalar_keys if key in observation_space.spaces
@@ -737,7 +743,16 @@ class OverworldEncoder(_SpecialistEncoder):
         shared: SharedSemanticTokenizer,
         phase_id: int,
         active_widths=None,
+        map_encoding=None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        blocks = self._context_blocks(obs, shared, active_widths)
+        blocks.extend(self._screen_blocks(obs, shared, phase_id))
+        blocks.extend(self._map_blocks(obs, phase_id, map_encoding))
+        packed_width = active_widths[2] if self.training and active_widths is not None and len(active_widths) == 3 else None
+        return self._run(len(obs["phase"]), blocks, map_features=obs.get("map_full_features"),
+                         packed_width=packed_width)
+
+    def _context_blocks(self, obs, shared, active_widths):
         batch_size = obs["phase"].shape[0]
         global_parts = [
             obs[key].float().reshape(batch_size, -1)
@@ -767,6 +782,10 @@ class OverworldEncoder(_SpecialistEncoder):
             self._potion_block(obs, shared, "potion", "potions"),
         ]
 
+        return blocks
+
+    def _screen_blocks(self, obs, shared, phase_id):
+        blocks = []
         if phase_id == V.PHASE_VOCAB_INDEX["combat_reward"]:
             blocks.extend([
                 self._card_block(
@@ -852,10 +871,16 @@ class OverworldEncoder(_SpecialistEncoder):
                 blocks.append(
                     ("event_option", event_option, obs["event_option_ids"].long() == 0)
                 )
+        return blocks
+
+    def _map_blocks(self, obs, phase_id, map_encoding):
+        blocks = []
         if "map_full_rooms" in obs and (phase_id == V.PHASE_VOCAB_INDEX["map"] or
                                        "upper_public_context" in self.observation_space.spaces):
             ids = obs["map_full_rooms"].long()
-            if self.map_dag is not None:
+            if map_encoding is not None:
+                full = map_encoding
+            elif self.map_dag is not None:
                 full = self.map_dag(
                     self.room_embedding(ids), obs["map_full_features"].float()
                 )
@@ -867,7 +892,7 @@ class OverworldEncoder(_SpecialistEncoder):
             blocks.append(
                 ("map_full", full + self.position["map_full"], ids == 0)
             )
-        return self._run(batch_size, blocks)
+        return blocks
 
 
 class _SpecialistActorCritic(nn.Module):
@@ -914,6 +939,9 @@ class _SpecialistActorCritic(nn.Module):
             return
         score = self._score(blocks[role], blocks["__global__"])
         base = A.seg_base(segment)
+        active = blocks.get('__active_roles__', {}).get(role)
+        if active is not None:
+            score = torch.where(active[:, None], score, logits[:, base:base + score.shape[1]])
         logits[:, base:base + score.shape[1]] = score
 
     def _map_logits(self, logits, obs, blocks):
@@ -945,14 +973,15 @@ class _SpecialistActorCritic(nn.Module):
 
     def forward(
         self, obs, shared, phase_id=None, *, active_relic_width=None, evaluate_subsets=True,
-        upper_active_widths=None,
+        upper_active_widths=None, upper_map_encoding=None,
     ):
         if self.kind == "combat":
             global_token, blocks = self.encoder(
                 obs, shared, active_relic_width=active_relic_width
             )
         else:
-            global_token, blocks = self.encoder(obs, shared, phase_id, active_widths=upper_active_widths)
+            global_token, blocks = self.encoder(obs, shared, phase_id,
+                active_widths=upper_active_widths, map_encoding=upper_map_encoding)
         blocks["__global__"] = global_token
         logits = self.fixed_head(global_token).clone()
         if self.kind != "combat":

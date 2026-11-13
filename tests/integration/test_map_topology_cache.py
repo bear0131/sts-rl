@@ -3,6 +3,7 @@ import pytest
 import numpy as np
 
 from env.core.spiremap import RunMap
+from env.core import encode
 
 pytestmark = [pytest.mark.native, pytest.mark.timeout(30)]
 
@@ -64,3 +65,41 @@ def test_warmed_map_survives_journal_restore_and_fresh_reset():
     finally:
         env.close()
         restored.close()
+
+
+@pytest.mark.parametrize('seed,ascension,act', [(1, 0, 1), (42, 20, 2), (87, 0, 3)])
+def test_all_positions_live_columns_and_order(seed, ascension, act):
+    owner = RunMap(seed, ascension, act)
+    roots = [(-1, -1)] + [
+        (x, y) for y in range(15) for x in range(7)
+        if owner.room_type(x, y) not in ('NONE', 'INVALID')
+    ]
+    retained = []
+    for x, y in roots:
+        normal = owner.reachable(x, y)
+        live = normal if y == 14 else [
+            c for c in range(7) if owner.room_type(c, y + 1) not in ('NONE', 'INVALID')
+        ]
+        for columns in (normal, live, live[::-1], live[:1]):
+            options = dict(
+                nodes=[(c, 'BOSS' if y == 14 else owner.room_type(c, max(0, y + 1)))
+                       for c in columns],
+                full_map=owner.full_view(x, y, next_columns=columns),
+            )
+            expected = encode.encode(dict(phase='map', options=options), global_map_view=True)
+            actual = owner.encoded_view(x, y, next_columns=columns, global_map_view=True)
+            for key, value in actual.items():
+                assert value.dtype == expected[key].dtype
+                assert value.tobytes() == expected[key].tobytes(), (x, y, columns, key)
+                assert not value.flags.writeable
+            retained.append((actual, {k: v.tobytes() for k, v in actual.items()}))
+    # A later position must not mutate a projection already returned to a caller.
+    for actual, expected in retained:
+        assert {k: v.tobytes() for k, v in actual.items()} == expected
+
+
+@pytest.mark.parametrize('columns', [[True], [np.int64(0)], [0, 0], list(range(8)), [7]])
+def test_invalid_columns_remain_rejected(columns):
+    owner = RunMap(1, 0, 1)
+    with pytest.raises(ValueError):
+        owner.encoded_view(-1, -1, next_columns=columns, global_map_view=True)

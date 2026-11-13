@@ -54,6 +54,7 @@ class StSMetricsCallback(BaseCallback):
         self._win = deque(maxlen=window)
         self._boss = deque(maxlen=window)
         self._boss_censored = 0
+        self._pure_censored = 0
         self._floor = deque(maxlen=window)
         self._act = deque(maxlen=window)
         self._deck = deque(maxlen=window)
@@ -72,6 +73,21 @@ class StSMetricsCallback(BaseCallback):
         self._last_speed_t = self._t0
         self._last_speed_steps = int(self.num_timesteps)
         self._start_steps = int(self.num_timesteps)
+        if self._pure_ppo():
+            self._pure_totals()
+
+    def _pure_ppo(self):
+        return getattr(getattr(getattr(self.model, 'policy', None), 'core', None),
+                       'training_objective', None) == 'shared-wholerun-ppo-room-v1'
+
+    def _pure_totals(self):
+        # Ordinary model save/load retains this small rank-local dictionary.
+        # Older checkpoints need an audited migration seed to claim a lifetime
+        # total; otherwise mark the counting origin instead of guessing history.
+        if not hasattr(self.model, 'pure_rl_game_totals'):
+            self.model.pure_rl_game_totals = dict(natural=0, censored=0,
+                start_step=int(getattr(self.model, 'num_timesteps', 0)))
+        return self.model.pure_rl_game_totals
 
     def _on_step(self) -> bool:
         for info in self.locals.get("infos", []):
@@ -87,11 +103,18 @@ class StSMetricsCallback(BaseCallback):
                 self._excluded_startup_episodes += 1
                 continue
             stats = info.get('run_stats') or {}
+            if (self._pure_ppo()
+                    and (info.get('TimeLimit.truncated') or info.get('dead_screen'))):
+                self._pure_censored += 1
+                self._pure_totals()['censored'] += 1
+                continue
             if (stats.get('episode_scope') == 'boss-opening' and
                     stats.get('combat_outcome') not in ('win', 'loss')):
                 self._boss_censored += 1
                 continue
             self._n_episodes += 1
+            if self._pure_ppo():
+                self._pure_totals()['natural'] += 1
             self._rew.append(ep["r"])
             self._len.append(ep["l"])
 
@@ -131,6 +154,10 @@ class StSMetricsCallback(BaseCallback):
         if self._deck:
             self.logger.record("game/deck_size_mean", mean(self._deck))
         self.logger.record("game/episodes_total", self._n_episodes)
+        if self._pure_ppo():
+            self.logger.record('pure_rl/censored_episodes_since_start', self._pure_censored)
+            for key, value in self._pure_totals().items():
+                self.logger.record('pure_rl/game_total/' + key, value)
         self.logger.record("game/episodes_window", len(self._win))
         for buf, numerator, denominator, rate in (
             (self._chest_opened, "chest_opened_window", "chest_opportunities_window", "chest_open_rate"),
@@ -257,12 +284,20 @@ class WholeRunTask(Task):
         )
         parser.add_argument(
             "--arch",
-            choices=["auto", "split-pointer", "semantic-reasoning", "entity-combat", "entity-joint"],
+            choices=["auto", "split-pointer", "semantic-reasoning", "entity-combat", "entity-joint", "shared-wholerun", "deck-latent"],
             default="auto",
             help="Independent combat and overworld Transformer actor-critics "
                  "with shared card/relic/potion tokenizers. --n-layers is the "
                  "combined layer budget split between both specialists.",
         )
+        parser.add_argument('--room-lambda', type=float, default=.9,
+                            help='Shared whole-run PPO trace decay at an act/floor boundary; within-room lambda is 1.')
+        parser.add_argument('--deck-combat-encoder', choices=('pooled-mlp', 'transformer64x2'),
+                            default='pooled-mlp', help='Fresh deck-latent combat geometry; saved in checkpoint.')
+        parser.add_argument('--combat-value-target', choices=('whole-run', 'pre-reward-anchor'),
+                            default='whole-run', help='Shared PPO combat target; anchor mode requires room lambda=1.')
+        parser.add_argument('--reward-flow', choices=('full', 'sequential-v1'), default='full',
+                            help='Reveal and resolve reward categories sequentially for fresh shared PPO.')
         parser.add_argument(
             "--interactive-reasoning",
             action=argparse.BooleanOptionalAction,
@@ -533,8 +568,11 @@ class WholeRunTask(Task):
         parser.add_argument("--nosl-is-az-value-coef", type=float, default=0.5)
 
     def make_env_fn(self, args):
-        from rl.training.reward import ShapedRewardWrapper
+        from rl.training.reward import ShapedRewardWrapper, StrategicRewardWrapper
 
+        if (getattr(args, 'combat_value_target', 'whole-run') != 'whole-run'
+                or getattr(args, 'reward_flow', 'full') != 'full') and args.arch not in ('shared-wholerun', 'deck-latent'):
+            raise ValueError('anchor targets and sequential rewards support shared whole-run PPO only')
         ascension = args.ascension
         interactive_reasoning = (
             args.arch == "semantic-reasoning"
@@ -556,13 +594,18 @@ class WholeRunTask(Task):
                 interactive_reasoning=interactive_reasoning,
                 outer_return_context=bool(getattr(args, 'outer_return_context', False)),
                 combat_value_objective=getattr(args, 'combat_value_objective', None),
+                combat_exit_anchor=(args.arch == 'deck-latent' or getattr(args, 'combat_value_target', 'whole-run') == 'pre-reward-anchor'),
+                deck_latent_context=args.arch == 'deck-latent',
+                reward_flow=getattr(args, 'reward_flow', 'full'),
                 combat_action_contract=getattr(args, "combat_action_contract", None) or "legacy",
                 nosl_is_az_boss_transition_target=bool(
                     getattr(args, "nosl_is_az_boss_transition_target", False)
                 ),
             )
             if not env.outer_return_objective:
-                env = ShapedRewardWrapper(env)
+                wrapper = (StrategicRewardWrapper if args.arch in ('shared-wholerun', 'deck-latent')
+                           or getattr(args, 'strategic_reward', False) else ShapedRewardWrapper)
+                env = wrapper(env)
             # TimeLimit last so it sees the same steps the policy takes and its
             # truncated=True passes straight through ShapedRewardWrapper.step
             # (which forwards truncated untouched).
@@ -583,6 +626,20 @@ class WholeRunTask(Task):
             raise RuntimeError(
                 "trainer must resolve --arch auto before building the policy"
             )
+        if args.arch in ('shared-wholerun', 'deck-latent'):
+            from rl.policies.shared_wholerun import SharedWholeRunPolicy
+            from rl.policies.deck_latent import DeckLatentPolicy
+            if (args.nosl_is_az or args.hierarchical_combat_hp or args.interactive_reasoning
+                    or args.card_vector_checkpoint or args.gamma != 1
+                    or args.combat_action_contract != 'autoregressive-v2'):
+                raise ValueError('shared whole-run PPO requires gamma1, AR actions, no search/HP/reasoning/pretrained cards')
+            policy = DeckLatentPolicy if args.arch == 'deck-latent' else SharedWholeRunPolicy
+            return policy, dict(d_model=args.d_model, n_layers=args.n_layers,
+                n_heads=args.n_heads, card_language=args.card_language,
+                map_dag=True, room_lambda=args.room_lambda,
+                combat_value_target=getattr(args, 'combat_value_target', 'whole-run'),
+                reward_flow=getattr(args, 'reward_flow', 'full'),
+                **(dict(deck_combat_encoder=args.deck_combat_encoder) if args.arch == 'deck-latent' else {}))
         if args.arch == "split-pointer":
             # The core owns both specialist encoders, policy heads, and value
             # heads, so no SB3 features_extractor/net_arch is needed here.

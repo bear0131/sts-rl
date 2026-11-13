@@ -4,6 +4,7 @@ import argparse
 from env.core import native_actions as C
 import copy
 import hashlib
+import multiprocessing
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
@@ -12,7 +13,7 @@ from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies import model as model_utils
 from rl.tasks.wholerun import WholeRunTask, _MAX_EPISODE_STEPS
 from rl.training.cached_mask_vec_env import CachedMaskSubprocVecEnv, GroupedCachedMaskSubprocVecEnv
-from rl.training.reward import ShapedRewardWrapper
+from rl.training.reward import ShapedRewardWrapper, StrategicRewardWrapper
 
 
 def startup_stagger_delays(
@@ -230,6 +231,8 @@ class TrainingStateWrapper(gym.Wrapper):
             return "observation_compat"
         if isinstance(wrapper, gym.wrappers.TimeLimit):
             return "time_limit"
+        if isinstance(wrapper, StrategicRewardWrapper):
+            return "strategic_reward"
         if isinstance(wrapper, ShapedRewardWrapper):
             return "shaped_reward"
         raise TypeError(
@@ -278,7 +281,7 @@ class TrainingStateWrapper(gym.Wrapper):
                 "max_episode_steps": wrapper._max_episode_steps,
                 "elapsed_steps": wrapper._elapsed_steps,
             }
-        if kind == "shaped_reward":
+        if kind in ("shaped_reward", "strategic_reward"):
             return {"previous": copy.deepcopy(wrapper._prev)}
         return {}
 
@@ -337,7 +340,7 @@ class TrainingStateWrapper(gym.Wrapper):
         ))):
             kind = saved["kind"]
             values = saved["state"]
-            if kind == "shaped_reward":
+            if kind in ("shaped_reward", "strategic_reward"):
                 wrapper._prev = copy.deepcopy(values["previous"])
             elif kind == "time_limit":
                 if wrapper._max_episode_steps != values["max_episode_steps"]:
@@ -409,7 +412,12 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
     env_args.ascension = args.ascension
     env_args.outer_return_context = bool(getattr(getattr(model.policy, 'core', None), 'frozen_upper', False)
                                          or getattr(model, '_outer_return', False))
-    env_args.combat_value_objective = getattr(getattr(model.policy, 'core', None), 'training_objective', None)
+    core = getattr(model.policy, 'core', None)
+    env_args.combat_value_objective = getattr(core, 'environment_value_objective',
+                                            getattr(core, 'training_objective', None))
+    env_args.strategic_reward = getattr(core, 'training_objective', None) == 'shared-wholerun-ppo-room-v1'
+    env_args.combat_value_target = getattr(model.policy, 'combat_value_target', 'whole-run')
+    env_args.reward_flow = getattr(model.policy, 'reward_flow', 'full')
     env_args.global_map_view = flags["global_map_view"]
     env_args.upper_public_context = flags["upper_public_context"]
     env_args.card_language = flags["card_language"]
@@ -426,7 +434,9 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
         else bool(args.interactive_reasoning)
     )
     env_args.arch = (
-        "semantic-reasoning" if interactive_reasoning else "split-pointer"
+        'deck-latent' if getattr(core, 'model_contract', None) == 'deck-latent-combat-v1' else
+        'shared-wholerun' if env_args.strategic_reward and getattr(core, 'training_objective', None) == 'shared-wholerun-ppo-room-v1'
+        else "semantic-reasoning" if interactive_reasoning else "split-pointer"
     )
     env_args.interactive_reasoning = interactive_reasoning
     env_args.map_dag = True
@@ -459,6 +469,10 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
                 group = 0 if env_index < args.n_envs // 2 else 1 if env_index < 3 * args.n_envs // 4 else 2
                 local_args.backend_factory = boss_pool.factory(boss=BOSSES[group], ascension=args.ascension)
             env = WholeRunTask().make_env_fn(local_args)()
+            if env_args.strategic_reward:
+                # Pure PPO consumes real transitions and its room returns, not
+                # historical search-only end-turn/terminal auxiliary snapshots.
+                env.unwrapped._emit_nosl_value_observations = False
             if expected_space is not None:
                 env = CheckpointObservationCompat(env, expected_space)
             if stagger_steps:
@@ -468,7 +482,18 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
         return make
 
     env_fns = [compat_env_fn(delay, index) for index, delay in enumerate(stagger_delays)]
-    if args.vec == "subproc":
+    if args.vec == 'native-subproc':
+        if not env_args.strategic_reward:
+            raise ValueError('native-subproc currently supports shared whole-run PPO only')
+        from rl.training.native_subproc_vec_env import NativeSubprocVecEnv
+        if args.start_method == 'forkserver':
+            # Import CPU libraries in the clean server, not once per worker.
+            # The training parent may already own CUDA; never fork that parent.
+            multiprocessing.set_forkserver_preload([
+                'torch', 'rl.training.native_subproc_vec_env', 'rl.training.environments'])
+        venv = NativeSubprocVecEnv(env_fns, envs_per_worker=args.envs_per_worker,
+                                  start_method=args.start_method)
+    elif args.vec == "subproc":
         if args.envs_per_worker == 1:
             venv = CachedMaskSubprocVecEnv(
                 env_fns, start_method=args.start_method

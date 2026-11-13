@@ -184,6 +184,58 @@ def split_games(records, heldout_games, seed):
     return train, hold
 
 
+def probe_cohort(model, protocol, *, average=lambda x: x):
+    """Validate the exact retained-game set, then reject bad cohorts on all ranks."""
+    error = None
+    result = None
+    try:
+        records = model._upper_completed
+        limits = protocol['diagnostic']
+        requested = limits['games_per_rank']
+        games = {(int(r['env']), int(r['episode'])) for r in records}
+        stats = getattr(model, 'episode_rollout_stats', {})
+        censored = getattr(model, 'episode_rollout_censored_slots', [])
+        if limits.get('allow_combat_turn_censoring', False):
+            cap = getattr(model, 'independent_rollout_config', {}).get('max_combat_turns')
+            if not isinstance(cap, int) or cap <= 0:
+                raise ValueError('censored probe requires the existing combat turn limit')
+            excluded = {int(r['slot']) for r in censored}
+            if (stats.get('games') != requested or stats.get('unfinished_games') != 0
+                    or stats.get('completed_games') != len(games)
+                    or stats.get('censored_games') != len(censored)
+                    or len(excluded) != len(censored)
+                    or len(games) + len(excluded) != requested):
+                raise ValueError('retained/censored cohort accounting mismatch')
+            for row in censored:
+                reason = row['reason']
+                parts = reason.removeprefix('combat-turn-limit:').split('>')
+                if (not reason.startswith('combat-turn-limit:') or len(parts) != 2
+                        or not all(v.isdecimal() for v in parts)
+                        or int(parts[1]) != cap or int(parts[0]) <= cap
+                        or row['seed'] != stats['first_seed'] + row['slot']):
+                    raise ValueError('probe only permits the existing combat-turn censor reason')
+            retained = set(range(requested)) - excluded
+            if {e for e, _ in games} != retained or len(games) != len(retained):
+                raise ValueError('upper records differ from retained complete games')
+            if any(int(r['env']) not in retained for r in getattr(model, '_small_playout_samples', [])):
+                raise ValueError('censored/unknown game leaked into lower samples')
+        elif len(games) != requested or stats.get('censored_games', 0) or censored:
+            raise ValueError('diagnostic requires every complete game')
+        U.complete_returns(records)
+        if len(games) <= limits['holdout_games_per_rank']:
+            raise ValueError('cohort must retain training and heldout games')
+        result = dict(requested_games=requested, retained_games=len(games),
+            censored_slots=copy.deepcopy(censored), production_stats=copy.deepcopy(stats))
+    except Exception as exc:
+        error = str(exc)
+    valid = average(dict(probe_cohort_valid=float(error is None)))['probe_cohort_valid']
+    if valid != 1.:
+        raise ValueError('coordinated probe cohort rejection: ' + (error or 'another rank has invalid game accounting'))
+    if error is not None:
+        raise ValueError(error)
+    return result
+
+
 def categorical_kl(old_logp, new_logp, masks):
     """KL(old||new) over all legal actions, not only sampled actions."""
     old_logp, new_logp = np.asarray(old_logp), np.asarray(new_logp)
@@ -248,8 +300,7 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
     if world_size != limits['world_size']:
         raise ValueError('diagnostic world size differs from protocol')
     games = {(r['env'], r['episode']) for r in records}
-    if len(games) != limits['games_per_rank']:
-        raise ValueError('diagnostic requires every complete game')
+    cohort = probe_cohort(model, protocol, average=average)
     returns = U.complete_returns(records)
     advantages, lambda_returns = U.macro_advantages(records, np.zeros(len(records)), 1., cfg.gae_lambda)
     train, hold = split_games(records, limits['holdout_games_per_rank'], protocol['seed'] + rank)
@@ -284,7 +335,7 @@ def run_probe(model, protocol, *, rank=0, world_size=1, average=lambda x: x,
     output = Path(output_dir) if output_dir else None
     if output:
         output.mkdir(parents=True, exist_ok=True)
-    results = dict(rank=rank, world_size=world_size, games=len(games),
+    results = dict(rank=rank, world_size=world_size, games=len(games), cohort=cohort,
         training_games=len(games) - limits['holdout_games_per_rank'] - calibration_count,
         holdout_games=limits['holdout_games_per_rank'], training_samples=len(train),
         holdout_samples=len(hold), initial_digest=initial_digest, arms=[],

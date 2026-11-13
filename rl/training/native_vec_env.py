@@ -1,4 +1,5 @@
 """Resident Python environments with a GIL-free C++ search thread pool."""
+from collections import OrderedDict
 from copy import deepcopy
 from contextlib import contextmanager
 import time
@@ -48,10 +49,12 @@ def _copy_step_infos(infos):
 class NativeSearchVecEnv(DummyVecEnv):
     def __init__(self, env_fns, *, threads=4):
         super().__init__(env_fns)
+        self.native_threads = threads
         self._small_step_plan = None
         self._prefetched_steps = {}
         self._small_overlap_stats = dict(prefetched_steps=0, step_call_seconds_sum=0.)
         self._step_observation_buffers = None
+        self._root_destination_cache = OrderedDict()
         self._strategic_observation_keys = None
         self._deferred_observation_rows = set()
         self.strategic_observation_rows_omitted = 0
@@ -83,9 +86,9 @@ class NativeSearchVecEnv(DummyVecEnv):
         # path. Only the actual training stack can carry the internal placeholder.
         from env.core.run_env import SlayTheSpireEnv
         from rl.training.environments import CheckpointObservationCompat, TrainingStateWrapper
-        from rl.training.reward import ShapedRewardWrapper
+        from rl.training.reward import ShapedRewardWrapper, StrategicRewardWrapper
         allowed = (CheckpointObservationCompat, TrainingStateWrapper,
-                   ShapedRewardWrapper, gym.wrappers.TimeLimit)
+                   ShapedRewardWrapper, StrategicRewardWrapper, gym.wrappers.TimeLimit)
         current = env
         while isinstance(current, gym.Wrapper):
             if type(current) not in allowed:
@@ -101,6 +104,19 @@ class NativeSearchVecEnv(DummyVecEnv):
         if self.native_root_observations is None and cohort is None:
             return super().step_wait()
         return self._step_indices(range(self.num_envs))
+
+    def _step_for_transport(self, actions):
+        """Borrow results only until the worker's synchronous write/send ends.
+
+        Public step()/step_subset() retain owned arrays and infos. The private
+        transport owner never advances a slot until serialization has finished.
+        """
+        if self.native_root_observations is None:
+            return self.step(actions)
+        if self._strategic_observation_keys is not None:
+            raise RuntimeError('cannot transport partial observations')
+        self.step_async(actions)
+        return self._step_indices(range(self.num_envs), borrow=True)
 
     def step_subset(self, actions):
         """Advance only ready logical slots, preserving all other slot state.
@@ -181,7 +197,7 @@ class NativeSearchVecEnv(DummyVecEnv):
             for base, enabled in zip(bases, previous, strict=True):
                 base._emit_nosl_value_observations = enabled
 
-    def _step_indices(self, indices, *, subset=False, observation_keys=None):
+    def _step_indices(self, indices, *, subset=False, observation_keys=None, borrow=False):
         cohort = getattr(self, 'episode_rollout_active', None)
         prefetched, self._prefetched_steps = self._prefetched_steps, {}
         self._small_step_plan = None
@@ -248,14 +264,32 @@ class NativeSearchVecEnv(DummyVecEnv):
         if pending:
             encoder = (self.native_root_observations.encode if observation_keys is None
                        else self.native_root_observations.encode_progress)
-            observations = encoder([self.envs[i].unwrapped for i in pending])
+            destination = None
+            # A contiguous subset can use the final vector rows directly.
+            # Legacy checkpoints missing codec fields retain the owned-output
+            # path; noncontiguous rows still use the original scatter below.
+            if (observation_keys is None
+                    and pending == list(range(pending[0], pending[-1] + 1))
+                    and self.buf_obs.keys() >= self.native_root_observations.prototypes.keys()):
+                span = (pending[0], pending[-1] + 1)
+                destination = self._root_destination_cache.get(span)
+                if destination is None:
+                    destination = {key: self.buf_obs[key][span[0]:span[1]]
+                                   for key in self.native_root_observations.prototypes}
+                    self._root_destination_cache[span] = destination
+                    if len(self._root_destination_cache) > 16:
+                        self._root_destination_cache.popitem(last=False)
+                self._root_destination_cache.move_to_end(span)
+            observations = encoder([self.envs[i].unwrapped for i in pending],
+                **({'destination': destination} if destination is not None else {}))
             if observation_keys is not None:
                 self.strategic_observation_rows_omitted += len(pending)
             pending_indices = np.asarray(pending, dtype=np.intp)
             # Respect the checkpoint's visible keys and leave reset/overworld
             # rows intact. The codec already returned one array per field.
-            for key in (self.keys if observation_keys is None else observations):
-                self.buf_obs[key][pending_indices] = observations[key]
+            if destination is None:
+                for key in (self.keys if observation_keys is None else observations):
+                    self.buf_obs[key][pending_indices] = observations[key]
         if subset:
             rows = np.asarray(indices, dtype=np.intp)
             keys = (self.keys if observation_keys is None else
@@ -264,6 +298,8 @@ class NativeSearchVecEnv(DummyVecEnv):
             return ({key: self.buf_obs[key][rows] for key in keys},
                     self.buf_rews[rows].copy(), self.buf_dones[rows].copy(),
                     _copy_step_infos([self.buf_infos[i] for i in indices]))
+        if borrow:
+            return self.buf_obs, self.buf_rews, self.buf_dones, self.buf_infos
         return (self._obs_from_buf(), np.copy(self.buf_rews), np.copy(self.buf_dones), _copy_step_infos(self.buf_infos))
 
     def _step_one(self, index, action):
@@ -392,6 +428,7 @@ class NativeSearchVecEnv(DummyVecEnv):
         return super().env_method(method_name, *method_args, indices=indices, **method_kwargs)
 
     def close(self):
+        self._root_destination_cache.clear()
         self.__dict__.pop('small_playout_batch', None)
         self.native_search_batch.close()
         super().close()

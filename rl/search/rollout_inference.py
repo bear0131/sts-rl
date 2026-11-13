@@ -101,7 +101,7 @@ class ExactInputCache:
         self.next_scope = 0
         self.stats['bytes'] = 0
 
-    def forward(self, observations, forward, *, namespace=()):
+    def forward(self, observations, forward, *, namespace=(), indexed=False):
         started = time.perf_counter()
         count = len(next(iter(observations.values())))
         if not count or any(len(v) != count for v in observations.values()):
@@ -109,7 +109,7 @@ class ExactInputCache:
         if self.max_bytes == 0:
             self.stats['requests'] += count
             self.stats['misses'] += count
-            result = forward(observations)
+            result = forward(observations, np.arange(count, dtype=np.int64)) if indexed else forward(observations)
             self.stats['forward_seconds'] += time.perf_counter()-started
             return result
         schema = tuple((k, v.shape[1:], v.dtype.str) for k, v in sorted(observations.items()))
@@ -144,7 +144,9 @@ class ExactInputCache:
         self.stats['key_seconds'] += time.perf_counter()-started
         if missing:
             started = time.perf_counter()
-            logits, values = forward({k: v[missing] for k, v in observations.items()})
+            selected = {k: v[missing] for k, v in observations.items()}
+            logits, values = (forward(selected, np.asarray(missing, dtype=np.int64))
+                              if indexed else forward(selected))
             results = np.concatenate((np.asarray(logits, np.float32),
                                       np.asarray(values, np.float32).reshape(-1, 1)), axis=1)
             self.stats['forward_seconds'] += time.perf_counter()-started

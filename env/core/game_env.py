@@ -136,6 +136,8 @@ class SimGameEnv:
         self._np_random = None
         self._prev_hp = None
         self._chest_relic_pending = False
+        self.combat_exit_anchor_enabled = False
+        self.combat_exit_anchor_pending = False
 
     # ------------------------------------------------------------------ reset
     def reset(self, *, seed=None):
@@ -148,6 +150,7 @@ class SimGameEnv:
         self.gc = sts.GameContext(self._character, game_seed, self._ascension)
         self.bc = None
         self._chest_relic_pending = False
+        self.combat_exit_anchor_pending = False
         self._rebuild_map()
         self._prev_hp = self.gc.cur_hp
         # GameContext starts on the Neow event; that IS the first decision point.
@@ -386,6 +389,8 @@ class SimGameEnv:
     def legal_semantic_actions(self):
         if self.is_over:
             return []
+        if self.combat_exit_anchor_pending:
+            return [ga.proceed()]
         if self.bc is not None:
             if int(self.bc.input_state) == 2 and not self.select_descriptor()["multi"]:
                 return [ga.select(i) for i, _ in enumerate(self.select_descriptor()["candidates"])]
@@ -512,6 +517,9 @@ class SimGameEnv:
     def step(self, action):
         if self.is_over:
             raise RuntimeError("run is over; call reset()")
+        release_anchor = self.combat_exit_anchor_pending
+        if release_anchor and action != ga.proceed():
+            raise ValueError('pre-reward combat anchor only accepts continue')
         self._last_reasoning_trace = None
         reasoning_before = (
             self.obs_canonical() if self._interactive_reasoning else None
@@ -521,14 +529,17 @@ class SimGameEnv:
             executed, self._last_reasoning_trace = self._apply_with_reasoning_trace(
                 action
             )
-        if not executed:
+        if not executed and not release_anchor:
             self._apply(action)
         terminal_combat_state = self._winning_combat_value_state()
         terminal_combat_target = self._nosl_value_terminal_target()
         terminal_combat_outcome = self._nosl_value_terminal_outcome()
         from .finite_curves import exit_identity, settled_exit
         curve = exit_identity(self.gc, self.bc) if getattr(self, '_finite_curve_objective', False) else None
-        self._settle()  # pump through any auto-resolving screens to next decision
+        if release_anchor:
+            self._settle(release_anchor=True)
+        else:
+            self._settle()
 
         if self._interactive_reasoning and self._last_reasoning_trace is None:
             self._last_reasoning_trace = {
@@ -864,7 +875,7 @@ class SimGameEnv:
         name = " ".join(w.capitalize() for w in tail.split("_"))
         return name if name in _ENCOUNTER_NAMES else tail
 
-    def _settle(self):
+    def _settle(self, *, release_anchor=False):
         """After an action, advance through states that don't need an agent
         decision: start any battle we transitioned into (from the map OR from a
         combat event like Mushrooms / Dead Adventurer), end a finished combat
@@ -874,6 +885,13 @@ class SimGameEnv:
         if self.bc is None and _tail(self.gc) == "BATTLE":
             self._start_battle()
         if self.bc is not None and self.bc.is_battle_over:
+            # This is before exit_battle: no reward offers, post-combat healing
+            # or reward RNG have been materialized. Death settles immediately.
+            if (self.combat_exit_anchor_enabled and not release_anchor
+                    and combat_terminal_outcome(self.bc) in ('win', 'escape')):
+                self.combat_exit_anchor_pending = True
+                return
+            self.combat_exit_anchor_pending = False
             self.bc.exit_battle(self.gc)
             self.bc = None
             if not self.is_over and _tail(self.gc) == "BATTLE":

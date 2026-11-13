@@ -206,6 +206,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert [p['global_step'] for p in payloads] == [32, 64]
     assert [p['legacy_step'] for p in payloads] == [1, 2]
     assert all(p['dist/avg_grad_sec'] == 0 for p in payloads)
+    assert all(0 < p['dist/update_sec'] <= p['dist/iteration_wall_sec'] - p['dist/rollout_sec']
+               for p in payloads)
+    assert all(p['dist/update_sec_max'] == p['dist/update_sec'] for p in payloads)
     assert all('game/episodes_window' in p for p in payloads)
     if chests:
         assert all(p['game/chest_opportunities_window'] > 0 for p in payloads)

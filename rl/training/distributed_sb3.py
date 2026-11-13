@@ -15,7 +15,10 @@ experiment targets.
 
 from __future__ import annotations
 
-from rl.algorithms.updates import ppo_forward, optimizer_step, reasoning_microbatch_backward
+from rl.algorithms.updates import ppo_forward, ppo_chunked_backward, optimizer_step, reasoning_microbatch_backward
+from rl.algorithms.ppo import configure_advantage_normalization, prepare_advantage_normalization
+from rl.algorithms.packed_ppo import configure_packed_updates
+from rl.training.ppo_overlap import distributed_packed_epoch
 from rl.algorithms.upper_ppo import enabled as joint_upper, combat_update, update_upper
 from rl.algorithms.update_schedule import parse_update_schedule
 from rl.search.native import NATIVE_TIMING_KEYS, WORKER_TIMING_KEYS, apply_strict_training_settings
@@ -29,7 +32,7 @@ import shlex
 import subprocess
 import time
 from itertools import count
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,7 +47,7 @@ from rl.algorithms.accumulating_ppo import (
 )
 from rl.training.environments import make_env
 from rl.training.checkpoints import read_bundle, restore_learner, save_bundle, prune_bundles
-from rl.training.ring_allreduce import SshRingAllReduce
+from rl.training.ring_allreduce import SshRingAllReduce, ParallelRingAllReduce
 from rl.training.monitoring import HP_ORDER_PREFIX, hp_order_fraction
 from rl.tasks.wholerun import WholeRunTask
 
@@ -394,7 +397,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--updates", type=int, default=1)
     parser.add_argument("--continuous", action="store_true",
-                        help="Keep training until coordinated STOP; supports fixed-rate inner-only NOSL or joint-upper small-playout, with full recovery saves.")
+                        help="Keep training until coordinated STOP; supports fixed-rate shared whole-run PPO, inner-only NOSL or joint-upper small-playout, with full recovery saves.")
     parser.add_argument(
         "--total-steps",
         type=int,
@@ -531,7 +534,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional CUDA autocast for rollout inference and PPO backward. "
              "BF16 keeps parameters and synchronized gradients in FP32.",
     )
-    parser.add_argument("--vec", choices=("subproc", "dummy", "native"), default="subproc")
+    parser.add_argument("--vec", choices=("subproc", "dummy", "native", "native-subproc"), default="subproc")
     parser.add_argument('--native-search-threads', type=int, default=4)
     parser.add_argument("--start-method", default="fork")
     parser.add_argument(
@@ -546,6 +549,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
     parser.add_argument("--training-state-dir", type=Path, help="Per-rank policy/Adam/replay/RNG recovery generations")
     parser.add_argument("--resume-state", type=Path, help="Explicit complete per-rank recovery generation")
+    parser.add_argument('--ppo-advantage-normalization', choices=('group256', 'rollout'),
+        help='Shared PPO only: retain checkpoint setting, or choose legacy groups/global rollout moments')
+    parser.add_argument('--ppo-update-config', type=Path,
+        help='Shared pure PPO physical batching JSON: token_budget, max_rows, precision; omitted inherits checkpoint')
+    parser.add_argument('--deck-training-schedule', type=Path,
+        help='Deck latent preparation/anchor/search schedule JSON; omitted inherits checkpoint')
     parser.add_argument('--fork-public-lower',choices=('root','turn','state'),default=None,
                         help='On a lower-only fork, add a public adapter refreshed per real root or simulated state')
     parser.add_argument('--fork-public-weights',type=Path,default=None,
@@ -568,6 +577,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--fork-grow-environments', action='store_true',
                         help='With --fork-state and --episode-rollout, preserve the complete natural '
                              'unified cohort and append new seeded environments; never reset source slots.')
+    parser.add_argument('--resume-grow-environments', action='store_true',
+                        help='Pure whole-run PPO only: retain live source slots and append seeded slots.')
     parser.add_argument(
         "--resume-reset-environments",
         action="store_true",
@@ -865,6 +876,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Loopback listener port forwarded by the ssh-ring transport.",
     )
     parser.add_argument(
+        "--ring-streams", type=int, choices=(1, 2, 4, 8), default=1,
+        help="Independent SSH streams per ring edge; uses consecutive listener ports.",
+    )
+    parser.add_argument(
         "--profile-cuda-memory",
         action="store_true",
         help="Record per-micro-batch CUDA allocated/reserved peaks and the "
@@ -1080,6 +1095,13 @@ def pack_gradients(model: AccumulatingMaskablePPO) -> th.Tensor:
     return flat
 
 
+def count_nonfinite_gradients(flat: th.Tensor) -> int:
+    """Scan the transport's CPU FP32 view without Torch's temporary passes."""
+    if flat.device.type != "cpu" or flat.dtype != th.float32:
+        raise TypeError("gradient diagnostics require a CPU float32 tensor")
+    return int(np.count_nonzero(~np.isfinite(flat.detach().numpy())))
+
+
 def save_gradients(flat: th.Tensor, path: Path) -> int:
     """Publish a fixed-layout raw gradient vector for SCP transport."""
     flat.numpy().tofile(path)
@@ -1161,7 +1183,7 @@ def logger_scalars(model: AccumulatingMaskablePPO) -> dict[str, float]:
     scalars = {}
     for key, value in model.logger.name_to_value.items():
         if key.startswith((
-            "game/", "boss/", "upper/", "rollout/", "speed/", "hierarchical/", "nosl_is_az/", "outer_return/", "frozen_upper/"
+            "game/", "boss/", "upper/", "rollout/", "speed/", "hierarchical/", "nosl_is_az/", "outer_return/", "frozen_upper/", "pure_rl/", "deck_search/"
         )):
             if isinstance(value, np.generic):
                 value = value.item()
@@ -1216,6 +1238,14 @@ def ppo_microbatch_backward(
             "reserved_before": th.cuda.memory_reserved(model.device),
         }
 
+    if getattr(model, 'nosl_supervision_contract', None) == 'shared-wholerun-ppo-room-v1':
+        loss_value = ppo_chunked_backward(model, rollout_data, clip_range, clip_range_vf)
+        if cuda_profile is not None:
+            cuda_profile.update(allocated_after_backward=th.cuda.memory_allocated(model.device),
+                peak_allocated=th.cuda.max_memory_allocated(model.device),
+                peak_reserved=th.cuda.max_memory_reserved(model.device))
+        return dict(loss=loss_value, combat_value_loss=None, overworld_value_loss=None,
+                    cuda_profile=cuda_profile)
     phase = rollout_data.observations["phase"].long().reshape(-1)
     valid = th.isfinite(rollout_data.advantages) & th.isfinite(
         rollout_data.returns
@@ -1344,9 +1374,44 @@ def synchronize_gradient_step(
     barrier_timeout: float,
 ) -> dict[str, float]:
     """Average current gradients over all ranks using the selected transport."""
+    if world_size == 1 and ring_transport is None:
+        if rank != 0 or peers:
+            raise ValueError('single-rank gradients require rank zero and no peers')
+        started = time.perf_counter()
+        parameters = gradient_parameters(model)
+        flat = th.cat([(p.grad.detach() if p.grad is not None else th.zeros_like(p)).reshape(-1)
+                       for p in parameters])
+        if flat.dtype != th.float32:
+            raise TypeError(f'distributed gradients must be float32, got {flat.dtype}')
+        bad = ~th.isfinite(flat)
+        nonfinite = int(bad.sum().item())
+        first_parameter = None
+        if nonfinite:
+            index = int(th.nonzero(bad, as_tuple=False)[0, 0])
+            offset = 0
+            for name, p in model.policy.named_parameters():
+                if p.requires_grad:
+                    offset += p.numel()
+                    if index < offset:
+                        first_parameter = name
+                        break
+        pack_seconds = time.perf_counter() - started
+        started = time.perf_counter()
+        # Preserve the file transport's zero + grad, then * 1 arithmetic,
+        # including signed zero. Materialize unused gradients: Adam momentum
+        # must still advance these parameters exactly as on ordinary resume.
+        averaged = th.zeros_like(flat).add_(flat).mul_(1.)
+        install_flat_gradients(model, averaged)
+        if flat.is_cuda:
+            th.cuda.synchronize(flat.device)
+        return dict(gradient_pack_sec=pack_seconds, sync_sec=time.perf_counter() - started,
+                    sync_mbps=0., grad_bytes=float(flat.numel() * flat.element_size()),
+                    local_nonfinite_gradients=float(nonfinite),
+                    synchronized_nonfinite_gradients=float(nonfinite),
+                    first_local_nonfinite_parameter=first_parameter)
     pack_started = time.perf_counter()
     local_flat = pack_gradients(model)
-    local_nonfinite = int(th.count_nonzero(~th.isfinite(local_flat)))
+    local_nonfinite = count_nonfinite_gradients(local_flat)
     first_nonfinite_parameter = None
     if local_nonfinite:
         first_index = int(th.nonzero(~th.isfinite(local_flat), as_tuple=False)[0, 0])
@@ -1398,7 +1463,7 @@ def synchronize_gradient_step(
         )
         local_flat = pack_gradients(model)
         paths_to_remove = [grad_path, *peer_paths]
-    synchronized_nonfinite = int(th.count_nonzero(~th.isfinite(local_flat)))
+    synchronized_nonfinite = count_nonfinite_gradients(local_flat)
     for path in paths_to_remove:
         try:
             path.unlink()
@@ -1451,11 +1516,11 @@ def average_scalar_dict(
     values: dict[str, float], ring_transport,
 ) -> dict[str, float]:
     """Average a fixed scalar schema over ranks when the SSH ring is active."""
-    if ring_transport is None or not values:
+    if ring_transport is None:
         return values
     keys = tuple(sorted(values))
     tensor = th.tensor([values[key] for key in keys], dtype=th.float32)
-    averaged, _bytes = ring_transport.average(tensor)
+    averaged, _bytes = ring_transport.average(tensor, schema=keys)
     return {key: float(value) for key, value in zip(keys, averaged.tolist())}
 
 
@@ -2246,6 +2311,9 @@ def main() -> None:
         raise ValueError("--fork-reset-environments requires --fork-state")
     if args.resume_reset_environments and args.resume_state is None:
         raise ValueError("--resume-reset-environments requires --resume-state")
+    if args.resume_grow_environments and (args.resume_state is None or args.resume_reset_environments
+                                          or args.episode_rollout):
+        raise ValueError('--resume-grow-environments requires ordinary PPO resume without reset')
     if args.fork_grow_environments and (
             args.fork_state is None or not args.episode_rollout
             or args.fork_reset_environments or args.resume_reset_environments):
@@ -2300,8 +2368,10 @@ def main() -> None:
         raise ValueError("--peer is meaningless for world_size=1")
     if args.gradient_transport == "ssh-ring" and args.world_size < 2:
         raise ValueError("--gradient-transport ssh-ring requires world_size >= 2")
-    if not 1 <= args.ring_port <= 65535:
-        raise ValueError("--ring-port must be in [1, 65535]")
+    if not 1 <= args.ring_port <= 65536 - args.ring_streams:
+        raise ValueError("all --ring-port listener ports must be in [1, 65535]")
+    if args.ring_streams != 1 and args.gradient_transport != "ssh-ring":
+        raise ValueError("--ring-streams requires --gradient-transport ssh-ring")
     if args.reasoning_gradient_accumulation_steps < 1:
         raise ValueError(
             "--reasoning-gradient-accumulation-steps must be at least 1"
@@ -2472,6 +2542,13 @@ def main() -> None:
     # Load once without env to infer obs flags, then load again with env and
     # custom_objects so SB3 rebuilds the rollout buffer at the requested shape.
     probe_model = AccumulatingMaskablePPO.load(args.checkpoint, device=args.device)
+    pure_ppo = probe_model.nosl_supervision_contract == 'shared-wholerun-ppo-room-v1'
+    if args.resume_grow_environments and not pure_ppo:
+        raise ValueError('--resume-grow-environments only supports shared whole-run PPO')
+    source_ppo_round = (getattr(probe_model, 'ppo_rollouts_completed',
+        args.wandb_step_base if args.wandb_step_base is not None else
+        probe_model.num_timesteps // (probe_model.n_envs * probe_model.n_steps * args.world_size))
+        if pure_ppo else None)
     if args.upper_auxiliary_search is not None and not joint_upper(probe_model):
         raise ValueError('--upper-auxiliary-search requires joint strategic PPO')
     if args.upper_micro_batch_size is not None and not joint_upper(probe_model):
@@ -2827,6 +2904,21 @@ def main() -> None:
     args.independent_rollout_config = configure_independent(
         model, independent_config, fork=args.fork_state is not None)
     configure_training_scope(model, args)
+    args.ppo_advantage_normalization = configure_advantage_normalization(
+        model, args.ppo_advantage_normalization)
+    configure_packed_updates(model, json.loads(args.ppo_update_config.read_text(encoding='utf-8'))
+        if args.ppo_update_config is not None else None)
+    args.ppo_update_config = model.ppo_update_config
+    from rl.algorithms.deck_schedule import configure as configure_deck_schedule
+    deck_schedule = configure_deck_schedule(model,
+        json.loads(args.deck_training_schedule.read_text(encoding='utf-8'))
+        if args.deck_training_schedule is not None else None)
+    args.deck_training_schedule = getattr(model, 'deck_training_schedule', None)
+    if args.ppo_update_config is not None and args.world_size > 1 and args.gradient_transport != 'ssh-ring':
+        raise ValueError('packed multi-rank PPO requires ssh-ring scalar consensus')
+    if (args.ppo_advantage_normalization == 'rollout' and args.world_size > 1
+            and args.gradient_transport != 'ssh-ring'):
+        raise ValueError('global rollout advantage normalization requires ssh-ring transport')
     if args.independent_rollout_config is not None:
         if args.reasoning_updates or args.reasoning_coef or args.interactive_reasoning:
             raise ValueError('independent cohorts do not support reasoning training')
@@ -2840,13 +2932,13 @@ def main() -> None:
         and hasattr(model.policy, 'small_playout')
         and model.policy.core.upper_config.learning_rate > 0
         and model.policy.small_playout_config['learning_rate'] > 0)
-    if args.continuous and not (
+    if args.continuous and not ((pure_ppo and args.reasoning_updates == 0) or (
         getattr(model, 'nosl_is_az', False)
         and getattr(model, 'nosl_is_az_inner_only', False)
         and (not joint_upper(model) or continuous_joint)
         and args.reasoning_updates == 0
-    ):
-        raise ValueError('--continuous supports fixed-rate inner-only NOSL or joint-upper small-playout without reasoning updates')
+    )):
+        raise ValueError('--continuous supports fixed-rate shared whole-run PPO, inner-only NOSL or joint-upper small-playout without reasoning updates')
     model.nosl_is_az_replay_enabled = bool(args.nosl_is_az_replay_enabled)
     print(
         f"[rank {args.rank}] NOSL-IS-AZ replay enabled: "
@@ -3115,9 +3207,9 @@ def main() -> None:
         next_rank = (args.rank + 1) % args.world_size
         next_peer = next(peer for peer in peers if peer.rank == next_rank)
 
-        def ring_ready_barrier() -> None:
+        def ring_ready_barrier(stream=0) -> None:
             all_rank_file_barrier(
-                tag="ssh_ring_listening",
+                tag=f"ssh_ring_listening_{stream}",
                 rank=args.rank,
                 peers=peers,
                 key=key,
@@ -3128,20 +3220,28 @@ def main() -> None:
                 timeout=args.barrier_timeout,
             )
 
-        ring_transport = SshRingAllReduce(
-            rank=args.rank,
-            world_size=args.world_size,
-            next_host=next_peer.host,
-            next_port=next_peer.port,
-            next_user=next_peer.user,
-            ssh_key=key,
-            listen_port=args.ring_port,
-            timeout=args.barrier_timeout,
-            ready_barrier=ring_ready_barrier,
-        )
+        links = []
+        try:
+            for stream in range(args.ring_streams):
+                links.append(SshRingAllReduce(
+                    rank=args.rank,
+                    world_size=args.world_size,
+                    next_host=next_peer.host,
+                    next_port=next_peer.port,
+                    next_user=next_peer.user,
+                    ssh_key=key,
+                    listen_port=args.ring_port + stream,
+                    timeout=args.barrier_timeout,
+                    ready_barrier=lambda stream=stream: ring_ready_barrier(stream),
+                ))
+            ring_transport = links[0] if len(links) == 1 else ParallelRingAllReduce(links)
+        except BaseException:
+            for link in links:
+                link.close()
+            raise
         print(
             f"[rank {args.rank}] persistent SSH gradient ring connected to "
-            f"rank {next_rank}",
+            f"rank {next_rank} over {args.ring_streams} stream(s)",
             flush=True,
         )
 
@@ -3213,6 +3313,8 @@ def main() -> None:
         tb_log_name=f"dist_sb3_rank{args.rank}",
         progress_bar=False,
     )
+    if pure_ppo:
+        model.ppo_rollouts_completed = int(source_ppo_round)
     if recovery_state is not None:
         recovery_manifest = restore_learner(
             model,
@@ -3221,10 +3323,13 @@ def main() -> None:
             world_size=args.world_size,
             restore_environment=not bool(
                 args.fork_reset_environments or args.resume_reset_environments),
-            grow_environments=args.fork_grow_environments,
+            grow_environments=args.fork_grow_environments or args.resume_grow_environments,
         )
         if args.fork_grow_environments:
             print('ENVIRONMENT_EXPANDED_ON_FORK ' + json.dumps(
+                model._recovery_environment_growth, sort_keys=True), flush=True)
+        if args.resume_grow_environments:
+            print('ENVIRONMENT_EXPANDED_ON_RESUME ' + json.dumps(
                 model._recovery_environment_growth, sort_keys=True), flush=True)
         if args.fork_reset_environments or args.resume_reset_environments:
             print(
@@ -3287,6 +3392,11 @@ def main() -> None:
     try:
         for update in (count() if args.continuous else range(args.updates)):
             iteration_budget.start(update)
+            if deck_schedule is not None:
+                from rl.training.deck_schedule import at_collection_boundary
+                at_collection_boundary(model, rank=args.rank, world_size=args.world_size,
+                    local_root=local_root, ascension=args.ascension,
+                    average=lambda values: average_scalar_dict(values, ring_transport))
             if model.device.type == "cuda":
                 th.cuda.synchronize(model.device)
             started = time.perf_counter()
@@ -3297,12 +3407,15 @@ def main() -> None:
                 monitor = resource_stack.enter_context(ResourceMonitor(
                     interval=args.rollout_resource_interval,
                     gpu=model.device.type=='cuda', torch_device=model.device))
-            ok = model.collect_rollouts(
-                model.env,
-                callback,
-                model.rollout_buffer,
-                n_rollout_steps=args.n_steps,
-            )
+            # This entry owns its metrics-only callbacks. Keep arbitrary
+            # library callbacks' autograd behavior unchanged.
+            with th.inference_mode() if pure_ppo else nullcontext():
+                ok = model.collect_rollouts(
+                    model.env,
+                    callback,
+                    model.rollout_buffer,
+                    n_rollout_steps=args.n_steps,
+                )
             if model.device.type == "cuda":
                 th.cuda.synchronize(model.device)
             if monitor is not None:
@@ -3310,6 +3423,8 @@ def main() -> None:
             rollout_sec = time.perf_counter() - started
             if not ok:
                 raise RuntimeError("collect_rollouts returned False")
+
+            update_started = time.perf_counter()
 
             # The inference graphs are unused during learner backpropagation.
             # Release their private pools before the full training microbatch;
@@ -3351,11 +3466,20 @@ def main() -> None:
             sync_seconds = 0.0
             sync_mbps = []
             gradient_pack_seconds = 0.0
+            planned_update_stats = {}
             step_seconds = 0.0
             backward_seconds = 0.0
             grad_bytes = 0
             optimizer_steps = 0
             cuda_memory_peak = None
+            if pure_ppo:
+                prepare_advantage_normalization(model, world_size=args.world_size,
+                    average=(lambda values: average_scalar_dict(values, ring_transport))
+                    if ring_transport is not None else None)
+                model._ppo_microbatch_stats = dict(chunks=0, rows=0, oom_retries=0,
+                                                  min_rows=args.batch_size, max_rows=0)
+                model._ppo_update_metric_sums = None
+                model._ppo_update_metric_count = 0
 
             inner_only_nosl = bool(
                 model.nosl_is_az and model.nosl_is_az_inner_only
@@ -3394,6 +3518,35 @@ def main() -> None:
             # a fixed rulebase lower has no lower learner at all.  In both
             # cases the only strategic update is the macro-action PPO below.
             for epoch in range(0 if inner_only_nosl else args.n_epochs):
+                if model.ppo_update_config is not None:
+                    offset = optimizer_steps
+                    def sync_packed(step):
+                        return synchronize_gradient_step(
+                            model, rank=args.rank, world_size=args.world_size, peers=peers,
+                            key=key, control_dir=control_dir, local_root=local_root,
+                            remote_root=args.remote_root, run_id=run_id,
+                            tag=f'u{update:06d}_e{epoch:03d}_s{offset + step:06d}',
+                            ring_transport=ring_transport, barrier_timeout=args.barrier_timeout)
+                    packed = distributed_packed_epoch(model, clip_range, clip_range_vf,
+                        ring=ring_transport, synchronize=sync_packed,
+                        average=lambda values: average_scalar_dict(values, ring_transport))
+                    for name, value in packed.items():
+                        if name.startswith(('planned_', 'graph_')):
+                            planned_update_stats[name] = planned_update_stats.get(name, 0) + value
+                            model.logger.record('pure_rl/update_' + name, planned_update_stats[name])
+                    losses.extend(packed['losses'])
+                    optimizer_steps += packed['optimizer_steps']
+                    backward_seconds += packed['backward_sec']
+                    gradient_pack_seconds += packed['gradient_pack_sec']
+                    sync_seconds += packed['sync_sec']
+                    sync_mbps.extend(packed['sync_mbps'])
+                    grad_bytes = packed['grad_bytes']
+                    step_seconds += packed['optimizer_step_sec']
+                    model.logger.record('pure_rl/update_loss_scale', model.ppo_update_loss_scale)
+                    model.logger.record('pure_rl/update_overflow_retries', packed['overflow_retries'])
+                    for field in ('context_input_rows', 'context_unique_rows', 'context_oom_retries'):
+                        model.logger.record('pure_rl/' + field, packed[field])
+                    continue
                 accumulated = 0
                 model.policy.optimizer.zero_grad()
                 for rollout_data in model.rollout_buffer.get(args.batch_size):
@@ -3499,6 +3652,12 @@ def main() -> None:
                 upper_update = update_upper(model, rank=args.rank, world_size=args.world_size,
                     average=lambda values: average_scalar_dict(values, ring_transport),
                     synchronize=sync_upper)
+            elif pure_ppo:
+                from rl.training import reward_monitor, campfire_monitor
+                choice_counts = average_scalar_dict({**reward_monitor.counts(model),
+                    **campfire_monitor.counts(model)}, ring_transport)
+                upper_update = {**reward_monitor.metrics(choice_counts, args.world_size),
+                    **campfire_monitor.metrics(choice_counts, args.world_size)}
             upper_seconds = time.perf_counter() - upper_started if joint_upper(model) else 0.0
 
             reasoning_records = []
@@ -3618,14 +3777,24 @@ def main() -> None:
                 sum(row["sampled_samples"] for row in reasoning_records)
             )
 
+            # Complete learner wall time includes data gathering, all backward
+            # passes, transport/waiting and optimizer work. Saves are separate.
+            if model.device.type == "cuda":
+                th.cuda.synchronize(model.device)
+            update_seconds = time.perf_counter() - update_started
+
             actual_rollout_size = (int(model.episode_rollout_stats['transitions'])
                                    if episode_config is not None else rollout_size)
             global_actions = int(round(average_scalar_dict(
                 {'actions': float(actual_rollout_size)}, ring_transport)['actions'] * args.world_size))
-            rank_rollout_seconds = average_scalar_dict({
-                f'rank{i}': rollout_sec if i == args.rank else 0.
+            rank_phase_seconds = average_scalar_dict({
+                f'{phase}{i}': seconds if i == args.rank else 0.
+                for phase, seconds in (('rollout', rollout_sec), ('update', update_seconds))
                 for i in range(args.world_size)}, ring_transport)
-            rollout_max_seconds = max(rank_rollout_seconds.values()) * args.world_size
+            rollout_max_seconds = max(rank_phase_seconds[f'rollout{i}']
+                                      for i in range(args.world_size)) * args.world_size
+            update_max_seconds = max(rank_phase_seconds[f'update{i}']
+                                     for i in range(args.world_size)) * args.world_size
             cumulative_global_steps += global_actions
             record = {
                 "rank": args.rank,
@@ -3641,6 +3810,8 @@ def main() -> None:
                 "leaf_graph_release_memory": graph_release_memory,
                 "rollout_steps_per_sec_local": actual_rollout_size / rollout_sec,
                 "rollout_sec_max": rollout_max_seconds,
+                "update_sec": update_seconds,
+                "update_sec_max": update_max_seconds,
                 "rollout_steps_per_sec_global": global_actions / rollout_max_seconds,
                 "loss_mean": float(np.mean(losses)) if losses else 0.0,
                 "optimizer_steps": optimizer_steps,
@@ -3751,6 +3922,20 @@ def main() -> None:
             # Average the fixed set across ranks before printing or sending it
             # to W&B, so the dashboard represents the global rollout rather
             # than rank 0's local subset.
+            if pure_ppo:
+                from rl.algorithms.ppo_metrics import update_moments
+                for key, value in update_moments(model).items():
+                    model.logger.record(key, value)
+                for key, value in model._ppo_microbatch_stats.items():
+                    model.logger.record('pure_rl/backward_' + key, value)
+                for key, value in dict(learning_rate=model.policy.optimizer.param_groups[0]['lr'],
+                        epochs=args.n_epochs, microbatch_rows_requested=args.batch_size,
+                        normalization_group_size=(model._ppo_advantage_stats['count']
+                            if args.ppo_advantage_normalization == 'rollout'
+                            else model.policy.ppo_advantage_group_size),
+                        advantage_normalization_rollout=int(args.ppo_advantage_normalization == 'rollout'),
+                        effective_batch_size_global=args.batch_size * args.gradient_accumulation_steps * args.world_size).items():
+                    model.logger.record('pure_rl/' + key, value)
             callback_scalars = logger_scalars(model)
             upper_counts = getattr(model, "_nosl_is_az_rollout_upper_counts", {})
             record["nosl_is_az_upper_strategy"] = model.nosl_is_az_upper_strategy
@@ -3807,6 +3992,9 @@ def main() -> None:
                 key: float(callback_scalars.get(key, 0.0))
                 for key in _DISTRIBUTED_NOSL_METRIC_KEYS
             })
+            if model.nosl_supervision_contract == 'shared-wholerun-ppo-room-v1':
+                aggregate_scalars.update({key: value for key, value in callback_scalars.items()
+                                          if key.startswith(('pure_rl/', 'deck_search/'))})
             if getattr(model, '_frozen_upper', False):
                 model.policy.core.teacher.assert_integrity()
                 aggregate_scalars.update({key: value for key, value in callback_scalars.items()
@@ -3826,6 +4014,9 @@ def main() -> None:
             _finalize_distributed_game_scalars(
                 aggregate_scalars, world_size=args.world_size,
             )
+            if pure_ppo:
+                from rl.algorithms.ppo_metrics import finalize_metrics
+                aggregate_scalars.update(finalize_metrics(aggregate_scalars))
             # Both counters underwent the same mean reduction, so their ratio
             # is sum(matches)/sum(count), even with unequal rank populations.
             # Keep the historical zero/count=0 logging convention for W&B.
@@ -3833,7 +4024,19 @@ def main() -> None:
                 hp_order_fraction(aggregate_scalars) or 0.0
             )
             record.update(aggregate_scalars)
+            if planned_update_stats:
+                record['planned_ppo'] = planned_update_stats
+            if pure_ppo:
+                record['pure_rl/natural_games_global'] = int(round(
+                    record['pure_rl/game_total/natural'] * args.world_size))
+                record['pure_rl/censored_games_global'] = int(round(
+                    record['pure_rl/game_total/censored'] * args.world_size))
+                if record['pure_rl/game_total/start_step'] == 0:
+                    record['completed_full_games_global'] = record['pure_rl/natural_games_global']
             record['training_scope'] = args.training_scope
+            if deck_schedule is not None:
+                record['deck_training_state'] = model.deck_training_state
+                record['training_objective_contract'] = model.training_objective_contract
             record.update({'upper/' + key: value for key, value in upper_update.items()})
             record.update({'small_playout_train/' + key: value for key, value in small_update.items()})
             if combat_strategy == 'small-playout':
@@ -3869,6 +4072,9 @@ def main() -> None:
                 record['episode_scope'] = 'boss-opening'
 
             global_timesteps = int(record["global_timesteps"])
+            if pure_ppo:
+                model.ppo_rollouts_completed += 1
+                record['rollout_round'] = model.ppo_rollouts_completed
             # Keep saved checkpoints/resumes on the global env-step axis rather
             # than SB3's local rank counter.
             model.num_timesteps = global_timesteps
@@ -3945,6 +4151,8 @@ def main() -> None:
                         "dist/checkpoint_sec": record["checkpoint_sec"],
                         "dist/rollout_sec": record["rollout_sec"],
                         "dist/rollout_sec_max": record["rollout_sec_max"],
+                        "dist/update_sec": record["update_sec"],
+                        "dist/update_sec_max": record["update_sec_max"],
                         "speed/rollout_env_steps_per_second": record["rollout_steps_per_sec_global"],
                         "dist/leaf_graph_release_sec": record["leaf_graph_release_sec"],
                         "dist/backward_sec": record["backward_sec"],
@@ -4084,12 +4292,16 @@ def main() -> None:
                     for key in ('upper/effective_batch_size_global', 'upper/micro_batch_size'):
                         wandb_payload[key] = record[key]
                 wandb_payload.update({key: value for key, value in record.items()
-                                      if key.startswith(('outer_return/', 'frozen_upper/'))})
+                                      if key.startswith(('outer_return/', 'frozen_upper/', 'pure_rl/', 'deck_search/'))})
+                if pure_ppo and 'completed_full_games_global' in record:
+                    wandb_payload['game/completed_full_games_global'] = record['completed_full_games_global']
                 wandb_payload.update({
                     key: record[key]
                     for key in _DISTRIBUTED_NOSL_METRIC_KEYS
                 })
-                if episode_config is not None:
+                if pure_ppo:
+                    legacy_step = model.ppo_rollouts_completed
+                elif episode_config is not None:
                     legacy_step = model.episode_rollouts_completed
                     wandb_payload['episode_rollout/round'] = legacy_step
                     wandb_payload['episode_rollout/games_global'] = args.n_envs * args.world_size
@@ -4162,7 +4374,11 @@ def main() -> None:
     finally:
         iteration_budget.cancel()
         try:
-            resource_stack.close()
+            try:
+                resource_stack.close()
+            finally:
+                from rl.search.resident_service import close_collection_service
+                close_collection_service(model)
         finally:
             callback.on_training_end()
             if ring_transport is not None:
