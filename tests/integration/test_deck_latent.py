@@ -1206,3 +1206,78 @@ def test_combat_cannot_contribute_to_early_upper_ring_bucket(latent_env):
     assert any(p.grad is not None and p.grad.any() for p in tail)
     assert {id(p) for p in early + tail} == {id(p) for p in policy.parameters() if p.requires_grad}
     assert len(early) + len(tail) == len({id(p) for p in early + tail})
+
+
+@pytest.mark.cuda
+def test_planned_anchor_search_loss_gradients_and_adam_after_graph_release(latent_env):
+    """Mixed anchor routes and search KL use the same original optimizer group."""
+    import gc
+    from contextlib import nullcontext
+    from dataclasses import asdict
+    from types import SimpleNamespace
+    from rl.algorithms.deck_update_plan import DeckUpdatePlan
+    from rl.algorithms.search_auxiliary import SearchTrainingConfig, prepare_search_batch
+    from rl.algorithms.updates import ppo_forward, optimizer_step
+    from rl.training.distributed_sb3 import pack_gradients, average_peer_gradients
+    assert torch.cuda.is_available(), 'explicit CUDA planned search qualification required'
+    torch.set_float32_matmul_precision('highest')
+    enter_combat(latent_env)
+    reference = policy_for(latent_env, 'transformer64x2').cuda().train()
+    reference.combat_value_target = 'pre-reward-anchor'
+    reference.core.combat.compact_training_tokens = True
+    planned = deepcopy(reference)
+    def learner(policy):
+        return SimpleNamespace(policy=policy, device=torch.device('cuda'),
+            action_space=latent_env.action_space, autocast_context=nullcontext,
+            hierarchical_combat_hp=False, normalize_advantage=False, ent_coef=.02, vf_coef=.5,
+            max_grad_norm=.5, deck_search_config=asdict(SearchTrainingConfig(coefficient=.1)))
+    models = [learner(reference), learner(planned)]
+    plan = DeckUpdatePlan(models[1])
+    previous = torch.cuda.current_stream()
+    stream = torch.cuda.Stream(); stream.wait_stream(previous)
+    try:
+        with torch.cuda.stream(stream):
+            for iteration, size in enumerate((896, 768, 32)):
+                obs = {k: v.cuda() for k, v in tensor_obs(latent_env, size).items()}
+                obs['_deck_context_index'] = torch.zeros(size, dtype=torch.long, device='cuda')
+                obs['combat_exit_anchor'][::8, 0] = 1.
+                legal = obs['combat_legal'].bool()
+                target = torch.randn(legal.shape, device='cuda').masked_fill(~legal, -torch.inf).log_softmax(-1)
+                obs['_search_target'] = target
+                obs['_search_valid'] = torch.arange(size, device='cuda').remainder(3).eq(1).float()
+                batch = SimpleNamespace(observations=obs, advantages=torch.randn(size, device='cuda'),
+                    actions=legal.long().argmax(-1), action_masks=legal,
+                    old_values=torch.zeros(size, device='cuda'), returns=torch.rand(size, device='cuda'),
+                    old_log_prob=torch.full((size,), -1., device='cuda'))
+                losses = []
+                for model in models:
+                    prepare_search_batch(model, batch, None)
+                    model.policy.optimizer.zero_grad(set_to_none=True)
+                    direct = model is models[1]
+                    chunks = [(batch, batch.advantages, 1., 'combat')]
+                    for chunk, _, _, _ in (plan.schedule(chunks) if direct else chunks):
+                        _, loss = ppo_forward(model, chunk, .2, None,
+                            direct_masked_categorical=direct, update_plan=plan if direct else None)
+                        loss.backward()
+                        losses.append(loss.detach())
+                torch.testing.assert_close(*losses, rtol=3e-4, atol=3e-6)
+                for (name, left), (_, right) in zip(reference.named_parameters(), planned.named_parameters(), strict=True):
+                    assert (left.grad is None) == (right.grad is None), name
+                    if left.grad is not None:
+                        torch.testing.assert_close(left.grad, right.grad, rtol=3e-4, atol=3e-6, msg=name)
+                for model in models:
+                    average_peer_gradients(model, pack_gradients(model), [], rank=0, world_size=1)
+                    optimizer_step(model)
+                for left, right in zip(reference.parameters(), planned.parameters(), strict=True):
+                    # FP32 padding changes reduction order; compare parameters
+                    # and Adam moments, not a cross-kernel bitwise claim.
+                    torch.testing.assert_close(left, right, rtol=3e-4, atol=3e-6)
+                    for key, value in reference.optimizer.state[left].items():
+                        torch.testing.assert_close(value, planned.optimizer.state[right][key], rtol=6e-4, atol=3e-6)
+                torch.cuda.synchronize(); torch._C._cuda_clearCublasWorkspaces()
+                gc.collect(); torch.cuda.empty_cache()
+            assert plan.graphs.stats['combat_captures'] == 1
+            assert plan.graphs.stats['combat_replays'] == 2
+    finally:
+        plan.graphs.entries.clear()
+        previous.wait_stream(stream)

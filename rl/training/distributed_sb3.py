@@ -1374,6 +1374,41 @@ def synchronize_gradient_step(
     barrier_timeout: float,
 ) -> dict[str, float]:
     """Average current gradients over all ranks using the selected transport."""
+    if world_size == 1 and ring_transport is None:
+        if rank != 0 or peers:
+            raise ValueError('single-rank gradients require rank zero and no peers')
+        started = time.perf_counter()
+        parameters = gradient_parameters(model)
+        flat = th.cat([(p.grad.detach() if p.grad is not None else th.zeros_like(p)).reshape(-1)
+                       for p in parameters])
+        if flat.dtype != th.float32:
+            raise TypeError(f'distributed gradients must be float32, got {flat.dtype}')
+        bad = ~th.isfinite(flat)
+        nonfinite = int(bad.sum().item())
+        first_parameter = None
+        if nonfinite:
+            index = int(th.nonzero(bad, as_tuple=False)[0, 0])
+            offset = 0
+            for name, p in model.policy.named_parameters():
+                if p.requires_grad:
+                    offset += p.numel()
+                    if index < offset:
+                        first_parameter = name
+                        break
+        pack_seconds = time.perf_counter() - started
+        started = time.perf_counter()
+        # Preserve the file transport's zero + grad, then * 1 arithmetic,
+        # including signed zero. Materialize unused gradients: Adam momentum
+        # must still advance these parameters exactly as on ordinary resume.
+        averaged = th.zeros_like(flat).add_(flat).mul_(1.)
+        install_flat_gradients(model, averaged)
+        if flat.is_cuda:
+            th.cuda.synchronize(flat.device)
+        return dict(gradient_pack_sec=pack_seconds, sync_sec=time.perf_counter() - started,
+                    sync_mbps=0., grad_bytes=float(flat.numel() * flat.element_size()),
+                    local_nonfinite_gradients=float(nonfinite),
+                    synchronized_nonfinite_gradients=float(nonfinite),
+                    first_local_nonfinite_parameter=first_parameter)
     pack_started = time.perf_counter()
     local_flat = pack_gradients(model)
     local_nonfinite = count_nonfinite_gradients(local_flat)

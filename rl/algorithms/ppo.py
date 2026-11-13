@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from env.core import vocab as V
 
 
-def masked_categorical_statistics(logits, actions, masks):
+def masked_categorical_statistics(logits, actions, masks, *, return_logits=False):
     """SB3 masked categorical log probability and entropy on the learner device."""
     original = logits - logits.logsumexp(dim=-1, keepdim=True)
     allowed = masks.bool().reshape_as(logits)
@@ -19,7 +19,8 @@ def masked_categorical_statistics(logits, actions, masks):
     # invalid rows to the packed learner's collective finite vote before Adam.
     valid = (~original.isnan().any() & ~log_probs.isnan().any()
              & (indices >= 0).all() & (indices < logits.shape[1]).all())
-    return selected, entropy, valid
+    result = selected, entropy, valid
+    return (*result, log_probs) if return_logits else result
 
 @dataclass(frozen=True)
 class PPOLossComponents:

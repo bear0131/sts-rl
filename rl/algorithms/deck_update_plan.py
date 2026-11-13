@@ -27,7 +27,7 @@ class _Chunk:
 
 
 class DeckUpdatePlan:
-    def __init__(self, model, reducer):
+    def __init__(self, model, reducer=None):
         self.core = model.policy.core
         self.reducer = reducer
         self.graphs = PackedHeadGraphs(self.core)
@@ -86,7 +86,9 @@ class DeckUpdatePlan:
                 screen, routes, order, int(kept.max()))
         self.chunk_count += len(chunks)
         try:
-            yield from self.reducer.schedule(chunks)
+            # A local learner has no communication to overlap. Preserve its
+            # physical chunk order without retaining deferred gradient copies.
+            yield from chunks if self.reducer is None else self.reducer.schedule(chunks)
         finally:
             self.chunks.clear()
 

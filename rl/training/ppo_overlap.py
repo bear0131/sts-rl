@@ -171,13 +171,14 @@ class EarlyUpperReduction(UpperFirstSchedule):
 
 
 def distributed_packed_epoch(model, clip_range, clip_range_vf, *, ring, synchronize, average):
-    """Use the qualified deck plan only for its FP32, pre-search training stage."""
+    """Use the FP32 deck plan for warmup and single-device anchor/search PPO."""
     from rl.algorithms.packed_ppo import packed_ppo_epoch
 
+    target = getattr(model.policy, 'combat_value_target', None)
+    stage_supported = (target == 'whole-run' and getattr(model, 'deck_search_config', None) is None
+                       or ring is None and target == 'pre-reward-anchor')
     planned = (model.ppo_update_config.get('execution') == 'deck-latent-448'
-               and model.device.type == 'cuda' and ring is not None
-               and getattr(model.policy, 'combat_value_target', None) == 'whole-run'
-               and getattr(model, 'deck_search_config', None) is None)
+               and model.device.type == 'cuda' and stage_supported)
     if not planned:
         return packed_ppo_epoch(model, clip_range, clip_range_vf, synchronize=synchronize, average=average)
 
@@ -188,18 +189,21 @@ def distributed_packed_epoch(model, clip_range, clip_range_vf, *, ring, synchron
     stream.wait_stream(previous)
     try:
         with torch.cuda.stream(stream):
-            reducer = EarlyUpperReduction(model, ring, exact_ring=True)
+            reducer = EarlyUpperReduction(model, ring, exact_ring=True) if ring is not None else None
             plan = DeckUpdatePlan(model, reducer)
             try:
-                result = packed_ppo_epoch(model, clip_range, clip_range_vf, synchronize=reducer.synchronize,
+                result = packed_ppo_epoch(model, clip_range, clip_range_vf,
+                                          synchronize=synchronize if reducer is None else reducer.synchronize,
                                           average=average, schedule_chunks=plan.schedule,
-                                          after_physical_chunk=reducer.after_physical_chunk, update_plan=plan)
+                                          after_physical_chunk=None if reducer is None else reducer.after_physical_chunk,
+                                          update_plan=plan)
                 result['planned_chunks'] = plan.chunk_count
                 result['planned_eager_retries'] = plan.eager_retries
                 result.update({'graph_' + k: v for k, v in plan.graphs.stats.items()})
                 return result
             finally:
-                reducer.close()
+                if reducer is not None:
+                    reducer.close()
                 plan.graphs.entries.clear()
     finally:
         previous.wait_stream(stream)

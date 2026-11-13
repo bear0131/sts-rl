@@ -24,20 +24,24 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
     with model.autocast_context():
         policy_obs = {k: v for k, v in observations.items() if not k.startswith('_search_')}
         masks = select(batch.action_masks)
-        if direct_masked_categorical and getattr(model, 'deck_search_config', None) is None:
+        search = getattr(model, 'deck_search_config', None) is not None
+        if direct_masked_categorical:
             actor_critic = model.policy.core.actor_critic if update_plan is None else update_plan.actor_critic
             logits, values = actor_critic(policy_obs)
-            log_prob, entropy, categorical_valid = masked_categorical_statistics(logits.float(), actions, masks)
+            statistics = masked_categorical_statistics(logits.float(), actions, masks, return_logits=search)
+            log_prob, entropy, categorical_valid = statistics[:3]
+            if search:
+                search_logits = statistics[3]
         else:
             values, log_prob, entropy = model.policy.evaluate_actions(policy_obs, actions, action_masks=masks)
+            if search:
+                search_logits = model.policy.action_dist.distribution.logits
         search_loss = None
-        if getattr(model, 'deck_search_config', None) is not None:
+        if search:
             from rl.algorithms.search_auxiliary import auxiliary_loss
-            # evaluate_actions leaves the exact masked distribution; reuse its
-            # graph rather than forwarding the large context encoder twice.
-            search_loss = auxiliary_loss(model, observations,
-                model.policy.action_dist.distribution.logits,
-                select(batch.action_masks).bool())
+            # Both paths expose SB3's exact twice-normalized masked logits.
+            # Reuse this forward and the ORIGINAL batch's searched-row scale.
+            search_loss = auxiliary_loss(model, observations, search_logits, masks.bool())
     if after_forward is not None:
         after_forward(observations)
     components = ppo_loss_components(

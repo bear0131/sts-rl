@@ -974,8 +974,8 @@ token 数按每八个一档分组，组内按精确上下文 ID 排序。牌、�
 
 FP32 DeckLatentPolicy 的 packed 配置可启用 `direct_masked_categorical`。纯 PPO
 更新在设备上按 SB3 的归一化顺序计算离散动作的 log-prob 和熵，非法输入进入
-Adam 之前的全局有限值检查。带搜索监督的更新沿用策略分布对象，以便辅助损失
-读取同一组掩码 logits。该选项随 checkpoint 保存，旧配置默认关闭。
+Adam 之前的全局有限值检查。带搜索监督时直接复用同一次前向、按同一顺序归一化的
+掩码 logits，搜索行归一化仍以原始 Adam 组为单位。该选项随 checkpoint 保存，旧配置默认关闭。
 
 使用 `SharedRolloutBuffer` 的 packed 更新可设置 `prefetch_groups`。CUDA
 学习器按原置换从主机提取下一组，在独立流上传输，消费流等待就绪后开始计算。
@@ -990,7 +990,10 @@ Adam 之前的全局有限值检查。带搜索监督的更新沿用策略分布
 从当前块复制输入，权重与 Adam 共享存储。显存不足时先释放图、重试同一块，
 仍然不足才拆块。各 rank 的更新记录 `planned_ppo` 给出实际分块、图命中和
 退避次数。每轮更新结束释放这些图；checkpoint 保存配置和分块上限。
-CPU、没有 SSH 环及进入战后锚点或搜索阶段时沿用常规 packed 更新。
+单 CUDA 学习器的预热、战后锚点和搜索阶段也使用上述计划；没有跨卡通信时按原块顺序
+计算，不建立上层梯度传输/延后队列。锚点路由仍使用独立价值头，搜索KL复用当前策略前向。
+CPU和多卡锚点/搜索仍沿用常规 packed 更新。单rank梯度在设备内物化缺失项并保留原零加/乘1
+和Adam动量语义，不再写梯度文件或经CPU往返；`grad_bytes`表示梯度向量大小，`sync_mbps=0`。
 
 Deck训练阶段配置可显式设置`anchor_start_round`，在指定已完成轮数后从预热切到
 战后锚点PPO。这是操作者决定，记录`configured-anchor-start`，不伪造准备度通过

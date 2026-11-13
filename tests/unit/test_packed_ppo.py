@@ -51,6 +51,52 @@ def test_direct_masked_categorical_matches_sb3_values_and_gradients():
     assert not masked_categorical_statistics(logits, actions, mask)[2]
 
 
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+@pytest.mark.parametrize('coefficient', [0., .1])
+def test_direct_search_update_reuses_planned_forward_and_exact_masked_loss(device, coefficient):
+    from dataclasses import asdict
+    from sb3_contrib.common.maskable.distributions import MaskableCategorical
+    from rl.algorithms.search_auxiliary import SearchTrainingConfig, prepare_search_batch
+    if device == 'cuda':
+        assert torch.cuda.is_available(), 'explicit CUDA search loss qualification required'
+    torch.manual_seed(20261113)
+    weight = torch.randn(6, 5, device=device)
+    masks = torch.tensor([[1, 0, 1, 1, 0]] * 6, device=device).bool()
+    target = torch.randn(6, 5, device=device).masked_fill(~masks, -torch.inf).log_softmax(-1)
+    batch = SimpleNamespace(observations=dict(phase=torch.full((6,1), vocab.PHASE_VOCAB_INDEX['combat'], device=device),
+        _search_valid=torch.tensor([1., 0., 1., 0., 0., 1.], device=device), _search_target=target),
+        actions=torch.tensor([0,2,3,2,0,3], device=device), action_masks=masks,
+        advantages=torch.randn(6, device=device), returns=torch.randn(6, device=device),
+        old_values=torch.randn(6, device=device), old_log_prob=torch.full((6,), -1., device=device))
+    outcomes = []
+    for direct in (False, True):
+        x = weight.clone().requires_grad_()
+        calls = []
+        def forward(obs):
+            assert not any(k.startswith('_search_') for k in obs)
+            calls.append('plan')
+            return x, x[:, :1]
+        def evaluate(obs, actions, action_masks):
+            assert not direct, 'planned search must not fall back to evaluate_actions'
+            dist = MaskableCategorical(logits=x); dist.apply_masking(action_masks)
+            policy.action_dist = SimpleNamespace(distribution=dist)
+            return x[:, :1], dist.log_prob(actions), dist.entropy()
+        policy = SimpleNamespace(evaluate_actions=evaluate)
+        model = SimpleNamespace(policy=policy, action_space=spaces.Discrete(5), autocast_context=nullcontext,
+            normalize_advantage=False, hierarchical_combat_hp=False, ent_coef=.02, vf_coef=.5,
+            deck_search_config=asdict(SearchTrainingConfig(coefficient=coefficient)))
+        prepare_search_batch(model, batch, None)
+        components, loss = ppo_forward(model, batch, .2, None, direct_masked_categorical=direct,
+                                      update_plan=SimpleNamespace(actor_critic=forward) if direct else None)
+        outcomes.append((loss.detach(), torch.autograd.grad(loss, x)[0]))
+        assert calls == (['plan'] if direct else [])
+    torch.testing.assert_close(outcomes[1][0], outcomes[0][0], atol=0, rtol=0)
+    # The toy value head aliases the logits leaf. CPU autograd can accumulate
+    # the value/PPO/KL branches in a different order (observed <= 3.8e-9).
+    # Keep the CUDA target bitwise and bound CPU error below 1e-8 absolute.
+    torch.testing.assert_close(outcomes[1][1], outcomes[0][1], atol=1e-8 if device == 'cpu' else 0, rtol=0)
+
+
 def test_compacted_combat_preserves_pad_queries_slots_and_gradients(combat_factory):
     torch.manual_seed(20261109)
     env = combat_factory(['STRIKE_RED', 'DEFEND_RED', 'BASH'],
