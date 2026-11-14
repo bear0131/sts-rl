@@ -48,6 +48,9 @@ Action OpeningAction::materialize() const {
         case Upgrade: return Actions::UpgradeRandomCardAction();
         case Toolbox: return Actions::ToolboxAction();
         case AfterCardUsed: return Actions::OnAfterCardUsed();
+        case MonsterBlock: return Actions::MonsterGainBlock(a, b);
+        case ReactiveRoll: return Actions::ReactiveRollMove(a);
+        case EndTurnOrbs: return Actions::TriggerEndOfTurnOrbsAction();
         case RedSkull: return {[](BattleContext &bc) {
             auto &player = bc.player;
             if (!player.redSkullActive && player.bloodied) {

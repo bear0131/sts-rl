@@ -398,8 +398,54 @@ def test_full480_burning_pact_pending_draw_roundtrip(combat_factory, upgrade):
     np.testing.assert_array_equal(restored.snapshot()['words'], cpu.State(bc).snapshot()['words'])
 
 
+def _full480_pending_block(env, scenario):
+    import slaythespire as sts
+    from tests.bridge_fixtures import native_card, native_card_state
+    codex = scenario == 'codex_block'
+    env.thick.gc.set_deck([('HEADBUTT', 0)] + [('STRIKE_RED', 0)] * 9)
+    env.thick.gc.set_relics(["Nilry's Codex"] if codex else [])
+    env.thick.gc.set_potion_state([])
+    encounter = {'codex_block': 'Jaw Worm', 'headbutt_block': 'Snake Plant',
+                 'headbutt_curl': 'Two Louse', 'headbutt_reactive': 'Writhing Mass'}[scenario]
+    env.thick.bc = bc = sts.create_battle(env.thick.gc, encounter)
+    bc.set_card_state(native_card_state(
+        hand=[native_card('HEADBUTT', 0)] + [native_card('STRIKE_RED', i) for i in (1, 2)],
+        draw=[native_card('STRIKE_RED', i) for i in range(3, 8)],
+        discard=[native_card('STRIKE_RED', i) for i in (8, 9)]))
+    if codex:
+        bc.set_player_status('METALLICIZE', 6)
+        bc.set_player_status('PLATED_ARMOR', 3)
+    env._invalidate_backend_cache()
+    bits = next(bits for _, bits in env._joint_policy_actions()
+                if (sts.Action(bits).action_type == sts.ActionType.END_TURN if codex else
+                    sts.Action(bits).action_type == sts.ActionType.CARD
+                    and sts.Action(bits).source_idx == 0 and sts.Action(bits).target_idx == 0))
+    action = dict((bits, action) for action, bits in env._joint_policy_actions())[bits]
+    env.step(action)
+    assert bc.select_info()['context'] == ('CODEX' if codex else 'HEADBUTT')
+
+
+@pytest.mark.parametrize('scenario', ['codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive'])
+def test_full480_pending_block_roundtrip(combat_factory, scenario):
+    import slaythespire as sts
+    from rl.search.full480.run_device import cpu_bridge
+    env = combat_factory(['STRIKE_RED'] * 10, seed=20261111,
+                         combat_action_contract='autoregressive-v2')
+    _full480_pending_block(env, scenario)
+    cpu = cpu_bridge()
+    snapshot = cpu.State(env.thick.bc).snapshot()
+    assert snapshot['input_state'] == 2 and snapshot['queue_size'] >= 2
+    assert snapshot['portable']
+    restored = cpu.State(snapshot['words'])
+    bits = restored.actions()[0]
+    restored.step(bits)
+    env.thick.bc.execute(sts.Action(bits))
+    np.testing.assert_array_equal(restored.snapshot()['words'], cpu.State(env.thick.bc).snapshot()['words'])
+
+
 @pytest.mark.parametrize('scenario,anchored', [(s, False) for s in
-    ('prefix', 'growth', 'escape', 'gamble', 'toolbox', 'armaments', 'burning_pact', 'burning_pact_up')] +
+    ('prefix', 'growth', 'escape', 'gamble', 'toolbox', 'armaments', 'burning_pact', 'burning_pact_up',
+     'codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive')] +
     [(s, True) for s in ('prefix', 'growth', 'escape', 'anchor_duplicates')])
 def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, anchored, tmp_path, monkeypatch):
     from rl.search.full480.combo_runtime import BattleArena, BattlePool
@@ -457,6 +503,8 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                     and sts.Action(bits).source_idx == slot)
         action = dict((bits, action) for action, bits in latent_env._joint_policy_actions())[bits]
         latent_env.step(action)
+    if scenario in ('codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive'):
+        _full480_pending_block(latent_env, scenario)
     policy = DeckLatentPolicy(latent_env.observation_space, latent_env.action_space,
         lambda _: 5e-5, d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
         reward_flow='sequential-v1', deck_combat_encoder='transformer64x2').cuda()
@@ -474,7 +522,8 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
         worlds = paired_worlds(20261111, len(mapping), 2 * len(mapping))
         budget = len(mapping) * len(worlds) - 1
         row = cpu.State(latent_env.thick.bc).root_plan(20261111, budget, 1., 8, False)
-        if scenario in ('gamble', 'toolbox', 'armaments', 'burning_pact', 'burning_pact_up'):
+        if scenario in ('gamble', 'toolbox', 'armaments', 'burning_pact', 'burning_pact_up',
+                        'codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive'):
             assert row['snapshot']['input_state'] == 2
             assert row['snapshot']['queue_size'] > 0
             assert row['snapshot']['portable'] and row['eligible']

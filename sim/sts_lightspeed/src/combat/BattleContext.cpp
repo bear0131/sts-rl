@@ -2201,7 +2201,7 @@ void BattleContext::callEndOfTurnActions() {
     for (const auto relic : onEndTurnRelicOrder) {
         switch (relic) {
             case R::CLOAK_CLASP:
-                addToBot(Actions::GainBlock(cards.cardsInHand));
+                addToBot(OpeningAction::create(OpeningAction::Block, cards.cardsInHand));
                 break;
             case R::FROZEN_CORE:
                 if (player.hasEmptyOrb()) player.channelOrb(Orb::FROST);
@@ -2210,10 +2210,10 @@ void BattleContext::callEndOfTurnActions() {
                 addToBot(Actions::CodexAction());
                 break;
             case R::ORICHALCUM:
-                if (player.block <= 0) addToTop(Actions::GainBlock(6));
+                if (player.block <= 0) addToTop(OpeningAction::create(OpeningAction::Block, 6));
                 break;
             case R::STONE_CALENDAR:
-                if (turn == 6) addToBot(Actions::DamageAllEnemy(52));
+                if (turn == 6) addToBot(OpeningAction::create(OpeningAction::DamageAll, 52));
                 break;
             default:
                 throw std::logic_error("unsupported relic in onPlayerEndTurn callback order");
@@ -2223,19 +2223,19 @@ void BattleContext::callEndOfTurnActions() {
     // ********************* Player Powers AtEndOfTurnPreEndTurnCards *********************
 
     if (player.hasStatus<PS::METALLICIZE>()) {
-        addToBot( Actions::GainBlock( player.getStatus<PS::METALLICIZE>()) );
+        addToBot( OpeningAction::create(OpeningAction::Block,  player.getStatus<PS::METALLICIZE>()) );
     }
 
     if (player.hasStatus<PS::PLATED_ARMOR>()) {
-        addToBot( Actions::GainBlock(player.getStatus<PS::PLATED_ARMOR>()) );
+        addToBot( OpeningAction::create(OpeningAction::Block, player.getStatus<PS::PLATED_ARMOR>()) );
     }
 
     if (player.hasStatus<PS::LIKE_WATER>() && player.stance == Stance::CALM) {
-        addToBot( Actions::GainBlock(player.getStatus<PS::LIKE_WATER>()) );
+        addToBot( OpeningAction::create(OpeningAction::Block, player.getStatus<PS::LIKE_WATER>()) );
     }
 
     if (player.orbSlots) {
-        addToBot(Actions::TriggerEndOfTurnOrbsAction());
+        addToBot(OpeningAction::create(OpeningAction::EndTurnOrbs));
     }
 
     // todo for cards in hand call triggerOnEndOfTurnForPlayingCard

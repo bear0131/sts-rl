@@ -493,7 +493,7 @@ void Monster::attackedUnblockedHelper(BattleContext &bc, int damage) {
         }});
 
     } else if (hasStatus<MS::CURL_UP>() && damage < curHp) {
-        bc.addToBot(Actions::MonsterGainBlock(this->idx, getStatus<MS::CURL_UP>()) );
+        bc.addToBot(OpeningAction::create(OpeningAction::MonsterBlock, this->idx, getStatus<MS::CURL_UP>()) );
         setHasStatus<MS::CURL_UP>(false);
 
     } else if (hasStatus<MS::FLIGHT>() && static_cast<float>(damage) / 2.0f < curHp) {
@@ -514,12 +514,12 @@ void Monster::attackedUnblockedHelper(BattleContext &bc, int damage) {
     } else if (damage < curHp && (hasStatus<MS::MALLEABLE>() || hasStatus<MS::REACTIVE>())) {
         if (hasStatus<MS::MALLEABLE>()) {
             const auto malleable = getStatus<MS::MALLEABLE>();
-            bc.addToBot( Actions::MonsterGainBlock(this->idx, malleable) );
+            bc.addToBot( OpeningAction::create(OpeningAction::MonsterBlock, this->idx, malleable) );
             setStatus<MS::MALLEABLE>(malleable+1);
         }
         if (hasStatus<MS::REACTIVE>()) {
             setStatus<MS::REACTIVE>(getStatus<MS::REACTIVE>() + 1);
-            bc.addToBot(Actions::ReactiveRollMove(idx));
+            bc.addToBot(OpeningAction::create(OpeningAction::ReactiveRoll, idx));
         }
 
     } else if (hasStatus<MS::ASLEEP>()) {
@@ -662,7 +662,7 @@ void Monster::onHpLost(BattleContext &bc, int amount) {
                     miscInfo += 10;
                     removeStatus<MS::MODE_SHIFT>();
                     setMove(MMID::THE_GUARDIAN_DEFENSIVE_MODE);
-                    bc.addToBot( Actions::MonsterGainBlock(idx, 20) );
+                    bc.addToBot( OpeningAction::create(OpeningAction::MonsterBlock, idx, 20) );
                 } else {
                     setStatus<MS::MODE_SHIFT>(newModeShiftAmount);
                 }

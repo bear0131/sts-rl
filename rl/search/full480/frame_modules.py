@@ -55,7 +55,22 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
    replacement=old.replace('Actions::DrawCards(up ? 3 : 2)', 'OpeningAction::create(OpeningAction::Draw, up ? 3 : 2)')
    assert original_text.count(old)==1 and replacement in (simulator/relative).read_text()
    target=continuation/relative;target.parent.mkdir(parents=True,exist_ok=True)
-   target.write_text(original_text.replace(old,replacement))
+   original_text=original_text.replace(old,replacement)
+   begin=original_text.index('void BattleContext::callEndOfTurnActions()')
+   end=original_text.index('void BattleContext::onTurnEnding()',begin)
+   section=original_text[begin:end]
+   section=section.replace('Actions::GainBlock(', 'OpeningAction::create(OpeningAction::Block, ')
+   section=section.replace('Actions::DamageAllEnemy(52)', 'OpeningAction::create(OpeningAction::DamageAll, 52)')
+   section=section.replace('Actions::TriggerEndOfTurnOrbsAction()', 'OpeningAction::create(OpeningAction::EndTurnOrbs)')
+   target.write_text(original_text[:begin]+section+original_text[end:])
+   continuation_sources[relative]=dict(native_sha256=digest(simulator/relative),generated_sha256=digest(target))
+   relative='src/combat/Monster.cpp'
+   original_text=(generated/relative).read_text()
+   assert original_text.count('Actions::MonsterGainBlock(')==3
+   assert original_text.count('Actions::ReactiveRollMove(idx)')==1
+   original_text=original_text.replace('Actions::MonsterGainBlock(', 'OpeningAction::create(OpeningAction::MonsterBlock, ')
+   original_text=original_text.replace('Actions::ReactiveRollMove(idx)', 'OpeningAction::create(OpeningAction::ReactiveRoll, idx)')
+   target=continuation/relative;target.write_text(original_text)
    continuation_sources[relative]=dict(native_sha256=digest(simulator/relative),generated_sha256=digest(target))
   entry=(source/filename).read_text()
   old='"/root/autodl-tmp/token-speed-r7-20261105/nine-token-speed/online480/waves/devicebudgetarena141/device_std.h"'

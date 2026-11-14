@@ -31,7 +31,8 @@ namespace sts {
     // Keep this trivially copyable and inside std::function's inline storage.
     struct OpeningAction {
         enum Kind { Unknown, Draw, Block, Energy, DamageAll, TempHand, TempDraw,
-            PlayerBuff, PlayerDebuff, EnemyDebuff, Gamble, Upgrade, Toolbox, RedSkull, AfterCardUsed };
+            PlayerBuff, PlayerDebuff, EnemyDebuff, Gamble, Upgrade, Toolbox, RedSkull, AfterCardUsed,
+            MonsterBlock, ReactiveRoll, EndTurnOrbs };
         Kind kind = Unknown;
         int a = 0, b = 0, c = 0;
         Action materialize() const;
