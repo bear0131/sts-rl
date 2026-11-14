@@ -43,10 +43,14 @@ template<class Actions> inline void prepare(const BattleContext&b,const Actions&
  // The original packer bypasses all neural inputs for a forced action.
  // Value-only consumers still require the complete observation and tokens.
  if(na==1&&!value_only){meta[i*4+3]=1;return;}
- auto packed=compact_leaf::pack<false>(b);
- for(int j=0;j<HAND+20;++j)raw[i*RAW+j]=packed.scalars[j];
- for(int j=PICK;j<RAW;++j)raw[i*RAW+j]=packed.scalars[j];
- for(int j=0;j<CAT;++j)cat[i*CAT+j]=packed.categorical[j];
+ // Use the canonical writer directly on the original frame's destination.
+ // Do not materialize and copy a second full Row in every GPU thread.
+ struct Output {int*categorical;float*scalars;int selectionCount;};
+ Output packed{cat+i*CAT,raw+i*RAW,0};
+ for(int j=0;j<HAND+20;++j)packed.scalars[j]=0.f;
+ for(int j=PICK;j<RAW;++j)packed.scalars[j]=0.f;
+ for(int j=0;j<CAT;++j)packed.categorical[j]=0;
+ compact_leaf::packInto<false>(b,packed);
  int needed=0;
  for(int j=0;j<10;++j)needed=max(needed,int(packed.scalars[HAND+2*j])+1);
  if(needed>upgrade_levels(w)[0]){

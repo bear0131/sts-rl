@@ -173,8 +173,8 @@ inline int monsterStatusValue(const sts::Monster &monster, int status) {
     }
 }
 
-template <bool IncludePileHistograms = true>
-inline Row pack(const sts::BattleContext &bc) {
+template <bool IncludePileHistograms = true, typename Output>
+inline void packInto(const sts::BattleContext &bc, Output &row) {
     if (bc.cards.cardsInHand < 0 || bc.cards.cardsInHand > kHandSlots) {
         throw std::invalid_argument("combat hand exceeds compact observation capacity");
     }
@@ -184,7 +184,6 @@ inline Row pack(const sts::BattleContext &bc) {
     if (bc.potionCapacity < 0 || bc.potionCapacity > kPotionSlots) {
         throw std::invalid_argument("potion slots exceed compact observation capacity");
     }
-    Row row;
     std::array<int, kMaxMonsters> baseDamages{};
     std::array<int, kMaxMonsters> attackCounts{};
     int c = 0;
@@ -372,6 +371,12 @@ inline Row pack(const sts::BattleContext &bc) {
     row.scalars[kFloatSize - 3] = bc.player.hasRelicRuntime(sts::RelicId::LIZARD_TAIL) ? 1.0f : 0.0f;
     row.scalars[kFloatSize - 2] = bc.postEnemyTurnBoundary ? bc.pocketwatchCardsAtBoundary : bc.player.cardsPlayedThisTurn;
     row.scalars[kFloatSize - 1] = bc.player.neowLamentRemaining;
+}
+
+template <bool IncludePileHistograms = true>
+inline Row pack(const sts::BattleContext &bc) {
+    Row row;
+    packInto<IncludePileHistograms>(bc, row);
     return row;
 }
 

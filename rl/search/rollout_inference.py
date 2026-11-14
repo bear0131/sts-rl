@@ -329,7 +329,8 @@ class _DeckConsumers:
         if self.core.map_dag_enabled and 'upper_public_context' in obs:
             ordinary = ((phases != V.PHASE_VOCAB_INDEX['combat'])
                         & (phases != V.PHASE_VOCAB_INDEX['card_select']))
-            routes[ordinary] = MERGED_UPPER_PHASE
+            if np.unique(phases[ordinary]).size > 1:
+                routes[ordinary] = MERGED_UPPER_PHASE
         anchored = np.asarray(obs['combat_exit_anchor'], bool).any(axis=1)
         logits = torch.empty((len(phases), C.AUTOREGRESSIVE_SIZE), device=self.device)
         values = torch.empty(len(phases), device=self.device)
