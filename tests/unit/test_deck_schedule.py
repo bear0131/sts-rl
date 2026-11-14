@@ -12,7 +12,7 @@ def healthy_moments():
                 wins=2., timeout=0., failed=0.)
 
 
-def test_three_validations_then_anchor_adaptation_and_qualified_search_ramp():
+def test_qualified_search_covers_all_roots_while_only_loss_weight_ramps():
     model = SimpleNamespace(policy=SimpleNamespace(core=SimpleNamespace(model_contract='deck-latent-combat-v1'),
         combat_value_target='whole-run'), policy_kwargs={})
     schedule = configure(model, asdict(DeckTrainingSchedule()))
@@ -30,10 +30,10 @@ def test_three_validations_then_anchor_adaptation_and_qualified_search_ramp():
     state = advance(state, schedule, 180, healthy_moments())
     assert state['stage'] == 'search'
     model.deck_training_state = deepcopy(state)
-    for completed, coverage, beta in ((180, .25, 0.), (190, .5, .05), (200, 1., .1)):
+    for completed, beta in ((180, 0.), (190, .05), (200, .1)):
         apply_stage(model, schedule, completed, rank=2)
         assert model.policy.combat_value_target == 'pre-reward-anchor'
-        assert model.deck_search_config['fraction'] == coverage
+        assert model.deck_search_config['fraction'] == 1.
         assert model.deck_search_config['coefficient'] == beta
     assert not check_due(state, schedule, 180)  # restart never repeats the same check
 

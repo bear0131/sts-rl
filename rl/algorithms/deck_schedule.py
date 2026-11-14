@@ -108,8 +108,9 @@ def apply_stage(model, schedule, completed_rounds, *, rank=0):
         if not schedule.search_qualified:
             raise ValueError('a search-stage checkpoint cannot resume on an unqualified backend')
         progress = min(1., max(0., (completed_rounds - state['stage_start']) / schedule.ramp_rounds))
-        fraction = .25 + .5 * progress if progress <= .5 else progress
-        model.deck_search_config = asdict(SearchTrainingConfig(fraction=fraction, coefficient=.1 * progress,
+        # Search covers every eligible root from the first search-stage startup;
+        # only its auxiliary loss weight continues the checkpointed ramp.
+        model.deck_search_config = asdict(SearchTrainingConfig(fraction=1., coefficient=.1 * progress,
             target_std=state['validation']['target_std'], seed=20261111 + 1_000_003 * rank,
             backend=schedule.search_backend, cuda_artifacts=schedule.search_cuda_artifacts,
             cuda_wave_capacity=schedule.search_cuda_wave_capacity,
