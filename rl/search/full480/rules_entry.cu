@@ -23,6 +23,53 @@
 
 #include "small_redeterminize.cuh"
 constexpr int POLICY_STATS=12;
+#ifdef STS_FULL480_DECK
+namespace paired_pcg {
+inline unsigned long long next(unsigned long long*s){
+ const unsigned long long lo=s[0],hi=s[1],ml=0x4385df649fccf645ull,mh=0x2360ed051fc65da4ull;
+ const unsigned long long product=lo*ml,next=product+s[2];
+ s[0]=next;s[1]=hi*ml+lo*mh+__umul64hi(lo,ml)+s[3]+(next<product);
+ const unsigned long long x=s[1]^s[0];const unsigned r=s[1]>>58;
+ return (x>>r)|(x<<((-r)&63));
+}
+inline double uniform(unsigned long long*s){return double(next(s)>>11)*0x1.0p-53;}
+}
+namespace deck_chain {
+__noinline__ bool execute(unsigned bits,sts::BattleContext&s,int&prefix){
+ const sts::search::Action action(bits);
+ if(action.getActionType()==sts::search::kSelectNext){prefix|=1<<action.getSourceIdx();return false;}
+ if(action.getActionType()==sts::search::kSelectStop)sts::search::Action(sts::search::ActionType::MULTI_CARD_SELECT,prefix).execute(s);
+ else action.execute(s);
+ prefix=0;return true;
+}
+inline void permanent_card(const sts::CardInstance&c,unsigned long long*out){
+ if(c.id==sts::CardId::RITUAL_DAGGER&&c.uniqueId>=0&&c.uniqueId<sts::Deck::MAX_SIZE)out[c.uniqueId]=static_cast<unsigned>(c.specialData);
+}
+__noinline__ void permanent_state(const sts::BattleContext&s,unsigned long long*out){
+ for(int j=0;j<sts::Deck::MAX_SIZE;++j)out[j]=~0ull;
+ for(const auto&c:s.cards.drawPile)permanent_card(c,out);
+ for(const auto&c:s.cards.discardPile)permanent_card(c,out);
+ for(const auto&c:s.cards.exhaustPile)permanent_card(c,out);
+ for(int j=0;j<s.cards.cardsInHand;++j)permanent_card(s.cards.hand[j],out);
+}
+inline void context_changed(const sts::BattleContext&s,int i,int root,unsigned long long*previous,int*dirty,const int*enabled){
+ if(!enabled[root])return;
+ unsigned long long current[sts::Deck::MAX_SIZE];permanent_state(s,current);
+ for(int j=0;j<sts::Deck::MAX_SIZE;++j){auto&old=previous[i*sts::Deck::MAX_SIZE+j];if(old!=current[j]){old=current[j];dirty[i]=1;}}
+}
+}
+extern "C" __global__ void paired_pcg_probe(unsigned long long*state,unsigned long long*out,int count,int draws){
+ int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=count)return;
+ for(int j=0;j<draws;++j)out[i*draws+j]=paired_pcg::next(state+i*4);
+}
+#define DECK_START const unsigned long long*paired_words,unsigned long long*pcg,int*prefix,const int*root_prefix,unsigned long long*context_hash,int*context_dirty,const int*context_roots,
+#define DECK_STEP unsigned long long*pcg,int*prefix,unsigned long long*context_hash,int*context_dirty,const int*context_roots,
+#define DECK_DYNAMIC ,unsigned long long*pcg,int*prefix,unsigned long long*context_hash,int*context_dirty,const int*context_roots
+#else
+#define DECK_START
+#define DECK_STEP
+#define DECK_DYNAMIC
+#endif
 namespace mirror_semantics {
 using namespace sts;using namespace sts::search;
 struct StrongPublicHash {
@@ -243,6 +290,18 @@ namespace finite_search {
 inline double quiet_nan(){union{unsigned long long bits;double value;}v;v.bits=0x7ff8000000000000ull;return v.value;}
 inline void finish(const sts::BattleContext&s,unsigned long long*st,int&alive,int&outcome,double&value,int boss,int maximum,int limit){
  outcome=int(s.outcome);
+#ifdef STS_FULL480_DECK
+ value=quiet_nan();
+ if(s.outcome!=sts::Outcome::UNDECIDED){
+  alive=0;
+  if(s.outcome==sts::Outcome::PLAYER_VICTORY)st[3]=1;
+  else if(s.outcome==sts::Outcome::PLAYER_LOSS){st[4]=1;value=0.;}
+  else if(s.outcome==sts::Outcome::PLAYER_ESCAPE)st[9]=1;
+  else device_state::require(false);
+ }else if(st[7]>=static_cast<unsigned long long>(limit)){alive=0;outcome=4;st[5]=1;}
+ else alive=1;
+ return;
+#endif
  if(s.outcome!=sts::Outcome::UNDECIDED){
   alive=0;value=boss?(s.outcome==sts::Outcome::PLAYER_VICTORY?1.:0.):double(std::max(0,s.player.curHp))/double(maximum);
   if(s.outcome==sts::Outcome::PLAYER_VICTORY)st[3]=1;
@@ -387,7 +446,7 @@ extern "C" __global__ void packed_clear(unsigned char*arena,int*constructed,int*
 extern "C" __global__ void packed_start(unsigned char*roots,unsigned char*arena,int*root_ids,unsigned long long*job_generation,
  unsigned long long*root_generation,unsigned long long*root_nonce,int*budgets,int*action_counts,unsigned*ordered_bits,
  unsigned long long*stats,int*constructed,int*alive,unsigned long long*world_seeds,unsigned long long*policy_seeds,unsigned*initial_bits,
- int count,int budget_cap,int action_cap){
+ DECK_START int count,int budget_cap,int action_cap){
  int k=blockIdx.x*blockDim.x+threadIdx.x;if(k>=count*budget_cap)return;
  int r=root_ids[k/budget_cap],j=k%budget_cap,i=r*budget_cap+j;
  device_state::require(!constructed[i]&&!alive[i]);
@@ -397,18 +456,39 @@ extern "C" __global__ void packed_start(unsigned char*roots,unsigned char*arena,
  auto&s=*new(packed_address(arena,i))sts::BattleContext(root);constructed[i]=1;alive[i]=1;
  auto*st=stats+i*POLICY_STATS;for(int x=0;x<POLICY_STATS;++x)st[x]=0;
  job_generation[i]=root_generation[r];
+#ifdef STS_FULL480_DECK
+ const auto*world=paired_words+(r*budget_cap+j/na)*5;const auto seed=world[0];
+ for(int k=0;k<4;++k)pcg[i*4+k]=world[1+k];prefix[i]=root_prefix[r];
+ context_dirty[i]=0;if(context_roots[r])deck_chain::permanent_state(root,context_hash+i*sts::Deck::MAX_SIZE);
+ world_seeds[i]=seed;policy_seeds[i]=seed^0x504F4C494359ull;initial_bits[i]=ordered_bits[r*action_cap+j%na];
+ sts::search::noslRedeterminize(s,seed);
+#else
  unsigned long long seed=sts::search::noslMix(sts::search::noslMix(root_nonce[r])+static_cast<unsigned long long>(j/na));
  world_seeds[i]=seed;policy_seeds[i]=sts::search::noslMix(seed^0x504149524544ull);initial_bits[i]=ordered_bits[r*action_cap+j%na];
  sts::search::smallRedeterminize(s,seed);
+#endif
 }
 
 extern "C" __global__ void packed_begin(unsigned char*arena,int*root_ids,int*budgets,unsigned*initial_bits,unsigned long long*stats,
- int*alive,int*outcomes,double*values,int*root_boss,int*root_maximum,int*root_limits,int*root_done,unsigned long long*ordered_semantic,int*action_counts,unsigned*root_executed,int count,int budget_cap,int action_cap){
+ int*alive,int*outcomes,double*values,int*root_boss,int*root_maximum,int*root_limits,int*root_done,unsigned long long*ordered_semantic,int*action_counts,unsigned*root_executed,DECK_STEP int count,int budget_cap,int action_cap){
  int k=blockIdx.x*blockDim.x+threadIdx.x;if(k>=count*budget_cap)return;int r=root_ids[k/budget_cap],j=k%budget_cap;
  if(j>=budgets[r])return;int i=r*budget_cap+j;
  auto&s=*reinterpret_cast<sts::BattleContext*>(packed_address(arena,i));auto*st=stats+i*POLICY_STATS;
- const unsigned bits=battle_actions::resolve(s,initial_bits[i],ordered_semantic[r*action_cap+j%action_counts[r]]);
- root_executed[i]=bits;sts::search::Action(bits).execute(s);
+ unsigned bits=initial_bits[i];
+#ifdef STS_FULL480_DECK
+ if((bits>>29)>=5)device_state::require(sts::search::validAutoregressiveAction(sts::search::Action(bits),s,prefix[i]));
+ else bits=battle_actions::resolve(s,bits,ordered_semantic[r*action_cap+j%action_counts[r]]);
+#else
+ bits=battle_actions::resolve(s,bits,ordered_semantic[r*action_cap+j%action_counts[r]]);
+#endif
+ root_executed[i]=bits;
+#ifdef STS_FULL480_DECK
+ if(!deck_chain::execute(bits,s,prefix[i]))++st[11];
+ deck_chain::context_changed(s,i,r,context_hash,context_dirty,context_roots);
+ st[7]=1;
+#else
+ sts::search::Action(bits).execute(s);
+#endif
  stream_search::finish(s,st,alive[i],outcomes[i],values[i],root_boss[r],root_maximum[r],root_limits[r],root_done+r);
 }
 
@@ -428,15 +508,19 @@ extern "C" __global__ void packed_destroy(unsigned char*arena,int*constructed,in
 
 extern "C" __global__ void packed_apply(unsigned char*arena,int*live,int*job_roots,float*score,unsigned*bits,int*meta,
  unsigned long long*policy_seeds,double*temperatures,unsigned long long*stats,int*alive,int*outcomes,double*values,
- unsigned*chosen,double*draws,int*root_boss,int*root_maximum,int*root_limits,unsigned long long*job_generation,unsigned long long*root_generation,int*root_done,int count,int base){
+ unsigned*chosen,double*draws,int*root_boss,int*root_maximum,int*root_limits,unsigned long long*job_generation,unsigned long long*root_generation,int*root_done,DECK_STEP int count,int base){
  int row=blockIdx.x*blockDim.x+threadIdx.x;if(row>=count)return;int i=live[base+row],root=job_roots[i];
  device_state::require(job_generation[i]==root_generation[root]);
  auto&s=*reinterpret_cast<sts::BattleContext*>(packed_address(arena,i));auto*st=stats+i*POLICY_STATS;
  int na=meta[row*4],start=meta[row*4+2];device_state::require(meta[row*4+3]&&na>0&&na<=2048&&alive[i]&&s.outcome==sts::Outcome::UNDECIDED);
  int pick=0;draws[i]=-1.;
  if(na>1){
+#ifdef STS_FULL480_DECK
+  double u=paired_pcg::uniform(pcg+i*4);draws[i]=u;
+#else
   auto random=sts::search::noslMix(policy_seeds[i]+0x9e3779b97f4a7c15ull*st[1]);
   double u=double(random>>11)*0x1.0p-53;draws[i]=u;
+#endif
   auto*x=score+start;float high=x[0];for(int a=1;a<na;++a)high=high>x[a]?high:x[a];
   double temperature=temperatures[root];device_state::require(temperature>0&&isfinite(temperature));
   double sum=0;for(int a=0;a<na;++a)sum+=exp((double(x[a])-double(high))/temperature);
@@ -444,7 +528,13 @@ extern "C" __global__ void packed_apply(unsigned char*arena,int*live,int*job_roo
   for(int a=0;a<na;++a){acc+=exp((double(x[a])-double(high))/temperature);if(threshold<acc){pick=a;break;}}
   st[10]+=na;
  }
- chosen[i]=bits[start+pick];sts::search::Action(chosen[i]).execute(s);
+ chosen[i]=bits[start+pick];
+#ifdef STS_FULL480_DECK
+ if(!deck_chain::execute(chosen[i],s,prefix[i]))++st[11];
+ deck_chain::context_changed(s,i,root,context_hash,context_dirty,context_roots);
+#else
+ sts::search::Action(chosen[i]).execute(s);
+#endif
  ++st[0];++st[na>1?1:2];++st[7];st[8]=st[8]>static_cast<unsigned long long>(na)?st[8]:na;
  stream_search::finish(s,st,alive[i],outcomes[i],values[i],root_boss[root],root_maximum[root],root_limits[root],root_done+root);
 }
@@ -454,7 +544,7 @@ extern "C" __global__ void packed_apply(unsigned char*arena,int*live,int*job_roo
 
 extern "C" __global__ void packed_apply_dynamic(unsigned char*arena,int*live,int*job_roots,float*score,unsigned*bits,int*meta,
  unsigned long long*policy_seeds,double*temperatures,unsigned long long*stats,int*alive,int*outcomes,double*values,
- unsigned*chosen,double*draws,int*root_boss,int*root_maximum,int*root_limits,unsigned long long*job_generation,unsigned long long*root_generation,int*root_done,int*dispatch,int*summary,long long*control){
+ unsigned*chosen,double*draws,int*root_boss,int*root_maximum,int*root_limits,unsigned long long*job_generation,unsigned long long*root_generation,int*root_done,int*dispatch,int*summary,long long*control DECK_DYNAMIC){
  if(!control[2]||control[3]||summary[2])return;const int count=dispatch[0],base=0;
  int row=blockIdx.x*blockDim.x+threadIdx.x;if(row>=count)return;int i=live[base+row],root=job_roots[i];
  device_state::require(job_generation[i]==root_generation[root]);
@@ -462,8 +552,12 @@ extern "C" __global__ void packed_apply_dynamic(unsigned char*arena,int*live,int
  int na=meta[row*4],start=meta[row*4+2];device_state::require(meta[row*4+3]&&na>0&&na<=2048&&alive[i]&&s.outcome==sts::Outcome::UNDECIDED);
  int pick=0;draws[i]=-1.;
  if(na>1){
+#ifdef STS_FULL480_DECK
+  double u=paired_pcg::uniform(pcg+i*4);draws[i]=u;
+#else
   auto random=sts::search::noslMix(policy_seeds[i]+0x9e3779b97f4a7c15ull*st[1]);
   double u=double(random>>11)*0x1.0p-53;draws[i]=u;
+#endif
   auto*x=score+start;float high=x[0];for(int a=1;a<na;++a)high=high>x[a]?high:x[a];
   double temperature=temperatures[root];device_state::require(temperature>0&&isfinite(temperature));
   double sum=0;for(int a=0;a<na;++a)sum+=exp((double(x[a])-double(high))/temperature);
@@ -471,7 +565,13 @@ extern "C" __global__ void packed_apply_dynamic(unsigned char*arena,int*live,int
   for(int a=0;a<na;++a){acc+=exp((double(x[a])-double(high))/temperature);if(threshold<acc){pick=a;break;}}
   st[10]+=na;
  }
- chosen[i]=bits[start+pick];sts::search::Action(chosen[i]).execute(s);
+ chosen[i]=bits[start+pick];
+#ifdef STS_FULL480_DECK
+ if(!deck_chain::execute(chosen[i],s,prefix[i]))++st[11];
+ deck_chain::context_changed(s,i,root,context_hash,context_dirty,context_roots);
+#else
+ sts::search::Action(chosen[i]).execute(s);
+#endif
  ++st[0];++st[na>1?1:2];++st[7];st[8]=st[8]>static_cast<unsigned long long>(na)?st[8]:na;
  stream_search::finish(s,st,alive[i],outcomes[i],values[i],root_boss[root],root_maximum[root],root_limits[root],root_done+root);
 }

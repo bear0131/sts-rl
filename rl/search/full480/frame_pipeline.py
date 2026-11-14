@@ -16,6 +16,7 @@ class FramePipeline:
   self.requested_cq=triton.next_power_of_2(query_capacity or self.F*8)
   self.graph=None;self.buffers={};self.key=None;self.bound=();self.capacity=(0,0,self.F)
   self.counts=collections.Counter();self.closed=False;self.history=[]
+  self.leaf_inference=None;self.owns_leaf_inference=False
  def signature(self):
   if self.pool.deck_consumer:self.pool.flat.validate();self.pool.flat.input_tables.validate()
   result=[]
@@ -30,7 +31,7 @@ class FramePipeline:
   p=self.pool
   result=(p.arena,p.deck,p.state,p.bits,p.actions,p.keys,p.source_rows,p.targets,p.ids,p.zones,p.monsters,p.numbers,p.meta,p.chunks,p.allocator,
    *p.inv,p.inv_slots,p.symbols,p.counts,p.canonical_sources,p.canonical_targets,p.entity_slots,p.extra_slots,p.token_order,p.query_order,p.query_map,p.input_map,p.geometry,p.scores)
-  if p.deck_consumer:result+=(p.selection_prefix,p.flat.input_tables.bindings,p.root_inputs,p.root_relics,p.root_counters,*p.flat.tensors())
+  if p.deck_consumer:result+=(p.selection_prefix,p.flat.input_tables.bindings,p.root_inputs,p.root_relics,p.root_counters,p.chain_inputs,p.value_mode,*p.flat.tensors())
   return result
  def fingerprint(self):
   p=self.pool
@@ -67,7 +68,7 @@ class FramePipeline:
   observer_args=[p.arena,w['worlds'],w['live'],p.deck,p.state,p.bits,p.actions,p.keys,p.source_rows,p.targets,
    p.ids,p.zones,p.monsters,p.numbers,p.meta,p.chunks,p.allocator,w['dispatch']]
   if p.deck_consumer:
-   observer_args+=[p.selection_prefix,p.flat.input_tables.bindings,w['raw'],w['cat'],w['legal'],w['selected'],w['remaining'],p.root_inputs,p.root_relics,p.root_counters]
+   observer_args+=[p.selection_prefix,p.flat.input_tables.bindings,w['raw'],w['cat'],w['legal'],w['selected'],w['remaining'],p.root_inputs,p.root_relics,p.root_counters,p.chain_inputs,p.value_mode]
   shape=[0,p.m,p.action_cap,p.entity_cap]
   self.modules.launch('frame_observe_special',observer_args,shape,triton.cdiv(F,32))
   self.modules.launch('normal_prepare',observer_args+[w['normal_rows']],shape,triton.cdiv(F,32))
@@ -82,15 +83,17 @@ class FramePipeline:
   self.modules.launch('packed_finalize',[p.allocator,w['totals'],w['dispatch'],m['counts'],w['summary']],[],1)
   self.model.execute()
  @torch.inference_mode()
- def run(self,base,count):
+ def run(self,base,count,*,selected=None,worlds=None,value_only=False):
   assert not self.closed and 0<count<=self.F
   p=self.pool
   if p.deck_consumer:p.flat.validate();p.flat.input_tables.validate()
+  if p.deck_consumer:p.value_mode.fill_(int(value_only))
   for attempt in range(8):
    key=self.fingerprint()
    if key!=self.key:self.allocate(key)
    w=self.buffers
-   w['live'][:count].copy_(p.live[base:base+count]);w['worlds'][:count].copy_(p.logical_ids[base:base+count])
+   w['live'][:count].copy_(p.live[base:base+count] if selected is None else selected)
+   w['worlds'][:count].copy_(p.logical_ids[base:base+count] if worlds is None else worlds)
    w['dispatch'].fill_(count)
    if self.graph is None:
     self.execute();torch.cuda.synchronize()
@@ -117,6 +120,58 @@ class FramePipeline:
    if nq>self.requested_cq:self.requested_cq=triton.next_power_of_2(nq)
    assert not flags&48 or nt>0 or nq>0
   raise RuntimeError('Frame graph overflow retry budget exhausted')
+ def completion_inference(self):
+  if self.leaf_inference is None:
+   self.leaf_inference=getattr(self.pool.flat,'inference',None)
+   if self.leaf_inference is None:
+    from rl.search.rollout_inference import UpperPolicyInference
+    self.leaf_inference=UpperPolicyInference(self.pool.flat.core,'cuda');self.owns_leaf_inference=True
+  return self.leaf_inference
+ @torch.inference_mode()
+ def refresh_contexts(self):
+  p=self.pool
+  if not p.dynamic_context_roots:return
+  selected=torch.nonzero(p.context_dirty,as_tuple=False).flatten().to(torch.int32)
+  count=len(selected)
+  if not count:return
+  owners=p.job_roots[selected.long()];roots=owners.cpu().tolist()
+  width=p.root_misc.shape[1];misc=p.arr((count,width),torch.float32)
+  self.modules.launch('deck_context_misc',[p.arena,selected,owners,p.root_misc,misc],[count,width],triton.cdiv(count,32))
+  data={key:np.stack([p.bank[r]['observation'][key] for r in roots]) for key in p.flat.core.context.keys}
+  data['outer_deck_misc']=misc.cpu().numpy()
+  context=self.completion_inference().search_context(data)
+  index=selected.long()
+  p.chain_inputs[index,:64]=context.combat;p.chain_anchor[index]=context.anchor;p.context_dirty[index]=0
+  self.counts['context_refresh_rows']+=count
+ @torch.inference_mode()
+ def complete(self,handles):
+  """Score finished owned states before the original completion retires pages."""
+  p=self.pool;self.refresh_contexts()
+  jobs=np.concatenate([h.slot*p.budget_cap+np.arange(p.bank[h.slot]['budget'],dtype=np.int32) for h in handles])
+  index=p.upload(jobs,np.int32);outcomes=p.outcomes[index.long()].cpu().numpy()
+  assert np.isin(outcomes,[1,2,3,4]).all(),outcomes
+  for start in range(0,len(jobs),self.F):
+   selected_jobs=jobs[start:start+self.F];kind=outcomes[start:start+self.F]
+   cut=selected_jobs[kind==4]
+   if len(cut):
+    selected=p.upload(cut,np.int32);owners=p.job_roots[selected.long()]
+    self.run(0,len(cut),selected=selected,worlds=owners,value_only=True)
+    values=self.model.buffers['coef'][:len(cut),12].clone()
+    assert bool(torch.isfinite(values).all())
+    p.values[selected.long()]=values.double();self.counts['cutoff_value_rows']+=len(cut)
+   anchors=selected_jobs[(kind==1)|(kind==3)]
+   if len(anchors):
+    selected=p.upload(anchors,np.int32);owners=p.job_roots[selected.long()];roots=owners.cpu().tolist()
+    R=p.root_relics.shape[1];dynamic=p.arr((len(anchors),10+R),torch.float32)
+    self.modules.launch('deck_anchor_inputs',[p.arena,selected,owners,p.flat.input_tables.bindings,p.root_relics,p.root_counters,dynamic],[len(anchors)],triton.cdiv(len(anchors),32))
+    d=dynamic.cpu().numpy()
+    data=dict(player_scalars=d[:,:2],potions=d[:,2:7].astype(np.int64),gold=d[:,7:8],combat_exit_anchor=d[:,8:10],relic_counters=d[:,10:],
+     relics=np.stack([p.bank[r]['relics'] for r in roots]),run_keys=np.stack([p.bank[r]['observation']['run_keys'] for r in roots]))
+    context=p.chain_anchor[selected.long()].cpu().numpy()
+    values=self.completion_inference().anchor_values(data,context)
+    assert np.isfinite(values).all()
+    p.values[selected.long()]=p.upload(values,np.float64);self.counts['anchor_value_rows']+=len(anchors)
+  assert bool(torch.isfinite(p.values[index.long()]).all())
  def statistics(self):
   return dict(self.counts,cached=int(self.graph is not None),capacity=list(self.capacity),closed=self.closed,
    kernels=self.model.kernel_metadata,workspace_bytes=self.model.workspace_bytes(self.buffers.values()),workspace_alias_version=1,
@@ -124,4 +179,6 @@ class FramePipeline:
    overflow_history=self.history,modules_closed=self.modules.closed,identity=self.modules.identity)
  def close(self):
   if self.closed:return
-  self.release();self.model.close();self.modules.close();self.closed=True
+  self.release();self.model.close();self.modules.close()
+  if self.owns_leaf_inference:self.leaf_inference.__exit__(None,None,None)
+  self.leaf_inference=None;self.closed=True

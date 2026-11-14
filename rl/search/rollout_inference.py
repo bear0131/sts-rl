@@ -103,6 +103,13 @@ class UpperPolicyInference:
         return SearchContext(torch.as_tensor(combat, device=self.device),
                              torch.as_tensor(anchor, device=self.device))
 
+    def anchor_values(self, observations, projected_context):
+        """Completion consumers reuse the exact anchor cache and static projection."""
+        if self.closed or self.deck is None:
+            raise RuntimeError('anchor values require an open deck consumer')
+        self.deck._check_weights()
+        return self.deck.anchor_values(dict(observations, _anchor_context=projected_context))
+
 
 class ExactInputCache:
     def __init__(self, max_bytes):
@@ -307,23 +314,28 @@ class _DeckConsumers:
                              _observed_width(data['relics']), _observed_width(required))
                 index = torch.as_tensor(rows, device=self.device)
                 if at_anchor:
-                    keys = ('player_scalars', 'potions', 'relics', 'relic_counters',
-                            '_anchor_context', *self.core.anchor.dynamic_keys)
-                    inputs = {k: data[k] for k in keys}
-                    inputs['player_scalars'] = inputs['player_scalars'][:, :2]
-                    def score_anchor(missing):
-                        out, value = self._forward(self.head, self.head_graphs, missing,
-                                                  (int(phase), True, 0, 0, 0))
-                        if isinstance(value, torch.Tensor):
-                            out, value = out.cpu().numpy(), value.cpu().numpy()
-                        return out, value
-                    _, value = self.anchor_cache.forward(inputs, score_anchor)
+                    value = self.anchor_values(data)
                     logits[index] = 0
                 else:
                     out, value = self._forward(self.head, self.head_graphs, data, signature)
                     logits[index] = torch.as_tensor(out, device=self.device)
                 values[index] = torch.as_tensor(value, device=self.device)
         return logits, values[:, None]
+
+    def anchor_values(self, data):
+        from env.core import vocab as V
+        keys = ('player_scalars', 'potions', 'relics', 'relic_counters',
+                '_anchor_context', *self.core.anchor.dynamic_keys)
+        inputs = {k: np.asarray(data[k]) for k in keys}
+        inputs['player_scalars'] = inputs['player_scalars'][:, :2]
+        def score_anchor(missing):
+            out, value = self._forward(self.head, self.head_graphs, missing,
+                                      (V.PHASE_VOCAB_INDEX['combat'], True, 0, 0, 0))
+            if isinstance(value, torch.Tensor):
+                out, value = out.cpu().numpy(), value.cpu().numpy()
+            return out, value
+        _, value = self.anchor_cache.forward(inputs, score_anchor)
+        return value
 
     def statistics(self):
         stats = {f'context_cache_{key}': value for key, value in self.cache.stats.items()}

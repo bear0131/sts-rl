@@ -11,7 +11,7 @@ class DeckWeights:
  precision='tf32x3'
  def __init__(self,core):
   if core.combat_encoder!='transformer64x2':raise ValueError('full480 requires transformer64x2')
-  self.net=core.combat;self.version=None;self.refresh()
+  self.core=core;self.net=core.combat;self.version=None;self.refresh()
  @torch.no_grad()
  def refresh(self):
   n=self.net

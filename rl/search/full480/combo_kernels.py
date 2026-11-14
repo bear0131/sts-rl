@@ -155,7 +155,7 @@ def deck_global(TOKEN,STARTS,MAP,META,W,BIAS,Z,COUNTS):
  weight=tl.load(W+cols[None,:]*64+d[:,None],cols[None,:]<225,0.)
  for block in range(tl.program_id(0),tl.cdiv(n,16),tl.num_programs(0)):
   rows=block*16+tl.arange(0,16);live=rows<n
-  live=live&(tl.load(META+rows*4,live,0)>1)
+  live=live&((tl.load(META+rows*4,live,0)>1)|(tl.load(META+rows*4+3,live,0)==2))
   base=tl.load(STARTS+rows*4+1,live,0)+tl.load(MAP+rows*161,live,0)
   x=tl.load(TOKEN+base[:,None]*288+d[None,:],live[:,None],0.)
   y=tl.dot(x,weight,input_precision='tf32x3')+tl.load(BIAS+cols,cols<225,0.)[None,:]
@@ -166,7 +166,7 @@ def deck_global(TOKEN,STARTS,MAP,META,W,BIAS,Z,COUNTS):
 def deck_subset(TOKEN,STARTS,MAP,META,Z,LEGAL,SELECTED,REMAIN,PREFIX,KEY,STOP,STOPBIAS,COMPLETIONS,VW,VB,OUT,COUNTS):
  n=tl.load(COUNTS+4);d=tl.arange(0,32);h=tl.arange(0,16);vd=tl.arange(0,64)
  for sid in range(tl.program_id(0),n,tl.num_programs(0)):
-  if tl.load(META+sid*4)>1:
+  if (tl.load(META+sid*4)>1)|(tl.load(META+sid*4+3)==2):
    base=tl.load(STARTS+sid*4+1)
    indices=tl.load(MAP+sid*161+1+h,h<10,-1)
    hand=tl.load(TOKEN+(base+indices[:,None])*288+256+d[None,:],(h[:,None]<10)&(indices[:,None]>=0),0.)

@@ -45,6 +45,16 @@ class StreamingPool(ScoringPool):
   if self.deck_consumer:
    inputs=self.flat.input_tables;R=inputs.defines['RELIC_WIDTH']
    self.selection_prefix=arr((self.n,)).zero_()
+   self.root_prefix=arr((self.m,)).zero_()
+   self.paired_words=arr((self.m,self.budget_cap,5),torch.int64)
+   self.pcg=arr((self.n,4),torch.int64)
+   self.context_hash=arr((self.n,inputs.prototypes['outer_deck_misc'].shape[0]),torch.int64)
+   self.context_dirty=arr((self.n,)).zero_();self.context_roots=arr((self.m,)).zero_()
+   self.chain_inputs=arr((self.n,68),torch.float32)
+   self.chain_anchor=arr((self.n,256),torch.float32)
+   self.root_misc=arr((self.m,inputs.prototypes['outer_deck_misc'].shape[0]),torch.float32)
+   self.value_mode=arr((1,)).zero_()
+   self.dynamic_context_roots=set()
    self.root_inputs=arr((self.m,68),torch.float32)
    self.root_relics=arr((self.m,R));self.root_counters=arr((self.m,R),torch.float32)
   self.roots=arr((self.m,self.layout),torch.uint8);self.arena=arr((self.n,),torch.int64).zero_()
@@ -74,6 +84,9 @@ class StreamingPool(ScoringPool):
   if name in packed:
    arena_index=1 if name=='stream_start' else 0
    if tensors[arena_index] is self.arena:name='packed_'+name[len('stream_'):]
+  if self.deck_consumer:
+   if name=='packed_start':tensors=tensors+[self.paired_words,self.pcg,self.selection_prefix,self.root_prefix,self.context_hash,self.context_dirty,self.context_roots]
+   elif name in ('packed_begin','packed_apply','packed_apply_dynamic'):tensors=tensors+[self.pcg,self.selection_prefix,self.context_hash,self.context_dirty,self.context_roots]
   return ScoringPool.launch(self,name,tensors,ints,wide,grid)
  def prepare_pages(self,handles,rows):
   assert all(h.slot not in self.page_leases for h in handles)
@@ -177,6 +190,7 @@ class StreamingPool(ScoringPool):
    b=self.bank[h.slot]['budget'];assert 0<=done[h.slot]<=b
    if done[h.slot]==b:handles.append(h)
   if not handles:return {}
+  if self.deck_consumer:self.frame_pipeline.complete(handles)
   indices=self.upload([h.slot for h in handles],np.int64)
   stats=self.stats.view(self.m,self.budget_cap,STAT)[indices].cpu().numpy().view(np.uint64)
   values=self.values.view(self.m,self.budget_cap)[indices].cpu().numpy()
@@ -187,9 +201,10 @@ class StreamingPool(ScoringPool):
    plan=dict(root=np.zeros(b,np.int32),action_index=np.asarray(r['order'],np.int32)[np.arange(b)%na])
    result=aggregate([r],plan,values[k,:b],outcomes[k,:b],stats[k,:b])[0]
    result['root_generation']=h.generation;result['root_slot']=h.slot
-   assert result['actual_transitions']-b==result['nonforced_decisions']+result['forced_actions']
+   assert result.get('atomic_decisions',result['actual_transitions'])-b==result['nonforced_decisions']+result['forced_actions']
    self.completed_counts.update(roots=1,simulations=b,actual_transitions=result['actual_transitions'],nonforced=result['nonforced_decisions'],forced=result['forced_actions'],cuts=result['depth_cuts'])
    output[h.key]=result;self.ledger.release(h);self.bank[h.slot]=None
+   if self.deck_consumer:self.dynamic_context_roots.discard(h.slot)
   self.retire_roots(output)
   return output
  def receive(self,steps=1):

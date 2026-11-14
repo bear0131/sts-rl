@@ -22,7 +22,7 @@
 #include "bridge_common.h"
 #ifdef STS_FULL480_DECK
 #include "deck_inputs.cuh"
-#define DECK_EXTRA const int*prefixes,const unsigned long long*weights,float*raw,int*cat,int*legal_mask,float*selected,int*remaining,const float*root_inputs,const int*root_relics,const float*root_counters,
+#define DECK_EXTRA const int*prefixes,const unsigned long long*weights,float*raw,int*cat,int*legal_mask,float*selected,int*remaining,const float*root_inputs,const int*root_relics,const float*root_counters,const float*chain_inputs,const int*value_mode,
 #else
 #define DECK_EXTRA
 #endif
@@ -336,6 +336,7 @@ extern "C" __global__ void frame_observe_special(unsigned char*arena,int*worlds,
 #ifdef STS_FULL480_DECK
  auto deck_actions=sts::search::autoregressiveActions(b,prefixes[live[base+i]]);
  deck_input::prepare(b,deck_actions,i,prefixes[live[base+i]],bits,keys,source_rows,targets,ids,zones,monsters,meta,chunks,allocator,action_capacity,entity_capacity,raw,cat,legal_mask,selected,remaining);
+ if(*value_mode&&meta[i*4+3])meta[i*4+3]=2;
  return;
 #endif
 
@@ -428,6 +429,7 @@ extern "C" __global__ void normal_prepare(unsigned char*arena,int*worlds,int*liv
 #ifdef STS_FULL480_DECK
  auto deck_actions=sts::search::normal_legal(b);
  deck_input::prepare(b,deck_actions,i,prefixes[live[base+i]],bits,keys,source_rows,targets,ids,zones,monsters,meta,chunks,allocator,action_capacity,entity_capacity,raw,cat,legal_mask,selected,remaining);
+ if(*value_mode&&meta[i*4+3])meta[i*4+3]=2;
  return;
 #endif
 
@@ -465,13 +467,13 @@ extern "C" __global__ void normal_features(unsigned char*arena,int*worlds,int*li
  for(int i=blockIdx.x;i<frame_count[0];i+=gridDim.x){
   const auto&b=*reinterpret_cast<const sts::BattleContext*>(packed_address(arena,live[base+i]));
   #ifdef STS_FULL480_DECK
-  if(meta[i*4]==1)continue;
+  if(meta[i*4]==1&&!*value_mode)continue;
   device_state::require(meta[i*4+3]);
   int root=worlds[base+i]%root_count;
   for(int row=0;row<meta[i*4+1];++row){
    int at=deck_input::physical(chunks,i,row),slot=ids[at];
    for(int dim=threadIdx.x;dim<64;dim+=blockDim.x)
-    numbers[at*64+dim]=deck_input::token(b,weights,raw+i*deck_input::RAW,cat+i*deck_input::CAT,root_inputs+root*68,root_relics+root*deck_input::RELIC_WIDTH,root_counters+root*deck_input::RELIC_WIDTH,prefixes[live[base+i]],slot,dim);
+    numbers[at*64+dim]=deck_input::token(b,weights,raw+i*deck_input::RAW,cat+i*deck_input::CAT,chain_inputs+live[base+i]*68,root_relics+root*deck_input::RELIC_WIDTH,root_counters+root*deck_input::RELIC_WIDTH,prefixes[live[base+i]],slot,dim);
   }
   continue;
 #endif
@@ -519,3 +521,32 @@ extern "C" __global__ void normal_features(unsigned char*arena,int*worlds,int*li
   }
  }
 }
+
+#ifdef STS_FULL480_DECK
+extern "C" __global__ void deck_anchor_inputs(unsigned char*arena,const int*jobs,const int*roots,
+ const unsigned long long*weights,const int*relics,const float*counters,float*out,int count){
+ int row=blockIdx.x*blockDim.x+threadIdx.x;if(row>=count)return;
+ const auto&b=*reinterpret_cast<const sts::BattleContext*>(packed_address(arena,jobs[row]));
+ device_state::require(b.outcome==sts::Outcome::PLAYER_VICTORY||b.outcome==sts::Outcome::PLAYER_ESCAPE);
+ const auto packed=compact_leaf::pack(b);const auto*s=packed.scalars.data();const auto*c=packed.categorical.data();
+ const int root=roots[row];auto*o=out+row*(10+deck_input::RELIC_WIDTH);
+ o[0]=fminf(s[0],deck_input::HP_SCALE)/deck_input::HP_SCALE;
+ o[1]=fminf(s[1],deck_input::HP_SCALE)/deck_input::HP_SCALE;
+ for(int j=0;j<5;++j)o[2+j]=deck_input::potion(weights)[c[25+j]];
+ o[7]=s[5]/deck_input::GOLD_SCALE;
+ o[8]=b.outcome==sts::Outcome::PLAYER_VICTORY;o[9]=b.outcome==sts::Outcome::PLAYER_ESCAPE;
+ for(int j=0;j<deck_input::RELIC_WIDTH;++j)o[10+j]=deck_input::relic_value(weights,relics[root*deck_input::RELIC_WIDTH+j],counters[root*deck_input::RELIC_WIDTH+j],s);
+}
+inline void deck_misc_card(const sts::CardInstance&card,float*out,int width){
+ if(card.id==sts::CardId::RITUAL_DAGGER&&card.uniqueId>=0&&card.uniqueId<width)out[card.uniqueId]=float(card.specialData)/100.f;
+}
+extern "C" __global__ void deck_context_misc(unsigned char*arena,const int*jobs,const int*roots,const float*initial,float*out,int count,int width){
+ int row=blockIdx.x*blockDim.x+threadIdx.x;if(row>=count)return;
+ const auto&b=*reinterpret_cast<const sts::BattleContext*>(packed_address(arena,jobs[row]));
+ auto*dest=out+row*width;for(int j=0;j<width;++j)dest[j]=initial[roots[row]*width+j];
+ for(const auto&c:b.cards.drawPile)deck_misc_card(c,dest,width);
+ for(const auto&c:b.cards.discardPile)deck_misc_card(c,dest,width);
+ for(const auto&c:b.cards.exhaustPile)deck_misc_card(c,dest,width);
+ for(int j=0;j<b.cards.cardsInHand;++j)deck_misc_card(b.cards.hand[j],dest,width);
+}
+#endif

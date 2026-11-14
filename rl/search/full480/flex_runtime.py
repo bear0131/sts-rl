@@ -5,16 +5,19 @@ P=artifact_directory()
 from .flex_adapter import *
 P=artifact_directory()
 class BattleModules:
- def __init__(self):
+ def __init__(self,*,deck=False):
   from .run_device import initialize
   initialize()
-  self.handles=[];self.funcs={};self.references=0;self.closed=False;self.identity={}
+  self.handles=[];self.funcs={};self.references=0;self.closed=False;self.identity={};self.deck_consumer=deck
   for kind,directory,names,probe in [
    ('observer',P,['search_observe','pool_layout','pool_inventory_slots'],'observer_layout'),
    ('rules',P,['stream_clear','stream_load','stream_start','stream_begin','stream_apply','stream_snapshot','stream_destroy','battle_step','battle_drop','battle_copy','battle_keys','packed_clear','packed_start','packed_begin','packed_apply','packed_snapshot','packed_destroy','packed_apply_dynamic','chain_step_layout'],'rules_layout')]:
+   if deck and kind=='rules':directory=directory/'deck';names=names+['paired_pcg_probe']
    receipt=directory/('search-observer-compile-0-result.json' if kind=='observer' else 'rule-compile-0-result.json')
    result=json.loads(receipt.read_text());assert result['completed'] and result['exit']==0
-   path=directory/('search-observer-0.cubin' if kind=='observer' else 'rules-0.cubin');digest=hashlib.sha256(path.read_bytes()).hexdigest();assert digest==result['cubin_sha256']
+   if deck and kind=='rules':
+    for name,digest in result['package_sources'].items():assert hashlib.sha256((Path(__file__).resolve().parent/name).read_bytes()).hexdigest()==digest,('stale full480 rules',name)
+   path=directory/('search-observer-0.cubin' if kind=='observer' else 'rule-0.cubin' if deck else 'rules-0.cubin');digest=hashlib.sha256(path.read_bytes()).hexdigest();assert digest==result['cubin_sha256']
    handle=ptr();check(lib.cuModuleLoad(ctypes.byref(handle),str(path).encode()),'load '+kind);self.handles.append(handle)
    for name in names+[probe,'packed_layout']:
     f=ptr();check(lib.cuModuleGetFunction(ctypes.byref(f),handle,name.encode()),name);self.funcs[name]=f
@@ -42,9 +45,9 @@ class BattleArena:
  upload=StreamingPool.upload
  launch=ScoringPool.launch
  snapshot=StreamingPool.snapshot
- def __init__(self,capacity,modules=None):
+ def __init__(self,capacity,modules=None,*,deck=False):
   assert capacity>0
-  self.m=self.n=capacity;self.modules=BattleModules() if modules is None else modules;self.owns_modules=modules is None
+  self.m=self.n=capacity;self.modules=BattleModules(deck=deck) if modules is None else modules;self.owns_modules=modules is None
   assert not self.modules.closed;self.modules.references+=1;self.funcs=self.modules.funcs;self.closed=False
   self.arr=lambda shape,dtype=torch.int32:torch.empty(shape,dtype=dtype,device='cuda')
   self.arena=self.arr((capacity,self.modules.identity['rules']['abi_layout'][0]),torch.uint8);self.roots=self.arena
@@ -106,6 +109,11 @@ class BattlePool(CollectionPool):
   if not rows:return {}
   # Validate every root before claiming or modifying any owned slot.
   for r in rows.values():
+   if self.deck_consumer:
+    from .finite_plan import PAIRED_ANCHOR
+    assert self.modules.deck_consumer and r['contract']==PAIRED_ANCHOR
+    assert r['budget']==len(r['worlds'])*len(r['action_bits']) and r['worlds'].shape[1:]==(5,)
+    assert r['temperature']==1. and np.array_equal(r['order'],np.arange(len(r['action_bits'])))
    if 'mirror' in r:self.mirror.validate(*r['mirror'])
    else:assert r['eligible'] and r['snapshot']['portable'] and r['snapshot']['input_state']==1
    assert r['snapshot']['input_state'] in (1,2) and r['snapshot']['outcome']==0 and len(r['semantic'])==len(r['action_bits'])
@@ -121,6 +129,19 @@ class BattlePool(CollectionPool):
    for h in handles:self.ledger.release(h)
    raise
   root_ids=self.upload([h.slot for h in handles],np.int32);indices=root_ids.long();count=len(handles)
+  if self.deck_consumer:
+   for h,r in zip(handles,rows.values(),strict=True):
+    self.paired_words[h.slot,:len(r['worlds'])].copy_(self.upload(r['worlds'],np.uint64))
+    span=slice(h.slot*self.budget_cap,h.slot*self.budget_cap+r['budget'])
+    self.chain_inputs[span].copy_(self.upload(r['context_inputs'],np.float32))
+    self.chain_anchor[span].copy_(self.upload(r['anchor_context'],np.float32))
+    self.root_misc[h.slot].copy_(self.upload(r['observation']['outer_deck_misc'],np.float32))
+    from env.core import encode
+    dynamic=bool(np.any(r['observation']['deck_ids']==encode._card_id_idx('Ritual Dagger')))
+    self.context_roots[h.slot]=int(dynamic)
+    if dynamic:self.dynamic_context_roots.add(h.slot)
+   for name,key,dtype in [('root_prefix','prefix',np.int32),('root_inputs','context_inputs',np.float32),('root_relics','relics',np.int32),('root_counters','relic_counters',np.float32)]:
+    getattr(self,name).index_copy_(0,indices,self.upload([r[key] for r in rows.values()],dtype))
   self.launch('stream_clear',[self.arena,self.constructed,self.alive,root_ids],[count,self.budget_cap],grid=count*self.budget_cap)
   self.grow_inventory(max(len(r['inventory']['ids']) for r in rows.values()))
   entries=list(zip(handles,rows.values()));ordered=np.zeros((count,self.action_width),np.uint32);semantics=np.zeros((count,self.action_width),np.uint64)

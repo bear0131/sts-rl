@@ -254,6 +254,7 @@ def test_full480_current_native_observer_and_packed_model(latent_env):
                 obs = {k: torch.as_tensor(v[None], device='cuda') for k, v in observation.items()}
                 context = policy.core.prepare_search_context(obs)
                 pool.root_inputs[0] = torch.cat((context.combat[0], obs['run_keys'][0], obs['ascension'][0]))
+                pool.chain_inputs[0].copy_(pool.root_inputs[0])
                 pool.root_relics[0] = obs['relics'][0].int()
                 pool.root_counters[0] = obs['relic_counters'][0]
                 prefix = sum(1 << i for i in (latent_env._multi or ()))
@@ -289,3 +290,189 @@ def test_full480_current_native_observer_and_packed_model(latent_env):
                 pool.close()
             arena.close()
         assert arena.modules.references == 0 and arena.modules.closed
+
+
+def test_full480_pcg64_matches_numpy_and_owns_each_chain():
+    from rl.search.full480.combo_runtime import BattleArena
+    from rl.search.full480.finite_plan import paired_worlds
+    assert torch.cuda.is_available()
+    words = np.concatenate([paired_worlds(seed, actions, budget)
+        for seed, actions, budget in [(20261111, 3, 64), (0, 197, 64), (2**63-1, 2, 256)]])
+    assert len(paired_worlds(0, 197, 64)) == 1
+    # Include duplicate worlds and rollover-prone 128-bit carries; independent
+    # lane state must not become one shared mutable random stream.
+    states = np.repeat(words[:, 1:], 2, axis=0).copy()
+    expected = []
+    for row in states:
+        generator = np.random.PCG64()
+        state = generator.state
+        state['state'].update(state=int(row[0]) | int(row[1]) << 64,
+                              inc=int(row[2]) | int(row[3]) << 64)
+        generator.state = state
+        expected.append(generator.random_raw(200))
+    arena = BattleArena(1, deck=True)
+    try:
+        device = arena.upload(states, np.uint64)
+        output = arena.arr((len(states), 200), torch.int64)
+        arena.launch('paired_pcg_probe', [device, output], [len(states), 200], grid=len(states))
+        np.testing.assert_array_equal(output.cpu().numpy().view(np.uint64), expected)
+        temporary = torch.empty(64 * 1024 * 1024, device='cuda', dtype=torch.uint8)
+        temporary.fill_(9)
+        del temporary
+        torch.cuda.empty_cache()
+        device.copy_(arena.upload(states, np.uint64))
+        arena.launch('paired_pcg_probe', [device, output], [len(states), 200], grid=len(states))
+        np.testing.assert_array_equal(output.cpu().numpy().view(np.uint64), expected)
+    finally:
+        arena.close()
+    assert arena.modules.references == 0 and arena.modules.closed
+
+
+@pytest.mark.parametrize('scenario', ['prefix', 'growth', 'escape'])
+def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario):
+    from rl.search.full480.combo_runtime import BattleArena, BattlePool
+    from rl.search.full480.combo_model import DeckWeights
+    from rl.search.full480.deck_inputs import DeckInputTables
+    from rl.search.full480.finite_plan import PAIRED_ANCHOR, paired_worlds
+    from rl.search.full480.run_device import cpu_bridge
+    from rl.policies.deck_latent import DeckLatentPolicy
+    assert torch.cuda.is_available()
+    torch.manual_seed(20261111)
+    for _ in range(128):
+        if latent_env.thick.bc is not None:
+            break
+        latent_env.step(int(np.flatnonzero(latent_env.action_masks())[0]))
+    import slaythespire as sts
+    latent_env.thick.gc.set_deck([(name, 0) for name in ['WARCRY', 'BURNING_PACT', 'HEADBUTT', 'TRUE_GRIT',
+        'DEFEND_RED', 'BATTLE_TRANCE', 'STRIKE_RED', 'DEFEND_RED', 'BASH', 'EXHUME']])
+    latent_env.thick.gc.set_potion_state(['Gamblers Brew', 'Liquid Memories'])
+    latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
+    if scenario != 'prefix':
+        latent_env.thick.gc.set_deck([('RITUAL_DAGGER' if scenario == 'growth' else 'STRIKE_RED', 0)] * 5)
+        latent_env.thick.gc.set_potion_state(['Smoke Bomb'] if scenario == 'escape' else [])
+        latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
+        if scenario == 'growth':
+            latent_env.thick.bc.set_player_strength(999)
+    latent_env._invalidate_backend_cache()
+    policy = DeckLatentPolicy(latent_env.observation_space, latent_env.action_space,
+        lambda _: 5e-5, d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
+        reward_flow='sequential-v1', deck_combat_encoder='transformer64x2').cuda()
+    policy.set_training_mode(False)
+    cpu = cpu_bridge()
+    core = policy.core
+    branches = []
+    with torch.no_grad():
+        obs = latent_env._obs()
+        data = {k: torch.as_tensor(v[None], device='cuda') for k, v in obs.items()}
+        context = core.prepare_search_context(data)
+        flat = DeckWeights(core)
+        flat.input_tables = DeckInputTables(core, obs)
+        mapping = sorted(latent_env._joint_policy_actions())
+        worlds = paired_worlds(20261111, len(mapping), 2 * len(mapping))
+        budget = len(mapping) * len(worlds)
+        row = cpu.State(latent_env.thick.bc).root_plan(20261111, budget, 1., 8, False)
+        semantic = dict(zip(row['action_bits'], row['semantic'], strict=True))
+        row.update(cpu.inventory(latent_env.thick.gc))
+        row.update(contract=PAIRED_ANCHOR, worlds=worlds, prefix=0,
+            action_bits=np.array([bits for _, bits in mapping], np.uint32),
+            semantic=np.array([semantic[bits] for _, bits in mapping], np.uint64),
+            order=np.arange(len(mapping)), context_inputs=torch.cat((context.combat,
+                data['run_keys'], data['ascension']), 1)[0].cpu().numpy(),
+            relics=obs['relics'], relic_counters=obs['relic_counters'],
+            anchor_context=context.anchor[0].cpu().numpy(),observation={k:v.copy() for k,v in obs.items()})
+        arena = BattleArena(1, deck=True)
+        pool = None
+        try:
+            versions = arena.load({0: row['snapshot']})
+            row['mirror'] = (0, *versions[0])
+            pool = BattlePool(arena, budget, net=flat.net, flat=flat, frame=budget, tile=32,
+                             frame_tokens=4, frame_queries=4)
+            for world in worlds[:, 0]:
+                for action, _ in mapping:
+                    branch = latent_env.fork_run(worldline=int(world))
+                    branch.thick.bc.nosl_redeterminize(int(world))
+                    branch._invalidate_backend_cache()
+                    branch.step(action)
+                    branches.append([branch, np.random.default_rng(int(world)^0x504F4C494359), 1])
+            pool.submit({0: row})
+            def compare_states():
+                ids = [i for i, (e, _, _) in enumerate(branches) if e.thick.bc is not None]
+                words, meta, _ = pool.snapshot(ids)
+                for j, i in enumerate(ids):
+                    snap = cpu.State(branches[i][0].thick.bc).snapshot()
+                    np.testing.assert_array_equal(words[j, :len(snap['words'])], snap['words'], err_msg=str(i))
+                    assert int(pool.selection_prefix[i]) == sum(1 << j for j in (branches[i][0]._multi or ()))
+            compare_states()
+            for tick in range(8):
+                active = torch.nonzero(pool.alive).flatten().cpu().tolist()
+                if not active:
+                    break
+                expected_draws = {}
+                for i in active:
+                    env, rng, depth = branches[i]
+                    mask = env.action_masks()
+                    legal = np.flatnonzero(mask)
+                    if len(legal) == 1:
+                        action = legal[0]
+                        expected_draws[i] = -1.
+                    else:
+                        ob = {k: torch.as_tensor(v[None], device='cuda') for k, v in env._obs().items()}
+                        branch_context = core.prepare_search_context(ob) if scenario == 'growth' else context
+                        logits, _ = core.combat_with_context(ob, branch_context)
+                        scores = logits[0, legal].cpu().double().numpy()
+                        probabilities = np.exp(scores-scores.max())
+                        probabilities /= probabilities.sum()
+                        before = rng.bit_generator.state
+                        action = rng.choice(legal, p=probabilities)
+                        reference = np.random.default_rng()
+                        reference.bit_generator.state = before
+                        expected_draws[i] = reference.random()
+                    env.step(int(action))
+                    branches[i][2] = depth + 1
+                if tick == 1:
+                    temporary = torch.empty(64 * 1024 * 1024, device='cuda', dtype=torch.uint8)
+                    temporary.fill_(3)
+                    del temporary
+                    torch.cuda.empty_cache()
+                pool.tick()
+                np.testing.assert_array_equal(pool.draws[active].cpu().numpy(), list(expected_draws.values()))
+                compare_states()
+            assert not pool.active_count
+            gold = []
+            for branch, _, _ in branches:
+                if branch.thick.is_over:
+                    gold.append(0.)
+                else:
+                    leaf = {k:torch.as_tensor(v[None],device='cuda') for k,v in branch._obs().items()}
+                    branch_context = core.prepare_search_context(leaf) if scenario == 'growth' else context
+                    if branch._at_combat_exit_anchor():
+                        value = core.anchor_with_context(leaf,branch_context)
+                    else:
+                        _, value = core.combat_with_context(leaf,branch_context)
+                    gold.append(float(value.item()))
+            result = pool.reap()[0]
+            np.testing.assert_allclose(result['values'],np.array(gold).reshape(len(worlds),-1).mean(0),atol=3e-5,rtol=1e-5)
+            assert result['simulations'] == budget
+            if scenario == 'prefix':
+                assert pool.stats[:, 11].sum().item() > 0, 'AR prefix path was not exercised'
+            else:
+                assert pool.frame_pipeline.counts['anchor_value_rows'] > 0
+                if scenario == 'growth':
+                    assert pool.frame_pipeline.counts['context_refresh_rows'] > 0
+            assert pool.graph_scorer.statistics()['step_overflow_retries'] > 0
+            assert pool.graph_scorer.statistics()['step_replays'] > 0
+            pool.close()
+        finally:
+            if pool is not None and not pool.closed:
+                pool.graph_scorer.close()
+                pool.launch('stream_destroy', [pool.arena, pool.constructed], [pool.n], grid=pool.n)
+                pool.launch('stream_destroy', [pool.roots, pool.root_constructed], [pool.m], grid=pool.m)
+                torch.cuda.synchronize()
+                pool.state_pages.release(list(pool.page_leases.values()))
+                pool.page_leases.clear()
+                pool.state_pages.close()
+                pool.modules.references -= 1
+                pool.closed = True
+            arena.close()
+            for branch, _, _ in branches:
+                branch.close()

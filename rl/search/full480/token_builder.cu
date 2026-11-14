@@ -52,7 +52,7 @@ template<int CAP,int STAGE> __device__ void pack(ARGS){
   ni=0;
 #endif
   for(int a=tid;a<na;a+=blockDim.x)owners[begin+a]=sid;
-  if(na==1){
+  if(na==1&&meta[sid*4+3]!=2){
    if(tid<4){lens[sid*4+tid]=0;starts[sid*4+tid]=0;}
    if(tid==0)scores[begin]=0.f;
    __syncthreads();continue;
