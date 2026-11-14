@@ -252,7 +252,10 @@ class _DeckConsumers:
             self.enc_graphs = CombatLeafGraphs(self.encoder, device, amp='off',
                 capacity=32, batch_multiple=8, compile_forward=False)
             self.head_graphs = CombatLeafGraphs(self.head, device, amp='off',
-                capacity=32, batch_multiple=8, compile_forward=False, device_outputs=True)
+                # The old unified head needed eight batch buckets. Current
+                # phase/choice/width specializations need several such sets;
+                # retain their graphs in one bounded, shared scratch pool.
+                capacity=256, batch_multiple=8, compile_forward=False, device_outputs=True)
             self.anchor_graphs = CombatLeafGraphs(self.head, device, amp='off',
                 capacity=32, batch_multiple=8, compile_forward=False, device_outputs=True)
 

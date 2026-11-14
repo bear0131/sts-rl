@@ -112,6 +112,33 @@ def test_full480_deck_context_cache_cannot_be_disabled(latent_env):
         UpperPolicyInference(core, 'cpu', context_bytes=0)
 
 
+def test_full480_phase_heads_reuse_their_batch_buckets(latent_env):
+    from rl.search.rollout_inference import UpperPolicyInference
+    assert torch.cuda.is_available(), 'phase graph qualification requires CUDA'
+    policy = policy_for(latent_env, 'transformer64x2').cuda().eval()
+    one = {k: v[None] for k, v in latent_env._obs().items()}
+    batches = []
+    for phase in ('map', 'combat_reward', 'rest', 'event', 'neow'):
+        for size in range(1, 65, 8):
+            batch = {k: np.repeat(v, size, axis=0) for k, v in one.items()}
+            batch['phase'][:] = vocab.PHASE_VOCAB_INDEX[phase]
+            batches.append(batch)
+    with torch.no_grad(), UpperPolicyInference(policy.core, 'cuda') as inference:
+        for batch in batches:
+            actual = inference(batch)
+            expected = policy.core.eager_actor_critic(obs_as_tensor(batch, 'cuda'))
+            torch.testing.assert_close(actual, expected, atol=2e-5, rtol=2e-5)
+        captured = inference.statistics()['upper_graph_captures']
+        temporary = torch.empty(16*1024*1024, device='cuda').fill_(.375)
+        del temporary
+        torch._C._cuda_clearCublasWorkspaces()
+        torch.cuda.empty_cache()
+        for batch in batches:
+            inference(batch)
+        assert inference.statistics()['upper_graph_captures'] == captured
+        assert inference.statistics()['upper_graph_evictions'] == 0
+
+
 def test_full480_anchor_cache_keys_only_consumed_continuation_fields(latent_env):
     from rl.search.rollout_inference import UpperPolicyInference
     policy = policy_for(latent_env, 'transformer64x2')
