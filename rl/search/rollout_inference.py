@@ -270,15 +270,15 @@ class _DeckConsumers:
         # every root and completion batch. Registration dictionaries are the
         # Module boundary; any changed binding rebuilds this owned inventory.
         if not self.registrations or any(
-                getattr(module, name) is not registry or len(registry) != len(bindings)
-                or any(registry.get(key) is not value for key, value in bindings)
-                for module, name, registry, bindings in self.registrations):
+                getattr(module, name) is not registry or tuple(registry) != keys
+                or tuple(map(id, registry.values())) != identities
+                for module, name, registry, keys, identities in self.registrations):
             self.registrations = tuple((module, name, getattr(module, name),
-                tuple(getattr(module, name).items())) for module in self.core.modules()
+                tuple(getattr(module, name)), tuple(map(id, getattr(module, name).values()))) for module in self.core.modules()
                 for name in ('_parameters', '_buffers', '_modules'))
             self.tensors = tuple(self.core.parameters()) + tuple(self.core.buffers())
         tensors = self.tensors
-        addresses = tuple((id(p), p.data_ptr(), str(p.device), p.dtype) for p in tensors)
+        addresses = tuple((id(p), p.data_ptr(), p.device, p.dtype) for p in tensors)
         versions = tuple(p._version for p in tensors)
         if addresses != self.addresses:
             for graphs in (self.enc_graphs, self.head_graphs, self.anchor_graphs):

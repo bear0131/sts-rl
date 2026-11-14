@@ -557,7 +557,11 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                     np.testing.assert_array_equal(repeated[0][1]['statistics'],actual['statistics'])
                     np.testing.assert_array_equal(repeated[0][1]['values'],actual['values'])
                     status=service.statistics()
-                assert status['upper_graph']['context_cache_hits']>0
+                if scenario == 'growth':
+                    assert status['upper_graph']['context_cache_hits']>0
+                else:
+                    assert status['upper_graph']['context_cache_requests']==1
+                    assert fallback.calls>1, 'unchanged branches must reuse the root projection across frames'
                 service.close()
             finally:
                 if not service.closed:service.close(cancel='test cleanup')

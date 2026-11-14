@@ -210,6 +210,14 @@ def test_full480_deck_graph_lifetime_and_parameter_replacement(latent_env):
         assert inference.deck.head_graphs.evictions >= 3
         core.combat.context_projection.bias = torch.nn.Parameter(core.combat.context_projection.bias + .01)
         check(inference, one)
+        for change in (
+                lambda: core.combat.register_buffer('cache_epoch_test', torch.ones(1, device='cuda')),
+                lambda: setattr(core.combat, 'context_projection', deepcopy(core.combat.context_projection)),
+                lambda: delattr(core.combat, 'cache_epoch_test')):
+            misses = inference.statistics()['context_cache_misses']
+            change()
+            check(inference, one)
+            assert inference.statistics()['context_cache_misses'] == misses + 1
         torch.testing.assert_close(first, saved, atol=0, rtol=0)
         inference.deck.cache.max_bytes = 1
         inference.deck.cache.clear()

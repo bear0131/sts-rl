@@ -134,7 +134,8 @@ class CpuFallback:
     return []
    self.pending=None;self.metrics['pending_wall_seconds']+=time.monotonic()-submitted
    picks=answer['picks']
-   if 'root_contexts' in answer:self.root_contexts=answer['root_contexts']
+   if 'root_contexts' in answer:
+    self.root_contexts=answer['root_contexts'];self.context_globals['_combat_context']=self.root_contexts
    if self.audit and not self.reference and not self.paired:
     tick=time.monotonic();self.validate(fields,answer['logits'],picks,answer['gold'],raw);self.metrics['audit_seconds']+=time.monotonic()-tick
    if self.paired:

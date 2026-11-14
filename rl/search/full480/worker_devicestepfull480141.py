@@ -129,12 +129,16 @@ def run_worker(commands,responses,settings):
       if deck:
        root_contexts=upper.search_context(raw).combat.cpu().numpy() if fields.pop('root_context_request') else None
        owners=fields.pop('root_indices');misc=fields.pop('permanent_misc')
-       context_obs={key:value[owners] for key,value in raw.items()}
-       changed=np.isfinite(misc);context_obs['outer_deck_misc'][changed]=misc[changed]
-       context=upper.search_context(context_obs)
-       extra=np.concatenate((context_obs['run_keys'],context_obs['ascension']),1)
-       projected=torch.cat((context.combat,torch.as_tensor(extra,device='cuda')),1)
-       fields['relics']=context_obs['relics'];fields['relic_counters']=context_obs['relic_counters']
+       projected=torch.as_tensor(raw.get('_combat_context',root_contexts)[owners],device='cuda')
+       changed=np.flatnonzero((np.isfinite(misc)&(misc!=raw['outer_deck_misc'][owners])).any(1))
+       if len(changed):
+        context_obs={key:raw[key][owners[changed]] for key in policy.core.context.keys}
+        permanent=misc[changed];valid=np.isfinite(permanent)
+        context_obs['outer_deck_misc'][valid]=permanent[valid]
+        projected[torch.as_tensor(changed,device='cuda')]=upper.search_context(context_obs).combat
+       extra=np.concatenate((raw['run_keys'][owners],raw['ascension'][owners]),1)
+       projected=torch.cat((projected,torch.as_tensor(extra,device='cuda')),1)
+       fields['relics']=raw['relics'][owners];fields['relic_counters']=raw['relic_counters'][owners]
        picks,logits=scorer.score(fields,None,projected)
        answer=dict(picks=picks,values=np.zeros(len(picks),np.float64))
        if root_contexts is not None:answer['root_contexts']=root_contexts
