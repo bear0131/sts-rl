@@ -7,20 +7,41 @@ mutated; a restored private clone bootstraps an initially pending root.
 from .cuda_battle import load_artifacts
 from .resident_chains import root_payload
 import numpy as np
+import math
 
 
-def pack_actor_roots(rows, host):
+class ObservationColumnTransport:
+    """Bind one live vector bank; each packet owns only its selected columns."""
+    def __init__(self, observations):
+        import slaythespire as sts
+        groups = {}
+        for key, value in observations.items():
+            groups.setdefault(value.dtype.str, []).append(key)
+        self.names = list(groups.values())
+        self.shapes = [[observations[k].shape[1:] for k in names] for names in self.names]
+        self.order = list(observations)
+        self.native = sts.ObservationColumns(observations, self.names)
+
+    def pack(self, rows):
+        storage = self.native.pack(np.asarray(rows, np.int64))
+        return (list(zip(self.names, self.shapes, storage, strict=True)), self.order)
+
+
+def pack_actor_roots(rows, host, *, columns=None):
     """Adapt full PPO observations to the old FIFO's contiguous native fields."""
     keys = list(rows)
-    observations = [rows[k]['observation'] for k in keys]
-    groups = {}
-    for name, value in observations[0].items():
-        groups.setdefault(value.dtype.str, []).append(name)
-    columns = [(names, [observations[0][k].shape for k in names],
-                host.stack_fields(observations, names)) for names in groups.values()]
+    if columns is None:
+        observations = [rows[k]['observation'] for k in keys]
+        groups = {}
+        for name, value in observations[0].items():
+            groups.setdefault(value.dtype.str, []).append(name)
+        columns = ([(names, [observations[0][k].shape for k in names],
+                    host.stack_fields(observations, names)) for names in groups.values()],
+                   list(observations[0]))
+    columns, field_order = columns
     metadata = [{k: v for k, v in rows[key].items() if k != 'observation'} for key in keys]
     return dict(contract='legacy-deck-roots-v1', keys=keys, columns=columns, metadata=metadata,
-                field_order=list(observations[0]))
+                field_order=field_order)
 
 
 def unpack_actor_roots(packet, *, row_observations=True):
@@ -33,7 +54,7 @@ def unpack_actor_roots(packet, *, row_observations=True):
     for names, shapes, storage in packet['columns']:
         offset = 0
         for name, shape in zip(names, shapes, strict=True):
-            end = offset + int(np.prod(shape))
+            end = offset + math.prod(shape)
             field = storage[:, offset:end].reshape(len(observations), *shape)
             batched[name] = field
             if row_observations:

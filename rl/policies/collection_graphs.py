@@ -29,6 +29,7 @@ class SharedCollectionGraphs:
             raise ValueError('collection graphs require FP32 parameters')
         self.core, self.capacity = core, capacity
         self.parameters = tuple(core.parameters())
+        self.context_parameters = tuple(core.context.parameters()) if hasattr(core, 'context') else ()
         self.device = self.parameters[0].device
         self.entries = OrderedDict()
         self.temporary_pool = torch.cuda.graph_pool_handle()
@@ -238,7 +239,7 @@ class SharedCollectionGraphs:
 
     def _run_context(self, observations, host, context_slots=None, packed_bank=None):
         encoder = self.core.context
-        versions = tuple(p._version for p in encoder.parameters())
+        versions = tuple(p._version for p in self.context_parameters)
         cached = self.context_cache
         count = len(host['phase'])
         slots, capacity = (np.arange(count), count) if context_slots is None else context_slots

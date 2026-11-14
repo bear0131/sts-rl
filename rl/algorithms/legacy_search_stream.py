@@ -22,6 +22,8 @@ class Stream:
         self.fallback = None
         self.exporter = ResidentRootExporter(vec.envs, self.config.cuda_artifacts,
                                              observations=vec.buf_obs)
+        from env.search.resident_transport import ObservationColumnTransport
+        self.observation_transport = ObservationColumnTransport(vec.buf_obs)
         self.stats = dict.fromkeys(('chains','atomic_steps','policy_rows','forced_rows',
             'anchor_rows','cutoff_rows','terminal_rows','max_active','budget_floor_overage',
             'searched_roots','selected_roots','eligible_roots','executed_search_actions',
@@ -71,22 +73,24 @@ class Stream:
             key = position, i
             if key in self.meta:
                 raise RuntimeError('real root already in flight')
-            obs, mask = calls[i]
-            budget = self.config.boss_budget if obs['combat_is_boss'].item() else self.config.normal_budget
+            mask = calls[i]
+            budget = (self.config.boss_budget if self.vec.buf_obs['combat_is_boss'][i].item()
+                      else self.config.normal_budget)
             seed = int(self.seeds[position, i])
             worlds = np.random.default_rng(seed).integers(0, 2**63-1,
                 max(1, budget//len(root['actions'])), dtype=np.int64)
-            row = dict(root=root, observation=obs, mask=mask, worlds=worlds,
+            row = dict(root=root, mask=mask, worlds=worlds,
                        budget=budget, slot=i, submitted_at=time.monotonic())
             self.meta[key] = dict(slot=i, mask=mask, seed=seed, position=position, row=row)
             if root.get('native_fallback'):
+                row['observation'] = {k:v[i] for k,v in self.vec.buf_obs.items()}
                 self.queue.append(key)
                 self.stats['native_fallback_roots'] += 1
             else:
                 rows[key] = row
             self.stats['selected_roots'] += 1
         if rows:
-            self.service.submit(rows)
+            self.service.submit(rows, columns=self.observation_transport.pack([key[1] for key in rows]))
             self.stats['resident_frames'] += 1
             self.stats['resident_frame_roots_max'] = max(
                 self.stats['resident_frame_roots_max'], len(self.service.outstanding))

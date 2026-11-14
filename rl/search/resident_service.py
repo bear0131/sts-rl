@@ -80,7 +80,7 @@ class GpuService:
    if ready:return value
    self.poll(.05)
    if time.monotonic()>deadline:raise TimeoutError('GPU RPC '+kind)
- def submit(self,rows):
+ def submit(self,rows,*,columns=None):
   if self.parked:raise RuntimeError('cannot submit to a parked GPU owner')
   if set(rows)&self.outstanding or len(self.outstanding)+len(rows)>self.capacity:
    raise ValueError('duplicate search or root capacity exceeded')
@@ -89,7 +89,7 @@ class GpuService:
    if not hasattr(self,'native_host'):
     from env.search.cuda_battle import load_artifacts
     self.native_host=load_artifacts(self.settings['artifacts'])[2]
-   self.send('submit',pack_actor_roots(rows,self.native_host));self.outstanding.update(rows)
+   self.send('submit',pack_actor_roots(rows,self.native_host,columns=columns));self.outstanding.update(rows)
  def park(self):
   if self.parked or self.outstanding or self.ready_roots or self.requests:raise RuntimeError('park requires consumed results')
   self.status=self.call('park');self.parked=True;return self.status

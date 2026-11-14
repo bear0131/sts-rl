@@ -32,7 +32,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
         raise ValueError('rollout must fill its declared sample count')
     vec = env.venv
     import slaythespire as sts
-    if not hasattr(sts, 'copy_observation_rows'):
+    if not hasattr(sts, 'ObservationRowCopy'):
         raise RuntimeError('legacy PPO consumer requires the explicit native row-copy build')
     if any(not np.array_equal(value, vec.buf_obs[key]) for key,value in model._last_obs.items()):
         raise RuntimeError('restored policy observation differs from live vector observation')
@@ -42,6 +42,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     vector_start = dict(vec.step_seconds)
     model.policy.set_training_mode(False)
     rollout_buffer.reset()
+    observation_copy = sts.ObservationRowCopy(rollout_buffer.observations, vec.buf_obs, 2)
     reward_monitor.begin_collection(model)
     campfire_monitor.begin_collection(model)
     rng = np.random.default_rng(config.seed)
@@ -101,23 +102,24 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             for i in sorted(ready):
                 mask = np.asarray(vec.envs[i].get_wrapper_attr('action_masks')(), bool)
                 masks[i] = mask
-                obs = {k: v[i] for k, v in model._last_obs.items()}
-                legal = int(obs['phase'].item()) == combat and not obs['combat_exit_anchor'].any()
-                if legal and mask.sum() == 1:
+                legal = (int(model._last_obs['phase'][i, 0]) == combat
+                         and not model._last_obs['combat_exit_anchor'][i].any())
+                legal_count = np.count_nonzero(mask)
+                if legal and legal_count == 1:
                     actions[i] = int(np.flatnonzero(mask)[0])
                     estimates[i] = np.nan, 0.
                     upper_policy[i] = None, None
                     stats['forced_rows'] += 1
-                elif legal and mask.sum() > 1 and draws[positions[i], i, 1] < config.fraction:
+                elif legal and legal_count > 1 and draws[positions[i], i, 1] < config.fraction:
                     # Runic Dome has no public current intent: retain model behavior.
                     base = vec.envs[i].unwrapped
                     if 'Runic Dome' not in [r['id'] for r in base.thick.gc.relic_state()]:
-                        calls[i] = obs, mask
+                        calls[i] = mask
                     else:
                         upper_waiting[i] = time.monotonic()
                 else:
                     upper_waiting[i] = time.monotonic()
-                stream.stats['eligible_roots'] += int(legal and mask.sum() > 1)
+                stream.stats['eligible_roots'] += int(legal and legal_count > 1)
             ready.clear()
             stats['root_prepare_seconds'] += time.monotonic()-tick
             tick = time.monotonic()
@@ -150,8 +152,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             ordered = {i: actions.pop(i) for i in indices}
             rows = np.asarray(indices, np.intp)
             # Full observations are required by the current critic/learner.
-            sts.copy_observation_rows(rollout_buffer.observations, model._last_obs,
-                positions[rows]*vec.num_envs+rows, rows, 2)
+            observation_copy.copy(positions[rows]*vec.num_envs+rows, rows)
             monitor_keys = {'reward_keys'} | {key for key,_,_ in reward_monitor.KINDS.values()}
             old = {k: model._last_obs[k][rows] for k in monitor_keys}
             action_rows = np.asarray(list(ordered.values()), np.int64)
