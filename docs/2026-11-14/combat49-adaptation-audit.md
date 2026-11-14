@@ -118,3 +118,6 @@ P18在原64命令循环合并根提交，来源镜像推进、非submit/step命�
 
 
 | P20 | 原模拟器Actions/Monster/BattleContext的待执行怪物格挡、换意图、回合末格挡/群伤/球动作登记为原OpeningAction小对象；GPU冻结编译输入对应原句同步替换 | 修复续训CODEX/HEADBUTT场景拒绝导入，动作体/入队顺序/胜利清理标志不改。无新执行路径、CPU回退或观察传输；新增四组CPU序列化与GPU逐动作oracle回归。此为正确性补漏，不计性能阶段收益；最终验收见worklog/2026-11-15.md |
+
+
+| P21 | 原GpuService父CUDA交接处在已有同步后回收无引用对象并归还闲置allocator缓存 | 修复完整PPO后第二collection启动owner时stack limit CUDA错误2；不降低栈/堆，不关图或构筑/锚点缓存，活模型/Adam保持。大块闲置显存回归先复现同错，修复后CPU/CUDA两例及完整47项通过；连续真实生产验收继续从247进行 |

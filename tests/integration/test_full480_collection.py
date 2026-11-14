@@ -237,6 +237,15 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
         assert state_digest(restored.policy.state_dict()) == state_digest(model.policy.state_dict())
         updates.clear()
         hook = restored.policy.optimizer.register_step_post_hook(lambda *args: updates.append(1))
+        if device == 'cuda':
+            # A production PPO update leaves a large, unused allocator cache.
+            # The spawned search owner cannot reuse its parent's reserved VRAM.
+            free, _ = torch.cuda.mem_get_info()
+            unused = torch.empty(free - 2 * 1024**3, dtype=torch.uint8, device='cuda')
+            unused.fill_(17)
+            torch.cuda.synchronize()
+            del unused
+            assert torch.cuda.memory_reserved() - torch.cuda.memory_allocated() > 1024**3
         restored.learn(64, reset_num_timesteps=False, callback=Rows())
         hook.remove()
         assert len(updates) == 2

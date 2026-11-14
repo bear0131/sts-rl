@@ -1,6 +1,6 @@
 """CPU-only owner of a bounded FIFO protocol to one CUDA process."""
 from pathlib import Path
-import sys,os,time,queue,pickle,multiprocessing as mp,collections,json,inspect
+import sys,os,time,queue,pickle,multiprocessing as mp,collections,json,inspect,gc
 import numpy as np
 import torch
 from .worker_devicestepfull480141 import run_worker
@@ -35,6 +35,10 @@ class GpuService:
   if self.parent_cuda:
    assert frozen_policy is not None and not frozen_policy.training,'learner must hand over a frozen collection'
    torch.cuda.synchronize()
+   # The spawned owner cannot allocate from the learner's unused CUDA cache.
+   # Live policy/Adam tensors and graph-owned storage remain referenced.
+   gc.collect()
+   torch.cuda.empty_cache()
   self.parent_versions=None if frozen_policy is None else tuple((id(p),p._version) for p in frozen_policy.parameters())
   owner=Path(__file__).resolve().parent
   assert Path(inspect.getfile(run_worker)).resolve()==owner/'worker_devicestepfull480141.py'
