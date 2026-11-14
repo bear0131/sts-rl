@@ -4,6 +4,7 @@ import torch
 import triton
 import triton.language as tl
 from .ragged_model import attention_tile
+from triton.language.extra.cuda import libdevice
 
 @triton.jit
 def norm64(x,W,B,EPS:tl.constexpr):
@@ -11,16 +12,19 @@ def norm64(x,W,B,EPS:tl.constexpr):
  return u*tl.rsqrt(tl.sum(u*u,1)/64.+EPS)[:,None]*tl.load(W+d)[None,:]+tl.load(B+d)[None,:]
 
 @triton.jit
-def input_tokens(FEAT,SYMBOL,SLOT,W,B,SE,LE,X,COUNTS):
+def input_tokens(FEAT,SYMBOL,SLOT,W,B,SE,LE,X,COUNTS,ENCODED:tl.constexpr=False):
  n=tl.load(COUNTS);d=tl.arange(0,128);o=tl.arange(0,64)
- weight=tl.load(W+o[None,:]*128+d[:,None])
+ if not ENCODED:weight=tl.load(W+o[None,:]*128+d[:,None])
  for block in range(tl.program_id(0),tl.cdiv(n,32),tl.num_programs(0)):
   r=block*32+tl.arange(0,32);live=r<n
-  a=tl.load(FEAT+r[:,None]*128+d[None,:],live[:,None],0.)
-  value=tl.dot(a,weight,input_precision='tf32x3')+tl.load(B+o)[None,:]
-  sy=tl.load(SYMBOL+r,live,0);sl=tl.load(SLOT+r,live,0)
-  value=value+tl.load(SE+sl[:,None]*64+o[None,:],live[:,None],0.)
-  value=value+tl.load(LE+sy[:,None]*64+o[None,:],live[:,None],0.)
+  if ENCODED:
+   value=tl.load(FEAT+r[:,None]*128+o[None,:],live[:,None],0.)
+  else:
+   a=tl.load(FEAT+r[:,None]*128+d[None,:],live[:,None],0.)
+   value=tl.dot(a,weight,input_precision='tf32x3')+tl.load(B+o)[None,:]
+   sy=tl.load(SYMBOL+r,live,0);sl=tl.load(SLOT+r,live,0)
+   value=value+tl.load(SE+sl[:,None]*64+o[None,:],live[:,None],0.)
+   value=value+tl.load(LE+sy[:,None]*64+o[None,:],live[:,None],0.)
   tl.store(X+r[:,None]*64+o[None,:],value,live[:,None])
 
 @triton.jit
@@ -67,14 +71,15 @@ def mix_feed(A,X,QUERY,MW,MB,NW,NB,F1,B1,F2,B2,OUT,COUNTS,SECOND:tl.constexpr,EP
   tl.store(OUT+r[:,None]*64+d[None,:],out,r[:,None]<n)
 
 @triton.jit
-def final_head(X,NW,NB,W,Y,COUNTS,EPS:tl.constexpr):
- n=tl.load(COUNTS+1);d=tl.arange(0,64);o=tl.arange(0,64)
- w=tl.load(W+o[None,:]*64+d[:,None],o[None,:]<34,0.)
+def final_head(X,NW,NB,W,Y,COUNTS,EPS:tl.constexpr,WIDTH:tl.constexpr=34,BIAS=None):
+ n=tl.load(COUNTS+1);d=tl.arange(0,64);o=tl.program_id(1)*64+tl.arange(0,64)
+ w=tl.load(W+o[None,:]*64+d[:,None],o[None,:]<WIDTH,0.)
  for block in range(tl.program_id(0),tl.cdiv(n,32),tl.num_programs(0)):
   r=block*32+tl.arange(0,32)
   x=tl.load(X+r[:,None]*64+d[None,:],r[:,None]<n,0.);v=norm64(x,NW,NB,EPS)
   y=tl.dot(v,w,input_precision='tf32x3')
-  tl.store(Y+r[:,None]*34+o[None,:],y,(r[:,None]<n)&(o[None,:]<34))
+  if BIAS is not None:y+=tl.load(BIAS+o,o<WIDTH,0.)[None,:]
+  tl.store(Y+r[:,None]*WIDTH+o[None,:],y,(r[:,None]<n)&(o[None,:]<WIDTH))
 
 @triton.jit
 def state_head(STATE,W1,B1,W2,B2,PROJ,LIN,Z,COEF,COUNTS,H:tl.constexpr,HH:tl.constexpr):
@@ -142,3 +147,87 @@ def attend_bucket(QKV,PRESENT,QUERY,STARTS,LENS,BLOCKS,OUT,COUNTS,SECOND:tl.cons
     else:y=attention_tile(QKV,PRESENT,QUERY,ts,qs,nt,nq,local,h,4,16,SECOND,256)
    qi=local+tl.arange(0,16);di=tl.arange(0,16)
    tl.store(OUT+(qs+qi[:,None])*64+h*16+di[None,:],y,qi[:,None]<nq)
+
+
+@triton.jit
+def deck_global(TOKEN,STARTS,MAP,W,BIAS,Z,COUNTS):
+ n=tl.load(COUNTS+4);d=tl.arange(0,64);cols=tl.program_id(1)*64+d
+ weight=tl.load(W+cols[None,:]*64+d[:,None],cols[None,:]<225,0.)
+ for block in range(tl.program_id(0),tl.cdiv(n,16),tl.num_programs(0)):
+  rows=block*16+tl.arange(0,16);live=rows<n
+  base=tl.load(STARTS+rows*4+1,live,0)+tl.load(MAP+rows*161,live,0)
+  x=tl.load(TOKEN+base[:,None]*288+d[None,:],live[:,None],0.)
+  y=tl.dot(x,weight,input_precision='tf32x3')+tl.load(BIAS+cols,cols<225,0.)[None,:]
+  tl.store(Z+rows[:,None]*225+cols[None,:],y,live[:,None]&(cols[None,:]<225))
+
+
+@triton.jit
+def deck_subset(TOKEN,STARTS,MAP,Z,LEGAL,SELECTED,REMAIN,PREFIX,KEY,STOP,STOPBIAS,COMPLETIONS,VW,VB,OUT,COUNTS):
+ n=tl.load(COUNTS+4);d=tl.arange(0,32);h=tl.arange(0,16);vd=tl.arange(0,64)
+ for sid in range(tl.program_id(0),n,tl.num_programs(0)):
+  base=tl.load(STARTS+sid*4+1)
+  indices=tl.load(MAP+sid*161+1+h,h<10,-1)
+  hand=tl.load(TOKEN+(base+indices[:,None])*288+256+d[None,:],(h[:,None]<10)&(indices[:,None]>=0),0.)
+  selected=tl.load(SELECTED+sid*10+h,h<10,0).to(tl.float32)
+  prefix=tl.sum(hand*selected[:,None],0)
+  pw=tl.load(PREFIX+d[:,None]+d[None,:]*32)
+  state=tl.load(Z+sid*225+128+d)
+  query=libdevice.tanh(state+tl.sum(prefix[:,None]*pw,0))
+  kw=tl.load(KEY+d[:,None]*32+d[None,:])
+  key_query=tl.sum(query[:,None]*kw,0)
+  score=tl.sum(hand*key_query[None,:],1)*0.1767766952966369
+  legal=tl.load(LEGAL+sid*198+187+h,h<11,0).to(tl.int32)
+  later=tl.sum(legal)-tl.cumsum(legal)-tl.load(LEGAL+sid*198+197).to(tl.int32)
+  later=tl.maximum(later,0)
+  capacity=tl.minimum(10,tl.maximum(0,tl.load(REMAIN+sid).to(tl.int32)-1))
+  completions=tl.load(COMPLETIONS+later*11+capacity,h<10,1.)
+  score+=tl.log(completions)
+  stop=tl.sum(query*tl.load(STOP+d),0)+tl.load(STOPBIAS)
+  score=tl.where(h==10,stop,score)
+  score=tl.where((h<11)&(legal!=0),score,-1.e9)
+  maximum=tl.max(score,0)
+  # Padded lanes do not belong to the eleven-way conditional distribution.
+  denominator=tl.log(tl.sum(tl.where(h<11,tl.exp(score-maximum),0.),0))+maximum
+  tl.store(OUT+sid*24+h,score-denominator,h<11)
+  tl.store(OUT+sid*24+11,tl.load(Z+sid*225+160))
+  hidden=tl.load(Z+sid*225+161+vd)
+  gelu=0.5*hidden*(1.+libdevice.erf(hidden*0.7071067811865476))
+  value=tl.sum(gelu*tl.load(VW+vd),0)+tl.load(VB)
+  tl.store(OUT+sid*24+12,value)
+
+
+@triton.jit
+def deck_actions(KEYS,OWNERS,META,MAP,STARTS,Z,AUX,TOKEN,LEGAL,OUT,COUNTS):
+ n=tl.load(COUNTS+5);d=tl.arange(0,64)
+ for block in range(tl.program_id(0),tl.cdiv(n,16),tl.num_programs(0)):
+  rows=block*16+tl.arange(0,16);valid=rows<n
+  sid=tl.load(OWNERS+rows,valid,0);na=tl.load(META+sid*4,valid,0);live=valid&(na>1)
+  action=tl.load(KEYS+rows*10,live,0)
+  base=tl.load(STARTS+sid*4+1,live,0)
+  group=(action-1)//6;target=(action-1)%6;targeted=(action>=1)&(action<=90)
+  slot=tl.where(action>=91,25+action-91,tl.where(group<10,1+group,16+group-10))
+  pointer=live&(action>=1)&(action<187)
+  index=tl.load(MAP+sid*161+slot,pointer,-1)
+  q=tl.load(Z+sid[:,None]*225+d[None,:],pointer[:,None],0.)
+  key=tl.load(TOKEN+(base[:,None]+index[:,None])*288+64+d[None,:],pointer[:,None]&(index[:,None]>=0),0.)
+  source=tl.sum(q*key,1)*0.125
+  target_live=live&targeted
+  source_q=tl.load(TOKEN+(base[:,None]+index[:,None])*288+128+d[None,:],target_live[:,None],0.)
+  global_q=tl.load(Z+sid[:,None]*225+64+d[None,:],target_live[:,None],0.)
+  query=source_q+global_q
+  maximum=tl.full((16,),-float('inf'),tl.float32);summed=tl.full((16,),0.,tl.float32);chosen=tl.full((16,),0.,tl.float32)
+  for t in tl.static_range(6):
+   if t<5:
+    ti=tl.load(MAP+sid*161+11+t,target_live,-1)
+    tk=tl.load(TOKEN+(base[:,None]+ti[:,None])*288+192+d[None,:],target_live[:,None]&(ti[:,None]>=0),0.)
+    score=tl.sum(query*tk,1)*0.125
+   else:score=tl.full((16,),0.,tl.float32)
+   allowed=tl.load(LEGAL+sid*198+1+group*6+t,target_live,0)
+   score=tl.where(allowed!=0,score,-1.e9)
+   next_max=tl.maximum(maximum,score);summed=summed*tl.exp(maximum-next_max)+tl.exp(score-next_max);maximum=next_max
+   chosen=tl.where(target==t,score,chosen)
+  value=source+tl.where(targeted,chosen-(maximum+tl.log(summed)),0.)
+  end=tl.load(AUX+sid*24+11,live&(action==0),0.)
+  subset=tl.load(AUX+sid*24+action-187,live&(action>=187)&(action<198),0.)
+  value=tl.where(action==0,end,tl.where(action>=187,subset,value))
+  tl.store(OUT+rows,tl.where(live,value,0.),valid)

@@ -13,16 +13,6 @@ from rl.policies.deck_latent import DeckLatentPolicy
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(180)]
 
 
-@pytest.fixture
-def latent_env():
-    env = SlayTheSpireEnv(card_language=True, global_map_view=True, upper_public_context=True,
-        event_option_observation=True, combat_action_contract='autoregressive-v2',
-        combat_exit_anchor=True, reward_flow='sequential-v1', deck_latent_context=True)
-    env.reset(seed=20261111)
-    yield env
-    env.close()
-
-
 def policy_for(env, encoder='pooled-mlp'):
     torch.manual_seed(20261111)
     return DeckLatentPolicy(env.observation_space, env.action_space, lambda _: 5e-5,

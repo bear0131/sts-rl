@@ -206,7 +206,8 @@ class TransformerCombatNetwork(FastCombatNetwork):
         self.roles = nn.Embedding(9, 64)
         self.blocks = nn.ModuleList([EntityBlock(64, 4) for _ in range(2)])
 
-    def encode(self, obs, active_relic_width=None, *, card_table=None):
+    def token_inputs(self, obs, *, card_table=None):
+        """Current consumer's token boundary, before the original two blocks."""
         player, entities, summary = self._dynamic_inputs(obs, card_table)
         context = obs.get('_combat_context')
         if context is None:
@@ -239,13 +240,17 @@ class TransformerCombatNetwork(FastCombatNetwork):
         if padding:
             x = torch.nn.functional.pad(x, (0, 0, 0, padding))
             mask = torch.nn.functional.pad(mask, (0, padding), value=False)
+        return x, mask, spans, required
+
+    def encode(self, obs, active_relic_width=None, *, card_table=None):
+        x, mask, spans, required = self.token_inputs(obs, card_table=card_table)
         for block in self.blocks:
             x = block(x, mask)
         x = self.norm(x)
         result = {name: x[:, lo:hi] for name, (lo, hi) in spans.items()}
         # Heads still see the complete native candidate index space.
         result['select'] = torch.nn.functional.pad(result['select'],
-            (0, 0, 0, valid.shape[1] - choice_width))
+            (0, 0, 0, required.shape[1] - result['select'].shape[1]))
         result['select'] = result['select'] * required[..., None]
         return result['global'][:, 0], result
 

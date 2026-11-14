@@ -38,6 +38,16 @@ def isolated_torch_compile_cache():
 
 
 @pytest.fixture
+def latent_env():
+    env = SlayTheSpireEnv(card_language=True, global_map_view=True, upper_public_context=True,
+        event_option_observation=True, combat_action_contract='autoregressive-v2',
+        combat_exit_anchor=True, reward_flow='sequential-v1', deck_latent_context=True)
+    env.reset(seed=20261111)
+    yield env
+    env.close()
+
+
+@pytest.fixture
 def combat_factory():
     created = []
 

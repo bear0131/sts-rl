@@ -87,3 +87,109 @@ def test_original_full480_whole_step_graph_and_frame_growth(combat_factory):
                 pool.closed = True
             arena.close()
         assert arena.modules.references == 0 and arena.modules.closed
+
+
+def test_full480_current_deck_fused_heads_and_owned_graphs(latent_env, monkeypatch):
+    """Current eager policy is the independent oracle for the old fused path."""
+    from rl.policies.deck_latent import DeckLatentPolicy
+    from rl.search.full480.combo_model import DeckWeights, GraphScorer
+    from env.core import encode
+
+    assert torch.cuda.is_available()
+    torch.manual_seed(20261111)
+    for _ in range(128):
+        if latent_env.thick.bc is not None:
+            break
+        latent_env.step(int(np.flatnonzero(latent_env.action_masks())[0]))
+    assert latent_env.thick.bc is not None
+    policy = DeckLatentPolicy(latent_env.observation_space, latent_env.action_space,
+        lambda _: 5e-5, d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
+        reward_flow='sequential-v1', deck_combat_encoder='transformer64x2').cuda()
+    policy.set_training_mode(False)
+    core = policy.core
+    with torch.no_grad():
+        # Exercise trained, nonuniform target and subset factors too.
+        for p in (core.combat.complete_head.source_query.weight,
+                  core.combat.complete_head.global_query.weight,
+                  core.combat.complete_head.subset.choice_key.weight,
+                  core.combat.complete_head.subset.stop.weight):
+            p.normal_(0, .075)
+        data = {k: torch.as_tensor(v[None], device='cuda') for k, v in latent_env._obs().items()}
+        context = core.prepare_search_context(data)
+        def no_encoder(*args, **kwargs):
+            raise AssertionError('inner fused execution recomputed the large context encoder')
+        monkeypatch.setattr(core.context, 'forward', no_encoder)
+        flat = DeckWeights(core)
+        scorer = GraphScorer(flat)
+        try:
+            for batch_size in (1, 3, 7):
+                obs = {k: v.expand(batch_size, *v.shape[1:]).clone() for k, v in data.items()}
+                obs['_combat_context'] = context.combat.expand(batch_size, -1).clone()
+                # Synthetic head contracts cover every canonical index, empty
+                # entity slots, PAD queries and increasing subset prefixes.
+                obs['combat_legal'].fill_(1)
+                obs['select_native_indices'][:, :5] = torch.arange(1, 6, device='cuda')
+                obs['select_hand_mask'][:, 1] = 1
+                obs['select_hand_mask'][:, 4] = 1
+                obs['pick_remaining'].fill_(3 / encode.PICK_SCALE)
+                if batch_size > 1:
+                    obs['combat_legal'][1, 1:91] = 0
+                    obs['combat_legal'][1, 6] = 1  # sole no-target conditional
+                    obs['combat_legal'][1, 187:192] = 0
+                tokens, present, spans, required = core.combat.token_inputs(obs)
+                count, length, _ = tokens.shape
+                # Drop key-only padding, but retain all consumed query slots.
+                selected_slots = list(range(21)) + list(range(25, 121))
+                packed, masks, queries, maps, starts, lens, b1, b2 = [], [], [], [], [], [], [], []
+                nt = nq = 0
+                for i in range(count):
+                    retained = torch.where(present[i] | torch.tensor(
+                        [j in selected_slots for j in range(length)], device='cuda'))[0]
+                    logical = {int(j): pos for pos, j in enumerate(retained.cpu().tolist())}
+                    q = [nt + logical[j] for j in selected_slots]
+                    mapping = torch.full((161,), -1, dtype=torch.int32, device='cuda')
+                    mapping[selected_slots] = torch.arange(len(q), device='cuda', dtype=torch.int32)
+                    starts.append([nt, nq, len(b1), len(b2)])
+                    lens.append([len(retained), len(q), (len(retained)+15)//16, (len(q)+15)//16])
+                    b1.extend((i, j) for j in range(0, len(retained), 16))
+                    b2.extend((i, j) for j in range(0, len(q), 16))
+                    packed.append(tokens[i, retained]); masks.append(present[i, retained]); queries.extend(q); maps.append(mapping)
+                    nt += len(retained); nq += len(q)
+                features = torch.zeros((nt, 128), device='cuda'); features[:, :64] = torch.cat(packed)
+                symbols = torch.zeros(nt, dtype=torch.int64, device='cuda')
+                query = torch.tensor(queries, dtype=torch.int64, device='cuda')
+                starts = torch.tensor(starts, dtype=torch.int64, device='cuda')
+                lens = torch.tensor(lens, dtype=torch.int64, device='cuda')
+                b1, b2 = [torch.tensor(x, dtype=torch.int32, device='cuda') for x in (b1, b2)]
+                actions = obs['combat_legal'].nonzero()
+                owners = actions[:, 0].int().contiguous()
+                keys = torch.full((len(actions), 10), -1, dtype=torch.int64, device='cuda')
+                keys[:, 0] = actions[:, 1]
+                meta = torch.zeros((count, 4), dtype=torch.int32, device='cuda')
+                meta[:, 0] = obs['combat_legal'].sum(1).int()
+                state = torch.zeros((count, 32), device='cuda')
+                unused = torch.empty((len(actions), 24), device='cuda')
+                scores = torch.empty(len(actions), device='cuda')
+                remaining = (obs['pick_remaining'] * encode.PICK_SCALE).round().int().contiguous()
+                scorer.bind_deck(obs['combat_legal'], obs['select_hand_mask'], remaining)
+                args = (flat, features, symbols, symbols, torch.cat(masks), query, starts, lens,
+                    b1, b2, state, unused, keys, owners, keys, owners, meta, torch.stack(maps), scores, len(actions))
+                for replay in range(3):
+                    if replay == 1:
+                        temporary = torch.empty(64*1024*1024, dtype=torch.uint8, device='cuda')
+                        temporary.fill_(3); del temporary
+                        torch.cuda.empty_cache()
+                    if replay == 2:
+                        core.combat.end.bias.add_(.03125)
+                        with pytest.raises(RuntimeError, match='drain and refresh'):
+                            scorer(*args)
+                        flat.refresh()
+                    expected, values, _ = core.combat(obs)
+                    scorer(*args)
+                    torch.testing.assert_close(scores, expected[actions[:, 0], actions[:, 1]], atol=3e-5, rtol=1e-5)
+                    torch.testing.assert_close(scorer.buffers['coef'][:count, 12], values.flatten(), atol=3e-5, rtol=1e-5)
+            assert scorer.counts['captures'] >= 3 and scorer.counts['replays'] >= 9
+            assert scorer.counts['evictions'] >= 2
+        finally:
+            scorer.close()
+        assert scorer.graph is None and not scorer.buffers and not scorer.weights
