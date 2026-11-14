@@ -171,12 +171,12 @@ class EarlyUpperReduction(UpperFirstSchedule):
 
 
 def distributed_packed_epoch(model, clip_range, clip_range_vf, *, ring, synchronize, average):
-    """Use the FP32 deck plan for warmup and single-device anchor/search PPO."""
+    """Use the FP32 deck plan for warmup and anchor/search PPO."""
     from rl.algorithms.packed_ppo import packed_ppo_epoch
 
     target = getattr(model.policy, 'combat_value_target', None)
     stage_supported = (target == 'whole-run' and getattr(model, 'deck_search_config', None) is None
-                       or ring is None and target == 'pre-reward-anchor')
+                       or target == 'pre-reward-anchor')
     planned = (model.ppo_update_config.get('execution') == 'deck-latent-448'
                and model.device.type == 'cuda' and stage_supported)
     if not planned:
@@ -200,6 +200,9 @@ def distributed_packed_epoch(model, clip_range, clip_range_vf, *, ring, synchron
                 result['planned_chunks'] = plan.chunk_count
                 result['planned_eager_retries'] = plan.eager_retries
                 result.update({'graph_' + k: v for k, v in plan.graphs.stats.items()})
+                if reducer is not None:
+                    for name in ('upper_ring_sec', 'upper_wait_sec', 'upper_ring_before_combat_done_sec'):
+                        result['planned_' + name] = sum(step[name] for step in reducer.steps)
                 return result
             finally:
                 if reducer is not None:

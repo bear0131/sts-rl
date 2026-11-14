@@ -1025,6 +1025,99 @@ def test_combat_cannot_contribute_to_early_upper_ring_bucket(latent_env):
 
 
 @pytest.mark.cuda
+def test_distributed_anchor_search_uses_existing_overlap_and_preserves_adam(latent_env):
+    """Real packed PPO groups include upper, combat, anchor and sparse search rows."""
+    import gc
+    import json
+    from contextlib import nullcontext
+    from dataclasses import asdict
+    from pathlib import Path
+    from types import SimpleNamespace
+    from rl.algorithms.packed_ppo import configure_packed_updates
+    from rl.algorithms.search_auxiliary import SearchTrainingConfig, SearchRolloutBuffer
+    from rl.training.distributed_sb3 import pack_gradients, average_peer_gradients
+    from rl.training.ppo_overlap import distributed_packed_epoch, gradient_buckets
+
+    assert torch.cuda.is_available(), 'explicit CUDA distributed search qualification required'
+    torch.set_float32_matmul_precision('highest')
+    outer, outer_mask = deepcopy(latent_env._obs()), latent_env.action_masks().copy()
+    enter_combat(latent_env)
+    combat, combat_mask = deepcopy(latent_env._obs()), latent_env.action_masks().copy()
+    anchor = deepcopy(combat); anchor['combat_exit_anchor'][0] = 1
+    source = policy_for(latent_env, 'transformer64x2').cuda().train()
+    source.combat_value_target = 'pre-reward-anchor'
+    config = json.loads((Path(__file__).parents[2]/'configs/train/deck_latent_448_fp32.json').read_text())
+    rng = np.random.default_rng(20261115)
+    buffer = SearchRolloutBuffer(2, latent_env.observation_space, latent_env.action_space,
+                                 device='cuda', n_envs=32, gamma=1., gae_lambda=1.)
+    rows = [outer, combat, anchor, combat] * 8
+    obs = {key:np.stack([row[key] for row in rows]) for key in outer}
+    masks = np.stack([outer_mask, combat_mask, combat_mask, combat_mask] * 8)
+    for step in range(2):
+        for env in range(1, 32, 4):
+            logits = torch.as_tensor(rng.normal(size=latent_env.action_space.n), dtype=torch.float32)
+            target = logits.masked_fill(~torch.as_tensor(masks[env]), -torch.inf).log_softmax(-1)
+            buffer.add_search_target(env, target.numpy())
+        buffer.add(obs, masks.argmax(-1), rng.normal(size=32), np.zeros(32, bool),
+                   torch.zeros(32), torch.full((32,), -1.), action_masks=masks)
+    buffer.advantages[:] = rng.normal(size=(2, 32))
+    buffer.returns[:] = rng.normal(size=(2, 32))
+
+    class IdenticalPeerRing:
+        # Unit integration isolates scheduling on one GPU; true four-machine
+        # SSH and cross-rank state equality are verified in production separately.
+        world_size = 4
+        def average(self, flat, *, chunk_sizes):
+            assert sum(chunk_sizes) == flat.numel() and len(chunk_sizes) == 4
+            return flat, flat.nbytes * 3 // 2
+
+    models, traces = [], []
+    for overlap in (False, True):
+        model = SimpleNamespace(policy=deepcopy(source), device=torch.device('cuda'),
+            action_space=latent_env.action_space, autocast_context=nullcontext,
+            hierarchical_combat_hp=False, nosl_is_az=False, reasoning_updates=0,
+            target_kl=None, amp_mode='off', normalize_advantage=False,
+            ent_coef=.02, vf_coef=.5, max_grad_norm=.5, batch_size=16,
+            gradient_accumulation_steps=2, rollout_buffer=deepcopy(buffer),
+            deck_search_config=asdict(SearchTrainingConfig(coefficient=.1)))
+        configure_packed_updates(model, config)
+        snapshots = []
+        hook = model.policy.optimizer.register_step_pre_hook(
+            lambda optimizer, args, kwargs, model=model, snapshots=snapshots:
+                snapshots.append(pack_gradients(model).clone()))
+        def serial_sync(_step):
+            flat = pack_gradients(model)
+            average_peer_gradients(model, flat, [], rank=0, world_size=1)
+            return dict(gradient_pack_sec=0., sync_sec=0., sync_mbps=0., grad_bytes=flat.nbytes)
+        np.random.seed(20261115)
+        try:
+            result = distributed_packed_epoch(model, .2, None,
+                ring=IdenticalPeerRing() if overlap else None,
+                synchronize=serial_sync, average=lambda values:values)
+        finally:
+            hook.remove()
+        assert result['optimizer_steps'] == len(snapshots) == 2
+        assert result['planned_chunks'] > 0
+        if overlap:
+            assert result['planned_upper_ring_sec'] > 0
+            assert result['planned_upper_ring_before_combat_done_sec'] >= 0
+        models.append(model); traces.append(snapshots)
+        torch.cuda.synchronize(); gc.collect(); torch.cuda.empty_cache()
+    for expected, actual in zip(*traces, strict=True):
+        torch.testing.assert_close(actual, expected, rtol=3e-4, atol=3e-6)
+    reference, candidate = (m.policy for m in models)
+    for left, right in zip(reference.parameters(), candidate.parameters(), strict=True):
+        torch.testing.assert_close(left, right, rtol=3e-4, atol=3e-6)
+        for name, value in reference.optimizer.state[left].items():
+            torch.testing.assert_close(value, candidate.optimizer.state[right][name], rtol=6e-4, atol=3e-6)
+    assert models[0]._deck_search_loss_normalization == models[1]._deck_search_loss_normalization
+    early, tail = gradient_buckets(candidate)
+    for group in (early, tail):
+        assert any(candidate.optimizer.state[p]['exp_avg'].abs().sum() > 0 for p in group)
+    assert any(candidate.optimizer.state[p]['exp_avg'].abs().sum() > 0 for p in candidate.core.anchor.parameters())
+
+
+@pytest.mark.cuda
 def test_planned_anchor_search_loss_gradients_and_adam_after_graph_release(latent_env):
     """Mixed anchor routes and search KL use the same original optimizer group."""
     import gc

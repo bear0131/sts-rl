@@ -213,3 +213,6 @@ PPO阶段未改原页租约、根账本、命令队列、整步GPU图、帧容�
 
 
 | P21 | 原GpuService父CUDA交接处在已有同步后回收无引用对象并归还闲置allocator缓存 | 修复完整PPO后第二collection启动owner时stack limit CUDA错误2；不降低栈/堆，不关图或构筑/锚点缓存，活模型/Adam保持。大块闲置显存回归先复现同错，修复后CPU/CUDA两例及完整47项通过；连续真实生产验收继续从247进行 |
+
+
+| P22 | 原`ppo_overlap.distributed_packed_epoch`允许多机锚点/搜索阶段进入既有448计划和早桶归约；仅增加三项原planned_ppo时间聚合 | 直接复用dffc1b79既有UpperFirstSchedule/EarlyUpperReduction与原8流ring，共享/战斗/锚点参数仍尾桶，完整梯度归约后统一裁剪/Adam；新5090上25项通过，未把单GPU模拟同伴测试称为真实多机性能证明。生产同进程两轮待续训验收 |
