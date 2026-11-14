@@ -25,13 +25,19 @@ class PairedTokenBatch(SmallPlayoutBatch):
     @torch.inference_mode()
     def score_roots(self, environments, observations=None, contexts=None):
         if self.deck:
-            inputs = (self.observer.encode(environments) if observations is None else
-                      {key:np.stack([obs[key] for obs in observations]) for key in observations[0]})
-            observations = [{key:value[i] for key,value in inputs.items()} for i in range(len(environments))]
             from rl.policies.deck_latent import SearchContext
+            from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS
             from rl.search.native import observation_as_tensor
             if contexts is None:contexts=[None]*len(environments)
             missing=[i for i,value in enumerate(contexts) if value is None]
+            if observations is None:
+                inputs = self.observer.encode(environments)
+                observations = [{key:value[i] for key,value in inputs.items()} for i in range(len(environments))]
+            else:
+                keys = COMBAT_OBSERVATION_KEYS | {'pile_upgraded_counts', 'pile_upgrade_sums'}
+                if missing:keys = keys | set(self.policy.context.keys)
+                inputs = {key:np.stack([obs[key] for obs in observations])
+                          for key in observations[0] if key in keys}
             if missing:
                 context=self.inference.search_context({k:v[missing] for k,v in inputs.items()}).combat.cpu().numpy()
                 for i,value in zip(missing,context,strict=True):contexts[i]=value
