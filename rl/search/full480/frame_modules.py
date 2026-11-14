@@ -50,6 +50,10 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
    old='addToBot(Actions::OnAfterCardUsed());'
    replacement='addToBot(OpeningAction::create(OpeningAction::AfterCardUsed));'
    assert original_text.count(old)==1 and replacement in (simulator/relative).read_text()
+   original_text=original_text.replace(old,replacement)
+   old='case CardId::BURNING_PACT:\n            addToBot( Actions::ChooseExhaustOne() );\n            addToBot( Actions::DrawCards(up ? 3 : 2) );'
+   replacement=old.replace('Actions::DrawCards(up ? 3 : 2)', 'OpeningAction::create(OpeningAction::Draw, up ? 3 : 2)')
+   assert original_text.count(old)==1 and replacement in (simulator/relative).read_text()
    target=continuation/relative;target.parent.mkdir(parents=True,exist_ok=True)
    target.write_text(original_text.replace(old,replacement))
    continuation_sources[relative]=dict(native_sha256=digest(simulator/relative),generated_sha256=digest(target))

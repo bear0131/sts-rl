@@ -1395,7 +1395,7 @@ void BattleContext::useSkillCard() {
 
         case CardId::BURNING_PACT:
             addToBot( Actions::ChooseExhaustOne() );
-            addToBot( Actions::DrawCards(up ? 3 : 2) );
+            addToBot( OpeningAction::create(OpeningAction::Draw, up ? 3 : 2) );
             break;
 
         case CardId::CHRYSALIS:

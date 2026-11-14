@@ -374,8 +374,32 @@ def test_full480_pcg64_matches_numpy_and_owns_each_chain():
     assert arena.modules.references == 0 and arena.modules.closed
 
 
+@pytest.mark.parametrize('upgrade', [0, 1])
+def test_full480_burning_pact_pending_draw_roundtrip(combat_factory, upgrade):
+    import slaythespire as sts
+    from rl.search.full480.run_device import cpu_bridge
+    from tests.bridge_fixtures import native_card, native_card_state
+    env = combat_factory(['BURNING_PACT'] + ['DEFEND_RED'] * 9, seed=20261111)
+    bc = env.thick.bc
+    bc.set_card_state(native_card_state(
+        hand=[native_card('BURNING_PACT', 0, upgrades=upgrade)] + [native_card('DEFEND_RED', i) for i in range(1, 5)],
+        draw=[native_card('DEFEND_RED', i) for i in range(5, 10)]))
+    bc.execute(sts.Action(sts.ActionType.CARD, 0))
+    cpu = cpu_bridge()
+    snapshot = cpu.State(bc).snapshot()
+    assert snapshot['input_state'] == 2 and snapshot['queue_size'] == 2
+    assert snapshot['portable']
+    restored = cpu.State(snapshot['words'])
+    bits = restored.actions()[0]
+    restored.step(bits)
+    bc.execute(sts.Action(bits))
+    assert len(bc.to_dict()['hand']) == 5 + upgrade
+    assert len(bc.to_dict()['exhaust']) == 1
+    np.testing.assert_array_equal(restored.snapshot()['words'], cpu.State(bc).snapshot()['words'])
+
+
 @pytest.mark.parametrize('scenario,anchored', [(s, False) for s in
-    ('prefix', 'growth', 'escape', 'gamble', 'toolbox', 'armaments')] +
+    ('prefix', 'growth', 'escape', 'gamble', 'toolbox', 'armaments', 'burning_pact', 'burning_pact_up')] +
     [(s, True) for s in ('prefix', 'growth', 'escape', 'anchor_duplicates')])
 def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, anchored, tmp_path, monkeypatch):
     from rl.search.full480.combo_runtime import BattleArena, BattlePool
@@ -414,13 +438,20 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
             for name in relics])
         latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
     latent_env._invalidate_backend_cache()
-    if scenario == 'armaments':
-        latent_env.thick.gc.set_deck([('ARMAMENTS', 0)] + [('DEFEND_RED', 0)] * 4)
+    if scenario in ('armaments', 'burning_pact', 'burning_pact_up'):
+        card = 'ARMAMENTS' if scenario == 'armaments' else 'BURNING_PACT'
+        upgrade = int(scenario == 'burning_pact_up')
+        latent_env.thick.gc.set_deck([(card, upgrade)] + [('DEFEND_RED', 0)] * (4 if card == 'ARMAMENTS' else 9))
         latent_env.thick.gc.set_relics([])
         latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
+        if card == 'BURNING_PACT':
+            from tests.bridge_fixtures import native_card, native_card_state
+            latent_env.thick.bc.set_card_state(native_card_state(
+                hand=[native_card(card, 0, upgrades=upgrade)] + [native_card('DEFEND_RED', i) for i in range(1, 5)],
+                draw=[native_card('DEFEND_RED', i) for i in range(5, 10)]))
         latent_env._invalidate_backend_cache()
         hand = latent_env.thick.bc.to_dict()['hand']
-        slot = next(i for i, card in enumerate(hand) if card[0] == 'ARMAMENTS')
+        slot = next(i for i, instance in enumerate(hand) if instance[0] == card)
         bits = next(bits for _, bits in latent_env._joint_policy_actions()
                     if sts.Action(bits).action_type == sts.ActionType.CARD
                     and sts.Action(bits).source_idx == slot)
@@ -443,7 +474,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
         worlds = paired_worlds(20261111, len(mapping), 2 * len(mapping))
         budget = len(mapping) * len(worlds) - 1
         row = cpu.State(latent_env.thick.bc).root_plan(20261111, budget, 1., 8, False)
-        if scenario in ('gamble', 'toolbox', 'armaments'):
+        if scenario in ('gamble', 'toolbox', 'armaments', 'burning_pact', 'burning_pact_up'):
             assert row['snapshot']['input_state'] == 2
             assert row['snapshot']['queue_size'] > 0
             assert row['snapshot']['portable'] and row['eligible']

@@ -199,3 +199,5 @@ rank0/1 的 native fallback 为 0，rank2/3 为41/67根，不能把全部差距�
 另行审查的模拟器修改：`Actions.h/Actions.cpp/BattleContext.cpp`将实际开战回调和OnAfterCardUsed改成带类型的小对象，执行仍调用原动作函数；`ActionQueue.h`只增加队列只读访问。原state_codec/CPU桥接增加这类对象的序列化/恢复，并在原ArenaProxy/BattleArena/GameMirror边界允许CARD_SELECT。未知回调仍拒绝导入，不能宣称任意函数均已支持；固定PPO遇到未知回调明确报错，不能静默用旧terminal-HP回退产生错误标签。正式246初态186个战斗快照已全部可导入，完整片段中的覆盖仍需实跑。
 
 PPO阶段未改原页租约、根账本、命令队列、整步GPU图、帧容量、共享QKV空间、内部强制跳过和权重失效检查。以上声明须与逐文件diff及测试结果一起审查，不替代速度证明。
+
+| P16 | 原模拟器`BattleContext.cpp`燃烧契约的待执行抽牌接已有`OpeningAction::Draw`；`frame_modules.py`在冻结GPU源码的同一语句作相同替换 | 四rank资格发现rank2正式246的slot43/48/160在EXHAUST_ONE含未登记回调；不新增队列/执行路径、不回CPU。未升级/升级CPU序列化后抽牌逐字回归已过；GPU对照和四rank生产两轮仍待验收，属于正确性补漏，不能算10%性能阶段 |
