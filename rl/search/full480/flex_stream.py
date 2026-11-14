@@ -38,9 +38,15 @@ class StreamingPool(ScoringPool):
   self.modules=StreamModules() if modules is None else modules;self.owns_modules=modules is None
   assert not self.modules.closed;self.modules.references+=1;self.funcs=self.modules.funcs
   self.net=load_net() if net is None else net;self.flat=Fused(self.net,precision) if flat is None else flat
+  self.deck_consumer=getattr(self.flat,'consumer',None)=='deck-latent-combat-v1'
   self.layout=self.modules.identity['rules']['abi_layout'][0];self.I=inventory_cap;self.action_width=2048
   def arr(shape,dtype=torch.int32):return torch.empty(shape,dtype=dtype,device='cuda')
   self.arr=arr
+  if self.deck_consumer:
+   inputs=self.flat.input_tables;R=inputs.defines['RELIC_WIDTH']
+   self.selection_prefix=arr((self.n,)).zero_()
+   self.root_inputs=arr((self.m,68),torch.float32)
+   self.root_relics=arr((self.m,R));self.root_counters=arr((self.m,R),torch.float32)
   self.roots=arr((self.m,self.layout),torch.uint8);self.arena=arr((self.n,),torch.int64).zero_()
   assert self.modules.identity['rules']['chain_addressing_version']==1
   self.state_pages=DevicePages(self.m,self.budget_cap,self.layout,lambda count:arr((count,self.layout),torch.uint8));self.page_leases={}

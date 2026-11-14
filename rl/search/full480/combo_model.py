@@ -60,7 +60,7 @@ class GraphScorer:
    torch.cuda.synchronize();self.graph.reset();self.graph=None;self.counts['evictions']+=1
   self.bound=None;self.buffers={};self.key=None;self.capacity=(0,0,0);self.weights=()
  def close(self):
-  self.release();self.closed=True
+  self.release();self.deck_inputs=None;self.closed=True
  def workspace_bytes(self,extra=()):
   storages={}
   for t in (*self.buffers.values(),*extra):
@@ -109,8 +109,8 @@ class GraphScorer:
    assert self.deck_inputs is not None
    legal,selected,remaining=self.deck_inputs;flat=self.flat;subset=net.complete_head.subset
    self.launch('final',final_head,(self.grid(cq)[0],5),w['second'],net.norm.weight,net.norm.bias,flat.head_weight,w['token'],c,net.norm.eps,288,flat.head_bias,warps=4)
-   self.launch('state',deck_global,(self.grid(cs,16)[0],4),w['token'],w['starts'],query_map,flat.state_weight,flat.state_bias,w['z'],c,warps=4)
-   self.launch('subset',deck_subset,(min(cs,self.sms*8),),w['token'],w['starts'],query_map,w['z'],legal,selected,remaining,
+   self.launch('state',deck_global,(self.grid(cs,16)[0],4),w['token'],w['starts'],query_map,meta,flat.state_weight,flat.state_bias,w['z'],c,warps=4)
+   self.launch('subset',deck_subset,(min(cs,self.sms*8),),w['token'],w['starts'],query_map,meta,w['z'],legal,selected,remaining,
     subset.prefix.weight,subset.choice_key.weight,subset.stop.weight,subset.stop.bias,subset.completion_counts,
     net.value_head[2].weight,net.value_head[2].bias,w['coef'],c,warps=4)
    self.launch('action',deck_actions,self.grid(len(actions),16),keys,owners,meta,query_map,w['starts'],w['z'],w['coef'],w['token'],legal,scores,c,warps=4)

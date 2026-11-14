@@ -20,6 +20,12 @@
 
 
 #include "bridge_common.h"
+#ifdef STS_FULL480_DECK
+#include "deck_inputs.cuh"
+#define DECK_EXTRA const int*prefixes,const unsigned long long*weights,float*raw,int*cat,int*legal_mask,float*selected,int*remaining,const float*root_inputs,const int*root_relics,const float*root_counters,
+#else
+#define DECK_EXTRA
+#endif
 
 inline unsigned char* packed_address(unsigned char*table,int index){
  const auto address=reinterpret_cast<const unsigned long long*>(table)[index];
@@ -323,10 +329,16 @@ bool parallel_capable(const sts::BattleContext& b){
 extern "C" __global__ void frame_observe_special(unsigned char*arena,int*worlds,int*live,int*deck_sizes,
  float*state,unsigned*bits,float*action_numbers,int*keys,int*source_rows,int*targets,
  int*ids,int*zones,int*monsters,float*numbers,int*meta,int*chunks,int*allocator,
- const int*frame_count,int base,int root_count,int action_capacity,int entity_capacity){
+ const int*frame_count,DECK_EXTRA int base,int root_count,int action_capacity,int entity_capacity){
  int count=frame_count[0];int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=count)return;
  const auto&b=*reinterpret_cast<const sts::BattleContext*>(packed_address(arena,live[base+i]));
  if(parallel_capable(b))return;
+#ifdef STS_FULL480_DECK
+ auto deck_actions=sts::search::autoregressiveActions(b,prefixes[live[base+i]]);
+ deck_input::prepare(b,deck_actions,i,prefixes[live[base+i]],bits,keys,source_rows,targets,ids,zones,monsters,meta,chunks,allocator,action_capacity,entity_capacity,raw,cat,legal_mask,selected,remaining);
+ return;
+#endif
+
  auto legal=device_state::legal_actions(b);int na=legal.size();
  device_state::require(na>0&&na<=2048);
  int start=atomicAdd(allocator,na);meta[i*4]=na;meta[i*4+1]=0;meta[i*4+2]=start;meta[i*4+3]=0;
@@ -409,10 +421,16 @@ NormalActionSink normal_legal(const BattleContext&bc){
 extern "C" __global__ void normal_prepare(unsigned char*arena,int*worlds,int*live,int*deck_sizes,
  float*state,unsigned*bits,float*action_numbers,int*keys,int*source_rows,int*targets,
  int*ids,int*zones,int*monsters,float*numbers,int*meta,int*chunks,int*allocator,
- const int*frame_count,int*desc,int base,int root_count,int action_capacity,int entity_capacity){
+ const int*frame_count,DECK_EXTRA int*desc,int base,int root_count,int action_capacity,int entity_capacity){
  int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=frame_count[0])return;
  const auto&b=*reinterpret_cast<const sts::BattleContext*>(packed_address(arena,live[base+i]));
  if(!parallel_capable(b))return;
+#ifdef STS_FULL480_DECK
+ auto deck_actions=sts::search::normal_legal(b);
+ deck_input::prepare(b,deck_actions,i,prefixes[live[base+i]],bits,keys,source_rows,targets,ids,zones,monsters,meta,chunks,allocator,action_capacity,entity_capacity,raw,cat,legal_mask,selected,remaining);
+ return;
+#endif
+
  auto legal=sts::search::normal_legal(b);int na=legal.size();device_state::require(na>0&&na<=2048);
  int start=atomicAdd(allocator,na);meta[i*4]=na;meta[i*4+1]=0;meta[i*4+2]=start;meta[i*4+3]=0;
  atomicMax(allocator+4,na);if(start>action_capacity-na){atomicOr(allocator+2,1);return;}
@@ -442,10 +460,21 @@ int parallel_compare(const sts::search::PlayoutEntity&a,const sts::search::Playo
 extern "C" __global__ void normal_features(unsigned char*arena,int*worlds,int*live,int*deck_sizes,
  float*state,unsigned*bits,float*action_numbers,int*keys,int*source_rows,int*targets,
  int*ids,int*zones,int*monsters,float*numbers,int*meta,int*chunks,int*allocator,
- const int*frame_count,int*desc,int base,int root_count,int action_capacity,int entity_capacity){
+ const int*frame_count,DECK_EXTRA int*desc,int base,int root_count,int action_capacity,int entity_capacity){
  if(allocator[2])return;
  for(int i=blockIdx.x;i<frame_count[0];i+=gridDim.x){
   const auto&b=*reinterpret_cast<const sts::BattleContext*>(packed_address(arena,live[base+i]));
+  #ifdef STS_FULL480_DECK
+  if(meta[i*4]==1)continue;
+  device_state::require(meta[i*4+3]);
+  int root=worlds[base+i]%root_count;
+  for(int row=0;row<meta[i*4+1];++row){
+   int at=deck_input::physical(chunks,i,row),slot=ids[at];
+   for(int dim=threadIdx.x;dim<64;dim+=blockDim.x)
+    numbers[at*64+dim]=deck_input::token(b,weights,raw+i*deck_input::RAW,cat+i*deck_input::CAT,root_inputs+root*68,root_relics+root*deck_input::RELIC_WIDTH,root_counters+root*deck_input::RELIC_WIDTH,prefixes[live[base+i]],slot,dim);
+  }
+  continue;
+#endif
   if(!parallel_capable(b))continue;
   device_state::require(meta[i*4+3]);
   const auto&c=b.cards;int na=meta[i*4],start=meta[i*4+2],head=desc[i*8],known=desc[i*8+6],tail=desc[i*8+7];

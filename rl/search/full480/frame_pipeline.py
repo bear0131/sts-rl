@@ -10,22 +10,28 @@ from .frame_kernels import prepare_lens,finalize,prefix_local,prefix_add
 
 class FramePipeline:
  def __init__(self,pool,model,token_capacity=None,query_capacity=None):
-  self.pool=pool;self.model=model;self.modules=FrameModules(pool.modules.identity['rules']['abi_layout'])
+  self.pool=pool;self.model=model;self.modules=FrameModules(pool.modules.identity['rules']['abi_layout'],deck=pool.deck_consumer,
+   schema=pool.flat.input_tables.header() if pool.deck_consumer else None)
   self.F=pool.frame_cap;self.requested_ct=triton.next_power_of_2(token_capacity or self.F*32)
   self.requested_cq=triton.next_power_of_2(query_capacity or self.F*8)
   self.graph=None;self.buffers={};self.key=None;self.bound=();self.capacity=(0,0,self.F)
   self.counts=collections.Counter();self.closed=False;self.history=[]
  def signature(self):
+  if self.pool.deck_consumer:self.pool.flat.validate();self.pool.flat.input_tables.validate()
   result=[]
   for t in (self.pool.flat.lookup,self.pool.flat.head_weight,*self.pool.net.parameters()):
    try:version=t._version
    except RuntimeError:version=None
    result.append((t.data_ptr(),version))
+  if p:=getattr(self.pool.flat,'input_tables',None):
+   for t in p.tables.values():result.append((t.data_ptr(),t._version))
   return tuple(result)
  def external(self):
   p=self.pool
-  return (p.arena,p.deck,p.state,p.bits,p.actions,p.keys,p.source_rows,p.targets,p.ids,p.zones,p.monsters,p.numbers,p.meta,p.chunks,p.allocator,
+  result=(p.arena,p.deck,p.state,p.bits,p.actions,p.keys,p.source_rows,p.targets,p.ids,p.zones,p.monsters,p.numbers,p.meta,p.chunks,p.allocator,
    *p.inv,p.inv_slots,p.symbols,p.counts,p.canonical_sources,p.canonical_targets,p.entity_slots,p.extra_slots,p.token_order,p.query_order,p.query_map,p.input_map,p.geometry,p.scores)
+  if p.deck_consumer:result+=(p.selection_prefix,p.flat.input_tables.bindings,p.root_inputs,p.root_relics,p.root_counters,*p.flat.tensors())
+  return result
  def fingerprint(self):
   p=self.pool
   return (p.I,p.action_cap,p.entity_cap,self.requested_ct,self.requested_cq,tuple(t.data_ptr() for t in self.external()),
@@ -46,6 +52,12 @@ class FramePipeline:
    owners=arr((p.action_cap,),torch.int32),live=arr((F,),torch.int32),worlds=arr((F,),torch.int32),dispatch=arr((1,),torch.int32),
    normal_rows=arr((F,8),torch.int32),totals=arr((5,),torch.int32),queues=arr((2*F,),torch.int32),queue_counts=arr((2,),torch.int32),summary=arr((10,),torch.int32))
   w=self.buffers
+  if p.deck_consumer:
+   from env.core.run_env import _nosl_compact_lut
+   layout=_nosl_compact_lut()['layout']
+   w.update(raw=arr((F,layout['scalar_width'])),cat=arr((F,layout['categorical_width']),torch.int32),
+    legal=arr((F,198),torch.int32),selected=arr((F,10)),remaining=arr((F,),torch.int32))
+   self.model.bind_deck(w['legal'],w['selected'],w['remaining'])
   self.model.allocate(key,(w['features'],w['symbols'],w['slots'],w['present'],w['queries'],w['blocks1'],w['blocks2'],
    p.state,p.actions,p.keys,w['owners'],p.canonical_sources,p.canonical_targets,p.meta,p.query_map,p.scores),ct,cq,F,qkv_workspace=token_workspace)
   self.bound=self.external();self.key=key;self.capacity=(ct,cq,F);self.counts['allocations']+=1
@@ -54,6 +66,8 @@ class FramePipeline:
   p.allocator.zero_();w['totals'].zero_();w['queue_counts'].zero_()
   observer_args=[p.arena,w['worlds'],w['live'],p.deck,p.state,p.bits,p.actions,p.keys,p.source_rows,p.targets,
    p.ids,p.zones,p.monsters,p.numbers,p.meta,p.chunks,p.allocator,w['dispatch']]
+  if p.deck_consumer:
+   observer_args+=[p.selection_prefix,p.flat.input_tables.bindings,w['raw'],w['cat'],w['legal'],w['selected'],w['remaining'],p.root_inputs,p.root_relics,p.root_counters]
   shape=[0,p.m,p.action_cap,p.entity_cap]
   self.modules.launch('frame_observe_special',observer_args,shape,triton.cdiv(F,32))
   self.modules.launch('normal_prepare',observer_args+[w['normal_rows']],shape,triton.cdiv(F,32))
@@ -71,6 +85,7 @@ class FramePipeline:
  def run(self,base,count):
   assert not self.closed and 0<count<=self.F
   p=self.pool
+  if p.deck_consumer:p.flat.validate();p.flat.input_tables.validate()
   for attempt in range(8):
    key=self.fingerprint()
    if key!=self.key:self.allocate(key)

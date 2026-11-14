@@ -136,6 +136,9 @@ def test_full480_current_deck_fused_heads_and_owned_graphs(latent_env, monkeypat
                     obs['combat_legal'][1, 1:91] = 0
                     obs['combat_legal'][1, 6] = 1  # sole no-target conditional
                     obs['combat_legal'][1, 187:192] = 0
+                if batch_size == 7:
+                    obs['combat_legal'][-1] = 0
+                    obs['combat_legal'][-1, 0] = 1
                 tokens, present, spans, required = core.combat.token_inputs(obs)
                 count, length, _ = tokens.shape
                 # Drop key-only padding, but retain all consumed query slots.
@@ -149,6 +152,8 @@ def test_full480_current_deck_fused_heads_and_owned_graphs(latent_env, monkeypat
                     q = [nt + logical[j] for j in selected_slots]
                     mapping = torch.full((161,), -1, dtype=torch.int32, device='cuda')
                     mapping[selected_slots] = torch.arange(len(q), device='cuda', dtype=torch.int32)
+                    if batch_size == 7 and i == count - 1:
+                        mapping.fill_(2**30)  # forced rows own no query map
                     starts.append([nt, nq, len(b1), len(b2)])
                     lens.append([len(retained), len(q), (len(retained)+15)//16, (len(q)+15)//16])
                     b1.extend((i, j) for j in range(0, len(retained), 16))
@@ -186,10 +191,101 @@ def test_full480_current_deck_fused_heads_and_owned_graphs(latent_env, monkeypat
                         flat.refresh()
                     expected, values, _ = core.combat(obs)
                     scorer(*args)
-                    torch.testing.assert_close(scores, expected[actions[:, 0], actions[:, 1]], atol=3e-5, rtol=1e-5)
-                    torch.testing.assert_close(scorer.buffers['coef'][:count, 12], values.flatten(), atol=3e-5, rtol=1e-5)
+                    nonforced = meta[:, 0] > 1
+                    reference = expected[actions[:, 0], actions[:, 1]].clone()
+                    reference[~nonforced[actions[:, 0]]] = 0
+                    torch.testing.assert_close(scores, reference, atol=3e-5, rtol=1e-5)
+                    torch.testing.assert_close(scorer.buffers['coef'][:count, 12][nonforced], values.flatten()[nonforced], atol=3e-5, rtol=1e-5)
             assert scorer.counts['captures'] >= 3 and scorer.counts['replays'] >= 9
             assert scorer.counts['evictions'] >= 2
         finally:
             scorer.close()
         assert scorer.graph is None and not scorer.buffers and not scorer.weights
+
+
+def test_full480_current_native_observer_and_packed_model(latent_env):
+    """The original frame reads real native states, against the Gym consumer."""
+    import slaythespire as sts
+    from rl.policies.deck_latent import DeckLatentPolicy
+    from rl.search.full480.combo_model import DeckWeights
+    from rl.search.full480.deck_inputs import DeckInputTables
+    from rl.search.full480.run_device import cpu_bridge, artifact_directory
+    from rl.search.full480.combo_runtime import BattleArena, BattlePool
+
+    assert torch.cuda.is_available()
+    torch.manual_seed(20261111)
+    for _ in range(128):
+        if latent_env.thick.bc is not None:
+            break
+        latent_env.step(int(np.flatnonzero(latent_env.action_masks())[0]))
+    assert latent_env.thick.bc is not None
+    deck = ['WARCRY', 'BURNING_PACT', 'HEADBUTT', 'TRUE_GRIT', 'DEFEND_RED',
+            'BATTLE_TRANCE', 'STRIKE_RED', 'DEFEND_RED', 'BASH', 'EXHUME']
+    latent_env.thick.gc.set_deck([(name, 0) for name in deck])
+    latent_env.thick.gc.set_potion_state(['Gamblers Brew', 'Liquid Memories'])
+    latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
+    latent_env._invalidate_backend_cache()
+    policy = DeckLatentPolicy(latent_env.observation_space, latent_env.action_space,
+        lambda _: 5e-5, d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
+        reward_flow='sequential-v1', deck_combat_encoder='transformer64x2').cuda()
+    policy.set_training_mode(False)
+    cpu = cpu_bridge()
+    with torch.no_grad():
+        flat = DeckWeights(policy.core)
+        flat.input_tables = DeckInputTables(policy.core, latent_env._obs())
+        assert flat.input_tables.header() == (artifact_directory()/'deck/deck_schema.h').read_text()
+        arena = BattleArena(1)
+        pool = None
+        checked = selections = prefixes = 0
+        try:
+            pool = BattlePool(arena, 1, net=flat.net, flat=flat, frame=1, tile=32,
+                              frame_tokens=4, frame_queries=4)
+            # Read-only borrowed mirror address; no synthetic search or sampler.
+            pool.arena[0] = arena.arena.data_ptr()
+            pool.live[0] = 0; pool.logical_ids[0] = 0
+            for _ in range(64):
+                if latent_env.thick.bc is None or latent_env._phase() != 'combat' or latent_env._at_combat_exit_anchor():
+                    break
+                observation = latent_env._obs()
+                native = cpu.State(latent_env.thick.bc).snapshot()
+                if not arena.versions:
+                    assert native['portable'], {k: v for k, v in native.items() if k != 'words'}
+                    arena.load({0: native})
+                obs = {k: torch.as_tensor(v[None], device='cuda') for k, v in observation.items()}
+                context = policy.core.prepare_search_context(obs)
+                pool.root_inputs[0] = torch.cat((context.combat[0], obs['run_keys'][0], obs['ascension'][0]))
+                pool.root_relics[0] = obs['relics'][0].int()
+                pool.root_counters[0] = obs['relic_counters'][0]
+                prefix = sum(1 << i for i in (latent_env._multi or ()))
+                prefixes += int(prefix != 0)
+                pool.selection_prefix[0] = prefix
+                summary = pool.frame_pipeline.run(0, 1)
+                a, ne, _, _, _, nt, nq, _, _, real = summary
+                w = pool.frame_pipeline.buffers
+                torch.testing.assert_close(w['legal'][0].bool(), obs['combat_legal'][0].bool())
+                if real:
+                    expected, values = policy.core.combat_with_context(obs, context)
+                    action_ids = pool.keys[:a, 0].long()
+                    torch.testing.assert_close(pool.scores[:a], expected[0, action_ids], atol=3e-5, rtol=1e-5)
+                    torch.testing.assert_close(pool.frame_pipeline.model.buffers['coef'][0, 12], values[0, 0], atol=3e-5, rtol=1e-5)
+                    tokens, _, _, _ = flat.net.token_inputs(dict(obs, _combat_context=context.combat))
+                    count = int(pool.meta[0, 1])
+                    physical = pool.chunks[0, torch.arange(count, device='cuda')//64] + torch.arange(count, device='cuda') % 64
+                    slots = pool.ids[physical].long()
+                    torch.testing.assert_close(pool.numbers[physical], tokens[0, slots], atol=3e-5, rtol=1e-5)
+                    checked += 1
+                    selections += int(observation['select_context'][0] != 0)
+                legal = np.flatnonzero(latent_env.action_masks())
+                action = int(next((x for x in legal if 1 <= x < 187), legal[0]))
+                _, _, _, _, info = latent_env.step(action)
+                if info.get('simulator_transition') is not False:
+                    arena.step({0: (*arena.versions[0], int(info['native_action']))})
+            assert checked >= 8 and selections >= 1 and prefixes >= 1, (checked, selections, prefixes)
+            assert pool.frame_pipeline.counts['overflow_retries'] > 0
+            assert pool.frame_pipeline.counts['replays'] >= checked
+        finally:
+            if pool is not None:
+                pool.arena.zero_()
+                pool.close()
+            arena.close()
+        assert arena.modules.references == 0 and arena.modules.closed

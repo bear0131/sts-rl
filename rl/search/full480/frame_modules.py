@@ -3,14 +3,88 @@ from pathlib import Path
 import ctypes,hashlib,json
 from .graph_runtime import torch,ptr,lib,check
 P=artifact_directory()
+
+def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory=None):
+ """Original NVRTC observer and nvcc builder, with explicit consumer inputs.
+
+ The simulator stays in the qualified external snapshot. No generated game
+ source, checkpoint or binary is copied into the repository.
+ """
+ import subprocess,time
+ from .deck_inputs import portable_compact_header
+ output=Path(directory or P/'deck');output.mkdir(parents=True,exist_ok=True)
+ source=Path(__file__).resolve().parent;snapshot=Path(snapshot)
+ original=snapshot/'devicecompact141';header=snapshot/'deviceflex141/device_std.h'
+ digest=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
+ assert digest(header)=='b4295d78a2df81e696177d5f97f2d5a1b07de6aa09c5d0570831a6335b727e51'
+ assert (original/'generated/include/combat/BattleContext.h').is_file()
+ (output/'deck_schema.h').write_text(inputs.header())
+ (output/'compact-observation-device.h').write_text(portable_compact_header(canonical_header))
+ entry=(source/'observer_entry.cu').read_text()
+ old='"/root/autodl-tmp/token-speed-r7-20261105/nine-token-speed/online480/waves/devicebudgetarena141/device_std.h"'
+ assert entry.count(old)==1
+ entry=entry.replace(old,'"'+str(header)+'"')
+ options=['--std=c++17','--gpu-architecture=sm_120','--device-as-default-execution-space','--fmad=false',
+  '--generate-line-info','--display-error-number','--diag-suppress=177','-DSTS_FULL480_DECK=1',
+  '-I'+str(original/'generated'),'-I'+str(original/'generated/include'),'-I'+str(original),'-I'+str(source),'-I'+str(output)]
+ compiler=ctypes.CDLL(str(nvrtc));program=ptr()
+ for name,args in [('nvrtcCreateProgram',[ctypes.POINTER(ptr),ctypes.c_char_p,ctypes.c_char_p,ctypes.c_int,ptr,ptr]),
+  ('nvrtcCompileProgram',[ptr,ctypes.c_int,ctypes.POINTER(ctypes.c_char_p)]),
+  ('nvrtcGetProgramLogSize',[ptr,ctypes.POINTER(ctypes.c_size_t)]),('nvrtcGetProgramLog',[ptr,ptr]),
+  ('nvrtcGetCUBINSize',[ptr,ctypes.POINTER(ctypes.c_size_t)]),('nvrtcGetCUBIN',[ptr,ptr]),
+  ('nvrtcDestroyProgram',[ctypes.POINTER(ptr)])]:getattr(compiler,name).argtypes=args
+ assert compiler.nvrtcCreateProgram(ctypes.byref(program),entry.encode(),str(source/'observer_entry.cu').encode(),0,None,None)==0
+ sources={name:digest(source/name) for name in ('observer_entry.cu','deck_inputs.cuh')}
+ dependencies={str(p.relative_to(snapshot)):digest(p) for p in original.rglob('*') if p.suffix in ('.h','.cuh','.cpp')}
+ dependencies[str(header.relative_to(snapshot))]=digest(header)
+ record=dict(completed=False,options=options,input_sha256=hashlib.sha256(entry.encode()).hexdigest(),
+  package_sources=sources,dependencies=dependencies,canonical_header_sha256=digest(canonical_header),
+  schema_sha256=digest(output/'deck_schema.h'),codec_sha256=digest(output/'compact-observation-device.h'))
+ path=output/'observer-compile-0-result.json';path.write_text(json.dumps(record,indent=2))
+ start=time.monotonic()
+ try:
+  opts=(ctypes.c_char_p*len(options))(*(s.encode() for s in options))
+  rc=compiler.nvrtcCompileProgram(program,len(options),opts)
+  size=ctypes.c_size_t();compiler.nvrtcGetProgramLogSize(program,ctypes.byref(size))
+  buffer=ctypes.create_string_buffer(size.value);compiler.nvrtcGetProgramLog(program,buffer)
+  (output/'observer-compile-0.log').write_bytes(buffer.value)
+  record.update(completed=True,exit=rc,seconds=time.monotonic()-start)
+  if rc==0:
+   compiler.nvrtcGetCUBINSize(program,ctypes.byref(size));buffer=ctypes.create_string_buffer(size.value)
+   compiler.nvrtcGetCUBIN(program,buffer);(output/'observer-0.cubin').write_bytes(bytes(buffer))
+   record.update(cubin_bytes=size.value,cubin_sha256=digest(output/'observer-0.cubin'))
+  path.write_text(json.dumps(record,indent=2))
+  if rc:raise RuntimeError('full480 observer compilation failed: '+str(output/'observer-compile-0.log'))
+ finally:compiler.nvrtcDestroyProgram(ctypes.byref(program))
+ args=[str(nvcc),'-std=c++17','-arch=sm_120','-cubin','--fmad=false','-Xptxas=-v','-DSTS_FULL480_DECK=1',
+  str(source/'token_builder.cu'),'-o',str(output/'token_builder.cubin')]
+ start=time.monotonic();result=subprocess.run(args,capture_output=True,text=True,timeout=120)
+ (output/'builder-build.log').write_text(result.stdout+result.stderr)
+ builder=dict(completed=True,exit=result.returncode,seconds=time.monotonic()-start,options=args,
+  package_sources={'token_builder.cu':digest(source/'token_builder.cu')})
+ if result.returncode==0:builder['cubin_sha256']=digest(output/'token_builder.cubin')
+ (output/'builder-build.json').write_text(json.dumps(builder,indent=2))
+ if result.returncode:raise RuntimeError('full480 builder compilation failed: '+str(output/'builder-build.log'))
+ return dict(observer=record,builder=builder)
+
 class FrameModules:
- def __init__(self,layout):
+ def __init__(self,layout,*,deck=False,schema=None):
   self.handles=[];self.functions={};self.closed=False;self.identity={}
+  try:self.load(layout,deck,schema)
+  except BaseException:
+   self.close();raise
+ def load(self,layout,deck,schema):
   for kind,receipt,name,functions in [
    ('observer','observer-compile-0-result.json','observer-0.cubin',['frame_observe','frame_observe_special','normal_prepare','normal_features','frame_layout','observer_layout','packed_layout']),
    ('builder','builder-build.json','token_builder.cubin',['pack_short','pack_medium','pack_long','packed_finalize'])]:
-   r=json.loads((P/receipt).read_text());assert r['completed'] and r['exit']==0
-   binary=P/name;digest=hashlib.sha256(binary.read_bytes()).hexdigest();assert digest==r['cubin_sha256']
+   directory=P/'deck' if deck else P
+   r=json.loads((directory/receipt).read_text());assert r['completed'] and r['exit']==0
+   if deck:
+    if kind=='observer':
+     assert schema is not None and hashlib.sha256(schema.encode()).hexdigest()==r['schema_sha256'],'full480 input schema does not match compiled observer'
+    for filename,digest in r['package_sources'].items():
+     assert hashlib.sha256((Path(__file__).resolve().parent/filename).read_bytes()).hexdigest()==digest,('stale full480 artifact',filename)
+   binary=directory/name;digest=hashlib.sha256(binary.read_bytes()).hexdigest();assert digest==r['cubin_sha256']
    h=ptr();check(lib.cuModuleLoad(ctypes.byref(h),str(binary).encode()),'load frame '+kind);self.handles.append(h)
    self.identity[kind]=dict(sha256=digest)
    for name in functions:
@@ -19,7 +93,7 @@ class FrameModules:
   for name,cap in [('pack_short',32),('pack_medium',64),('pack_long',161)]:
    check(lib.cuFuncSetAttribute(self.functions[name],8,cap*128*4),name+' shared limit')
   out=torch.empty(2,device='cuda',dtype=torch.int64);self.launch('observer_layout',[out],[],1,threads=1)
-  assert out.cpu().tolist()==layout
+  actual=out.cpu().tolist();assert actual==layout,(actual,layout)
   mode=torch.empty(3,device='cuda',dtype=torch.int64);self.launch('packed_layout',[mode],[],1,threads=1)
   assert mode.cpu().tolist()==[1,16864,8]
   self.identity['observer']['chain_addressing_version']=1

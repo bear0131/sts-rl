@@ -150,11 +150,12 @@ def attend_bucket(QKV,PRESENT,QUERY,STARTS,LENS,BLOCKS,OUT,COUNTS,SECOND:tl.cons
 
 
 @triton.jit
-def deck_global(TOKEN,STARTS,MAP,W,BIAS,Z,COUNTS):
+def deck_global(TOKEN,STARTS,MAP,META,W,BIAS,Z,COUNTS):
  n=tl.load(COUNTS+4);d=tl.arange(0,64);cols=tl.program_id(1)*64+d
  weight=tl.load(W+cols[None,:]*64+d[:,None],cols[None,:]<225,0.)
  for block in range(tl.program_id(0),tl.cdiv(n,16),tl.num_programs(0)):
   rows=block*16+tl.arange(0,16);live=rows<n
+  live=live&(tl.load(META+rows*4,live,0)>1)
   base=tl.load(STARTS+rows*4+1,live,0)+tl.load(MAP+rows*161,live,0)
   x=tl.load(TOKEN+base[:,None]*288+d[None,:],live[:,None],0.)
   y=tl.dot(x,weight,input_precision='tf32x3')+tl.load(BIAS+cols,cols<225,0.)[None,:]
@@ -162,38 +163,39 @@ def deck_global(TOKEN,STARTS,MAP,W,BIAS,Z,COUNTS):
 
 
 @triton.jit
-def deck_subset(TOKEN,STARTS,MAP,Z,LEGAL,SELECTED,REMAIN,PREFIX,KEY,STOP,STOPBIAS,COMPLETIONS,VW,VB,OUT,COUNTS):
+def deck_subset(TOKEN,STARTS,MAP,META,Z,LEGAL,SELECTED,REMAIN,PREFIX,KEY,STOP,STOPBIAS,COMPLETIONS,VW,VB,OUT,COUNTS):
  n=tl.load(COUNTS+4);d=tl.arange(0,32);h=tl.arange(0,16);vd=tl.arange(0,64)
  for sid in range(tl.program_id(0),n,tl.num_programs(0)):
-  base=tl.load(STARTS+sid*4+1)
-  indices=tl.load(MAP+sid*161+1+h,h<10,-1)
-  hand=tl.load(TOKEN+(base+indices[:,None])*288+256+d[None,:],(h[:,None]<10)&(indices[:,None]>=0),0.)
-  selected=tl.load(SELECTED+sid*10+h,h<10,0).to(tl.float32)
-  prefix=tl.sum(hand*selected[:,None],0)
-  pw=tl.load(PREFIX+d[:,None]+d[None,:]*32)
-  state=tl.load(Z+sid*225+128+d)
-  query=libdevice.tanh(state+tl.sum(prefix[:,None]*pw,0))
-  kw=tl.load(KEY+d[:,None]*32+d[None,:])
-  key_query=tl.sum(query[:,None]*kw,0)
-  score=tl.sum(hand*key_query[None,:],1)*0.1767766952966369
-  legal=tl.load(LEGAL+sid*198+187+h,h<11,0).to(tl.int32)
-  later=tl.sum(legal)-tl.cumsum(legal)-tl.load(LEGAL+sid*198+197).to(tl.int32)
-  later=tl.maximum(later,0)
-  capacity=tl.minimum(10,tl.maximum(0,tl.load(REMAIN+sid).to(tl.int32)-1))
-  completions=tl.load(COMPLETIONS+later*11+capacity,h<10,1.)
-  score+=tl.log(completions)
-  stop=tl.sum(query*tl.load(STOP+d),0)+tl.load(STOPBIAS)
-  score=tl.where(h==10,stop,score)
-  score=tl.where((h<11)&(legal!=0),score,-1.e9)
-  maximum=tl.max(score,0)
-  # Padded lanes do not belong to the eleven-way conditional distribution.
-  denominator=tl.log(tl.sum(tl.where(h<11,tl.exp(score-maximum),0.),0))+maximum
-  tl.store(OUT+sid*24+h,score-denominator,h<11)
-  tl.store(OUT+sid*24+11,tl.load(Z+sid*225+160))
-  hidden=tl.load(Z+sid*225+161+vd)
-  gelu=0.5*hidden*(1.+libdevice.erf(hidden*0.7071067811865476))
-  value=tl.sum(gelu*tl.load(VW+vd),0)+tl.load(VB)
-  tl.store(OUT+sid*24+12,value)
+  if tl.load(META+sid*4)>1:
+   base=tl.load(STARTS+sid*4+1)
+   indices=tl.load(MAP+sid*161+1+h,h<10,-1)
+   hand=tl.load(TOKEN+(base+indices[:,None])*288+256+d[None,:],(h[:,None]<10)&(indices[:,None]>=0),0.)
+   selected=tl.load(SELECTED+sid*10+h,h<10,0).to(tl.float32)
+   prefix=tl.sum(hand*selected[:,None],0)
+   pw=tl.load(PREFIX+d[:,None]+d[None,:]*32)
+   state=tl.load(Z+sid*225+128+d)
+   query=libdevice.tanh(state+tl.sum(prefix[:,None]*pw,0))
+   kw=tl.load(KEY+d[:,None]*32+d[None,:])
+   key_query=tl.sum(query[:,None]*kw,0)
+   score=tl.sum(hand*key_query[None,:],1)*0.1767766952966369
+   legal=tl.load(LEGAL+sid*198+187+h,h<11,0).to(tl.int32)
+   later=tl.sum(legal)-tl.cumsum(legal)-tl.load(LEGAL+sid*198+197).to(tl.int32)
+   later=tl.maximum(later,0)
+   capacity=tl.minimum(10,tl.maximum(0,tl.load(REMAIN+sid).to(tl.int32)-1))
+   completions=tl.load(COMPLETIONS+later*11+capacity,h<10,1.)
+   score+=tl.log(completions)
+   stop=tl.sum(query*tl.load(STOP+d),0)+tl.load(STOPBIAS)
+   score=tl.where(h==10,stop,score)
+   score=tl.where((h<11)&(legal!=0),score,-1.e9)
+   maximum=tl.max(score,0)
+   # Padded lanes do not belong to the eleven-way conditional distribution.
+   denominator=tl.log(tl.sum(tl.where(h<11,tl.exp(score-maximum),0.),0))+maximum
+   tl.store(OUT+sid*24+h,score-denominator,h<11)
+   tl.store(OUT+sid*24+11,tl.load(Z+sid*225+160))
+   hidden=tl.load(Z+sid*225+161+vd)
+   gelu=0.5*hidden*(1.+libdevice.erf(hidden*0.7071067811865476))
+   value=tl.sum(gelu*tl.load(VW+vd),0)+tl.load(VB)
+   tl.store(OUT+sid*24+12,value)
 
 
 @triton.jit

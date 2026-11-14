@@ -48,6 +48,7 @@ class StepPipeline(FramePipeline):
   compact(p)
  @torch.inference_mode()
  def ensure_step_graph(self):
+  if self.pool.deck_consumer:self.pool.flat.validate();self.pool.flat.input_tables.validate()
   key=self.fingerprint()
   if key!=self.key:self.allocate(key)
   if self.step_graph is None:

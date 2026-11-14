@@ -16,7 +16,10 @@ class BattlePool(BasePool):
   super().__init__(*a,**kw)
   assert all(p.dtype==torch.float32 for p in self.net.parameters())
   self.graph_scorer.close();self.graph_scorer=ComboScorer(self.flat)
-  self.frame_pipeline=FramePipeline(self,self.graph_scorer,frame_tokens,frame_queries);self.graph_scorer=self.frame_pipeline
+  try:self.frame_pipeline=FramePipeline(self,self.graph_scorer,frame_tokens,frame_queries)
+  except BaseException:
+   super().close();raise
+  self.graph_scorer=self.frame_pipeline
  def refresh(self):return step_refresh(self)
  def tick(self):return self.frame_pipeline.tick()
  def allocate_actions(self,n):

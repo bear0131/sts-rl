@@ -48,6 +48,9 @@ template<int CAP,int STAGE> __device__ void pack(ARGS){
   int sid=STAGE==0?task:queues[(STAGE-1)*F+task];
   int na=meta[sid*4],ne=meta[sid*4+1],begin=meta[sid*4+2],root=worlds[sid]%ROOTS,ni=inv_counts[root];
   require(meta[sid*4+3]&&na>0&&na<=2048&&ne<=1024&&T==161);
+#ifdef STS_FULL480_DECK
+  ni=0;
+#endif
   for(int a=tid;a<na;a+=blockDim.x)owners[begin+a]=sid;
   if(na==1){
    if(tid<4){lens[sid*4+tid]=0;starts[sid*4+tid]=0;}
@@ -58,6 +61,13 @@ template<int CAP,int STAGE> __device__ void pack(ARGS){
   if(tid<33)last[tid]=-1;
   if(tid==0){has_extra=0;nextra=0;}
   __syncthreads();
+#ifdef STS_FULL480_DECK
+  for(int r=tid;r<ne;r+=blockDim.x){
+   int at=physical(chunks,sid,r),sl=ids[at];require(sl>=0&&sl<121);
+   ct[sl]=zones[at];queried[sl]=monsters[at];
+  }
+  __syncthreads();
+#else
   for(int r=tid;r<ne+ni;r+=blockDim.x){
    bool own=r<ne;int at=own?physical(chunks,sid,r):root*I+r-ne;
    int eid=own?ids[at]:inv_ids[at],z=own?zones[at]:inv_zones[at],mon=own?monsters[at]:inv_monsters[at];
@@ -99,6 +109,7 @@ template<int CAP,int STAGE> __device__ void pack(ARGS){
    canonical_targets[begin+a]=sl;if(sl>=0)atomicExch(queried+sl,1);
   }
   __syncthreads();
+#endif
   bool used=tid<161&&(tid==0||ct[tid]>0||queried[tid]);
   bool query=tid<161&&queried[tid];
   unsigned long long prefix,aggregate,flags=static_cast<unsigned long long>(used)+(static_cast<unsigned long long>(query)<<32);
@@ -128,6 +139,12 @@ template<int CAP,int STAGE> __device__ void pack(ARGS){
   if(overflow){__syncthreads();continue;}
   for(int k=tid;k<nt*128;k+=blockDim.x)feature[k]=0.f;
   __syncthreads();
+#ifdef STS_FULL480_DECK
+  for(int k=tid;k<ne*64;k+=blockDim.x){
+   int at=physical(chunks,sid,k/64),sl=rank[ids[at]];require(sl>=0);
+   feature[sl*128+k%64]=numbers[at*64+k%64];
+  }
+#else
   int j=tid%16;
   for(int r=tid/16;r<ne+ni;r+=blockDim.x/16){
    bool own=r<ne;int at=own?physical(chunks,sid,r):root*I+r-ne;
@@ -144,10 +161,15 @@ template<int CAP,int STAGE> __device__ void pack(ARGS){
     if(extra>=0){atomicAdd(feature+extra*128+hi%127u,vi);atomicAdd(feature+extra*128+hk%127u,vk);}
    }
   }
+#endif
   __syncthreads();
   for(int k=tid;k<nt*128;k+=blockDim.x){
    int c=k/128,d=k%128,old=order[c],cnt=ct[old];float cf=float(cnt);
+   #ifdef STS_FULL480_DECK
+   features[(int64_t(ts)+c)*128+d]=feature[k];
+#else
    features[(int64_t(ts)+c)*128+d]=d==127?logf(cf+1.f):feature[k]/sqrtf(fmaxf(cf,1.f));
+#endif
   }
   for(int c=tid;c<nt;c+=blockDim.x){
    int old=order[c];symbols[ts+c]=sy[old];slots[ts+c]=old<33?old:33;present[ts+c]=ct[old]>0||old==0;

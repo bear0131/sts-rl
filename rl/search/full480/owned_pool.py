@@ -68,7 +68,7 @@ class ResidentPool:
   self.source_rows=a((cap,10));self.targets=a((cap,));self.canonical_sources=a((cap,10));self.canonical_targets=a((cap,));self.scores=a((cap,),torch.float32)
  def allocate_entities(self,cap):
   cap=triton.cdiv(int(cap),64)*64;self.entity_cap=cap;a=self.arr
-  self.ids=a((cap,));self.zones=a((cap,));self.monsters=a((cap,));self.numbers=a((cap,16),torch.float32)
+  self.ids=a((cap,));self.zones=a((cap,));self.monsters=a((cap,));self.numbers=a((cap,64 if getattr(self,'deck_consumer',False) else 16),torch.float32)
   self.entity_slots=a((cap,));self.extra_slots=a((cap,))
  def prepare(self,initialize=0):
   params=[ptr(x.data_ptr()) for x in [self.roots,self.arena,self.stats,self.logical_ids]]

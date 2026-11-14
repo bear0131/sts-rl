@@ -12,7 +12,11 @@ assert source.count('ragged_forward(')==1
 namespace=dict(vars(ragged_runtime));exec(source.replace('ragged_forward(','self.graph_scorer('),namespace)
 class BattlePool(BasePool):
  def __init__(self,*args,**kwargs):
-  super().__init__(*args,**kwargs);self.graph_scorer=GraphScorer(self.flat)
+  super().__init__(*args,**kwargs)
+  scorer=GraphScorer
+  if getattr(self.flat,'consumer',None)=='deck-latent-combat-v1':
+   from .combo_model import GraphScorer as scorer
+  self.graph_scorer=scorer(self.flat)
  def _buffer(self,name,count,tail=(),dtype=torch.float32):
   old=getattr(self,'ragged_buffers',{}).get(name)
   if old is None or len(old)<count:
