@@ -44,6 +44,17 @@ if(STS_BUILD_FULL480)
     target_compile_options(_full480_cpu PRIVATE -ffp-contract=off -mavx2)
     find_library(full480_cuda_driver NAMES cuda cuda.so.1 REQUIRED)
     target_link_libraries(_full480_cpu PRIVATE Threads::Threads ${full480_cuda_driver})
+    set(STS_FULL480_REFERENCE_INCLUDE "" CACHE PATH "Qualified full480 bridge header directory")
+    if(STS_FULL480_REFERENCE_INCLUDE)
+        pybind11_add_module(gpu_search_bridge "${full480_root}/cpu_bridge.cpp" ${sts_lightspeed_SOURCES})
+        target_include_directories(gpu_search_bridge PRIVATE "${full480_root}/include"
+            "${STS_FULL480_REFERENCE_INCLUDE}" include bindings json/single_include)
+        target_compile_options(gpu_search_bridge PRIVATE -ffp-contract=off -mavx2)
+        if(STS_ENABLE_RULE_TRACE)
+            target_compile_definitions(gpu_search_bridge PRIVATE STS_ENABLE_RULE_TRACE)
+        endif()
+        target_link_libraries(gpu_search_bridge PRIVATE Threads::Threads)
+    endif()
 endif()
 
 

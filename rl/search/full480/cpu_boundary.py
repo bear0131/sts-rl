@@ -33,7 +33,7 @@ class GameMirror:
    if i in self.identities:drop.append(i);del self.identities[i]
    if bc is not None:
     s=cpu.State(bc).snapshot()
-    if s['portable'] and s['input_state']==1 and s['outcome']==0:
+    if s['portable'] and s['input_state'] in (1,2) and s['outcome']==0:
      load[i]=s;identities[i]=bc
     else:self.counts['initial_unimportable']+=1
   if drop:self.arena.drop(drop);self.counts['dropped_battles']+=len(drop)

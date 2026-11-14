@@ -58,6 +58,14 @@ namespace sts {
         ActionFunction popFront();
         [[nodiscard]] int getCapacity() const;
 
+        // BEGIN PENDING ACTION ACCESS
+        Action pendingAt(int offset) const {
+            assert(offset >= 0 && offset < size);
+            const int slot = (front + offset) % getCapacity();
+            return Action(callback(slot), clearsOnVictory(slot));
+        }
+        // END PENDING ACTION ACCESS
+
     private:
         // Ordinary search states retain inline storage. Only a long callback
         // chain allocates a larger ring; no pending action may be overwritten.

@@ -11,6 +11,66 @@
 
 using namespace sts;
 
+// BEGIN PORTABLE OPENING ACTION
+Action OpeningAction::materialize() const {
+    switch (kind) {
+        case Draw: return Actions::DrawCards(a);
+        case Block: return Actions::GainBlock(a);
+        case Energy: return Actions::GainEnergy(a);
+        case DamageAll: return Actions::DamageAllEnemy(a);
+        case TempHand: return Actions::MakeTempCardInHand(CardId(a), bool(b), c);
+        case TempDraw: return Actions::MakeTempCardInDrawPile(CardInstance(CardId(a)), b, bool(c));
+        case PlayerBuff:
+            switch (PlayerStatus(a)) {
+                case PS::ARTIFACT: return Actions::BuffPlayer<PS::ARTIFACT>(b);
+                case PS::BUFFER: return Actions::BuffPlayer<PS::BUFFER>(b);
+                case PS::STRENGTH: return Actions::BuffPlayer<PS::STRENGTH>(b);
+                case PS::INTANGIBLE: return Actions::BuffPlayer<PS::INTANGIBLE>(b);
+                default: break;
+            }
+            break;
+        case PlayerDebuff:
+            switch (PlayerStatus(a)) {
+                case PS::WEAK: return Actions::DebuffPlayer<PS::WEAK>(b, bool(c));
+                case PS::LOSE_STRENGTH: return Actions::DebuffPlayer<PS::LOSE_STRENGTH>(b, bool(c));
+                default: break;
+            }
+            break;
+        case EnemyDebuff:
+            switch (MonsterStatus(a)) {
+                case MS::VULNERABLE: return Actions::DebuffAllEnemy<MS::VULNERABLE>(b, bool(c));
+                case MS::WEAK: return Actions::DebuffAllEnemy<MS::WEAK>(b, bool(c));
+                case MS::POISON: return Actions::DebuffAllEnemy<MS::POISON>(b, bool(c));
+                default: break;
+            }
+            break;
+        case Gamble: return Actions::GambleAction(SelectOrigin(a), b);
+        case Upgrade: return Actions::UpgradeRandomCardAction();
+        case Toolbox: return Actions::ToolboxAction();
+        case AfterCardUsed: return Actions::OnAfterCardUsed();
+        case RedSkull: return {[](BattleContext &bc) {
+            auto &player = bc.player;
+            if (!player.redSkullActive && player.bloodied) {
+                player.buff<PS::STRENGTH>(3);
+                player.redSkullActive = true;
+                bc.applyPowersToHand();
+            }
+        }};
+        default: break;
+    }
+    throw std::logic_error("unknown opening continuation");
+}
+
+void OpeningAction::operator()(BattleContext &bc) const {
+    materialize().actFunc(bc);
+}
+
+Action OpeningAction::create(Kind kind, int a, int b, int c) {
+    const OpeningAction pending{kind, a, b, c};
+    return Action(pending, pending.materialize().clearOnCombatVictory);
+}
+// END PORTABLE OPENING ACTION
+
 Action Actions::SetState(InputState state) {
     return {[=] (BattleContext &bc) {
         bc.setState(state);

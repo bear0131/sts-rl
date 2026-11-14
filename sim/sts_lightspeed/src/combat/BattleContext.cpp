@@ -419,19 +419,19 @@ void BattleContext::initRelics(const GameContext &gc) {
     for (auto r : atBattleStartPreDraw) {
         switch (r) {
             case R::HOLY_WATER:
-                addToBot(Actions::MakeTempCardInHand(CardId::MIRACLE, false, 3));
+                addToBot(OpeningAction::create(OpeningAction::TempHand, int(CardId::MIRACLE), false, 3));
                 break;
 
             case R::NINJA_SCROLL:
-                addToBot(Actions::MakeTempCardInHand(CardId::SHIV, false, 3) );
+                addToBot(OpeningAction::create(OpeningAction::TempHand, int(CardId::SHIV), false, 3) );
                 break;
 
             case R::PURE_WATER:
-                addToBot(Actions::MakeTempCardInHand(CardId::MIRACLE, false, 1));
+                addToBot(OpeningAction::create(OpeningAction::TempHand, int(CardId::MIRACLE), false, 1));
                 break;
 
             case R::TOOLBOX:
-                addToBot( Actions::ToolboxAction() );
+                addToBot( OpeningAction::create(OpeningAction::Toolbox) );
                 break;
 
             default:
@@ -439,69 +439,62 @@ void BattleContext::initRelics(const GameContext &gc) {
         }
     }
 
-    addToBot( Actions::DrawCards(p.cardDrawPerTurn) );
+    addToBot( OpeningAction::create(OpeningAction::Draw, p.cardDrawPerTurn) );
 
     for (auto r : atBattleStart) {
         switch (r) {
             case R::ANCHOR:
-                addToBot(Actions::GainBlock(10));
+                addToBot(OpeningAction::create(OpeningAction::Block, 10));
                 break;
 
             case R::BAG_OF_MARBLES:
-                addToBot( Actions::DebuffAllEnemy<MS::VULNERABLE>(1, false) );
+                addToBot( OpeningAction::create(OpeningAction::EnemyDebuff, int(MS::VULNERABLE), 1, false) );
                 break;
 
             case R::BAG_OF_PREPARATION:
-                addToBot( Actions::DrawCards(2) );
+                addToBot( OpeningAction::create(OpeningAction::Draw, 2) );
                 break;
 
             case R::CLOCKWORK_SOUVENIR:
                 // Both this and Mutagenic Strength prepend their actions.
                 // The later relic's TOP actions therefore resolve first.
-                addToTop( Actions::BuffPlayer<PS::ARTIFACT>(1) );
+                addToTop( OpeningAction::create(OpeningAction::PlayerBuff, int(PS::ARTIFACT), 1) );
                 break;
 
             case R::FOSSILIZED_HELIX:
-                addToBot(Actions::BuffPlayer<PS::BUFFER>(1));
+                addToBot(OpeningAction::create(OpeningAction::PlayerBuff, int(PS::BUFFER), 1));
                 break;
 
             case R::GREMLIN_VISAGE:
-                addToBot( Actions::DebuffPlayer<PS::WEAK>(1, false) );
+                addToBot( OpeningAction::create(OpeningAction::PlayerDebuff, int(PS::WEAK), 1, false) );
                 break;
 
             case R::MARK_OF_PAIN:
-                addToBot( Actions::MakeTempCardInDrawPile( {CardId::WOUND}, 2, true) );
+                addToBot( OpeningAction::create(OpeningAction::TempDraw, int(CardId::WOUND), 2, true) );
                 break;
 
             case R::MUTAGENIC_STRENGTH:
-                addToTop( Actions::BuffPlayer<PS::STRENGTH>(3) );
-                addToTop( Actions::DebuffPlayer<PS::LOSE_STRENGTH>(3, false) );
+                addToTop( OpeningAction::create(OpeningAction::PlayerBuff, int(PS::STRENGTH), 3) );
+                addToTop( OpeningAction::create(OpeningAction::PlayerDebuff, int(PS::LOSE_STRENGTH), 3, false) );
                 break;
 
             case R::RED_MASK:
-                addToBot( Actions::DebuffAllEnemy<MS::WEAK>(1, false) );
+                addToBot( OpeningAction::create(OpeningAction::EnemyDebuff, int(MS::WEAK), 1, false) );
                 break;
 
             case R::RED_SKULL:
                 // The real start action runs after a possible Toolbox choice.
                 // Keep it pending when that actual root replaces public state;
                 // an eager grant would be overwritten and never applied again.
-                addToBot({[](BattleContext &bc) {
-                    auto &player = bc.player;
-                    if (!player.redSkullActive && player.bloodied) {
-                        player.buff<PS::STRENGTH>(3);
-                        player.redSkullActive = true;
-                        bc.applyPowersToHand();
-                    }
-                }});
+                addToBot(OpeningAction::create(OpeningAction::RedSkull));
                 break;
 
             case R::RING_OF_THE_SNAKE:
-                addToBot( Actions::DrawCards(2) );
+                addToBot( OpeningAction::create(OpeningAction::Draw, 2) );
                 break;
 
             case R::TWISTED_FUNNEL:
-                addToBot( Actions::DebuffAllEnemy<MS::POISON>(4) );
+                addToBot( OpeningAction::create(OpeningAction::EnemyDebuff, int(MS::POISON), 4, true) );
                 break;
 
             default:
@@ -514,13 +507,13 @@ void BattleContext::initRelics(const GameContext &gc) {
     for (auto r : atTurnStart) {
         switch (r) {
             case R::HAPPY_FLOWER:
-                addToBot(Actions::GainEnergy(1));
+                addToBot(OpeningAction::create(OpeningAction::Energy, 1));
                 break;
             case R::INCENSE_BURNER:
-                addToBot(Actions::BuffPlayer<PS::INTANGIBLE>(1));
+                addToBot(OpeningAction::create(OpeningAction::PlayerBuff, int(PS::INTANGIBLE), 1));
                 break;
             case R::MERCURY_HOURGLASS:
-                addToBot(Actions::DamageAllEnemy(3));
+                addToBot(OpeningAction::create(OpeningAction::DamageAll, 3));
                 break;
             default:
                 break;
@@ -530,11 +523,11 @@ void BattleContext::initRelics(const GameContext &gc) {
     for (auto r : atTurnStartPostDraw) {
         switch (r) {
             case R::GAMBLING_CHIP:
-                addToBot( Actions::GambleAction(SelectOrigin::Relic,int(R::GAMBLING_CHIP)) );
+                addToBot( OpeningAction::create(OpeningAction::Gamble, int(SelectOrigin::Relic), int(R::GAMBLING_CHIP)) );
                 break;
 
             case R::WARPED_TONGS:
-                addToBot( Actions::UpgradeRandomCardAction() );
+                addToBot( OpeningAction::create(OpeningAction::Upgrade) );
                 break;
 
             default:
@@ -1049,7 +1042,7 @@ void BattleContext::useCard() {
             break;
     }
 
-    addToBot(Actions::OnAfterCardUsed());
+    addToBot(OpeningAction::create(OpeningAction::AfterCardUsed));
     triggerOnOtherCardPlayed(c);
 
     if (!item.purgeOnUse) { // todo change to checking the card queue item

@@ -28,6 +28,31 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
    manifest=json.loads((snapshot/'deviceflex141/outlined-source-manifest.json').read_text())
    assert len(manifest['selected_functions'])==185 and manifest['factory_count']==99
    for name,row in manifest['overrides'].items():assert digest(generated/name)==row['sha256'],('original outlined method differs',name)
+   # Retain the qualified outlined simulator. Add only the native queue's
+   # data-only opening continuation and its unchanged Actions consumers.
+   simulator=Path(canonical_header).resolve().parents[1]
+   continuation=output/'continuation-simulator'
+   continuation_sources={}
+   for relative,marker,anchor in [
+    ('include/combat/Actions.h','PORTABLE OPENING ACTION','    class CardQueueItem;'),
+    ('include/combat/ActionQueue.h','PENDING ACTION ACCESS','        [[nodiscard]] int getCapacity() const;'),
+    ('src/combat/Actions.cpp','PORTABLE OPENING ACTION','using namespace sts;')]:
+    native=simulator/relative;text=native.read_text();begin='// BEGIN '+marker;end='// END '+marker
+    section=text[text.index(begin):text.index(end)+len(end)]
+    section=section.replace('throw std::logic_error("unknown opening continuation");',
+                            'gpu_fail(__LINE__); return {};')
+    original_text=(generated/relative).read_text();assert original_text.count(anchor)==1,(relative,anchor)
+    target=continuation/relative;target.parent.mkdir(parents=True,exist_ok=True)
+    target.write_text(original_text.replace(anchor,anchor+'\n'+section))
+    continuation_sources[relative]=dict(native_sha256=digest(native),generated_sha256=digest(target))
+   relative='src/combat/BattleContext.cpp'
+   original_text=(generated/relative).read_text()
+   old='addToBot(Actions::OnAfterCardUsed());'
+   replacement='addToBot(OpeningAction::create(OpeningAction::AfterCardUsed));'
+   assert original_text.count(old)==1 and replacement in (simulator/relative).read_text()
+   target=continuation/relative;target.parent.mkdir(parents=True,exist_ok=True)
+   target.write_text(original_text.replace(old,replacement))
+   continuation_sources[relative]=dict(native_sha256=digest(simulator/relative),generated_sha256=digest(target))
   entry=(source/filename).read_text()
   old='"/root/autodl-tmp/token-speed-r7-20261105/nine-token-speed/online480/waves/devicebudgetarena141/device_std.h"'
   assert entry.count(old)==1
@@ -35,6 +60,7 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
   options=['--std=c++17','--gpu-architecture=sm_120','--device-as-default-execution-space','--fmad=false',
    '--generate-line-info','--display-error-number','--diag-suppress=177','-DSTS_FULL480_DECK=1',
    '-I'+str(generated),'-I'+str(generated/'include'),'-I'+str(original),'-I'+str(source),'-I'+str(output)]
+  if kind=='rule':options[0:0]=['-I'+str(continuation),'-I'+str(continuation/'include')]
   compiler=ctypes.CDLL(str(nvrtc));program=ptr()
   major=ctypes.c_int();minor=ctypes.c_int();assert compiler.nvrtcVersion(ctypes.byref(major),ctypes.byref(minor))==0
   assert major.value==13,'full480 generated rules require the archived CUDA 13 compiler'
@@ -44,7 +70,7 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
    ('nvrtcGetCUBINSize',[ptr,ctypes.POINTER(ctypes.c_size_t)]),('nvrtcGetCUBIN',[ptr,ptr]),
    ('nvrtcDestroyProgram',[ctypes.POINTER(ptr)])]:getattr(compiler,name).argtypes=args
   assert compiler.nvrtcCreateProgram(ctypes.byref(program),entry.encode(),str(source/filename).encode(),0,None,None)==0
-  sources={name:digest(source/name) for name in ((filename,'deck_inputs.cuh') if kind=='observer' else (filename,))}
+  sources={name:digest(source/name) for name in ((filename,'deck_inputs.cuh') if kind=='observer' else (filename,'native/include/state_codec.h'))}
   dependencies={str(p.relative_to(snapshot)):digest(p) for p in original.rglob('*') if p.suffix in ('.h','.cuh','.cpp')}
   dependencies[str(header.relative_to(snapshot))]=digest(header)
   if kind=='rule':dependencies.update({str(p.relative_to(snapshot)):digest(p) for p in generated.rglob('*') if p.is_file()})
@@ -52,6 +78,7 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
    compiler=dict(version=[major.value,minor.value],sha256=digest(nvrtc)),
    package_sources=sources,dependencies=dependencies,canonical_header_sha256=digest(canonical_header),
    schema_sha256=digest(output/'deck_schema.h'),codec_sha256=digest(output/'compact-observation-device.h'))
+  if kind=='rule':record.update(state_schema=2,continuation_sources=continuation_sources)
   path=output/(kind+'-compile-0-result.json');path.write_text(json.dumps(record,indent=2))
   start=time.monotonic()
   try:

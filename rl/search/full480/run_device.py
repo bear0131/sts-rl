@@ -39,11 +39,9 @@ def initialize():
     check(lib.cuCtxSetLimit(2,512*1024*1024),'device heap limit')
 
 def cpu_bridge():
-    """Use the exact original state ABI, never a same-named ambient binary."""
-    path=P/'devicerootsearch141/gpu_search_bridge.cpython-311-x86_64-linux-gnu.so'
-    digest='36da97eb79bff5c2e1fe42d8bc65e01fc87971c8dcf487cdd609421977396c76'
-    if hashlib.sha256(path.read_bytes()).hexdigest()!=digest:
-        raise ValueError('full480 original state bridge identity mismatch')
+    """Original bridge with the explicit pending-continuation state schema."""
+    path=P/'cpu-build/gpu_search_bridge.cpython-311-x86_64-linux-gnu.so'
+    if not path.is_file():raise RuntimeError('build the full480 state bridge before collection')
     name='gpu_search_bridge'
     existing=sys.modules.get(name)
     if existing is not None:
@@ -54,6 +52,7 @@ def cpu_bridge():
     loaded=importlib.util.module_from_spec(spec)
     sys.modules[name]=loaded
     spec.loader.exec_module(loaded)
+    if loaded.state_schema!=2:raise RuntimeError('full480 pending-continuation state schema required')
     return loaded
 
 def cpu_fallback():

@@ -12,7 +12,7 @@ class ArenaProxy:
   assert not self.closed and self.versions.get(index)==(epoch,revision),(index,epoch,revision,self.versions.get(index))
  def load(self,rows):
   assert not self.closed
-  for i,s in rows.items():assert type(i)==int and 0<=i<self.m and s['portable'] and s['input_state']==1 and s['outcome']==0
+  for i,s in rows.items():assert type(i)==int and 0<=i<self.m and s['portable'] and s['input_state'] in (1,2) and s['outcome']==0
   if not rows:return {}
   expected={}
   for i in rows:self.epochs[i]+=1;self.versions[i]=(self.epochs[i],0);expected[i]=self.versions[i]

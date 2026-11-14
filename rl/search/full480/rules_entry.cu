@@ -13,7 +13,11 @@
 #include "src/game/Card.cpp"
 #include "src/sim/search/Action.cpp"
 #include "src/sim/search/Nosl.cpp"
+#ifdef STS_FULL480_DECK
+#include "native/include/state_codec.h"
+#else
 #include "state_codec.h"
+#endif
 #include "device_observation.h"
 #include "small_features.cuh"
 #include "src/sim/search/PlayoutEntities.cpp"
@@ -320,7 +324,7 @@ extern "C" __global__ void stream_load(unsigned char*roots,int*constructed,int*r
  if(constructed[r])reinterpret_cast<sts::BattleContext*>(address)->~BattleContext();
  auto&s=*new(address)sts::BattleContext{};
  device_state::Archive<true> a{words+k*8192,lengths[k]};a.field(s);device_state::require(a.at==lengths[k]);
- device_state::require(s.outcome==sts::Outcome::UNDECIDED&&s.inputState==sts::InputState::PLAYER_NORMAL&&s.actionQueue.size==0);
+ device_state::require(s.outcome==sts::Outcome::UNDECIDED&&(s.inputState==sts::InputState::PLAYER_NORMAL||s.inputState==sts::InputState::CARD_SELECT));
  constructed[r]=1;
 }
 extern "C" __global__ void stream_start(unsigned char*roots,unsigned char*arena,int*root_ids,unsigned long long*job_generation,

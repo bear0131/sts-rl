@@ -374,7 +374,7 @@ def test_full480_pcg64_matches_numpy_and_owns_each_chain():
     assert arena.modules.references == 0 and arena.modules.closed
 
 
-@pytest.mark.parametrize('scenario', ['prefix', 'growth', 'escape'])
+@pytest.mark.parametrize('scenario', ['prefix', 'growth', 'escape', 'gamble', 'toolbox', 'armaments'])
 def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, tmp_path, monkeypatch):
     from rl.search.full480.combo_runtime import BattleArena, BattlePool
     from rl.search.full480.combo_model import DeckWeights
@@ -393,13 +393,37 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
         'DEFEND_RED', 'BATTLE_TRANCE', 'STRIKE_RED', 'DEFEND_RED', 'BASH', 'EXHUME']])
     latent_env.thick.gc.set_potion_state(['Gamblers Brew', 'Liquid Memories'])
     latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
-    if scenario != 'prefix':
+    if scenario in ('growth', 'escape'):
         latent_env.thick.gc.set_deck([('RITUAL_DAGGER' if scenario == 'growth' else 'STRIKE_RED', 0)] * 5)
         latent_env.thick.gc.set_potion_state(['Smoke Bomb'] if scenario == 'escape' else [])
         latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
         if scenario == 'growth':
             latent_env.thick.bc.set_player_strength(999)
+    if scenario in ('gamble', 'toolbox'):
+        relics = ['Gambling Chip', 'WarpedTongs']
+        if scenario == 'toolbox':
+            relics = ['Toolbox',
+                'Anchor', 'Bag of Marbles', 'Bag of Preparation', 'ClockworkSouvenir',
+                'FossilizedHelix', 'GremlinMask', 'Mark of Pain', 'MutagenicStrength',
+                'Red Mask', 'Red Skull', 'Ring of the Snake', 'TwistedFunnel',
+                'Happy Flower', 'Incense Burner', 'Mercury Hourglass', *relics]
+        latent_env.thick.gc.set_relic_state([dict(id=name,
+            counter=2 if name == 'Happy Flower' else 5 if name == 'Incense Burner' else 0)
+            for name in relics])
+        latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
     latent_env._invalidate_backend_cache()
+    if scenario == 'armaments':
+        latent_env.thick.gc.set_deck([('ARMAMENTS', 0)] + [('DEFEND_RED', 0)] * 4)
+        latent_env.thick.gc.set_relics([])
+        latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
+        latent_env._invalidate_backend_cache()
+        hand = latent_env.thick.bc.to_dict()['hand']
+        slot = next(i for i, card in enumerate(hand) if card[0] == 'ARMAMENTS')
+        bits = next(bits for _, bits in latent_env._joint_policy_actions()
+                    if sts.Action(bits).action_type == sts.ActionType.CARD
+                    and sts.Action(bits).source_idx == slot)
+        action = dict((bits, action) for action, bits in latent_env._joint_policy_actions())[bits]
+        latent_env.step(action)
     policy = DeckLatentPolicy(latent_env.observation_space, latent_env.action_space,
         lambda _: 5e-5, d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
         reward_flow='sequential-v1', deck_combat_encoder='transformer64x2').cuda()
@@ -417,11 +441,17 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
         worlds = paired_worlds(20261111, len(mapping), 2 * len(mapping))
         budget = len(mapping) * len(worlds) - 1
         row = cpu.State(latent_env.thick.bc).root_plan(20261111, budget, 1., 8, False)
+        if scenario in ('gamble', 'toolbox', 'armaments'):
+            assert row['snapshot']['input_state'] == 2
+            assert row['snapshot']['queue_size'] > 0
+            assert row['snapshot']['portable'] and row['eligible']
+            restored = cpu.State(row['snapshot']['words'])
+            np.testing.assert_array_equal(restored.snapshot()['words'], row['snapshot']['words'])
         semantic = dict(zip(row['action_bits'], row['semantic'], strict=True))
         row.update(cpu.inventory(latent_env.thick.gc))
         row.update(contract=PAIRED_TERMINAL, worlds=worlds, prefix=0,
             action_bits=np.array([bits for _, bits in mapping], np.uint32),
-            semantic=np.array([semantic[bits] for _, bits in mapping], np.uint64),
+            semantic=np.array([semantic.get(bits, 0) for _, bits in mapping], np.uint64),
             order=np.arange(len(mapping)), context_inputs=torch.cat((context.combat,
                 data['run_keys'], data['ascension']), 1)[0].cpu().numpy(),
             relics=obs['relics'], relic_counters=obs['relic_counters'],
@@ -526,7 +556,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 np.testing.assert_allclose(scored[0][1],expected_root[0,[a for a,_ in mapping]].cpu().numpy(),atol=3e-5,rtol=1e-5)
             batch.inference.__exit__(None,None,None)
             assert result['visits'].sum()==budget and result['visits'].max()-result['visits'].min()==1
-            if scenario == 'prefix':
+            if scenario in ('prefix', 'gamble'):
                 assert pool.stats[:, 11].sum().item() > 0, 'AR prefix path was not exercised'
             assert pool.frame_pipeline.counts['anchor_value_rows']==0
             assert pool.graph_scorer.statistics()['step_overflow_retries'] > 0

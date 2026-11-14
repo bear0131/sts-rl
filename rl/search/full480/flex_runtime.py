@@ -61,7 +61,7 @@ class BattleArena:
   if not rows:return {}
   for i,s in rows.items():
    assert type(i)==int and 0<=i<self.m
-   assert s['portable'] and s['input_state']==1 and s['outcome']==0 and len(s['words'])<=8192
+   assert s['portable'] and s['input_state'] in (1,2) and s['outcome']==0 and len(s['words'])<=8192
   ids=self.upload(list(rows),np.int32);words=np.zeros((len(rows),8192),np.uint64);lengths=[]
   for k,(i,s) in enumerate(rows.items()):
    words[k,:len(s['words'])]=s['words'];lengths.append(len(s['words']))
@@ -115,7 +115,7 @@ class BattlePool(CollectionPool):
     assert len(r['worlds'])==(r['budget']+len(r['action_bits'])-1)//len(r['action_bits']) and r['worlds'].shape[1:]==(5,)
     assert r['temperature']==1. and np.array_equal(r['order'],np.arange(len(r['action_bits'])))
    if 'mirror' in r:self.mirror.validate(*r['mirror'])
-   else:assert r['eligible'] and r['snapshot']['portable'] and r['snapshot']['input_state']==1
+   else:assert r['eligible'] and r['snapshot']['portable'] and r['snapshot']['input_state'] in (1,2)
    assert r['snapshot']['input_state'] in (1,2) and r['snapshot']['outcome']==0 and len(r['semantic'])==len(r['action_bits'])
    assert 1<=r['budget']<=self.budget_cap and 0<=r['depth_limit']<=200 and r['max_hp']>0
    assert np.isfinite(r['temperature']) and r['temperature']>0

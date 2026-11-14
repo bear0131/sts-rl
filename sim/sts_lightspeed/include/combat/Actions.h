@@ -26,6 +26,20 @@ namespace sts {
     class CardInstance;
     class CardQueueItem;
 
+    // BEGIN PORTABLE OPENING ACTION
+    // A pending opening effect is data. Execution still uses Actions below.
+    // Keep this trivially copyable and inside std::function's inline storage.
+    struct OpeningAction {
+        enum Kind { Unknown, Draw, Block, Energy, DamageAll, TempHand, TempDraw,
+            PlayerBuff, PlayerDebuff, EnemyDebuff, Gamble, Upgrade, Toolbox, RedSkull, AfterCardUsed };
+        Kind kind = Unknown;
+        int a = 0, b = 0, c = 0;
+        Action materialize() const;
+        void operator()(BattleContext &bc) const;
+        static Action create(Kind kind, int a=0, int b=0, int c=0);
+    };
+    // END PORTABLE OPENING ACTION
+
     using DamageMatrix = std::array<int, 5>;
 
     struct Actions {
