@@ -346,11 +346,11 @@ namespace sts {
         e.addDebuff<s>(amount, isSourceMonster);
         applyPowersToHand();
         if (player.hasStatus<PS::SADISTIC>()) {
-            addToBot( Actions::DamageEnemy(idx, player.getStatus<PS::SADISTIC>()) );
+            addToBot( OpeningAction::create(OpeningAction::EnemyDamage, idx, player.getStatus<PS::SADISTIC>()) );
         }
 
         if (s == MS::VULNERABLE && player.hasRelic<RelicId::CHAMPION_BELT>()) {
-            addToBot(Actions::DebuffEnemy<MS::WEAK>(idx, 1, false) );
+            addToBot(OpeningAction::create(OpeningAction::TargetWeak, idx, 1, false) );
         }
     }
 

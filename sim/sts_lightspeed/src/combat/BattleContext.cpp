@@ -1783,7 +1783,7 @@ void BattleContext::onUseCardRelics() {
                 break;
             case R::BLUE_CANDLE:
                 if (type == CardType::CURSE) {
-                    addToBot(Actions::PlayerLoseHp(1, true));
+                    addToBot(OpeningAction::create(OpeningAction::PlayerHpLoss, 1, true));
                     c.exhaust = true;
                     item.exhaustOnUse = true;
                 }
@@ -1797,7 +1797,7 @@ void BattleContext::onUseCardRelics() {
             case R::INK_BOTTLE:
                 if (++p.inkBottleCounter == 10) {
                     p.inkBottleCounter = 0;
-                    addToBot(Actions::DrawCards(1));
+                    addToBot(OpeningAction::create(OpeningAction::Draw, 1));
                 }
                 break;
             case R::ORANGE_PELLETS:
@@ -1805,20 +1805,20 @@ void BattleContext::onUseCardRelics() {
                     p.orangePelletsCardTypesPlayed.set(static_cast<int>(type), true);
                 if (p.orangePelletsCardTypesPlayed.all()) {
                     p.orangePelletsCardTypesPlayed.reset();
-                    addToBot(Actions::RemovePlayerDebuffs());
+                    addToBot(OpeningAction::create(OpeningAction::Cleanse));
                 }
                 break;
             case R::KUNAI:
                 if (type == CardType::ATTACK && p.attacksPlayedThisTurn % 3 == 0)
-                    addToBot(Actions::BuffPlayer<PS::DEXTERITY>(1));
+                    addToBot(OpeningAction::create(OpeningAction::PlayerBuff, int(PS::DEXTERITY), 1));
                 break;
             case R::ORNAMENTAL_FAN:
                 if (type == CardType::ATTACK && p.attacksPlayedThisTurn % 3 == 0)
-                    addToBot(Actions::GainBlock(4));
+                    addToBot(OpeningAction::create(OpeningAction::Block, 4));
                 break;
             case R::SHURIKEN:
                 if (type == CardType::ATTACK && p.attacksPlayedThisTurn % 3 == 0)
-                    addToBot(Actions::BuffPlayer<PS::STRENGTH>(1));
+                    addToBot(OpeningAction::create(OpeningAction::PlayerBuff, int(PS::STRENGTH), 1));
                 break;
             case R::NECRONOMICON:
                 if (type == CardType::ATTACK && !p.haveUsedNecronomiconThisTurn
@@ -1830,22 +1830,22 @@ void BattleContext::onUseCardRelics() {
                 break;
             case R::PEN_NIB:
                 if (type == CardType::ATTACK && ++p.penNibCounter == 9) {
-                    addToBot(Actions::BuffPlayer<PS::PEN_NIB>(1));
+                    addToBot(OpeningAction::create(OpeningAction::PlayerBuff, int(PS::PEN_NIB), 1));
                     p.penNibCounter = -1;
                 }
                 break;
             case R::DUALITY:
-                if (type == CardType::ATTACK) addToBot(Actions::DualityAction());
+                if (type == CardType::ATTACK) addToBot(OpeningAction::create(OpeningAction::Duality));
                 break;
             case R::NUNCHAKU:
                 if (type == CardType::ATTACK && ++p.nunchakuCounter >= 10) {
                     p.nunchakuCounter = 0;
-                    addToBot(Actions::GainEnergy(1));
+                    addToBot(OpeningAction::create(OpeningAction::Energy, 1));
                 }
                 break;
             case R::LETTER_OPENER:
                 if (type == CardType::SKILL && p.skillsPlayedThisTurn >= 3 && p.skillsPlayedThisTurn % 3 == 0)
-                    addToBot(Actions::DamageAllEnemy(5));
+                    addToBot(OpeningAction::create(OpeningAction::DamageAll, 5));
                 break;
             case R::MUMMIFIED_HAND:
                 if (type == CardType::POWER) mummifiedHandOnUsePower();
@@ -1880,7 +1880,7 @@ void BattleContext::onUseAttackCard() {
     // ********* Powers onUseCard *********
 
     if (p.hasStatus<PS::AFTER_IMAGE>()) {
-        addToBot(Actions::GainBlock(p.getStatus<PS::AFTER_IMAGE>()));
+        addToBot(OpeningAction::create(OpeningAction::Block, p.getStatus<PS::AFTER_IMAGE>()));
     }
 
     if (!item.purgeOnUse && p.hasStatus<PS::DOUBLE_TAP>()) {
@@ -1904,15 +1904,15 @@ void BattleContext::onUseAttackCard() {
 
     if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
         p.panacheCounter = 5;
-        addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
+        addToBot( OpeningAction::create(OpeningAction::DamageAll, p.getStatus<PS::PANACHE>()) );
     }
 
     if (p.hasStatus<PS::RAGE>()) {
-        addToBot( Actions::GainBlock(p.getStatus<PS::RAGE>()) );
+        addToBot( OpeningAction::create(OpeningAction::Block, p.getStatus<PS::RAGE>()) );
     }
 
     if (p.hasStatus<PS::VIGOR>()) {
-        addToBot(Actions::RemoveStatus<PS::VIGOR>());
+        addToBot(OpeningAction::create(OpeningAction::PlayerRemove, int(PS::VIGOR)));
     }
 
     if (p.hasStatus<PS::FREE_ATTACK_POWER>()) {
@@ -1921,7 +1921,7 @@ void BattleContext::onUseAttackCard() {
 
     if (p.hasStatus<PS::PEN_NIB>()) {
         // todo does this need to be added to bot?
-        addToBot( Actions::RemoveStatus<PS::PEN_NIB>() );
+        addToBot( OpeningAction::create(OpeningAction::PlayerRemove, int(PS::PEN_NIB)) );
     }
 
     onUseCardRelics();
@@ -1939,7 +1939,7 @@ void BattleContext::onUseAttackCard() {
     for (int i = 0; i < monsters.monsterCount; ++i) {
         const auto &m = monsters.arr[i];
         if (m.id != MonsterId::INVALID && m.hasStatus<MS::SHARP_HIDE>()) {
-            addToBot(Actions::DamagePlayer(m.getStatus<MS::SHARP_HIDE>()));
+            addToBot(OpeningAction::create(OpeningAction::PlayerDamage, m.getStatus<MS::SHARP_HIDE>()));
         }
     }
 
@@ -1955,7 +1955,7 @@ void BattleContext::onUseSkillCard() {
     // ********* Powers onUseCard *********
 
     if (p.hasStatus<PS::AFTER_IMAGE>()) {
-        addToBot(Actions::GainBlock(p.getStatus<PS::AFTER_IMAGE>()));
+        addToBot(OpeningAction::create(OpeningAction::Block, p.getStatus<PS::AFTER_IMAGE>()));
     }
 
     if (!item.purgeOnUse && p.hasStatus<PS::BURST>()) {
@@ -1983,7 +1983,7 @@ void BattleContext::onUseSkillCard() {
 
     if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
         p.panacheCounter = 5;
-        addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
+        addToBot( OpeningAction::create(OpeningAction::DamageAll, p.getStatus<PS::PANACHE>()) );
     }
 
     // todo Storm
@@ -2020,7 +2020,7 @@ void BattleContext::onUsePowerCard() {
     auto &p = player;
 
     if (p.hasStatus<PS::AFTER_IMAGE>()) {
-        addToBot(Actions::GainBlock(p.getStatus<PS::AFTER_IMAGE>()));
+        addToBot(OpeningAction::create(OpeningAction::Block, p.getStatus<PS::AFTER_IMAGE>()));
     }
 
     if (!item.purgeOnUse && p.hasStatus<PS::DUPLICATION>()) {
@@ -2043,7 +2043,7 @@ void BattleContext::onUsePowerCard() {
 
     if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
         p.panacheCounter = 5;
-        addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
+        addToBot( OpeningAction::create(OpeningAction::DamageAll, p.getStatus<PS::PANACHE>()) );
     }
 
     onUseCardRelics();
@@ -2069,7 +2069,7 @@ void BattleContext::onUseStatusOrCurseCard() {
     auto &p = player;
 
     if (p.hasStatus<PS::AFTER_IMAGE>()) {
-        addToBot(Actions::GainBlock(p.getStatus<PS::AFTER_IMAGE>()));
+        addToBot(OpeningAction::create(OpeningAction::Block, p.getStatus<PS::AFTER_IMAGE>()));
     }
 
     if (!item.purgeOnUse && p.hasStatus<PS::DUPLICATION>()) {
@@ -2092,7 +2092,7 @@ void BattleContext::onUseStatusOrCurseCard() {
 
     if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
         p.panacheCounter = 5;
-        addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
+        addToBot( OpeningAction::create(OpeningAction::DamageAll, p.getStatus<PS::PANACHE>()) );
     }
 
     onUseCardRelics();
@@ -2707,7 +2707,7 @@ void BattleContext::drinkPotion(int idx, int target) {
     // PotionPopUp calls onUsePotion after potion.use. Automatic Fairy revival
     // and discarding a potion never go through this callback.
     if (player.hasRelic<R::TOY_ORNITHOPTER>()) {
-        addToBot(Actions::HealPlayer(5));
+        addToBot(OpeningAction::create(OpeningAction::PlayerHeal, 5));
     }
     if (p == Potion::SMOKE_BOMB) {
         addToBot({[](BattleContext &bc) {
@@ -2975,12 +2975,12 @@ void BattleContext::triggerOnOtherCardPlayed(const CardInstance &usedCard) {
         --painCount;
     }
     for (int i = 0; i < painCount; ++i) {
-        addToTop(Actions::PlayerLoseHp(1, true));
+        addToTop(OpeningAction::create(OpeningAction::PlayerHpLoss, 1, true));
     }
 
     const auto thousandCuts = player.getStatus<PS::THOUSAND_CUTS>();
     if (thousandCuts) {
-        addToBot(Actions::DamageAllEnemy(thousandCuts));
+        addToBot(OpeningAction::create(OpeningAction::DamageAll, thousandCuts));
     }
 }
 
@@ -3158,7 +3158,7 @@ void BattleContext::applyPowersToHand() {
 
 void BattleContext::onShuffle() {
     if (player.hasRelic<R::THE_ABACUS>()) {
-        addToBot( Actions::GainBlock(6) );
+        addToBot( OpeningAction::create(OpeningAction::Block, 6) );
     }
 
     if (player.hasRelic<R::MELANGE>()) {
@@ -3168,7 +3168,7 @@ void BattleContext::onShuffle() {
     if (player.hasRelic<R::SUNDIAL>()) {
         if (player.sundialCounter == 2) {
             player.sundialCounter = 0;
-            addToBot( Actions::GainEnergy(2) );
+            addToBot( OpeningAction::create(OpeningAction::Energy, 2) );
         } else {
             ++player.sundialCounter;
         }

@@ -41,6 +41,8 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
     section=text[text.index(begin):text.index(end)+len(end)]
     section=section.replace('throw std::logic_error("unknown opening continuation");',
                             'gpu_fail(__LINE__); return {};')
+    section=section.replace('throw std::logic_error("pending Stasis return lost its captured card");',
+                            'gpu_fail(__LINE__); return;')
     original_text=(generated/relative).read_text();assert original_text.count(anchor)==1,(relative,anchor)
     target=continuation/relative;target.parent.mkdir(parents=True,exist_ok=True)
     target.write_text(original_text.replace(anchor,anchor+'\n'+section))
@@ -82,6 +84,66 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
    original_text=original_text[:start]+replacement+original_text[end:]
    target=continuation/relative;target.write_text(original_text)
    continuation_sources[relative]=dict(native_sha256=digest(simulator/relative),generated_sha256=digest(target))
+   # The source audit covers effects queued behind card/potion choices, draw
+   # hooks and on-hit/death hooks. Keep the original outlined function bodies;
+   # only their queue entries become the same inline data as the native CPU.
+   replacements={
+    'Actions::'+factory+'(': 'OpeningAction::create(OpeningAction::'+tag+', '
+    for factory,tag in [('DrawCards','Draw'),('GainBlock','Block'),('GainEnergy','Energy'),
+     ('DamageAllEnemy','DamageAll'),('DamagePlayer','PlayerDamage'),('PlayerLoseHp','PlayerHpLoss'),
+     ('DamageRandomEnemy','RandomDamage'),('DamageEnemy','EnemyDamage'),('EscapeAction','MonsterEscape'),
+     ('DebuffEnemy<MS::VULNERABLE>','TargetVulnerable'),('DebuffEnemy<MS::WEAK>','TargetWeak')]}
+   replacements.update({'Actions::RemovePlayerDebuffs()':'OpeningAction::create(OpeningAction::Cleanse)',
+                        'Actions::DualityAction()':'OpeningAction::create(OpeningAction::Duality)'})
+   for status in ('DEXTERITY','STRENGTH','PEN_NIB'):
+    replacements['Actions::BuffPlayer<PS::'+status+'>(']='OpeningAction::create(OpeningAction::PlayerBuff, int(PS::'+status+'), '
+   for status in ('VIGOR','PEN_NIB'):
+    replacements['Actions::RemoveStatus<PS::'+status+'>()']='OpeningAction::create(OpeningAction::PlayerRemove, int(PS::'+status+'))'
+   regions={
+    'src/combat/BattleContext.cpp':[
+     ('void BattleContext::onUseCardRelics()', 'void BattleContext::onAfterUseCard()'),
+     ('void BattleContext::triggerOnOtherCardPlayed(', 'int BattleContext::calculateCardDamage('),
+     ('void BattleContext::onShuffle()', 'void BattleContext::triggerAndMoveToExhaustPile(')],
+    'src/combat/CardManager.cpp':[('void CardManager::draw(', 'void CardManager::onTookDamage()')],
+    'src/combat/Player.cpp':[('void Player::gainBlock(', 'void Player::gainGold(')],
+    'src/combat/Monster.cpp':[('void Monster::triggerDeathEffects(', 'void Monster::onHpLost(')],
+    'include/combat/BattleContext.h':[('void BattleContext::debuffEnemy(', '\n\n\n}')],
+    'src/combat/MonsterSpecific.cpp':[],
+   }
+   for relative,spans in regions.items():
+    target=continuation/relative
+    text=(target if relative in continuation_sources else generated/relative).read_text()
+    native=(simulator/relative).read_text()
+    for begin,end in spans:
+     start=text.index(begin);stop=text.index(end,start);section=text[start:stop]
+     for old,new in replacements.items():
+      if old in section:
+       assert new in native,(relative,new)
+       section=section.replace(old,new)
+     text=text[:start]+section+text[stop:]
+    if relative=='src/combat/BattleContext.cpp':
+     old='addToBot(Actions::HealPlayer(5));'
+     assert text.count(old)==1
+     text=text.replace(old,'addToBot(OpeningAction::create(OpeningAction::PlayerHeal, 5));')
+    if relative=='src/combat/CardManager.cpp':
+     start=text.index('                bc.addToBot({[](BattleContext &ctx)',text.index('if (c.getId() == CardId::VOID)'))
+     stop=text.index('\n            }',start)
+     text=text[:start]+'                bc.addToBot(OpeningAction::create(OpeningAction::VoidEnergy));'+text[stop:]
+    if relative=='src/combat/Monster.cpp':
+     start=text.index('        bc.addToBot({[poisonAmount]');stop=text.index('\n    }',start)
+     text=text[:start]+'        bc.addToBot(OpeningAction::create(OpeningAction::TransferPoison, poisonAmount));'+text[stop:]
+     start=text.index('        const int target = idx;',text.index('} else if (hasStatus<MS::FLIGHT>'))
+     stop=text.index('    } else if (damage < curHp',start)
+     text=text[:start]+'        bc.addToBot(OpeningAction::create(OpeningAction::FlightDamage, idx));\n\n'+text[stop:]
+     import re
+     text,count=re.subn(r'bc.addToBot\(\{\[target\]\(BattleContext &ctx\) \{\s*ctx.monsters.arr\[target\].setMove\((MMID::[A-Z_]+)\);\s*\}\}\);',
+                       r'bc.addToBot(OpeningAction::create(OpeningAction::MonsterMove, target, int(\1)));',text)
+     assert count==3,count
+    if relative=='src/combat/MonsterSpecific.cpp':
+     start=text.index('    bc.addToBot({[slot, toDiscard]');stop=text.index('\n}',start)
+     text=text[:start]+'    bc.addToBot(OpeningAction::create(OpeningAction::StasisReturn, slot, toDiscard));'+text[stop:]
+    target.parent.mkdir(parents=True,exist_ok=True);target.write_text(text)
+    continuation_sources[relative]=dict(native_sha256=digest(simulator/relative),generated_sha256=digest(target))
   entry=(source/filename).read_text()
   old='"/root/autodl-tmp/token-speed-r7-20261105/nine-token-speed/online480/waves/devicebudgetarena141/device_std.h"'
   assert entry.count(old)==1

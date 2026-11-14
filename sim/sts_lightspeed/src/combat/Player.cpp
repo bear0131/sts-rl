@@ -85,7 +85,7 @@ void Player::gainBlock(BattleContext &bc, int amount) {
     block += std::min(amount, MAX_BLOCK - block);
 
     if (hasStatus<PS::JUGGERNAUT>()) {
-        bc.addToBot(Actions::DamageRandomEnemy(getStatus<PS::JUGGERNAUT>()));
+        bc.addToBot(OpeningAction::create(OpeningAction::RandomDamage, getStatus<PS::JUGGERNAUT>()));
     }
 
     // todo watcher weak power

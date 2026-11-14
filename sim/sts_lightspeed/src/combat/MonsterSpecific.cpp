@@ -3611,18 +3611,7 @@ void Monster::returnStasisCard(BattleContext &bc) {
     // returns it later. A hand action may overflow then; a discard action
     // chosen for an initially full hand must remain a discard action.
     const bool toDiscard = bc.cards.cardsInHand == 10;
-    bc.addToBot({[slot, toDiscard](BattleContext &ctx) {
-        auto &original = ctx.cards.stasisCards[slot];
-        if (original.id == CardId::INVALID) {
-            throw std::logic_error("pending Stasis return lost its captured card");
-        }
-        auto card = original.makeStatEquivalentCopy();
-        card.uniqueId = original.uniqueId;
-        original = {CardId::INVALID};
-        ctx.cards.notifyAddCardToCombat(card);
-        if (toDiscard) ctx.cards.moveToDiscardPile(card);
-        else ctx.moveGeneratedCardToHand(card);
-    }});
+    bc.addToBot(OpeningAction::create(OpeningAction::StasisReturn, slot, toDiscard));
 }
 
 int reptoSummonHelper(const BattleContext &bc, int daggerIdxs[2], int daggerCount) {

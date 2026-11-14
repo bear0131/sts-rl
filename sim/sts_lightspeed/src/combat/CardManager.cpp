@@ -477,22 +477,20 @@ void CardManager::draw(BattleContext &bc, int amount) {
 
         } else if (c.getType() == CardType::STATUS) {
             if (evolve) {
-                bc.addToBot( Actions::DrawCards(evolve) );
+                bc.addToBot( OpeningAction::create(OpeningAction::Draw, evolve) );
             }
             if (fireBreathing) {
-                bc.addToBot( Actions::DamageAllEnemy(fireBreathing) );
+                bc.addToBot( OpeningAction::create(OpeningAction::DamageAll, fireBreathing) );
             }
             if (c.getId() == CardId::VOID) {
                 // VoidCard queues LoseEnergyAction. Existing actions such as
                 // Warcry's selection must still see the pre-loss energy.
-                bc.addToBot({[](BattleContext &ctx) {
-                    ctx.player.energy = std::max(0, ctx.player.energy - 1);
-                }});
+                bc.addToBot(OpeningAction::create(OpeningAction::VoidEnergy));
             }
 
         } else if (c.getType() == CardType::CURSE) {
             if (fireBreathing) {
-                bc.addToBot( Actions::DamageAllEnemy(fireBreathing) );
+                bc.addToBot( OpeningAction::create(OpeningAction::DamageAll, fireBreathing) );
             }
 
         }

@@ -127,3 +127,20 @@ P18在原64命令循环合并根提交，来源镜像推进、非submit/step命�
 
 
 | P23 | 原Hex三处DAZED入队接已有TempDraw；原怪物多层护甲扣减动作体移至OpeningAction，嵌套眩晕调用原SetMonsterMove；冻结GPU对应句同步替换 | 新增两个枚举值，旧值/队列次序/胜利清理/卡牌数量不变；不加执行路径或CPU回退。247真实失败现场保留，新三场景先portable=false复现，重建CPU后7项通过，GPU规则feb53d9b重建后完整53项通过；从247恢复同进程生产两轮仍待验收 |
+
+
+| P24 | 全面审计原卡牌/药水停点后，在原队列追加15种16字节数据表示；原回调动作体、槽位/UID、入队顺序与胜利清理保留，GPU冻结编译源逐句对应 | 42攻击/60技能/19能力分支与42种药水枚举已查。当前Ironclad池33种；13种直接选牌卡与7种直接选牌药水及自动/复制出牌链、遗物/能力/怪物触发见下表。71场CPU往返与旧原生执行最终状态逐字一致；GPU和248续训两轮资格以worklog本题结果为准。无新采样路径、CPU回退或缓存开关 |
+
+### P24 选择停点与回调来源
+
+| 原来源 | 审计出的选择边界 / 原队列消费者 | 本次改动位置 |
+| --- | --- | --- |
+| 卡牌 | ARMAMENTS（未升级）、BURNING_PACT、DISCOVERY、DUAL_WIELD、EXHUME、FORETHOUGHT、HEADBUTT、PURITY、SECRET_TECHNIQUE、SECRET_WEAPON、THINKING_AHEAD、TRUE_GRIT（升级）、WARCRY；两升级态都测试 | 这些选牌动作本体不改；其后的onUse/triggerOnOtherCardPlayed回调在sim/sts_lightspeed/src/combat/BattleContext.cpp登记 |
+| 药水 | Attack/Colorless/Skill/Power Potion、Elixir Potion、Gamblers Brew、Liquid Memories；Sacred Bark多次选择之后才执行Toy Ornithopter回血 | 原drinkPotion末尾HealPlayer入队改用数据表示，同一Actions::HealPlayer执行 |
+| 自动与复制出牌 | Havoc、Distilled Chaos、Mayhem；Double Tap、Burst、Duplication及其药水、Echo Form、Necronomicon | 原cardQueue完整CardQueueItem已可保存，未新增另一种执行路径；递归选择纳入测试 |
+| 出牌遗物/能力 | Ink Bottle、Orange Pellets、Kunai、Ornamental Fan、Shuriken、Pen Nib、Duality、Nunchaku、Letter Opener；After Image、Panache、Rage、Vigor、Thousand Cuts、Hex | 原onUseCardRelics/onUseAttackCard/onUseSkillCard/onUsePowerCard/onUseStatusOrCurseCard及triggerOnOtherCardPlayed只替换队列项 |
+| 抽牌/格挡/洗牌 | Evolve、Fire Breathing、Void；Juggernaut；The Abacus、Sundial；Pain→Centennial Puzzle/Runic Cube→抽牌连锁 | CardManager::draw、Player::gainBlock、BattleContext::onShuffle；Void原扣能量lambda体移入OpeningAction |
+| 受击/死亡 | Sharp Hide、Flight最后一层、Hand Drill→Champion Belt/Sadistic、Corpse Explosion、Gremlin Horn、The Specimen、Stasis、Darkling/Awakened One换动作、Leader随从逃跑 | Monster.cpp、MonsterSpecific.cpp及BattleContext.h::debuffEnemy；原目标槽、Stasis完整卡实例和RNG保留 |
+| 既有开局/回合末选择 | Toolbox→Gambling Chip；Nilry's Codex后的格挡/群伤/球；Hex/Plated Armor已有P23 | 沿已有OpeningAction类型，未改其选择路径；完整GPU回归继续覆盖这些旧场景 |
+
+审计边界：当前源码只有121个显式攻击/技能/能力卡分支，不声称实现了全部游戏卡。非现役职业的Stance Potion仍缺CHOOSE_STANCE_ACTION消费者；Defect容量/黑暗药水原为空动作，不在Ironclad药水池中。它们是既有规则实现范围，不能拿本次队列修复宣称已经支持。完整逐卡/药水枚举和改动行段见同名JSON的callback_audit_stage与files；一次性运行证据统一放worklog/2026-11-15.md。

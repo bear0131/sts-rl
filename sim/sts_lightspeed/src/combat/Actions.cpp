@@ -25,6 +25,8 @@ Action OpeningAction::materialize() const {
                 case PS::ARTIFACT: return Actions::BuffPlayer<PS::ARTIFACT>(b);
                 case PS::BUFFER: return Actions::BuffPlayer<PS::BUFFER>(b);
                 case PS::STRENGTH: return Actions::BuffPlayer<PS::STRENGTH>(b);
+                case PS::DEXTERITY: return Actions::BuffPlayer<PS::DEXTERITY>(b);
+                case PS::PEN_NIB: return Actions::BuffPlayer<PS::PEN_NIB>(b);
                 case PS::INTANGIBLE: return Actions::BuffPlayer<PS::INTANGIBLE>(b);
                 default: break;
             }
@@ -52,6 +54,50 @@ Action OpeningAction::materialize() const {
         case ReactiveRoll: return Actions::ReactiveRollMove(a);
         case EndTurnOrbs: return Actions::TriggerEndOfTurnOrbsAction();
         case MonsterMove: return Actions::SetMonsterMove(a, MonsterMoveId(b));
+        case PlayerDamage: return Actions::DamagePlayer(a, bool(b));
+        case PlayerHeal: return Actions::HealPlayer(a);
+        case PlayerHpLoss: return Actions::PlayerLoseHp(a, bool(b));
+        case EnemyDamage: return Actions::DamageEnemy(a, b);
+        case RandomDamage: return Actions::DamageRandomEnemy(a);
+        case PlayerRemove:
+            switch (PlayerStatus(a)) {
+                case PS::VIGOR: return Actions::RemoveStatus<PS::VIGOR>();
+                case PS::PEN_NIB: return Actions::RemoveStatus<PS::PEN_NIB>();
+                default: break;
+            }
+            break;
+        case Cleanse: return Actions::RemovePlayerDebuffs();
+        case Duality: return Actions::DualityAction();
+        case TargetVulnerable: return Actions::DebuffEnemy<MS::VULNERABLE>(a, b, bool(c));
+        case TargetWeak: return Actions::DebuffEnemy<MS::WEAK>(a, b, bool(c));
+        case MonsterEscape: return Actions::EscapeAction(a);
+        case VoidEnergy: return {[](BattleContext &ctx) {
+            ctx.player.energy = std::max(0, ctx.player.energy - 1);
+        }};
+        case FlightDamage: return {[target=a](BattleContext &ctx) {
+            auto &monster = ctx.monsters.arr[target];
+            if (!monster.hasStatus<MS::FLIGHT>()) return;
+            monster.decrementStatus<MS::FLIGHT>();
+            if (!monster.hasStatus<MS::FLIGHT>() && monster.id == MonsterId::BYRD) {
+                ctx.addToBot(OpeningAction::create(OpeningAction::MonsterMove, target, int(MMID::BYRD_STUNNED)));
+            }
+        }};
+        case TransferPoison: return {[poisonAmount=a](BattleContext &ctx) {
+            const int target = ctx.monsters.getRandomMonsterIdx(ctx.cardRandomRng, true);
+            if (target >= 0) ctx.addToTop(Actions::DebuffEnemy<MS::POISON>(target, poisonAmount, false));
+        }};
+        case StasisReturn: return {[slot=a, toDiscard=bool(b)](BattleContext &ctx) {
+            auto &original = ctx.cards.stasisCards[slot];
+            if (original.id == CardId::INVALID) {
+                throw std::logic_error("pending Stasis return lost its captured card");
+            }
+            auto card = original.makeStatEquivalentCopy();
+            card.uniqueId = original.uniqueId;
+            original = {CardId::INVALID};
+            ctx.cards.notifyAddCardToCombat(card);
+            if (toDiscard) ctx.cards.moveToDiscardPile(card);
+            else ctx.moveGeneratedCardToHand(card);
+        }};
         case PlatedArmorDamage: return {[target=a](BattleContext &ctx) {
             auto &monster = ctx.monsters.arr[target];
             if (!monster.hasStatus<MS::PLATED_ARMOR>()) return;

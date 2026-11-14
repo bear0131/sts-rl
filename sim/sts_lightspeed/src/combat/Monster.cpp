@@ -310,20 +310,17 @@ void Monster::triggerDeathEffects(BattleContext &bc) {
 
     if (curHp <= 0 && hasStatus<MS::CORPSE_EXPLOSION>() && !battleEnding) {
         int damage = maxHp * getStatus<MS::CORPSE_EXPLOSION>();
-        bc.addToBot( Actions::DamageAllEnemy(damage) );
+        bc.addToBot( OpeningAction::create(OpeningAction::DamageAll, damage) );
     }
 
     if (curHp == 0 && bc.player.hasRelic<RelicId::GREMLIN_HORN>() && !battleEnding) {
-        bc.addToBot( Actions::GainEnergy(1) );
-        bc.addToBot( Actions::DrawCards(1) );
+        bc.addToBot( OpeningAction::create(OpeningAction::Energy, 1) );
+        bc.addToBot( OpeningAction::create(OpeningAction::Draw, 1) );
     }
 
     if (bc.player.hasRelic<RelicId::THE_SPECIMEN>() && hasStatus<MS::POISON>() && !battleEnding) {
         const int poisonAmount = getStatus<MS::POISON>();
-        bc.addToBot({[poisonAmount](BattleContext &ctx) {
-            const int target = ctx.monsters.getRandomMonsterIdx(ctx.cardRandomRng, true);
-            if (target >= 0) ctx.addToTop(Actions::DebuffEnemy<MS::POISON>(target, poisonAmount, false));
-        }});
+        bc.addToBot(OpeningAction::create(OpeningAction::TransferPoison, poisonAmount));
     }
 
 }
@@ -355,9 +352,7 @@ void Monster::die(BattleContext &bc) {
         removeStatus<MS::CURIOSITY>();
         setMove(MonsterMoveId::AWAKENED_ONE_REBIRTH);
         const int target = idx;
-        bc.addToBot({[target](BattleContext &ctx) {
-            ctx.monsters.arr[target].setMove(MMID::AWAKENED_ONE_REBIRTH);
-        }});
+        bc.addToBot(OpeningAction::create(OpeningAction::MonsterMove, target, int(MMID::AWAKENED_ONE_REBIRTH)));
         return;
     }
 
@@ -384,9 +379,7 @@ void Monster::die(BattleContext &bc) {
         } else if (moveHistory[0] != MMID::DARKLING_REGROW) {
             setMove(MMID::DARKLING_REGROW);
             const int target = idx;
-            bc.addToBot({[target](BattleContext &ctx) {
-                ctx.monsters.arr[target].setMove(MMID::DARKLING_REGROW);
-            }});
+            bc.addToBot(OpeningAction::create(OpeningAction::MonsterMove, target, int(MMID::DARKLING_REGROW)));
         }
         return;
     }
@@ -408,7 +401,7 @@ void Monster::die(BattleContext &bc) {
             const auto &other = bc.monsters.arr[i];
             if (!other.isDying() &&
                 (id == MonsterId::GREMLIN_LEADER || other.id == MonsterId::CULTIST)) {
-                bc.addToBot(Actions::EscapeAction(i));
+                bc.addToBot(OpeningAction::create(OpeningAction::MonsterEscape, i));
             }
         }
     }
@@ -422,9 +415,7 @@ void Monster::die(BattleContext &bc) {
         removeStatus<MS::CURIOSITY>();
         setMove(MMID::AWAKENED_ONE_REBIRTH);
         const int target = idx;
-        bc.addToBot({[target](BattleContext &ctx) {
-            ctx.monsters.arr[target].setMove(MMID::AWAKENED_ONE_REBIRTH);
-        }});
+        bc.addToBot(OpeningAction::create(OpeningAction::MonsterMove, target, int(MMID::AWAKENED_ONE_REBIRTH)));
     }
 }
 
@@ -474,7 +465,7 @@ void Monster::attackedUnblockedHelper(BattleContext &bc, int damage) {
     // Thorns does not require HP loss; it is not an alternative to a damage
     // modifier. A fatal hit still schedules its retaliation.
     if (hasStatus<MS::THORNS>()) {
-        bc.addToTop(Actions::DamagePlayer(getStatus<MS::THORNS>()));
+        bc.addToTop(OpeningAction::create(OpeningAction::PlayerDamage, getStatus<MS::THORNS>()));
     }
     if (damage <= 0) return;
 
@@ -488,17 +479,7 @@ void Monster::attackedUnblockedHelper(BattleContext &bc, int damage) {
     } else if (hasStatus<MS::FLIGHT>() && static_cast<float>(damage) / 2.0f < curHp) {
         // FlightPower reuses its final-receive calculation for this guard,
         // even though damage has already passed through that calculation.
-        const int target = idx;
-        bc.addToBot({[target](BattleContext &ctx) {
-            auto &monster = ctx.monsters.arr[target];
-            if (!monster.hasStatus<MS::FLIGHT>()) return;
-            monster.decrementStatus<MS::FLIGHT>();
-            if (!monster.hasStatus<MS::FLIGHT>() && monster.id == MonsterId::BYRD) {
-                ctx.addToBot({[target](BattleContext &next) {
-                    next.monsters.arr[target].setMove(MMID::BYRD_STUNNED);
-                }});
-            }
-        }});
+        bc.addToBot(OpeningAction::create(OpeningAction::FlightDamage, idx));
 
     } else if (damage < curHp && (hasStatus<MS::MALLEABLE>() || hasStatus<MS::REACTIVE>())) {
         if (hasStatus<MS::MALLEABLE>()) {
@@ -554,7 +535,7 @@ void Monster::attacked(BattleContext &bc, int damage) {
     block = std::max(0, block - tempDamage);
 
     if (hadBlock && block == 0 && bc.player.hasRelic<RelicId::HAND_DRILL>()) {
-        bc.addToBot(Actions::DebuffEnemy<MS::VULNERABLE>(idx, 2, false) );
+        bc.addToBot(OpeningAction::create(OpeningAction::TargetVulnerable, idx, 2, false) );
     }
 
     attackedUnblockedHelper(bc, damage);
@@ -608,7 +589,7 @@ void Monster::damage(BattleContext &bc, int damage) {
     block = std::max(0, block-tempDamage);
 
     if (hadBlock && block == 0 && bc.player.hasRelic<RelicId::HAND_DRILL>()) {
-        bc.addToBot(Actions::DebuffEnemy<MS::VULNERABLE>(idx, 2, false) );
+        bc.addToBot(OpeningAction::create(OpeningAction::TargetVulnerable, idx, 2, false) );
     }
 
     if (damage > 0) {

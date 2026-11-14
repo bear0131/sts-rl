@@ -5,6 +5,8 @@ import numpy as np
 import pytest
 import torch
 
+from tests.full480_continuation_fixtures import TRIGGER_CASES, pending_continuation
+
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(180)]
 
 
@@ -464,7 +466,9 @@ def test_full480_pending_block_roundtrip(combat_factory, scenario):
     ('prefix', 'growth', 'escape', 'gamble', 'toolbox', 'armaments', 'burning_pact', 'burning_pact_up',
      'codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive',
      'warcry_hex', 'headbutt_plated', 'headbutt_plated_last')] +
-    [(s, True) for s in ('prefix', 'growth', 'escape', 'anchor_duplicates')])
+    [(s, True) for s in ('prefix', 'growth', 'escape', 'anchor_duplicates')] +
+    [('audit:' + s, False) for s in TRIGGER_CASES] +
+    [('audit:potion:' + s + ':1', False) for s in ('Attack Potion', 'Elixir Potion', 'Gamblers Brew', 'Liquid Memories')])
 def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, anchored, tmp_path, monkeypatch):
     from rl.search.full480.combo_runtime import BattleArena, BattlePool
     from rl.search.full480.combo_model import DeckWeights
@@ -524,6 +528,8 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
     if scenario in ('codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive',
                     'warcry_hex', 'headbutt_plated', 'headbutt_plated_last'):
         _full480_pending_block(latent_env, scenario)
+    if scenario.startswith('audit:'):
+        pending_continuation(latent_env, scenario[len('audit:'):])
     policy = DeckLatentPolicy(latent_env.observation_space, latent_env.action_space,
         lambda _: 5e-5, d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
         reward_flow='sequential-v1', deck_combat_encoder='transformer64x2').cuda()
@@ -541,7 +547,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
         worlds = paired_worlds(20261111, len(mapping), 2 * len(mapping))
         budget = len(mapping) * len(worlds) - 1
         row = cpu.State(latent_env.thick.bc).root_plan(20261111, budget, 1., 8, False)
-        if scenario in ('gamble', 'toolbox', 'armaments', 'burning_pact', 'burning_pact_up',
+        if scenario.startswith('audit:') or scenario in ('gamble', 'toolbox', 'armaments', 'burning_pact', 'burning_pact_up',
                         'codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive',
                         'warcry_hex', 'headbutt_plated', 'headbutt_plated_last'):
             assert row['snapshot']['input_state'] == 2
@@ -589,6 +595,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                     np.testing.assert_array_equal(words[j, :len(snap['words'])], snap['words'], err_msg=str(i))
                     assert int(pool.selection_prefix[i]) == sum(1 << j for j in (branches[i][0]._multi or ()))
             compare_states()
+            oracle_action_scores = 0
             for tick in range(8):
                 active = torch.nonzero(pool.alive).flatten().cpu().tolist()
                 if not active:
@@ -602,6 +609,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                         action = legal[0]
                         expected_draws[i] = -1.
                     else:
+                        oracle_action_scores += len(legal)
                         ob = {k: torch.as_tensor(v[None], device='cuda') for k, v in env._obs().items()}
                         branch_context = core.prepare_search_context(ob) if scenario == 'growth' else context
                         logits, _ = core.combat_with_context(ob, branch_context)
@@ -650,6 +658,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 pool.frame_pipeline.score_roots(list(pool.ledger.pending.values()))
                 del scratch
             result = pool.reap()[0]
+            assert int(result['statistics'][10]) == oracle_action_scores
             owners=np.arange(budget)%len(mapping)
             expected=np.bincount(owners,weights=gold,minlength=len(mapping))/np.bincount(owners,minlength=len(mapping))
             np.testing.assert_allclose(result['values'],expected,atol=3e-5,rtol=1e-5)
@@ -737,11 +746,23 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                     assert pool.frame_pipeline.completion_inference().statistics()['anchor_cache_batch_duplicates'] > 0
             else:
                 assert pool.frame_pipeline.counts['anchor_rows']==0
-            assert (pool.graph_scorer.statistics()['step_overflow_retries']
-                    + pool.frame_pipeline.counts['overflow_retries']) > 0
-            assert pool.graph_scorer.statistics()['step_replays'] > 0
+            if scenario == 'audit:leader':
+                # Every candidate finishes the combat while resuming its
+                # pending escapes, before any policy step graph is needed.
+                np.testing.assert_array_equal(result['terminal_visits'], result['visits'])
+                assert int(result['statistics'][0]) == oracle_action_scores == 0
+            else:
+                assert (pool.graph_scorer.statistics()['step_overflow_retries']
+                        + pool.frame_pipeline.counts['overflow_retries']) > 0
+                assert pool.graph_scorer.statistics()['step_replays'] > 0
             pool.close()
             arena.close()
+            # The audited callbacks belong on the production GPU state path.
+            # All eight steps above use the original CPU simulator as oracle.
+            # The original cases below separately qualify the legacy CPU owner;
+            # its context refresh/accounting assumptions are not universal
+            # (FULL480-CPU-FALLBACK-SCORE-COUNT in TODO.md).
+            if scenario.startswith('audit:'):return
             if anchored:return  # CPU fallback retains the separate terminal-HP contract.
             # Exercise the original CPU owner and its real FIFO GPU service on
             # exactly the same root/worlds, including pre-existing callbacks.

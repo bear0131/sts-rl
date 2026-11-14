@@ -32,7 +32,10 @@ namespace sts {
     struct OpeningAction {
         enum Kind { Unknown, Draw, Block, Energy, DamageAll, TempHand, TempDraw,
             PlayerBuff, PlayerDebuff, EnemyDebuff, Gamble, Upgrade, Toolbox, RedSkull, AfterCardUsed,
-            MonsterBlock, ReactiveRoll, EndTurnOrbs, MonsterMove, PlatedArmorDamage };
+            MonsterBlock, ReactiveRoll, EndTurnOrbs, MonsterMove, PlatedArmorDamage,
+            PlayerDamage, PlayerHeal, PlayerHpLoss, EnemyDamage, RandomDamage,
+            PlayerRemove, Cleanse, Duality, TargetVulnerable, TargetWeak,
+            FlightDamage, TransferPoison, StasisReturn, MonsterEscape, VoidEnergy };
         Kind kind = Unknown;
         int a = 0, b = 0, c = 0;
         Action materialize() const;
