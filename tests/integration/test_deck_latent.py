@@ -91,15 +91,15 @@ def test_full480_existing_inference_consumes_cached_deck_heads(latent_env, devic
             torch.testing.assert_close(inference(data), reference(data), rtol=2e-5, atol=2e-5)
             assert inference.statistics()['context_cache_misses'] == before + 2
         torch.testing.assert_close(result, saved, rtol=0, atol=0)
-        # Permanent widths affect the encoded context, not combat-head geometry.
-        # Exercise many widths without rebuilding the identical small head.
+        # Static deck width must not split combat graphs; relic padding uses
+        # existing width buckets and preserves interior empty physical slots.
         captures = inference.statistics()['upper_graph_captures']
         for width in range(1, 9):
             varying = {k: v[1:2].copy() for k, v in data.items()}
             varying['deck_ids'][:] = 0
             varying['deck_ids'][:, :width] = data['deck_ids'][1, 0]
             varying['relics'][:] = 0
-            varying['relics'][:, :width] = data['relics'][1, 0]
+            varying['relics'][:, width-1] = data['relics'][1, 0]
             torch.testing.assert_close(inference(varying), reference(varying), rtol=2e-5, atol=2e-5)
         if device == 'cuda':
             assert inference.statistics()['upper_graph_captures'] - captures <= 1

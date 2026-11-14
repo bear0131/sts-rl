@@ -37,7 +37,10 @@ class PairedTokenBatch(SmallPlayoutBatch):
                 for i,value in zip(missing,context,strict=True):contexts[i]=value
                 self.stats['root_context_cpu_rows']=self.stats.get('root_context_cpu_rows',0)+len(missing)
             projected=SearchContext(torch.as_tensor(np.stack(contexts),device=self.device),None)
-            logits, _ = self.policy.combat_with_context(observation_as_tensor(inputs,self.device),projected)
+            from rl.search.rollout_inference import _observed_width
+            width=_observed_width(inputs['relics'])
+            dynamic=dict(inputs,relics=inputs['relics'][:,:width],relic_counters=inputs['relic_counters'][:,:width])
+            logits, _ = self.policy.combat_with_context(observation_as_tensor(dynamic,self.device),projected)
             logits = logits.cpu().numpy()
             out = []
             for env, obs, scores in zip(environments, observations, logits, strict=True):

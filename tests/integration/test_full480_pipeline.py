@@ -493,7 +493,13 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 raise AssertionError('root scoring repeated the large encoder')
             with monkeypatch.context() as patch:
                 patch.setattr(core.context,'forward',no_large_encoder)
+                widths=[]
+                hook=core.combat.summaries.relic_counter.register_forward_pre_hook(
+                    lambda module,args:widths.append(args[0].shape[1]))
                 scored=batch.score_roots([latent_env],observations=[obs],contexts=[result['combat_context']])
+                hook.remove()
+                assert widths and widths[0]<len(obs['relics'])
+                np.testing.assert_array_equal(scored[0][0]['observation']['relics'],obs['relics'])
                 expected_root,_=core.combat_with_context(data,context)
                 np.testing.assert_allclose(scored[0][1],expected_root[0,[a for a,_ in mapping]].cpu().numpy(),atol=3e-5,rtol=1e-5)
             batch.inference.__exit__(None,None,None)

@@ -332,6 +332,8 @@ class _DeckConsumers:
                     continue
                 data = {k: v[rows] for k, v in batch.items()}
                 if phase == V.PHASE_VOCAB_INDEX['combat']:
+                    data, _ = _upper_graph_inputs(data, (data['deck_ids'].shape[1], _observed_width(data['relics'])),
+                        (data['deck_ids'].shape[1], data['relics'].shape[1]))
                     pick = C.JOINT_PICK - C.JOINT_END
                     required = ((data['select_native_indices'] > 0)
                                 | data['combat_legal'][:, pick:pick+data['select_native_indices'].shape[1]].astype(bool))

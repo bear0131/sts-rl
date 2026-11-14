@@ -43,7 +43,7 @@
 
 ## 尚未提交与已撤回的内容
 
-- 当前尚未提交的 4 个根观测文件：`env/core/deck_context.py`、`env/core/native_observation.py`、`sim/sts_lightspeed/bindings/slaythespire.cpp`、`tests/integration/test_native_root_observation.py`。它们把当前模型的牌堆升级计数/总量放进已有 `pack_neural_roots`，替代 Python 每牌构造；不是新增采样入口。新增 `deck_context_schema` 参数和能力版本标记也属于我加的接口。明确构建 SHA `4daefadd5b63a056b7e01ca262d4935ac61699a31d0bf5b6f69fbe8589e681f4` 下 20 项测试通过，尚未做这版完整长度性能验收。
+- 已随 e7d757f8 提交的 4 个根观测文件：`env/core/deck_context.py`、`env/core/native_observation.py`、`sim/sts_lightspeed/bindings/slaythespire.cpp`、`tests/integration/test_native_root_observation.py`。它们把当前模型的牌堆升级计数/总量放进已有 `pack_neural_roots`，替代 Python 每牌构造；不是新增采样入口。新增 `deck_context_schema` 参数和能力版本标记也属于我加的接口。明确构建 SHA `4daefadd5b63a056b7e01ca262d4935ac61699a31d0bf5b6f69fbe8589e681f4` 下 20 项测试通过，已完成480自然局，速度仍不合格。
 - 已按用户最新约束撤回的未提交尝试：`upper-value.cpp` 的 `forward_keys`/新构造函数，以及 `rollout_inference.py` 的 native scalar cache 分支。未编译验证、未提交、未用于完整测速；现已恢复 HEAD。原先工作的 Python 精确构筑和锚点缓存继续保留。
 - 新增测试：`test_full480_pipeline.py`、`test_full480_collection.py`；已有 deck latent、buffer、native root 测试中也新增了回归。测试增量和 fixture 变更单独列入 JSON，不混成运行时实现。
 
@@ -73,10 +73,16 @@
 
 第一次恢复旧目标的完整运行 `collection-1794653592544064387.log` 在121秒时根处理89.784秒，10215根；该轮主动中断，不算完整验收。原因之一是我在 PairedTokenBatch 新模型边界调用完整模型，在 CPU 另算大构筑编码。修正为原结果包携带 GPU 缓存的 64 维投影；原根评分只跑战斗小网，测试把大编码器设为抛错仍通过。后续相同480/相同种子启动的30秒检查中根处理5.719秒/6926根，前一版本19.219秒/882根。早期计数受进度影响，不当作整轮最终倍率。
 
-当前完整运行日志 `collection-1794653982223970963.log`；源与模型冻结、0更新，尚未出完整回执。
+完整运行 `collection-1794653982223970963.log` 为572.965秒/126.51万有效决策每秒；后续1abef11d为592.053秒/122.36万。两轮480自然结束、0更新，但速度均不合格。
 
 ### 已定位到我所加代码的后续证据
 
 - 45 秒提交阶段 profile：19.475 秒中 `dome_policy` 为 15.612 秒，CPU 大编码器 97 次、7.701 秒；当前模型被沿用到旧 CPU 特例而未转入已有 GPU 批量队列，是明确新增慢点。恢复后 90 秒检查提交 28261 根、累计 10.208 秒（约0.36ms/根），未作为最终吞吐。
 - 测试回调漏写已有 `_uses_rollout_observations=False`，使旧观察省略优化未启用；已在原测试入口修正。不是减少根记录：完整 e7d757f8 结果111139搜索根、111064多动作根训练记录，75个单动作根按原accept合同不写训练标签。
 - 第二轮 collection-1794654968469327901.log 在原状态页扩容时 OOM，退出1，不能称完整通过。90秒状态页已占5733220352字节、峰值333000在途simulation；新增逐链anchor副本和单独宽输出头合计1095499776字节，现已撤除冗余副本/复用原scratch。原缓存、精度、480环境、搜索预算与并发调度不缩减。
+
+### 空槽与重复牌堆观察
+
+- C03根评分的当前模型输入保留了整段遗物PAD尾部；75秒cProfile中`relic_terms`为8.164秒。直接在原`PairedTokenBatch.score_roots`裁尾，根训练观察仍保存完整数组，物理中间空槽不删除。C04原GPU小头使用已有宽度分桶裁尾。
+- C08的`deck_input::prepare`调用canonical pack生成并复制三份稠密牌堆直方图，而后续原地GPU特征直接读取同一BattleContext牌堆。canonical pack新增默认开启的模板参数，只在该GPU消费者关闭这三个不用的直方图；CPU默认输出合同不变。未增加采样或传输路径。
+- 完整逐段位置与SHA见同名JSON；本次观察修改的GPU数值/生命周期及自然局回归17项通过，完整速度结论仍待新480局。

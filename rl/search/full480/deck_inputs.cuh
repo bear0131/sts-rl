@@ -20,8 +20,9 @@ template<class Actions> inline void prepare(const BattleContext&b,const Actions&
  unsigned*bits,int*keys,int*source_rows,int*targets,int*ids,int*zones,int*monsters,
  int*meta,int*chunks,int*allocator,int action_capacity,int entity_capacity,
  float*raw,int*cat,int*legal,float*selected,int*remaining){
- auto packed=compact_leaf::pack(b);
- for(int j=0;j<RAW;++j)raw[i*RAW+j]=packed.scalars[j];
+ auto packed=compact_leaf::pack<false>(b);
+ for(int j=0;j<HAND+20;++j)raw[i*RAW+j]=packed.scalars[j];
+ for(int j=PICK;j<RAW;++j)raw[i*RAW+j]=packed.scalars[j];
  for(int j=0;j<CAT;++j)cat[i*CAT+j]=packed.categorical[j];
  const int na=actions.size();device_state::require(na>0&&na<=198);
  unsigned by_id[198]{};bool mask[198]{};

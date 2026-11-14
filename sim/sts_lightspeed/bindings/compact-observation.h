@@ -173,6 +173,7 @@ inline int monsterStatusValue(const sts::Monster &monster, int status) {
     }
 }
 
+template <bool IncludePileHistograms = true>
 inline Row pack(const sts::BattleContext &bc) {
     if (bc.cards.cardsInHand < 0 || bc.cards.cardsInHand > kHandSlots) {
         throw std::invalid_argument("combat hand exceeds compact observation capacity");
@@ -345,9 +346,15 @@ inline Row pack(const sts::BattleContext &bc) {
         }
         f += kCardIds;
     };
-    countPile(bc.cards.drawPile);
-    countPile(bc.cards.discardPile);
-    countPile(bc.cards.exhaustPile);
+    if constexpr (IncludePileHistograms) {
+        countPile(bc.cards.drawPile);
+        countPile(bc.cards.discardPile);
+        countPile(bc.cards.exhaustPile);
+    } else {
+        // The resident GPU observer reads these same piles directly when
+        // forming their learned summaries; its dense histograms are unused.
+        f += 3 * kCardIds;
+    }
     // GRID prefixes remain in the discard pile until the mandatory last pick.
     row.scalars[f++] = selecting
         ? static_cast<float>(bc.cardSelectInfo.pickCount - bc.cardSelectInfo.selectedCount)
