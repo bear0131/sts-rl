@@ -1008,3 +1008,10 @@ PAD卡ID等同于无效native候选。缓存、稀疏摘要接口、标量critic
 写入policy构造参数和搜索worker冻结快照，旧checkpoint仍按原MLP恢复。
 
 Combat49 采样重接待办见 [交接文档](../docs/2026-11-14/combat49-old-sampling-handoff.md)；近期重写实现已撤除，正式训练保持停止。
+
+`SearchRolloutBuffer.add_rows(indices, ...)` 消费旧collector已有的ready子集。
+它只写真实PPO行，不安排环境、搜索或重置；每环境独立计数，数据仍按(time,env)
+存放，GAE和learner的env-major shuffle不变。teacher与实际搜索动作/logprob必须
+随同一次写入交付，完整验证包后才写任何数组。`row_positions`返回副本；所有环境
+达到固定长度才置full，未完成时不能取样更新。不得与整批add/prefill混用。
+此接口尚未接到full480执行循环，不能单独构成生产采样资格。
