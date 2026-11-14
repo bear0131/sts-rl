@@ -2,9 +2,31 @@
 import numpy as np
 import pytest
 
-from tests.full480_continuation_fixtures import AUDITED_CASES, pending_continuation
+from tests.full480_continuation_fixtures import AUDITED_CASES, pending_continuation, large_card_pile
 
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(180)]
+
+
+@pytest.mark.parametrize('zone', ['draw', 'discard', 'exhaust'])
+@pytest.mark.parametrize('count', [128, 129, 168, 257])
+def test_full480_large_pile_roundtrip(combat_factory, zone, count):
+    import slaythespire as sts
+    from rl.search.full480.run_device import cpu_bridge
+    env = combat_factory(['STRIKE_RED'] * 10, seed=20261111,
+                         combat_action_contract='autoregressive-v2')
+    bc = large_card_pile(env, zone, count)
+    assert len(bc.card_state()[zone]) == count
+    cpu = cpu_bridge()
+    snap = cpu.State(bc).snapshot()
+    assert snap['max_vector'] == count and snap['queue_size'] == 0
+    assert snap['portable'], '128 is inline storage, not the GPU vector limit'
+    restored = cpu.State(snap['words'])
+    for _ in range(3):
+        np.testing.assert_array_equal(restored.snapshot()['words'], cpu.State(bc).snapshot()['words'])
+        bits = restored.actions()[0]
+        restored.step(bits)
+        bc.execute(sts.Action(bits))
+    np.testing.assert_array_equal(restored.snapshot()['words'], cpu.State(bc).snapshot()['words'])
 
 
 @pytest.mark.parametrize('case', AUDITED_CASES)

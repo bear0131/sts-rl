@@ -23,6 +23,25 @@ AUDITED_CASES = (tuple(f'card:{card}:{up}' for card in SELECTION_CARDS for up in
     + TRIGGER_CASES)
 
 
+def large_card_pile(env, zone, count):
+    """Keep every generated card while crossing the GPU vector's inline size."""
+    import slaythespire as sts
+    env.thick.gc.set_deck([('TRUE_GRIT', 1)] + [('STRIKE_RED', 0)] * 9)
+    env.thick.gc.set_relics([])
+    env.thick.gc.set_potion_state([])
+    env.thick.bc = bc = sts.create_battle(env.thick.gc, 'Jaw Worm')
+    piles = dict(hand=[native_card('TRUE_GRIT', 0, upgrades=1),
+                       native_card('STRIKE_RED', 1), native_card('DEFEND_RED', 2)],
+                 draw=[native_card('STRIKE_RED', 3), native_card('DEFEND_RED', 4)],
+                 discard=[native_card('STRIKE_RED', 5)], exhaust=[])
+    piles[zone] = [native_card('SLIMED', 32 + i) for i in range(count)]
+    bc.set_card_state(native_card_state(**piles, next_uid=32 + count))
+    bc.set_player_energy(5)
+    bc.apply_custom_state({'monsters': [{'hp': 1000, 'max_hp': 1000}]})
+    env._invalidate_backend_cache()
+    return bc
+
+
 def pending_continuation(env, case):
     """Use the original native action to reach a choice; never inject a queue."""
     import slaythespire as sts

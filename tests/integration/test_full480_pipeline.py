@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-from tests.full480_continuation_fixtures import TRIGGER_CASES, pending_continuation
+from tests.full480_continuation_fixtures import TRIGGER_CASES, pending_continuation, large_card_pile
 
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(180)]
 
@@ -466,7 +466,8 @@ def test_full480_pending_block_roundtrip(combat_factory, scenario):
     ('prefix', 'growth', 'escape', 'gamble', 'toolbox', 'armaments', 'burning_pact', 'burning_pact_up',
      'codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive',
      'warcry_hex', 'headbutt_plated', 'headbutt_plated_last')] +
-    [(s, True) for s in ('prefix', 'growth', 'escape', 'anchor_duplicates')] +
+    [(s, True) for s in ('prefix', 'growth', 'escape', 'anchor_duplicates',
+                       'pile:draw:168', 'pile:discard:168', 'pile:exhaust:168', 'pile:exhaust:128')] +
     [('audit:' + s, False) for s in TRIGGER_CASES] +
     [('audit:potion:' + s + ':1', False) for s in ('Attack Potion', 'Elixir Potion', 'Gamblers Brew', 'Liquid Memories')])
 def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, anchored, tmp_path, monkeypatch):
@@ -530,6 +531,9 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
         _full480_pending_block(latent_env, scenario)
     if scenario.startswith('audit:'):
         pending_continuation(latent_env, scenario[len('audit:'):])
+    if scenario.startswith('pile:'):
+        _, zone, count = scenario.split(':')
+        large_card_pile(latent_env, zone, int(count))
     policy = DeckLatentPolicy(latent_env.observation_space, latent_env.action_space,
         lambda _: 5e-5, d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
         reward_flow='sequential-v1', deck_combat_encoder='transformer64x2').cuda()
@@ -547,6 +551,9 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
         worlds = paired_worlds(20261111, len(mapping), 2 * len(mapping))
         budget = len(mapping) * len(worlds) - 1
         row = cpu.State(latent_env.thick.bc).root_plan(20261111, budget, 1., 8, False)
+        if scenario.startswith('pile:'):
+            assert row['snapshot']['max_vector'] == int(scenario.rsplit(':', 1)[1])
+            assert row['snapshot']['portable'] and row['eligible']
         if scenario.startswith('audit:') or scenario in ('gamble', 'toolbox', 'armaments', 'burning_pact', 'burning_pact_up',
                         'codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive',
                         'warcry_hex', 'headbutt_plated', 'headbutt_plated_last'):
@@ -636,6 +643,9 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 np.testing.assert_array_equal(pool.draws[active].cpu().numpy(), list(expected_draws.values()))
                 compare_states()
             assert not pool.active_count
+            if scenario == 'pile:exhaust:128':
+                assert max(len(branch.thick.bc.card_state()['exhaust'])
+                           for branch, _, _ in branches) > 128
             # The old target consumes terminal HP, never a neural anchor or
             # a value bootstrap at the depth limit. Unfinished visits add zero
             # to the lower bound while remaining nonterminal in the counters.

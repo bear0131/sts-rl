@@ -37,7 +37,8 @@ struct CpuSearchState {
   device_state::Archive<false> w{tmp.data(),int(tmp.size())};w.field(state);
   py::array_t<unsigned long long> words(w.at);std::copy_n(tmp.data(),w.at,words.mutable_data());
   py::dict d;d["words"]=words;d["queue_size"]=state.actionQueue.size;d["max_vector"]=w.max_vector;
-  d["portable"]=w.portable&&w.max_vector<=128;
+  // The original flex GPU vector grows beyond its 128-element inline storage.
+  d["portable"]=w.portable;
   d["input_state"]=int(state.inputState);d["outcome"]=int(state.outcome);
   return d;
  }
