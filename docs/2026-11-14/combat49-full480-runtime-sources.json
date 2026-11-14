@@ -310,6 +310,42 @@
         "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
       },
       "current": "rl/algorithms/full480.py"
+    },
+    {
+      "original": "directmapped141-qualified-v1.tgz:small.cpp",
+      "current": "rl/search/full480/native/wave.cpp",
+      "sha256": "78534d22f86195e2ee9ff2a62eddf477f8cfbaea173bcd7b9714a8c523a57316",
+      "proof": {
+        "archive_sha256": "31ea169e7831ae165950fb8c69e8acac3f5849c3a1b1e620b04aeb74befce41b",
+        "actual_full480_native_sha256": "9b7439fa1c29ba4f6e2bd09d9d66ff5e6ba2aa4f4995d9b8c0b6e4c8ec9987e2"
+      }
+    },
+    {
+      "original": "directmapped141-qualified-v1.tgz:bind.cpp",
+      "current": "rl/search/full480/native/bindings.cpp",
+      "sha256": "7c05d84e175edd55c2759fdabf859c572511b3bf329f24f4c2d33b482c794511",
+      "proof": {
+        "archive_sha256": "31ea169e7831ae165950fb8c69e8acac3f5849c3a1b1e620b04aeb74befce41b",
+        "actual_full480_native_sha256": "9b7439fa1c29ba4f6e2bd09d9d66ff5e6ba2aa4f4995d9b8c0b6e4c8ec9987e2"
+      }
+    },
+    {
+      "original": "directmapped141-qualified-v1.tgz:inc/sim/search/WaveDiag.h",
+      "current": "rl/search/full480/native/include/sim/search/WaveDiag.h",
+      "sha256": "b40e57a6c15fe4e336481dfe5c76901e1080948387d511ffdd7f3281afd8b945",
+      "proof": {
+        "archive_sha256": "31ea169e7831ae165950fb8c69e8acac3f5849c3a1b1e620b04aeb74befce41b",
+        "actual_full480_native_sha256": "9b7439fa1c29ba4f6e2bd09d9d66ff5e6ba2aa4f4995d9b8c0b6e4c8ec9987e2"
+      }
+    },
+    {
+      "original": "directmapped141-qualified-v1.tgz:raw_public.h",
+      "current": "rl/search/full480/native/raw_public.h",
+      "sha256": "a2a0122e53cea70949873fdff4026bb7ff13eafec86694983179baf993bb13d7",
+      "proof": {
+        "archive_sha256": "31ea169e7831ae165950fb8c69e8acac3f5849c3a1b1e620b04aeb74befce41b",
+        "actual_full480_native_sha256": "9b7439fa1c29ba4f6e2bd09d9d66ff5e6ba2aa4f4995d9b8c0b6e4c8ec9987e2"
+      }
     }
   ]
 }
