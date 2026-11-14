@@ -11,7 +11,8 @@ from .step_pipeline import StepPipeline as FramePipeline,refresh as step_refresh
 from .combo_model import GraphScorer as ComboScorer
 
 class BattlePool(BasePool):
- def __init__(self,*a,frame_tokens=None,frame_queries=None,**kw):
+ def __init__(self,*a,frame_tokens=None,frame_queries=None,step_batch=1,**kw):
+  assert 1<=step_batch<=4;self.step_batch=step_batch
   self.frame_pipeline=None;self._observed=False;self._frame_ready=False;self._scored=False
   super().__init__(*a,**kw)
   assert all(p.dtype==torch.float32 for p in self.net.parameters())
@@ -21,7 +22,7 @@ class BattlePool(BasePool):
    super().close();raise
   self.graph_scorer=self.frame_pipeline
  def refresh(self):return step_refresh(self)
- def tick(self):return self.frame_pipeline.tick()
+ def tick(self):return self.frame_pipeline.tick(steps=self.step_batch)
  def allocate_actions(self,n):
   if getattr(self,'frame_pipeline',None) is not None:self.frame_pipeline.release()
   return super().allocate_actions(n)

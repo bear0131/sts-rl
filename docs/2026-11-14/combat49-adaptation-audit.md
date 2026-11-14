@@ -2,7 +2,7 @@
 
 用户原话：“你明确标出你自己加了哪些部分的适配哪些部分的改动”；并要求“最小化所有的适配，尽可能只在原本基础上改不加东西”。
 
-当前审查范围包含原480主体内的固定PPO消费者；下方JSON给出固定原件基线和当前逐段改动。PPO增量逐项见[交接文档第10节](combat49-old-sampling-handoff.md#10-固定-ppo-接线改动清单)。正式训练仍停止在246：最新7f546ac9固定256×768满预算359.492秒/162.05万有效非强制决策每秒、25%预算249.194秒/57.16万；原180万门槛未过。P16燃烧契约恢复缺口已修复；P17启动即100%覆盖后，四rank两轮完整PPO/16Adam/保存和普通恢复通过，性能仍未达门槛。后续四机同负载速度按用户指定取第二慢耗时，保留所有rank结果。
+当前审查范围包含原480主体内的固定PPO消费者；下方JSON给出固定原件基线和当前逐段改动。PPO增量逐项见[交接文档第10节](combat49-old-sampling-handoff.md#10-固定-ppo-接线改动清单)。P18/P19调度阶段四机满预算固定256×768第二慢408.808→346.956秒（减少15.13%）；原480自然局379.176秒/190.78万有效非强制决策每秒，180万自然局门槛通过。25%预算四机第二慢251.474→198.292秒（减少21.15%）；当前代码两轮完整PPO资格待验收；先前b711的两轮100%覆盖资格不能替代本阶段。正式246保持停止；原shadow 5%对照尚未按新覆盖率重新对齐。
 
 已撤回我增加的固定 PPO 主循环、战斗根先走 upper、根完成时另造 teacher、CPU fallback 完整观测字典以及独立 add_rows 缓冲接口。e7d757f8 中采样循环 AST 除可选属性读取、回调取消清理外与归档相同。本阶段进一步在原循环中改了 Runic Dome 的无搜索决策分流：送入已有 GPU upper 队列，并补齐该批当前战斗输入，避免原 CPU 特例调用大模型。没有另建推理消息、队列或采样循环。
 
@@ -30,13 +30,13 @@
 | C08 | 新文件 `rl/search/full480/deck_inputs.py`、`deck_inputs.cuh`；原 `observer_entry.cu`、`token_builder.cu`、`frame_modules.py`、`frame_pipeline.py` | 新增 `DeckInputTables` 和 CUDA 当前模型特征构造；原 observer/builder 增加 Deck 编译分支、当前物理槽位/token/查询映射；新增构建函数及升级表溢出增长 | 两个 deck_inputs 文件是本次从零新增的模型输入适配，不是旧文件搬迁。执行仍嵌在旧 observer → builder → frame 中 |
 | C09 | `rl/search/full480/combo_model.py`、`combo_kernels.py`、`fallback_ieee_model.py`、`fallback_ieee_kernels.py`；`rl/policies/deck_latent.py` | 新增 `DeckWeights`、当前输出头、global/subset/action 融合 kernel；旧 2×64 主体接当前头；从已有 `encode` 提取 `token_inputs` | 旧 attention/FFN、查询子集和融合执行保留，输入与输出头分支是我改写的；当前较宽输出头复用结束使用的 QKV 存储，避免额外 576 MiB（生产帧）的分配 |
 | C10 | `rules_entry.cu`、`finite_plan.py`、`flex_runtime.py`、`flex_stream.py`、`frame_pipeline.py`、`step_pipeline.py` | 自然局保留旧终局HP/Boss目标；固定PPO在原reap接当前anchor/cutoff值，复用已有观察kernel和缓存。永久变化时刷新对应context | 原GPU原地clone/step、页租约、整步图和回收保留；P06新增完成值函数必须计入适配，不再增加逐链anchor副本 |
-| C11 | `search_auxiliary.py`、`room_returns.py`、`tests/unit/test_search_auxiliary.py` | 已撤回独立add_rows/row_positions及外传last_values；仅保留full480名称识别；新collector调用原teacher、room returns和PPO | 25项包含CPU/CUDA真实更新及普通恢复；256×768完整行通过，四rank两轮16Adam/恢复和速度未验收 |
+| C11 | `search_auxiliary.py`、`room_returns.py`、`tests/unit/test_search_auxiliary.py` | 已撤回独立add_rows/row_positions及外传last_values；仅保留full480名称识别；新collector调用原teacher、room returns和PPO | 既有CPU/CUDA真实更新及普通恢复保留；b711两轮四rank100%覆盖/16Adam/恢复已过，P18/P19当前代码资格另验 |
 | C12 | `run_device.py`、`layout_bindings.py`、`sim/sts_lightspeed/CMakeLists.txt`，各运行模块的 import | 去掉历史固定目录/固定模型加载，改显式产物路径与包内 import；添加原生 full480 构建目标及依赖校验 | 运行绑定和构建改动，不是纯模型数学改动；部分文件只有 import 改动，不能与新增搜索逻辑混算 |
 | C13 | `native/cpu_bridge.cpp`、`native/include/state_codec.h`、模拟器`ActionQueue/Actions/BattleContext`及原arena导入校验 | 原逻辑状态codec加入带类型回调；原动作函数执行，保留队列顺序/clearOnVictory，支持CARD_SELECT；显式新增bridge构建目标 | 这些文件及回调表示是本次改动；未登记回调仍拒绝，完整256×768实测0CPU回退。新增回调包装的成本也属于性能审查范围 |
 
 ## 原样保留与并未由我修改的文件
 
-原件导入后，`root_ledger.py`、`state_pages.py`、`step_kernels.py`、`frame_kernels.py`、`cooperative_gpu.py` 没有本次行为改动；native 的 `raw_public.h` 保持原件。`native/include/zones.h` 是历史依赖原样导入。
+原件导入后，`root_ledger.py`、`state_pages.py`、`frame_kernels.py`、`cooperative_gpu.py` 没有本次行为改动；native 的 `raw_public.h` 保持原件。`native/include/zones.h` 是历史依赖原样导入。`step_kernels.py` 已由P19修改，不再归为原样保留。
 
 `graph_kernels.py`、`graph_model.py`、`pool_gpu.py`、`ragged_model.py`、`ragged_pack.py` 只改包内 import。`ragged_runtime.py`、`search_runtime.py` 还改历史产物定位；其他 runtime 文件的模型选择、尺寸或生命周期变更均已计入 C08–C12，不归为“未改”。
 
@@ -110,3 +110,8 @@ P14扩展2026-10-29历史UpperValueRuntime标量缓存接数组批次，沿2026-
 
 
 P16只将原模拟器燃烧契约在选择后排队的DrawCards换成已有OpeningAction::Draw，并在原GPU编译输入中替换对应语句。触发证据为rank2正式246的slot43/48/160（EXHAUST_ONE、两项待执行回调、portable=false），不是关闭CPU回退检查绕过。未升级/升级两个CPU往返回归0.81秒通过；GPU规则产物重建及四rank生产资格尚待完成，不能把此前rank0/1完整采样结果外推为四rank全部恢复路径通过。
+
+
+P18在原64命令循环合并根提交，来源镜像推进、非submit/step命令、同步回复和批末先flush；跨无关镜像推进仍保留。P19在原StepPipeline复放最多4步后读状态，实际context_dirty在原GPU compact内归约，原32字状态区27/28保护刷新/步数边界，溢出沿原扩容重试。没有新增运行时文件、消息、线程、搜索算法或CPU特殊路径；5个原运行时文件及一个既有集成测试文件是本阶段实际修改范围。
+
+原单步API仍默认1，生产worker明确4；原upper与锚点缓存的CPU期间继续推进，所有页租约、forced跳过、共享临时空间和权重检查保持。新增测试保留逐动作CPU oracle，额外覆盖多帧、半步已提交后注入溢出、Ritual Dagger永久输入变化，以及两根提交跨无关镜像/来源镜像推进。四机满预算第二慢408.808452→346.955725秒（减少15.13%），单独P18和全局保护试版只3.99%/6.12%，没有独立晋级。完整结果、源SHA、重试修正前后边界和剩余资格见worklog/2026-11-15.md。

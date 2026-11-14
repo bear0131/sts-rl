@@ -422,7 +422,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
     if scenario in ('growth', 'escape', 'anchor_duplicates'):
         latent_env.thick.gc.set_deck([('RITUAL_DAGGER' if scenario == 'growth' else 'STRIKE_RED', 0)] * 5)
         latent_env.thick.gc.set_potion_state(['Smoke Bomb'] if scenario == 'escape' else [])
-        latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
+        latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Two Louse' if scenario == 'growth' else 'Jaw Worm')
         if scenario in ('growth', 'anchor_duplicates'):
             latent_env.thick.bc.set_player_strength(999)
     if scenario in ('gamble', 'toolbox'):
@@ -495,7 +495,8 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
         try:
             versions = arena.load({0: row['snapshot']})
             row['mirror'] = (0, *versions[0])
-            pool = BattlePool(arena, budget, net=flat.net, flat=flat, frame=budget, tile=32,
+            frame = max(1, budget // 3 + 1) if scenario == 'prefix' and not anchored else budget
+            pool = BattlePool(arena, budget, net=flat.net, flat=flat, frame=frame, tile=32,
                              frame_tokens=4, frame_queries=4)
             for world, low, high, inc_low, inc_high in worlds:
                 for action, _ in mapping:
@@ -585,6 +586,55 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
             np.testing.assert_allclose(result['values'],expected,atol=3e-5,rtol=1e-5)
             assert result['simulations'] == budget
             np.testing.assert_allclose(result['combat_context'],context.combat[0].cpu().numpy(),atol=0,rtol=0)
+            if scenario in ('prefix','growth') and not anchored:
+                # Repeat the independent per-action oracle above using grouped
+                # graph replays. An undersized frame must stop all later
+                # replays before retry, without advancing RNG or state twice.
+                pool.submit({0:row})
+                pool.frame_pipeline.release()
+                pool.frame_pipeline.requested_ct=pool.frame_pipeline.requested_cq=4
+                before_steps=dict(pool.step_counts)
+                before_retries=pool.frame_pipeline.counts['step_overflow_retries']
+                ensure_graph=pool.frame_pipeline.ensure_step_graph
+                injected=False
+                if scenario=='prefix':
+                    # Fail after a real frame committed, so retry must finish
+                    # that partial tick and then process whole later ticks.
+                    def ensure_partial_retry():
+                        ensure_graph()
+                        if injected:return
+                        graph=pool.frame_pipeline.step_graph
+                        class PartialOverflow:
+                            def reset(self):graph.reset()
+                            def replay(self):
+                                nonlocal injected
+                                status=pool.step_status[:6].cpu().tolist()
+                                if not injected and not status[3] and 0<status[1]<status[0]:
+                                    injected=True
+                                    pool.step_status[3].fill_(1)
+                                    pool.step_status[15].add_(1)
+                                    pool.step_status[16:26].copy_(torch.tensor(
+                                        [pool.action_cap+1,0,1,0,0,0,0,0,0,0],device='cuda'))
+                                    pool.step_status[26].fill_(min(frame,status[0]-status[1]))
+                                else:graph.replay()
+                        pool.frame_pipeline.step_graph=PartialOverflow()
+                    monkeypatch.setattr(pool.frame_pipeline,'ensure_step_graph',ensure_partial_retry)
+                repeated={}
+                for _ in range(8):
+                    if pool.active_count:pool.frame_pipeline.tick(steps=4)
+                    repeated.update(pool.receive(steps=0))
+                    if not pool.pending:break
+                monkeypatch.setattr(pool.frame_pipeline,'ensure_step_graph',ensure_graph)
+                assert set(repeated)=={0}
+                for key in ('action_bits','visits','terminal_visits','statistics','playout_lengths'):
+                    np.testing.assert_array_equal(repeated[0][key],result[key],err_msg=key)
+                np.testing.assert_allclose(repeated[0]['values'],result['values'],atol=3e-5,rtol=1e-5)
+                assert pool.frame_pipeline.counts['step_overflow_retries']>before_retries
+                if scenario=='prefix':
+                    assert injected
+                    assert pool.step_counts['ticks']-before_steps['ticks']>pool.step_counts['host_reads']-before_steps['host_reads']
+                else:
+                    assert pool.step_counts['context_pauses']>before_steps.get('context_pauses',0)
             from rl.search.paired_token_rollout import PairedTokenBatch
             from env.search.small_playout import PAIRED_CONTRACT
             pair=dict(contract='deck-latent-combat-v1',search_contract=PAIRED_CONTRACT,online=True)
@@ -605,7 +655,8 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 np.testing.assert_allclose(scored[0][1],expected_root[0,[a for a,_ in mapping]].cpu().numpy(),atol=3e-5,rtol=1e-5)
                 np.testing.assert_allclose(result['root_logits'],scored[0][1],atol=3e-5,rtol=1e-5)
                 assert result['root_value'] == pytest.approx(float(expected_value.flatten()[0]),abs=3e-5)
-                assert pool.frame_pipeline.counts['root_policy_rows'] == (2 if scenario == 'anchor_duplicates' else 1)
+            assert pool.frame_pipeline.counts['root_policy_rows'] == 1 + int(
+                scenario == 'anchor_duplicates' or (scenario in ('prefix','growth') and not anchored))
             batch.inference.__exit__(None,None,None)
             assert result['visits'].sum()==budget and result['visits'].max()-result['visits'].min()==1
             if scenario in ('prefix', 'gamble'):
@@ -638,7 +689,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
             check(lib.cuCtxSetLimit(0,1024),'release idle oracle stack')
             torch.cuda.empty_cache()
             path=tmp_path/'frozen-policy.pt';torch.save(policy,path)
-            service=GpuService(1,path,expected_digest=state_digest(policy.state_dict()),
+            service=GpuService(3 if scenario == 'prefix' else 1,path,expected_digest=state_digest(policy.state_dict()),
                 prototypes=obs,frozen_policy=policy,budget_cap=budget,frame=budget,tile=32)
             try:
                 cfg=sts.SmallPlayoutConfig();cfg.simulations=budget;cfg.playout_depth=8;cfg.paired_worldlines=True
@@ -674,6 +725,34 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 else:
                     assert status['upper_graph']['context_cache_requests']==1
                     assert fallback.calls>1, 'unchanged branches must reuse the root projection across frames'
+                if scenario == 'prefix':
+                    # A step of another mirror may be batched between root
+                    # submissions. A step of their own source must observe
+                    # the roots already copied, even while search is pending.
+                    versions=service.arena.load({i:row['snapshot'] for i in range(3)})
+                    bits=int(row['action_bits'][0])
+                    changed=cpu.State(row['snapshot']['words']);changed.step(bits)
+                    expected_words=changed.snapshot()['words']
+                    queued={i:dict(row,mirror=(i,*versions[i])) for i in range(2)}
+                    service.send('delay',.1)
+                    service.submit({0:queued[0]})
+                    service.arena.step({2:(*versions[2],bits)})
+                    service.submit({1:queued[1]})
+                    service.arena.step({0:(*versions[0],bits)})
+                    words,_,_=service.arena.snapshot([0,2])
+                    for actual_words in words:
+                        np.testing.assert_array_equal(actual_words[:len(expected_words)],expected_words)
+                    roots={}
+                    while len(roots)<2:
+                        assert time.monotonic()<deadline
+                        roots.update(service.receive(.001))
+                    for root in roots.values():
+                        for key in ('action_bits','visits','terminal_visits','statistics','playout_lengths'):
+                            np.testing.assert_array_equal(root[key],result[key],err_msg=key)
+                        np.testing.assert_allclose(root['values'],result['values'],atol=3e-5,rtol=1e-5)
+                    counts=service.statistics()['counts']
+                    assert counts['commands_submit']==2 and counts['submit_calls']==1
+                    assert counts['submit_max_roots']==2
                 service.close()
             finally:
                 if not service.closed:service.close(cancel='test cleanup')

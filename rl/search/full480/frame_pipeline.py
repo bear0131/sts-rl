@@ -190,7 +190,7 @@ class FramePipeline:
       run_keys=np.stack([p.bank[s]['observation']['run_keys'] for s in slots])[root_rows])
     # The completed pages stay leased. Advance only the other live chains
     # while the existing exact cache packs/looks up this completion batch.
-    finish_step=self.tick(deferred=True) if p.active_count else None
+    finish_step=self.tick(deferred=True,steps=p.step_batch) if p.active_count else None
     try:values=inference.anchor_values(inputs,projected).reshape(-1)
     finally:
      if finish_step is not None:finish_step()

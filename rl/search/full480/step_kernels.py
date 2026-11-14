@@ -4,15 +4,18 @@ import triton.language as tl
 
 # Control: active, cursor, enabled, error, compact, ticks, applied, choices,
 # forced, model_frames, tokens, queries, actions, attention_blocks, frames,
-# overflows, first_failed_summary[10], failed_count.
+# overflows, first_failed_summary[10], failed_count, context_pause, tick_limit.
 @triton.jit
-def compact_local(ALIVE,PREFIX,TOTALS,C,N:tl.constexpr,B:tl.constexpr):
+def compact_local(ALIVE,DIRTY,PREFIX,TOTALS,C,N:tl.constexpr,B:tl.constexpr,DECK:tl.constexpr):
  if tl.load(C+4):
   b=tl.program_id(0);i=b*B+tl.arange(0,B)
   x=(tl.load(ALIVE+i,i<N,0)!=0).to(tl.int32)
   y=tl.cumsum(x,0)
   tl.store(PREFIX+i,y,i<N)
   tl.store(TOTALS+b,tl.sum(x,0))
+  dirty=tl.full((B,),0,tl.int32)
+  if DECK:dirty=((x!=0)&(tl.load(DIRTY+i,i<N,0)!=0)).to(tl.int32)
+  tl.store(TOTALS+tl.cdiv(N,B)+b,tl.sum(dirty,0))
 
 @triton.jit
 def compact_scatter(ALIVE,PREFIX,TOTALS,LIVE,WORLDS,C,N:tl.constexpr,ROOT_BUDGET:tl.constexpr,B:tl.constexpr,CB:tl.constexpr):
@@ -29,11 +32,12 @@ def compact_finish(TOTALS,C,NB:tl.constexpr,CB:tl.constexpr):
  if tl.load(C+4):
   q=tl.arange(0,CB);n=tl.sum(tl.load(TOTALS+q,q<NB,0),0)
   tl.store(C,n);tl.store(C+1,0);tl.store(C+4,0)
+  tl.store(C+27,tl.sum(tl.load(TOTALS+NB+q,q<NB,0),0)>0)
 
 @triton.jit
 def frame_prepare(LIVE,WORLDS,OUT_LIVE,OUT_WORLDS,DISPATCH,C,F:tl.constexpr,B:tl.constexpr):
  active=tl.load(C);cursor=tl.load(C+1)
- enabled=(tl.load(C+2)!=0)&(tl.load(C+3)==0)
+ enabled=(tl.load(C+2)!=0)&(tl.load(C+3)==0)&(tl.load(C+27)==0)&(tl.load(C+5)<tl.load(C+28))
  count=tl.where(enabled,tl.minimum(F,active-cursor),0).to(tl.int32)
  i=tl.program_id(0)*B+tl.arange(0,B);valid=(i<F)&(i<count)
  job=tl.load(LIVE+cursor+i,valid,0);world=tl.load(WORLDS+cursor+i,valid,0)

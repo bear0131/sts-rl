@@ -57,7 +57,7 @@ def run_worker(commands,responses,settings):
    if deck:
     flat=DeckWeights(policy.core);flat.input_tables=DeckInputTables(policy.core,settings['prototypes']);flat.inference=upper
    arena=BattleArena(settings['capacity'],deck=deck)
-   engine=BattlePool(arena,settings['budget_cap'],net=policy.core.combat if deck else policy.small_playout,flat=flat,frame=settings['frame'],tile=settings['tile'])
+   engine=BattlePool(arena,settings['budget_cap'],net=policy.core.combat if deck else policy.small_playout,flat=flat,frame=settings['frame'],tile=settings['tile'],step_batch=4)
    actual=engine.frame_pipeline.modules.identity;directory=artifacts/'deck' if deck else artifacts
    expected={name:json.loads((directory/receipt).read_text())['cubin_sha256'] for name,receipt in [('observer','observer-compile-0-result.json'),('builder','builder-build.json')]}
    assert {name:actual[name]['sha256'] for name in expected}==expected,('wrong compiled inference backend',actual,expected)
@@ -74,6 +74,14 @@ def run_worker(commands,responses,settings):
    pids=[int(x) for x in subprocess.check_output(['nvidia-smi','--query-compute-apps=pid','--format=csv,noheader'],text=True).split()]
    assert set(pids)==({os.getpid(),settings['parent_pid']} if settings['parent_cuda'] else {os.getpid()}),pids
    startup=stats();startup['gpu_pids']=pids;emit('ready',startup)
+   submissions={};submission_sources=set()
+   def flush_submissions():
+    if not submissions:return
+    started=time.perf_counter();engine.submit(submissions)
+    counts['seconds_submit']+=time.perf_counter()-started
+    counts['submit_calls']+=1;counts['submit_roots']+=len(submissions)
+    counts['submit_max_roots']=max(counts['submit_max_roots'],len(submissions))
+    submissions.clear();submission_sources.clear()
    stop=False;loop_started=time.perf_counter()
    while not stop:
     advanced=False
@@ -83,14 +91,22 @@ def run_worker(commands,responses,settings):
      except queue.Empty:packet=None
     for index in range(64):
      if packet is None:break
-     kind,payload,ident=pickle.loads(packet);answer=None;start=time.perf_counter()
+     kind,payload,ident=pickle.loads(packet);answer=None
+     # Within the original 64-command batch, independent arena steps cannot
+     # change these root snapshots. Flush before touching a source or replying.
+     if submissions and (kind not in ('submit','step') or ident is not None
+       or (kind=='step' and not submission_sources.isdisjoint(payload))):flush_submissions()
+     start=time.perf_counter()
      if kind=='load':
       rows,expected=payload;answer=arena.load(rows);assert answer==expected
      elif kind=='step':arena.step(payload)
      elif kind=='drop':arena.drop(payload)
      elif kind=='snapshot':answer=arena.snapshot(payload)
      elif kind=='keys':answer=arena.keys(payload)
-     elif kind=='submit':engine.submit(payload)
+     elif kind=='submit':
+      assert submissions.keys().isdisjoint(payload),'duplicate queued root'
+      submissions.update(payload)
+      submission_sources.update(row['mirror'][0] for row in payload.values() if 'mirror' in row)
      elif kind=='reference':
       assert not engine.pending;engine.submit(payload);answer={}
       while engine.pending:answer.update(engine.receive())
@@ -113,7 +129,7 @@ def run_worker(commands,responses,settings):
      elif kind in ('upper','upper_reference'):
       finish_step=None
       if kind=='upper' and deck and engine.active_count and not advanced:
-       finish_step=engine.frame_pipeline.tick(deferred=True);advanced=True
+       finish_step=engine.frame_pipeline.tick(deferred=True,steps=engine.step_batch);advanced=True
        counts['upper_overlap_ticks']+=1
       try:
        obs,masks=payload
@@ -173,10 +189,11 @@ def run_worker(commands,responses,settings):
      elif kind=='cancel':abort(str(payload));stop=True
      else:raise ValueError('unknown GPU command '+kind)
      counts['commands_'+kind]+=1;counts['seconds_'+kind]+=time.perf_counter()-start
-     if ident is not None:emit('reply',answer,ident)
+     if ident is not None:flush_submissions();emit('reply',answer,ident)
      if stop or index==63:break
      try:packet=commands.get_nowait()
      except queue.Empty:packet=None
+    flush_submissions()
     if not stop and engine.pending:
      active_before=engine.active_count;start=time.perf_counter();ready=engine.receive(steps=0 if advanced else 1)
      elapsed=time.perf_counter()-start;counts['gpu_service_seconds']+=elapsed;counts['active_tick_time_sum']+=active_before*elapsed;counts['active_tick_sum']+=active_before;counts['ticks']+=1

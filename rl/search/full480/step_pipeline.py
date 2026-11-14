@@ -5,7 +5,8 @@ from .step_kernels import compact_local,compact_scatter,compact_finish,frame_pre
 
 def compact(pool):
  n=pool.n;b=1024;nb=triton.cdiv(n,b);cb=triton.next_power_of_2(nb)
- compact_local[(nb,)](pool.alive,pool.step_prefix,pool.step_totals,pool.step_status,n,b)
+ compact_local[(nb,)](pool.alive,pool.context_dirty if pool.deck_consumer else pool.alive,
+  pool.step_prefix,pool.step_totals,pool.step_status,n,b,pool.deck_consumer)
  compact_scatter[(nb,)](pool.alive,pool.step_prefix,pool.step_totals,pool.live,pool.logical_ids,pool.step_status,n,pool.budget_cap,b,cb)
  compact_finish[(1,)](pool.step_totals,pool.step_status,nb,cb)
 
@@ -13,7 +14,7 @@ def refresh(pool):
  if not hasattr(pool,'step_status'):
   pool.step_status=torch.zeros(32,device='cuda',dtype=torch.int64)
   pool.step_prefix=torch.empty(pool.n,device='cuda',dtype=torch.int32)
-  pool.step_totals=torch.empty(triton.cdiv(pool.n,1024),device='cuda',dtype=torch.int32)
+  pool.step_totals=torch.empty(2*triton.cdiv(pool.n,1024),device='cuda',dtype=torch.int32)
   pool.live=torch.zeros(pool.n,device='cuda',dtype=torch.int32)
   pool.logical_ids=torch.zeros(pool.n,device='cuda',dtype=torch.int32)
   pool.step_counts=collections.Counter();pool.step_last=[0]*32
@@ -77,16 +78,25 @@ class StepPipeline(FramePipeline):
   if nq>self.requested_cq:self.requested_cq=triton.next_power_of_2(nq)
   p.step_status[3].zero_();s[3]=0
  @torch.inference_mode()
- def tick(self,*,deferred=False):
+ def tick(self,*,deferred=False,steps=1):
   started=time.perf_counter()
   p=self.pool
+  assert 1<=steps<=4
   if p.deck_consumer:self.refresh_contexts();p.value_mode.zero_()
   assert p.active_count>0 and not p.closed and not p._scored and not p._observed
   before=p.step_last.copy();s=before.copy()
   assert s[1]==0 and s[3]==0 and s[0]==p.active_count
+  # Reuse the original transactional graph before returning to the host.
+  # Device guards stop at the requested tick, an overflow, or an actual
+  # permanent context change; only then is host intervention needed.
+  target_ticks=before[5]+steps
+  p.step_status[27].zero_();p.step_status[28].fill_(target_ticks)
   def launch():
    self.ensure_step_graph()
    frames=triton.cdiv(s[0]-s[1],self.F);assert frames>0
+   # A retry can start partway through this tick; later ticks still need
+   # enough frames for every live chain, not just the unfinished suffix.
+   frames+=triton.cdiv(s[0],self.F)*(target_ticks-s[5]-1)
    for _ in range(frames):
     self.step_graph.replay();self.counts['step_replays']+=1
   launch();launched=time.perf_counter();finished=False
@@ -101,14 +111,17 @@ class StepPipeline(FramePipeline):
     self.grow_failed_frame(s)
     if attempt<7:launch()
    else:raise RuntimeError('Step graph overflow retry budget exhausted')
-   assert s[5]==before[5]+1 and s[1]==0 and s[4]==0
-   assert s[6]-before[6]==before[0]
+   ticks=s[5]-before[5]
+   assert 1<=ticks<=target_ticks-before[5] and s[1]==0 and s[4]==0
+   assert s[5]==target_ticks or s[0]==0 or s[27]
+   assert before[0]<=s[6]-before[6]<=before[0]*ticks
    delta=[x-y for x,y in zip(s,before)]
    p.real_neural_rows+=delta[7];p.neural_rows+=delta[7];p.skipped_forced_rows+=delta[8];p.model_calls+=delta[9]
    if not hasattr(p,'ragged_counts'):p.ragged_counts=collections.Counter()
    p.ragged_counts.update(frames=delta[9],tokens=delta[10],queries=delta[11],states=delta[7],actions=delta[12],attention_blocks=delta[13])
-   p.step_counts.update(applied=delta[6],nonforced=delta[7],forced=delta[8],frames=delta[14],overflow_frames=delta[15],ticks=1)
-   p.step_last=s;p.active_count=s[0];p.iterations+=1;finished=True
+   p.step_counts.update(applied=delta[6],nonforced=delta[7],forced=delta[8],frames=delta[14],overflow_frames=delta[15],ticks=ticks)
+   p.step_counts['context_pauses']+=int(bool(s[27]) and s[5]<target_ticks)
+   p.step_last=s;p.active_count=s[0];p.iterations+=ticks;finished=True
    self.counts['step_seconds']+=time.perf_counter()-started
    self.counts['step_finish_seconds']+=time.perf_counter()-waiting
    if deferred:self.counts['deferred_host_interval_seconds']+=waiting-launched
