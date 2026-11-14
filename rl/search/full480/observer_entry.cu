@@ -335,7 +335,7 @@ extern "C" __global__ void frame_observe_special(unsigned char*arena,int*worlds,
  if(parallel_capable(b))return;
 #ifdef STS_FULL480_DECK
  auto deck_actions=sts::search::autoregressiveActions(b,prefixes[live[base+i]]);
- deck_input::prepare(b,deck_actions,i,prefixes[live[base+i]],weights,bits,keys,source_rows,targets,ids,zones,monsters,meta,chunks,allocator,action_capacity,entity_capacity,raw,cat,legal_mask,selected,remaining);
+ deck_input::prepare(b,deck_actions,i,prefixes[live[base+i]],weights,bits,keys,source_rows,targets,ids,zones,monsters,meta,chunks,allocator,action_capacity,entity_capacity,raw,cat,legal_mask,selected,remaining,*value_mode!=0);
  if(*value_mode&&meta[i*4+3])meta[i*4+3]=2;
  return;
 #endif
@@ -428,7 +428,7 @@ extern "C" __global__ void normal_prepare(unsigned char*arena,int*worlds,int*liv
  if(!parallel_capable(b))return;
 #ifdef STS_FULL480_DECK
  auto deck_actions=sts::search::normal_legal(b);
- deck_input::prepare(b,deck_actions,i,prefixes[live[base+i]],weights,bits,keys,source_rows,targets,ids,zones,monsters,meta,chunks,allocator,action_capacity,entity_capacity,raw,cat,legal_mask,selected,remaining);
+ deck_input::prepare(b,deck_actions,i,prefixes[live[base+i]],weights,bits,keys,source_rows,targets,ids,zones,monsters,meta,chunks,allocator,action_capacity,entity_capacity,raw,cat,legal_mask,selected,remaining,*value_mode!=0);
  if(*value_mode&&meta[i*4+3])meta[i*4+3]=2;
  return;
 #endif

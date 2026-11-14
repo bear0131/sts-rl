@@ -306,6 +306,27 @@ def test_full480_current_native_observer_and_packed_model(latent_env):
                 torch.testing.assert_close(pool.frame_pipeline.model.buffers['coef'][0, 12], values[0, 0], atol=3e-5, rtol=1e-5)
                 assert flat.input_tables.upgrade_capacity > level
             assert sum(bool(row['summary'][2] & 64) for row in pool.frame_pipeline.history) >= 2
+            # An only-End-Turn state skips observation/token work in search,
+            # but the same graph must still score it when a value is requested.
+            latent_env.thick.gc.set_deck([('STRIKE_RED', 0)] * 5)
+            latent_env.thick.gc.set_potion_state([])
+            latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
+            latent_env.thick.bc.set_player_energy(0)
+            latent_env._invalidate_backend_cache()
+            assert np.flatnonzero(latent_env.action_masks()).tolist() == [0]
+            arena.drop([0]); arena.load({0: cpu.State(latent_env.thick.bc).snapshot()})
+            data = {k: torch.as_tensor(v[None], device='cuda') for k, v in latent_env._obs().items()}
+            context = policy.core.prepare_search_context(data)
+            pool.chain_inputs[0] = torch.cat((context.combat[0], data['run_keys'][0], data['ascension'][0]))
+            pool.selection_prefix.zero_()
+            summary = pool.frame_pipeline.run(0, 1)
+            assert summary[5:7] == [0, 0] and summary[9] == 0
+            assert int(pool.meta[0, 1]) == 0 and float(pool.scores[0]) == 0.
+            summary = pool.frame_pipeline.run(0, 1, value_only=True)
+            assert summary[5] > 0 and summary[9] == 1
+            expected, values = policy.core.combat_with_context(data, context)
+            assert float(pool.scores[0]) == 0., 'the forced-action sampler keeps its original zero score'
+            torch.testing.assert_close(pool.frame_pipeline.model.buffers['coef'][0, 12], values[0, 0], atol=3e-5, rtol=1e-5)
         finally:
             if pool is not None:
                 pool.arena.zero_()

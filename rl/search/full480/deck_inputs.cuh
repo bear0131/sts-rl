@@ -19,11 +19,7 @@ inline int physical(const int*chunks,int row,int slot){return chunks[row*16+slot
 template<class Actions> inline void prepare(const BattleContext&b,const Actions&actions,int i,int prefix,const unsigned long long*w,
  unsigned*bits,int*keys,int*source_rows,int*targets,int*ids,int*zones,int*monsters,
  int*meta,int*chunks,int*allocator,int action_capacity,int entity_capacity,
- float*raw,int*cat,int*legal,float*selected,int*remaining){
- auto packed=compact_leaf::pack<false>(b);
- for(int j=0;j<HAND+20;++j)raw[i*RAW+j]=packed.scalars[j];
- for(int j=PICK;j<RAW;++j)raw[i*RAW+j]=packed.scalars[j];
- for(int j=0;j<CAT;++j)cat[i*CAT+j]=packed.categorical[j];
+ float*raw,int*cat,int*legal,float*selected,int*remaining,bool value_only){
  const int na=actions.size();device_state::require(na>0&&na<=198);
  unsigned by_id[198]{};bool mask[198]{};
  for(int k=0;k<na;++k){const auto a=actions[k];
@@ -33,12 +29,6 @@ template<class Actions> inline void prepare(const BattleContext&b,const Actions&
  int start=atomicAdd(allocator,na);meta[i*4]=na;meta[i*4+1]=0;meta[i*4+2]=start;meta[i*4+3]=0;
  atomicMax(allocator+4,na);
  if(start>action_capacity-na){atomicOr(allocator+2,1);return;}
- int needed=0;
- for(int j=0;j<10;++j)needed=max(needed,int(packed.scalars[HAND+2*j])+1);
- if(needed>upgrade_levels(w)[0]){
-  // Bit 2 already prevents packing and apply; bit 64 identifies table growth.
-  atomicMax(allocator+3,needed);atomicOr(allocator+2,66);return;
- }
  int a=0;
  for(int id=0;id<198;++id){
   legal[i*198+id]=mask[id];if(!mask[id])continue;
@@ -49,6 +39,19 @@ template<class Actions> inline void prepare(const BattleContext&b,const Actions&
   else if(id>=91&&id<187)source=25+id-91;
   else if(id>=187&&id<197)source=1+id-187;
   source_rows[at*10]=source;targets[at]=target;
+ }
+ // The original packer bypasses all neural inputs for a forced action.
+ // Value-only consumers still require the complete observation and tokens.
+ if(na==1&&!value_only){meta[i*4+3]=1;return;}
+ auto packed=compact_leaf::pack<false>(b);
+ for(int j=0;j<HAND+20;++j)raw[i*RAW+j]=packed.scalars[j];
+ for(int j=PICK;j<RAW;++j)raw[i*RAW+j]=packed.scalars[j];
+ for(int j=0;j<CAT;++j)cat[i*CAT+j]=packed.categorical[j];
+ int needed=0;
+ for(int j=0;j<10;++j)needed=max(needed,int(packed.scalars[HAND+2*j])+1);
+ if(needed>upgrade_levels(w)[0]){
+  // Bit 2 already prevents packing and apply; bit 64 identifies table growth.
+  atomicMax(allocator+3,needed);atomicOr(allocator+2,66);return;
  }
  for(int j=0;j<10;++j)selected[i*10+j]=(prefix>>j)&1;
  remaining[i]=max(0,int(packed.scalars[PICK])-__popc(unsigned(prefix)));
