@@ -1,10 +1,11 @@
+from .run_device import artifact_directory
 from pathlib import Path
 import sys
-RAGGED_P=Path(__file__).resolve().parent
-sys.path.insert(0,str(RAGGED_P.parent/'devicebattle141'))
-from battle_runtime import *
-from ragged_pack import ragged_hash,ragged_pack
-from ragged_model import forward as ragged_forward
+RAGGED_P=artifact_directory()
+
+from .flex_runtime import *
+from .ragged_pack import ragged_hash,ragged_pack
+from .ragged_model import forward as ragged_forward
 
 class RaggedBattlePool(BattlePool):
  def _buffer(self,name,count,tail=(),dtype=torch.float32):

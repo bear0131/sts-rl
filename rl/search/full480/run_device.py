@@ -1,39 +1,63 @@
+"""Original CUDA driver setup, explicitly owned by the sampling worker."""
 from pathlib import Path
-import ctypes,json,time,subprocess,os,hashlib
+import ctypes, hashlib, importlib.util, os, sys
 import torch
-P=Path(__file__).resolve().parent
-assert json.loads((P/'compile-result.json').read_text())['exit']==0
-assert not subprocess.check_output(['nvidia-smi','--query-compute-apps=pid','--format=csv,noheader']).strip()
-torch.cuda.init()
-_context_anchor=torch.zeros(1,device="cuda")
-lib=ctypes.CDLL('libcuda.so.1');ptr=ctypes.c_void_p;u32=ctypes.c_uint
+
+def artifact_directory():
+    return Path(os.environ.get('STS_FULL480_ARTIFACT_DIR', Path(__file__).resolve().parent))
+
+P=artifact_directory()
+ptr=ctypes.c_void_p
+u32=ctypes.c_uint
+module=None
+_context_anchor=None
+
+class _Driver:
+    handle=None
+    def __getattr__(self,name):
+        if self.handle is None:
+            self.handle=ctypes.CDLL('nvcuda.dll' if os.name=='nt' else 'libcuda.so.1')
+        return getattr(self.handle,name)
+
+lib=_Driver()
+
 def check(code,where):
     if code:raise RuntimeError((where,code))
-lib.cuModuleLoad.argtypes=[ctypes.POINTER(ptr),ctypes.c_char_p]
-lib.cuModuleGetFunction.argtypes=[ctypes.POINTER(ptr),ptr,ctypes.c_char_p]
-lib.cuLaunchKernel.argtypes=[ptr,u32,u32,u32,u32,u32,u32,u32,ptr,ctypes.POINTER(ptr),ptr]
-lib.cuCtxSynchronize.argtypes=[]
-lib.cuCtxSetLimit.argtypes=[ctypes.c_int,ctypes.c_size_t]
-check(lib.cuCtxSetLimit(0,65536),'stack limit')
-check(lib.cuCtxSetLimit(2,512*1024*1024),'device heap limit')
-module=ptr();check(lib.cuModuleLoad(ctypes.byref(module),str(P/'device_battle.cubin').encode()),'load')
-result=dict(device=torch.cuda.get_device_name(),cuda=torch.version.cuda,
-            cubin_sha256=hashlib.sha256((P/'device_battle.cubin').read_bytes()).hexdigest(),
-            scope='device rule execution smoke only, not a complete combat or throughput qualification')
-for name in ('device_layout','device_rule_probe'):
-    fn=ptr();check(lib.cuModuleGetFunction(ctypes.byref(fn),module,name.encode()),'getfunction')
-    out=torch.zeros(2,dtype=torch.int64,device='cuda')
-    addr=ptr(out.data_ptr())
-    if name=='device_rule_probe':
-        arena=torch.zeros(result['device_layout']['values'][0],dtype=torch.uint8,device='cuda');state=ptr(arena.data_ptr());args=(ptr*2)(ctypes.cast(ctypes.byref(state),ptr),ctypes.cast(ctypes.byref(addr),ptr))
-    else:args=(ptr*1)(ctypes.cast(ctypes.byref(addr),ptr))
-    torch.cuda.synchronize();start=time.monotonic()
-    check(lib.cuLaunchKernel(fn,1,1,1,1,1,1,0,ptr(torch.cuda.current_stream().cuda_stream),args,None),'launch')
-    check(lib.cuCtxSynchronize(),'sync')
-    values=out.cpu().tolist();result[name]=dict(values=values,seconds=time.monotonic()-start)
-    print(name,values,flush=True)
-    (P/'device-smoke.json').write_text(json.dumps(result,indent=2))
-assert result['device_rule_probe']['values']==[3,2],result
-result['completed']=True
-result['torch_allocated']=torch.cuda.memory_allocated();result['torch_reserved']=torch.cuda.memory_reserved()
-(P/'device-smoke.json').write_text(json.dumps(result,indent=2))
+
+def initialize():
+    global _context_anchor
+    if _context_anchor is not None:return
+    torch.cuda.init()
+    _context_anchor=torch.zeros(1,device='cuda')
+    lib.cuModuleLoad.argtypes=[ctypes.POINTER(ptr),ctypes.c_char_p]
+    lib.cuModuleGetFunction.argtypes=[ctypes.POINTER(ptr),ptr,ctypes.c_char_p]
+    lib.cuLaunchKernel.argtypes=[ptr,u32,u32,u32,u32,u32,u32,u32,ptr,ctypes.POINTER(ptr),ptr]
+    lib.cuModuleUnload.argtypes=[ptr]
+    lib.cuCtxSynchronize.argtypes=[]
+    lib.cuCtxSetLimit.argtypes=[ctypes.c_int,ctypes.c_size_t]
+    check(lib.cuCtxSetLimit(0,65536),'stack limit')
+    check(lib.cuCtxSetLimit(2,512*1024*1024),'device heap limit')
+
+def cpu_bridge():
+    """Use the exact original state ABI, never a same-named ambient binary."""
+    path=P/'devicerootsearch141/gpu_search_bridge.cpython-311-x86_64-linux-gnu.so'
+    digest='36da97eb79bff5c2e1fe42d8bc65e01fc87971c8dcf487cdd609421977396c76'
+    if hashlib.sha256(path.read_bytes()).hexdigest()!=digest:
+        raise ValueError('full480 original state bridge identity mismatch')
+    name='gpu_search_bridge'
+    existing=sys.modules.get(name)
+    if existing is not None:
+        if Path(existing.__file__).resolve()!=path.resolve():
+            raise RuntimeError('another state bridge is already loaded')
+        return existing
+    spec=importlib.util.spec_from_file_location(name,path)
+    loaded=importlib.util.module_from_spec(spec)
+    sys.modules[name]=loaded
+    spec.loader.exec_module(loaded)
+    return loaded
+
+def load_net():
+    raise ValueError('full480 requires the explicitly supplied frozen checkpoint consumer')
+
+def Fused(net,precision):
+    raise ValueError('full480 requires explicit consumer weight tables')

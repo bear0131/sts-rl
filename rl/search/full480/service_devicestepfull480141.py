@@ -3,7 +3,7 @@ from pathlib import Path
 import sys,os,time,queue,pickle,multiprocessing as mp,collections,json,inspect
 import numpy as np
 import torch
-from worker_devicestepfull480141 import run_worker
+from .worker_devicestepfull480141 import run_worker
 
 class ArenaProxy:
  def __init__(self,owner,capacity):

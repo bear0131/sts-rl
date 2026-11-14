@@ -1,11 +1,12 @@
+from .run_device import artifact_directory
 from pathlib import Path
 import sys,os,ctypes,json,hashlib,collections
 import numpy as np
-P=Path(__file__).resolve().parent;sys.path.insert(0,str(P.parent/'devicerootsearch141'))
-from search_runtime import *
-from root_ledger import RootLedger
-from state_pages import DevicePages
-P=Path(__file__).resolve().parent
+P=artifact_directory()
+from .search_runtime import *
+from .root_ledger import RootLedger
+from .state_pages import DevicePages
+P=artifact_directory()
 class StreamModules:
  def __init__(self):
   self.handles=[];self.funcs={};self.references=0;self.closed=False;self.identity={}

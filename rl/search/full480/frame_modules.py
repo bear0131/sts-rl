@@ -1,7 +1,8 @@
+from .run_device import artifact_directory
 from pathlib import Path
 import ctypes,hashlib,json
-from graph_runtime import torch,ptr,lib,check
-P=Path(__file__).resolve().parent
+from .graph_runtime import torch,ptr,lib,check
+P=artifact_directory()
 class FrameModules:
  def __init__(self,layout):
   self.handles=[];self.functions={};self.closed=False;self.identity={}

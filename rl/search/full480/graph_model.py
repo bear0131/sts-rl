@@ -2,7 +2,7 @@
 import collections
 import torch
 import triton
-from graph_kernels import input_tokens,qkv_project,attend,mix_feed,final_head,state_head,action_head
+from .graph_kernels import input_tokens,qkv_project,attend,mix_feed,final_head,state_head,action_head
 
 class GraphScorer:
  def __init__(self,flat):

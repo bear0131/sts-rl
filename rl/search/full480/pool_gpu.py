@@ -1,6 +1,6 @@
 import triton
 import triton.language as tl
-from cooperative_gpu import hash32
+from .cooperative_gpu import hash32
 @triton.jit
 def pool_hash(ids,zones,numbers,meta,chunks,inv_ids,inv_zones,inv_numbers,inv_counts,inv_slots,
  entity_slots,extra_slots,selected,features,BASE,ROOTS:tl.constexpr,I:tl.constexpr,T:tl.constexpr,R:tl.constexpr):

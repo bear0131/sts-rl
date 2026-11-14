@@ -3,7 +3,7 @@ import math
 import torch
 import triton
 import triton.language as tl
-from ragged_model import attention_tile
+from .ragged_model import attention_tile
 
 @triton.jit
 def norm64(x,W,B,EPS:tl.constexpr):

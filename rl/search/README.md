@@ -145,3 +145,5 @@ CUDA 保留图捕获/重放、形状淘汰、共享临时存储及设备输出�
 GPU 搜索/collector 的执行门仍保持关闭；不能据此恢复训练或宣称吞吐资格。
 原件逐文件来源与当前未完成项见
 [交接合同](../../docs/2026-11-14/combat49-old-sampling-handoff.md)及其来源映射。
+
+`full480/`保留原full480的帧、整步图、融合推理、页租约和服务协议；逐文件原件及基座见`docs/2026-11-14/combat49-full480-runtime-sources.json`，原始基座提交d5cd40be。GPU产物由`STS_FULL480_ARTIFACT_DIR`显式定位，CPU状态桥与cubin必须匹配回执SHA，禁止从同名环境模块偶然加载。该包尚在接入当前消费者，训练后端在全部接口与资格通过前仍拒绝启动。

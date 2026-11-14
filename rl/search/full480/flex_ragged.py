@@ -1,10 +1,11 @@
+from .run_device import artifact_directory
 from pathlib import Path
 import sys
-from flex_runtime import *
-from flex_runtime import BattlePool as FlexBattlePool
-P=Path(__file__).resolve().parent
-sys.path.insert(0,str(P.parent/'deviceragged141'))
-from ragged_runtime import RaggedBattlePool
+from .flex_runtime import *
+from .flex_runtime import BattlePool as FlexBattlePool
+P=artifact_directory()
+
+from .ragged_runtime import RaggedBattlePool
 class BattlePool(FlexBattlePool):
  _buffer=RaggedBattlePool._buffer
  score=RaggedBattlePool.score

@@ -1,8 +1,10 @@
 from pathlib import Path
 import ctypes,json,pickle,collections,hashlib,os
 import numpy as np
-from device_policy import load_net,Fused,bridge,P,lib,ptr,check,module,torch,DEPTH,STAT
-from pool_gpu import *
+import torch
+from .run_device import P,lib,ptr,check,module,load_net,Fused
+DEPTH=200;STAT=12
+from .pool_gpu import *
 T=161
 TOKEN_BINS=[16,24,32,48,64,96,128,161]
 QUERY_BINS=[1,2,4,8,16,32,64,128,161]

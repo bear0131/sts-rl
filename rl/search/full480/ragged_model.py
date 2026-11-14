@@ -3,7 +3,7 @@ import torch
 import triton
 import triton.language as tl
 from torch.nn import functional as F
-from ragged_pack import ragged_score
+from .ragged_pack import ragged_score
 
 @triton.jit
 def projected(x,ln,lnbias,w,bias,out,R,D:tl.constexpr,O:tl.constexpr,M:tl.constexpr,K:tl.constexpr,EPS:tl.constexpr,PREC:tl.constexpr):

@@ -5,7 +5,7 @@ P = Path(__file__).resolve().parent
 sys.path.insert(0, str(P.parent / 'devicefallback141'))
 from packed_fallback import torch, np, triton, tl, Fused, hash_table
 sys.path.insert(0, str(P.parent / 'devicecombo141'))
-from combo_model import GraphScorer
+from .combo_model import GraphScorer
 
 
 @triton.jit

@@ -1,13 +1,14 @@
 """Lazy complete readonly frame, followed by the original search action."""
+from .run_device import artifact_directory
 from pathlib import Path
 import sys
-P=Path(__file__).resolve().parent
-sys.path.insert(0,str(P.parent/'devicegraph141'))
-import layout_bindings
-from graph_runtime import *
-from graph_runtime import BattlePool as BasePool
-from step_pipeline import StepPipeline as FramePipeline,refresh as step_refresh
-from combo_model import GraphScorer as ComboScorer
+P=artifact_directory()
+
+from . import layout_bindings
+from .graph_runtime import *
+from .graph_runtime import BattlePool as BasePool
+from .step_pipeline import StepPipeline as FramePipeline,refresh as step_refresh
+from .combo_model import GraphScorer as ComboScorer
 
 class BattlePool(BasePool):
  def __init__(self,*a,frame_tokens=None,frame_queries=None,**kw):

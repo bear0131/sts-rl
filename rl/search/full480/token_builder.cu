@@ -171,4 +171,3 @@ extern "C" __global__ void packed_finalize(const int*allocator,const int*totals,
   counts[4]=good?dispatch[0]:0;counts[5]=good?a:0;
  }
 }
-

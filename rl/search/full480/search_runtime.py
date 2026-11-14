@@ -1,12 +1,13 @@
+from .run_device import artifact_directory
 from pathlib import Path
 import sys,os,ctypes,json,hashlib,collections,time
 import numpy as np
-P=Path(__file__).resolve().parent;SOURCE_P=P.parent/'devicecompact141'
-sys.path.insert(0,str(SOURCE_P));sys.path.insert(0,str(P.parent/'devicechoice141'))
-from owned_pool import ResidentPool as ScoringPool
-from owned_pool import *
-from finite_plan import build_plan,aggregate
-P=Path(__file__).resolve().parent
+P=artifact_directory()
+
+from .owned_pool import ResidentPool as ScoringPool
+from .owned_pool import *
+from .finite_plan import build_plan,aggregate
+P=artifact_directory()
 lib.cuModuleUnload.argtypes=[ptr]
 class SearchModules:
  def __init__(self,mode='0'):

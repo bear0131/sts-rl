@@ -1,12 +1,14 @@
 """Native collector result boundary and full-Transformer CPU fallback."""
+from .run_device import artifact_directory
 from pathlib import Path
 import sys,time
-P=Path(__file__).resolve().parent;sys.path.insert(0,str(P.parent/'devicestream141'))
-from flex_stream import *
+P=artifact_directory()
+from .flex_stream import *
 import slaythespire as sts
-import gpu_search_bridge as cpu
+from .run_device import cpu_bridge
+cpu=cpu_bridge()
 from rl.policies.token_regret import encode_public_roots,pack_rows
-P=Path(__file__).resolve().parent
+P=artifact_directory()
 class CollectionPool(StreamingPool):
  def reap(self):
   out=super().reap()

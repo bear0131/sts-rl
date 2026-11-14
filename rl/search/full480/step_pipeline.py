@@ -1,7 +1,7 @@
 """One captured frame includes observation, model, apply, and final compaction."""
 import collections
-from frame_pipeline import FramePipeline,torch,triton
-from step_kernels import compact_local,compact_scatter,compact_finish,frame_prepare,frame_commit
+from .frame_pipeline import FramePipeline,torch,triton
+from .step_kernels import compact_local,compact_scatter,compact_finish,frame_prepare,frame_commit
 
 def compact(pool):
  n=pool.n;b=1024;nb=triton.cdiv(n,b);cb=triton.next_power_of_2(nb)

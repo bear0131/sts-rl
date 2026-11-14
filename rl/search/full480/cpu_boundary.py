@@ -1,11 +1,13 @@
 """CPU boundary extracted from qualified flex/fallback implementations; no CUDA imports."""
+from .run_device import artifact_directory
 from pathlib import Path
 import sys,os,time,collections
 import numpy as np
 import slaythespire as sts
-P=Path(__file__).resolve().parent
-sys.path.insert(0,str(P.parent/"devicerootsearch141"))
-import gpu_search_bridge as cpu
+P=artifact_directory()
+
+from .run_device import cpu_bridge
+cpu=cpu_bridge()
 
 def native_result(features,result,turn_limit,seconds):
  np.testing.assert_array_equal(features['action_bits'],result['action_bits'])

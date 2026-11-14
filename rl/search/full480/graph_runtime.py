@@ -1,11 +1,12 @@
+from .run_device import artifact_directory
 from pathlib import Path
 import sys,inspect,textwrap
-P=Path(__file__).resolve().parent
-sys.path.insert(0,str(P.parent/'deviceflex141'))
-from flex_ragged import *
-from flex_ragged import BattlePool as BasePool
-import ragged_runtime
-from graph_model import GraphScorer
+P=artifact_directory()
+
+from .flex_ragged import *
+from .flex_ragged import BattlePool as BasePool
+from . import ragged_runtime
+from .graph_model import GraphScorer
 source=textwrap.dedent(inspect.getsource(ragged_runtime.RaggedBattlePool.score))
 assert source.count('ragged_forward(')==1
 namespace=dict(vars(ragged_runtime));exec(source.replace('ragged_forward(','self.graph_scorer('),namespace)

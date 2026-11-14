@@ -1,11 +1,12 @@
 """Bounded readonly observation-to-score CUDA graph; apply stays outside."""
+from .run_device import artifact_directory
 from pathlib import Path
 import sys,collections
-P=Path(__file__).resolve().parent
-sys.path.insert(0,str(P.parent/'devicegraph141'))
-from graph_runtime import *
-from frame_modules import FrameModules
-from frame_kernels import prepare_lens,finalize,prefix_local,prefix_add
+P=artifact_directory()
+
+from .graph_runtime import *
+from .frame_modules import FrameModules
+from .frame_kernels import prepare_lens,finalize,prefix_local,prefix_add
 
 class FramePipeline:
  def __init__(self,pool,model,token_capacity=None,query_capacity=None):

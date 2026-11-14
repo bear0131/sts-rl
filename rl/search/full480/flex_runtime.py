@@ -1,10 +1,13 @@
+from .run_device import artifact_directory
 from pathlib import Path
 import sys,os,ctypes,json,hashlib,collections
-P=Path(__file__).resolve().parent;sys.path.insert(0,str(P.parent/'devicestreamfull141'))
-from flex_adapter import *
-P=Path(__file__).resolve().parent
+P=artifact_directory()
+from .flex_adapter import *
+P=artifact_directory()
 class BattleModules:
  def __init__(self):
+  from .run_device import initialize
+  initialize()
   self.handles=[];self.funcs={};self.references=0;self.closed=False;self.identity={}
   for kind,directory,names,probe in [
    ('observer',P,['search_observe','pool_layout','pool_inventory_slots'],'observer_layout'),
