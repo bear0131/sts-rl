@@ -110,7 +110,8 @@ def run_worker(commands,responses,settings):
        mirror.close()
      elif kind in ('upper','upper_reference'):
       obs,masks=payload
-      if kind=='upper':logits,values=upper(obs)
+      if kind=='upper' and deck:logits,values,context=upper(obs,with_search_context=True)
+      elif kind=='upper':logits,values=upper(obs)
       else:
        from rl.search.native import observation_as_tensor
        logits,values=policy.core.actor_critic(observation_as_tensor(obs,'cuda'))
@@ -119,13 +120,16 @@ def run_worker(commands,responses,settings):
        values=values.float().flatten().cpu().numpy(),reward=ind.reward_monitor.policy_probabilities(dist,obs),
        campfire=ind.campfire_monitor.policy_probabilities(dist,obs))
       if deck:
-       context=upper.search_context(obs)
-       answer.update(logits=logits.float().cpu().numpy(),context=(context.combat.cpu().numpy(),context.anchor.cpu().numpy()))
+       if kind=='upper_reference':
+        projected=upper.search_context(obs);context=(projected.combat.cpu().numpy(),projected.anchor.cpu().numpy())
+       answer.update(logits=logits.float().cpu().numpy(),context=context)
      elif kind=='fallback':
       fields,temp,raw,reference=payload
       if deck:
        obs=fields['observations'];kinds=fields['kinds'];count=len(kinds)
-       context=upper.search_context(obs);picks=np.zeros(count,np.int32);values=np.zeros(count,np.float64)
+       context_obs={key:value[fields['root_indices']] for key,value in fields['context_roots'].items()}
+       context_obs['outer_deck_misc']=obs['outer_deck_misc']
+       context=upper.search_context(context_obs);picks=np.zeros(count,np.int32);values=np.zeros(count,np.float64)
        anchors=np.flatnonzero(np.isin(kinds,[1,3]));chains=np.flatnonzero((kinds==0)|(kinds==4))
        if len(anchors):values[anchors]=upper.anchor_values({k:v[anchors] for k,v in obs.items()},context.anchor[anchors].cpu().numpy())
        if len(chains):

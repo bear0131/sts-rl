@@ -77,6 +77,7 @@ def test_full480_real_rows_updates_restore_and_cancel(tmp_path, monkeypatch, lat
         restored._setup_learn(64, reset_num_timesteps=False)
         restore_learner(restored, bundle, rank=0, world_size=1)
         assert restored._recovery_environment_restored and restored._full480_rng == rng
+        assert restored.full480_search_rng_version == model.full480_search_rng_version == 'pcg64-bulk-state-v1'
         assert state_digest(restored.policy.state_dict()) == state_digest(model.policy.state_dict())
         restored.learn(64, reset_num_timesteps=False)
         assert restored.num_timesteps == 128

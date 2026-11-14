@@ -114,13 +114,18 @@ class Stream:
  def accept_ready(self,completed):
   from rl.algorithms.search_auxiliary import improved_prior
   from env.search.action_selection import search_filtered_choice
-  out={}
+  if not completed:return {}
+  out={};prepared=[]
   for job,result in completed:
    i,_,_,nonce=job;packet=self.meta[i][1];mapping=dict((int(bits),int(action)) for action,bits in self.batch.envs[i]._joint_policy_actions())
    choices=np.asarray([mapping[int(bits)] for bits in result['action_bits']],np.int64)
    logits=np.asarray(packet['logits'],np.float32);q=np.zeros_like(logits);q[choices]=result['values']
-   target=improved_prior(torch.from_numpy(logits[None]),torch.from_numpy(q[None]),torch.from_numpy(packet['mask'][None]),
-    torch.tensor([int(result['visits'][0])]),self.config.target_std)[0].numpy()
+   prepared.append((i,nonce,packet,result,choices,logits,q))
+  targets=improved_prior(torch.from_numpy(np.stack([r[5] for r in prepared])),
+   torch.from_numpy(np.stack([r[6] for r in prepared])),
+   torch.from_numpy(np.stack([r[2]['mask'] for r in prepared])),
+   torch.tensor([int(r[3]['visits'][0]) for r in prepared]),self.config.target_std).numpy()
+  for (i,nonce,packet,result,choices,logits,q),target in zip(prepared,targets,strict=True):
    chosen,logp=search_filtered_choice(logits[choices],np.asarray(result['values']),result['visits'],nonce)
    out[i]=dict(action=int(choices[chosen]),log_prob=logp,target=target,changed=int(choices[chosen])!=packet['policy_action'])
   return out

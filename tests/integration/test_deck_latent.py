@@ -67,6 +67,14 @@ def test_full480_existing_inference_consumes_cached_deck_heads(latent_env, devic
         direct_z = core.prepare_search_context(tensors)
         torch.testing.assert_close(z.combat, direct_z.combat, rtol=2e-5, atol=2e-5)
         torch.testing.assert_close(z.anchor, direct_z.anchor, rtol=2e-5, atol=2e-5)
+        before_requests = inference.statistics()['context_cache_requests']
+        logits, values, projected = inference(reordered, with_search_context=True)
+        torch.testing.assert_close((logits, values), reference(reordered), rtol=2e-5, atol=2e-5)
+        assert inference.statistics()['context_cache_requests'] == before_requests + len(reordered['phase'])
+        np.testing.assert_allclose(projected[0], direct_z.combat.cpu().numpy(), rtol=2e-5, atol=2e-5)
+        np.testing.assert_allclose(projected[1], direct_z.anchor.cpu().numpy(), rtol=2e-5, atol=2e-5)
+        projected[0][:] = 0
+        assert inference.search_context(reordered).combat.abs().sum() > 0
         # A permanent branch change refreshes exactly that context. Its sibling
         # retains the old entry even if the caller then mutates the response.
         changed = {k: v.copy() for k, v in reordered.items()}

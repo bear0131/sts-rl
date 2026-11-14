@@ -71,11 +71,13 @@ class UpperPolicyInference:
         if self.deck is not None:
             self.deck.close()
 
-    def __call__(self, observations):
+    def __call__(self, observations, *, with_search_context=False):
         if self.closed:
             raise RuntimeError('upper inference collection already closed')
         if self.deck is not None:
-            return self.deck(observations)
+            return self.deck(observations, with_search_context=with_search_context)
+        if with_search_context:
+            raise ValueError('search context requires a deck consumer')
         from env.core import vocab as V
         from rl.search.native import observation_as_tensor
         count = len(observations['phase'])
@@ -248,6 +250,7 @@ class _DeckConsumers:
         self.head = _DeckForward(core)
         self.enc_graphs = self.head_graphs = self.anchor_graphs = None
         self.versions = self.addresses = None
+        self.registrations, self.tensors = (), ()
         if torch.device(device).type == 'cuda':
             self.enc_graphs = CombatLeafGraphs(self.encoder, device, amp='off',
                 capacity=32, batch_multiple=8, compile_forward=False)
@@ -262,7 +265,19 @@ class _DeckConsumers:
     def _check_weights(self):
         if self.core.training or torch.is_grad_enabled():
             raise RuntimeError('deck collection requires frozen inference without gradients')
-        tensors = tuple(self.core.parameters()) + tuple(self.core.buffers())
+        # Keep checking replacements, additions and mutable tensor versions,
+        # without recursively rebuilding every qualified parameter name for
+        # every root and completion batch. Registration dictionaries are the
+        # Module boundary; any changed binding rebuilds this owned inventory.
+        if not self.registrations or any(
+                getattr(module, name) is not registry or len(registry) != len(bindings)
+                or any(registry.get(key) is not value for key, value in bindings)
+                for module, name, registry, bindings in self.registrations):
+            self.registrations = tuple((module, name, getattr(module, name),
+                tuple(getattr(module, name).items())) for module in self.core.modules()
+                for name in ('_parameters', '_buffers', '_modules'))
+            self.tensors = tuple(self.core.parameters()) + tuple(self.core.buffers())
+        tensors = self.tensors
         addresses = tuple((id(p), p.data_ptr(), str(p.device), p.dtype) for p in tensors)
         versions = tuple(p._version for p in tensors)
         if addresses != self.addresses:
@@ -300,7 +315,7 @@ class _DeckConsumers:
         encoded, _ = self.cache.forward(static, encode)
         return encoded[:, :width], encoded[:, width:width+combat_width], encoded[:, width+combat_width:]
 
-    def __call__(self, obs):
+    def __call__(self, obs, *, with_search_context=False):
         from env.core import vocab as V, native_actions as C
         from env.core.encode import upper_observation_keys
         from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS
@@ -342,6 +357,10 @@ class _DeckConsumers:
                     out, value = self._forward(self.head, self.head_graphs, data, signature)
                     logits[index] = torch.as_tensor(out, device=self.device)
                 values[index] = torch.as_tensor(value, device=self.device)
+        if with_search_context:
+            # The FIFO response owns these CPU arrays. Reuse this forward's
+            # exact projections instead of a second lookup and GPU round trip.
+            return logits, values[:, None], (combat, anchor)
         return logits, values[:, None]
 
     def anchor_values(self, data):

@@ -98,6 +98,7 @@ class CpuFallback:
     if 'deck_latent_context' in obs:fields['deck_latent_context']=obs['deck_latent_context']
     globals.append(fields)
    self.globals={key:np.stack([row[key] for row in globals]) for key in globals[0]}
+   self.context_globals={key:self.globals[key] for key in RunContextEncoder.keys}
   else:
    native=sts
    self.roots=[sts.WaveRoot(environments[i].thick.gc,environments[i].thick.bc,cfg,nonce) for i,tier,cfg,nonce in jobs]
@@ -189,7 +190,11 @@ class CpuFallback:
    obs['combat_exit_anchor'][:]=np.stack((kinds==1,kinds==3),1)
    chains=np.flatnonzero((kinds==0)|(kinds==4)).astype(np.int64)
    layout=self.wave.pack_raw(obs,chains) if len(chains) else None
-   fields=dict(observations=obs,draws=np.asarray(packed['draws']),kinds=kinds,layout=layout)
+   from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS
+   keys=COMBAT_OBSERVATION_KEYS|{'pile_upgraded_counts','pile_upgrade_sums','outer_deck_misc'}
+   fields=dict(observations={key:value for key,value in obs.items() if key in keys},
+    context_roots=self.context_globals,root_indices=owners,
+    draws=np.asarray(packed['draws']),kinds=kinds,layout=layout)
    tick=time.monotonic();ident=self.service.begin_call('fallback',(fields,1.,None,self.reference))
    self.pending=(ident,fields,None,str((b,n)),tick)
    self.metrics['encode_score_seconds']+=time.monotonic()-tick
