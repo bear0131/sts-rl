@@ -66,11 +66,11 @@ class ResidentInference:
         if values_only:
             # Only context/map consumers request views; binding shape checks
             # are unnecessary here because the schema built the exact banks.
-            self.graphs.host_inputs = tensor, obs, (slots, capacity), packed
+            self.graphs.host_inputs = tensor, obs, (slots, capacity), packed, self.layout
             _, values = self.graphs(tensor)
             return values.flatten().cpu().numpy()
         width = masks.shape[1]
-        packet = self.graphs.host_actor(tensor, obs, (slots,capacity), packed, uploaded[-1]).cpu().numpy()
+        packet = self.graphs.host_actor(tensor, obs, (slots,capacity), packed, uploaded[-1], layout=self.layout).cpu().numpy()
         # Monitoring consumes the already published probabilities on the CPU,
         # without another device gather/copy for each reward or campfire batch.
         dist = SimpleNamespace(distribution=SimpleNamespace(probs=torch.from_numpy(packet[:,:width])))

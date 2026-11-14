@@ -792,7 +792,7 @@ def test_packed_owner_actor_matches_masked_policy_through_shapes_weights_and_evi
     retained=[]
     try:
         with torch.no_grad():
-            for iteration,count in enumerate((3,17,1,9,3)):
+            for iteration,count in enumerate((3,17,1,257,9,3)):
                 rows=[upper if i%3==0 else combat for i in range(count)]
                 masks=np.stack([upper_mask if i%3==0 else combat_mask for i in range(count)])
                 obs={k:np.stack([row[k] for row in rows]) for k in combat}
@@ -806,7 +806,7 @@ def test_packed_owner_actor_matches_masked_policy_through_shapes_weights_and_evi
                 dist.apply_masking(masks)
                 expected=(dist.distribution.probs.cpu().numpy(),dist.distribution.logits.cpu().numpy(),
                           values.flatten().cpu().numpy())
-                actual=inference.actor((obs,masks,np.arange(count),32),context=True)
+                actual=inference.actor((obs,masks,np.arange(count),max(32,count)),context=True)
                 for key,want in zip(('probabilities','logprobs','values'),expected,strict=True):
                     np.testing.assert_allclose(actual[key],want,rtol=3e-5,atol=2e-5,err_msg=key)
                     retained.append((actual[key],actual[key].copy()))

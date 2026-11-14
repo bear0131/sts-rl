@@ -42,6 +42,7 @@ class SharedCollectionGraphs:
         self.map_entries = OrderedDict()
         self.context_cache = None
         self.context_entries = OrderedDict()
+        self.packed_bank = None
         self.weight_versions = None
         self.begin_collection()
 
@@ -62,7 +63,7 @@ class SharedCollectionGraphs:
         width = int(columns[-1]) + 1 if len(columns) else 1
         return min(ids.shape[1], max(minimum, 1 << (width - 1).bit_length()))
 
-    def _capture(self, batch, padded, forward):
+    def _capture(self, batch, padded, forward, keep_alive=()):
         count = len(next(iter(batch.values())))
         with torch.inference_mode(False), torch.no_grad():
             inputs = {key: torch.cat([value, value[:1].expand(padded-count, *value.shape[1:])]).clone()
@@ -87,6 +88,7 @@ class SharedCollectionGraphs:
         # can be freed/reused when another shape is captured or evicted.
         torch._C._cuda_clearCublasWorkspaces()
         graph = torch.cuda.CUDAGraph()
+        graph._external_owners = keep_alive
         with torch.cuda.graph(graph, stream=stream, pool=self.temporary_pool):
             temporary = forward(inputs)
             for target, source in zip(published, temporary, strict=True):
@@ -96,7 +98,7 @@ class SharedCollectionGraphs:
         torch._C._cuda_clearCublasWorkspaces()
         return inputs, graph, published
 
-    def _replay(self, cache, signature, batch, padded, forward, capacity):
+    def _replay(self, cache, signature, batch, padded, forward, capacity, *, keep_alive=()):
         if signature not in cache:
             if len(cache) >= capacity:
                 # Evicting the last graph may release the temporary pool's
@@ -109,7 +111,7 @@ class SharedCollectionGraphs:
                     self.temporary_pool = torch.cuda.graph_pool_handle()
                 self.stats['evictions'] += 1
             started = time.perf_counter()
-            cache[signature] = self._capture(batch, padded, forward)
+            cache[signature] = self._capture(batch, padded, forward, keep_alive)
             self.stats['capture_seconds'] += time.perf_counter() - started
             self.stats['captures'] += 1
         else:
@@ -155,11 +157,12 @@ class SharedCollectionGraphs:
             pending, self.host_inputs = self.host_inputs, None
             host = pending[1] if pending is not None and pending[0] is observations else None
             return self._forward(observations, host, pending[2] if host is not None else None,
-                                 pending[3] if host is not None else None)
+                                 pending[3] if host is not None else None,
+                packed_layout=pending[4] if host is not None and len(pending) > 4 else None)
         finally:
             self.sequence_done.record(stream)
 
-    def host_actor(self, observations, host, slots, packed, masks):
+    def host_actor(self, observations, host, slots, packed, masks, *, layout=None):
         """The same phase graphs, with categorical output inside each replay.
 
         The frozen owner has one exact host batch. Unused observation fields
@@ -171,7 +174,7 @@ class SharedCollectionGraphs:
         stream = torch.cuda.current_stream(self.device)
         stream.wait_event(self.sequence_done)
         try:
-            return self._forward(observations, host, slots, packed, masks)[0]
+            return self._forward(observations, host, slots, packed, masks, packed_layout=layout)[0]
         finally:
             self.sequence_done.record(stream)
 
@@ -184,7 +187,56 @@ class SharedCollectionGraphs:
                             device=rooms.device))
             self.map_valid = torch.zeros(len(rooms), dtype=torch.bool, device=rooms.device)
 
-    def _run_context(self, observations, host, context_slots=None):
+    def _bind_packed_bank(self, packed, layout, masks, slots):
+        """Own one column bank for every graph consumer of this actor batch.
+
+        Graphs gather their own fields and rows. Repeated small actor/context
+        calls do not launch one eager gather/copy for each observation field.
+        Addresses remain stable until geometry/capacity changes; the signature
+        then changes and old graph entries keep their own storage references.
+        """
+        count = len(next(iter(packed.values())))
+        capacity = max(256, 1 << (count-1).bit_length())
+        schema = tuple((k, tuple(v.shape[1:]), v.dtype) for k,v in packed.items())
+        previous = self.packed_bank
+        if previous is None or previous['schema'] != schema or previous['capacity'] < count:
+            with torch.inference_mode(False), torch.no_grad():
+                columns = {k: torch.empty((capacity,*v.shape[1:]),device=self.device,dtype=v.dtype)
+                           for k,v in packed.items()}
+                bank = dict(schema=schema, capacity=capacity, columns=columns, layout=dict(layout),
+                    context=torch.empty((capacity,self.core.upper_config.width),device=self.device),
+                    slots=torch.empty(capacity,device=self.device,dtype=torch.long), mask=None)
+            self.packed_bank = bank
+        else:
+            bank = previous
+            if bank['layout'] != layout:
+                raise ValueError('packed observation layout changed without a schema change')
+        for k,v in packed.items():
+            bank['columns'][k][:count].copy_(v)
+        bank['slots'][:count].copy_(torch.as_tensor(slots,device=self.device))
+        if masks is not None:
+            if bank['mask'] is None or bank['mask'].shape[1:] != masks.shape[1:]:
+                bank['mask'] = torch.empty((bank['capacity'],*masks.shape[1:]),device=self.device,dtype=masks.dtype)
+            bank['mask'][:count].copy_(masks)
+        # Captured closures own this generation, including buffers replaced by
+        # a later capacity/layout. Never let an old graph dereference self.bank.
+        bound = dict(bank)
+        bound['key'] = tuple(v.data_ptr() for v in bank['columns'].values()) + (
+            bank['context'].data_ptr(), bank['slots'].data_ptr(),
+            0 if masks is None else bank['mask'].data_ptr())
+        return bound
+
+    @staticmethod
+    def _packed_fields(bank, rows, keys):
+        groups = {bank['layout'][k][0] for k in keys}
+        columns = {g: bank['columns'][g][rows] for g in groups}
+        result = {}
+        for key in keys:
+            group,start,end,shape = bank['layout'][key]
+            result[key] = columns[group][:,start:end].reshape(len(rows),*shape)
+        return result
+
+    def _run_context(self, observations, host, context_slots=None, packed_bank=None):
         encoder = self.core.context
         versions = tuple(p._version for p in encoder.parameters())
         cached = self.context_cache
@@ -212,20 +264,26 @@ class SharedCollectionGraphs:
             _, first, inverse = np.unique(records, return_index=True, return_inverse=True)
             selected = rows[first]
             indices = torch.as_tensor(selected, device=self.device)
-            batch = {k: observations[k][indices] for k in encoder.keys}
+            batch = ({k: observations[k][indices] for k in encoder.keys} if packed_bank is None
+                     else {'_indices': indices})
             widths = tuple(self._width(host[k][selected], 1) for k in ('deck_ids', 'relics'))
             live = (1+(host['deck_ids'][selected] != 0).sum(1)
                       +(host['relics'][selected] != 0).sum(1)
                       +((host['map_full_rooms'][selected] != 0)
                         | host['map_full_features'][selected].any(-1)).sum(1))
-            packed_width = (int(live.max())+15)//16*16
+            packed_width = max(16, 1 << (int(live.max())-1).bit_length())
             count = len(selected)
-            padded = (1 << (count - 1).bit_length()) if count <= 16 else ((count + 15) // 16) * 16
+            padded = max(8, 1 << (count - 1).bit_length()) if count <= 16 else ((count + 15) // 16) * 16
             signature = ('run-context', padded, widths, packed_width,
+                         None if packed_bank is None else packed_bank['key'],
                          tuple((k, tuple(v.shape[1:]), v.dtype) for k, v in batch.items()))
+            def encode_context(inputs):
+                fields = (inputs if packed_bank is None else
+                          self._packed_fields(packed_bank,inputs['_indices'],encoder.keys))
+                return (encoder(fields, active_widths=widths, packed_width=packed_width),)
             encoded = self._replay(self.context_entries, signature, batch, padded,
-                lambda inputs: (encoder(inputs, active_widths=widths, packed_width=packed_width),),
-                min(32, self.capacity))[0][:count]
+                                  encode_context, min(128,self.capacity),
+                                  keep_alive=() if packed_bank is None else (packed_bank,))[0][:count]
             latent[torch.as_tensor(slots[rows], device=self.device)] = encoded[
                 torch.as_tensor(inverse, device=self.device)]
             for k in encoder.keys:
@@ -235,7 +293,7 @@ class SharedCollectionGraphs:
         self.context_cache = versions, previous, latent, valid
         return latent if context_slots is None else latent[torch.as_tensor(slots, device=self.device)]
 
-    def _forward(self, observations, host=None, context_slots=None, packed=None, actor_masks=None):
+    def _forward(self, observations, host=None, context_slots=None, packed=None, actor_masks=None, *, packed_layout=None):
         if self.closed or self.core.training or torch.is_grad_enabled():
             raise RuntimeError('collection graphs require a live eval/no-grad scope')
         if torch.is_autocast_enabled('cuda'):
@@ -247,7 +305,11 @@ class SharedCollectionGraphs:
         deck_model = getattr(self.core, 'model_contract', None) == 'deck-latent-combat-v1'
         if deck_model and host is None:
             return self.core.eager_actor_critic(observations)
-        context = self._run_context(observations, host, context_slots) if deck_model else None
+        packed_bank = (None if packed_layout is None else self._bind_packed_bank(
+            packed,packed_layout,actor_masks,np.arange(len(host['phase'])) if context_slots is None else context_slots[0]))
+        context = self._run_context(observations,host,context_slots,packed_bank) if deck_model else None
+        if packed_bank is not None:
+            packed_bank['context'][:len(context)].copy_(context)
         if deck_model:
             self.core.publish_actor_context(context)
         phase = observations['phase'].long().flatten()
@@ -315,15 +377,22 @@ class SharedCollectionGraphs:
                 selected = torch.from_numpy(changed).to(device=phase.device, non_blocking=True)
                 count = len(changed)
                 padded = 1 << (count - 1).bit_length()
-                batch = dict(rooms=rooms[selected], features=features[selected])
+                batch = (dict(rooms=rooms[selected], features=features[selected])
+                         if packed_bank is None else dict(_indices=selected))
                 signature = (padded, tuple(rooms.shape[1:]), rooms.dtype,
-                             tuple(features.shape[1:]), features.dtype)
+                             tuple(features.shape[1:]), features.dtype,
+                             None if packed_bank is None else packed_bank['key'])
                 encoder = self.core.overworld.encoder
                 def map_forward(tensors):
+                    if packed_bank is not None:
+                        fields = self._packed_fields(packed_bank,tensors['_indices'],
+                                                     ('map_full_rooms','map_full_features'))
+                        tensors = dict(rooms=fields['map_full_rooms'],features=fields['map_full_features'])
                     return (encoder.map_dag(encoder.room_embedding(tensors['rooms'].long()),
                                            tensors['features'].float()),)
                 output = self._replay(self.map_entries, signature, batch, padded,
-                                      map_forward, min(16, self.capacity))
+                                      map_forward, min(16, self.capacity),
+                                      keep_alive=() if packed_bank is None else (packed_bank,))
                 destination = slot_tensor[selected] if host is not None else selected
                 encoded_map[destination] = output[0][:count]
                 output[0].record_stream(torch.cuda.current_stream(self.device))
@@ -331,7 +400,7 @@ class SharedCollectionGraphs:
                 previous_features[destination] = features[selected]
                 self.map_valid[destination] = True
                 self.stats['map_rows'] = self.stats.get('map_rows', 0) + count
-            if host is not None and context_slots is not None:
+            if host is not None and context_slots is not None and packed_bank is None:
                 encoded_map = encoded_map[slot_tensor]
         # Pack by dtype, preserving categorical integers exactly. Each phase
         # submits only a few gathers/copies; views are reconstructed in its graph.
@@ -379,20 +448,22 @@ class SharedCollectionGraphs:
                 keys = keys | {'pile_upgraded_counts', 'pile_upgrade_sums'}
             keys = tuple(key for key in observations if key in keys)
             needed = {layout[key][0] for key in keys}
-            batch = {group: value[selected] for group, value in packed.items() if group in needed}
+            batch = ({group: value[selected] for group, value in packed.items() if group in needed}
+                     if packed_bank is None else dict(_indices=selected))
             relic = self._width(meta[rows, 1:relic_end], 4)
             deck = None if combat else self._width(meta[rows, relic_end:-1], 16)
             choice_width = None
             if deck_model:
-                batch['_run_context'] = context[selected]
+                if packed_bank is None:
+                    batch['_run_context'] = context[selected]
                 if phase_id == combat_id:
                     choices = host['select_native_indices'][rows] > 0
                     pick = C.JOINT_PICK - C.JOINT_END
                     choices |= host['combat_legal'][rows, pick:pick + choices.shape[1]].astype(bool)
                     choice_width = self._width(choices, 1)
-            if use_map and not combat:
+            if use_map and not combat and packed_bank is None:
                 batch['_map_encoding'] = encoded_map[selected]
-            if actor_masks is not None:
+            if actor_masks is not None and packed_bank is None:
                 batch['_actor_mask'] = actor_masks[selected]
             union_width = (self.core.overworld.encoder.merged_width(host, rows, multiple=16)
                 if phase_id == MERGED_UPPER_PHASE else None)
@@ -401,27 +472,34 @@ class SharedCollectionGraphs:
                       else ((count + 15) // 16) * 16) if actor_masks is not None else (
                       (1 << (count - 1).bit_length()) if count <= 16 else ((count + 15) // 16) * 16)
             signature = (phase_id, padded, deck, relic, union_width, choice_width, schema,
+                         None if packed_bank is None else packed_bank['key'],
+                         encoded_map.data_ptr() if packed_bank is not None and use_map and not combat else None,
                          tuple((key, tuple(value.shape[1:]), value.dtype) for key, value in batch.items()))
 
             def forward(packed_batch):
-                tensors = {}
-                for key in keys:
-                    group, start, end, shape = layout[key]
-                    tensors[key] = packed_batch[group][:, start:end].reshape(padded, *shape)
+                tensors = ({} if packed_bank is None else
+                           self._packed_fields(packed_bank,packed_batch['_indices'],keys))
+                if packed_bank is None:
+                    for key in keys:
+                        group, start, end, shape = layout[key]
+                        tensors[key] = packed_batch[group][:, start:end].reshape(padded, *shape)
                 for key in ('relics', 'relic_counters'):
                     tensors[key] = tensors[key][:, :relic]
                 if deck is not None:
                     for key in ('deck_ids', 'deck_upgrades'):
                         tensors[key] = tensors[key][:, :deck]
                 if deck_model:
-                    tensors['_run_context'] = packed_batch['_run_context']
+                    tensors['_run_context'] = (packed_batch['_run_context'] if packed_bank is None else
+                                               packed_bank['context'][packed_batch['_indices']])
                     if phase_id == _ANCHOR_PHASE:
                         z = tensors['_run_context']
                         return (z.new_zeros(padded, C.AUTOREGRESSIVE_SIZE),
                                 self.core.anchor_with_context(tensors, self.core.anchor.context_projection(z)))
                     if combat:
                         tensors['_choice_width'] = choice_width
-                if '_map_encoding' in packed_batch:
+                if packed_bank is not None and use_map and not combat:
+                    tensors['_map_encoding'] = encoded_map[packed_bank['slots'][packed_batch['_indices']]]
+                elif '_map_encoding' in packed_batch:
                     tensors['_map_encoding'] = packed_batch['_map_encoding']
                 if combat:
                     return self.core.combat_actor_critic(tensors, active_relic_width=relic)
@@ -437,10 +515,13 @@ class SharedCollectionGraphs:
                     # Same two Categorical normalizations as MaskableCategorical:
                     # original logits first, then the mask and normalization.
                     normalized = out.float()-out.float().logsumexp(-1, keepdim=True)
-                    masked = normalized.masked_fill(~packed_batch['_actor_mask'].bool(), -1e8)
+                    mask = (packed_batch['_actor_mask'] if packed_bank is None else
+                            packed_bank['mask'][packed_batch['_indices']])
+                    masked = normalized.masked_fill(~mask.bool(), -1e8)
                     logprob = masked-masked.logsumexp(-1, keepdim=True)
                     return torch.cat((logprob.softmax(-1), logprob, value.reshape(-1,1)),1), value
-            output = self._replay(self.entries, signature, batch, padded, forward, self.capacity)
+            output = self._replay(self.entries, signature, batch, padded, forward, self.capacity,
+                keep_alive=() if packed_bank is None else (packed_bank, encoded_map if use_map else None))
             # Results own storage; subsequent replay/eviction cannot mutate
             # them. Register the clone's stream before releasing private pools.
             out, value = [tensor[:count].clone() for tensor in output]
@@ -464,4 +545,5 @@ class SharedCollectionGraphs:
             self.map_cache = None
             self.host_map_cache = None
             self.host_inputs = None
+            self.packed_bank = None
             self.closed = True
