@@ -1,102 +1,122 @@
-"""The original collector, real PPO updater and ordinary recovery boundary."""
-from copy import deepcopy
-from dataclasses import asdict
-
+"""Original natural-cohort collection with current observations and model."""
 import numpy as np
 import pytest
 import torch
 
-pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(240)]
+pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(180)]
 
 
-def test_full480_real_rows_updates_restore_and_cancel(tmp_path, monkeypatch, latent_training_factory):
+@pytest.mark.parametrize('dome', [False, True])
+def test_full480_natural_rows_cached_dome_and_cancel(
+        tmp_path, monkeypatch, latent_training_factory, dome):
     from stable_baselines3.common.vec_env import VecMonitor
     from stable_baselines3.common.callbacks import BaseCallback
     from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
-    from rl.algorithms.packed_ppo import configure_packed_updates
-    from rl.algorithms.search_auxiliary import SearchTrainingConfig
     from rl.algorithms.upper_probe import state_digest
     from rl.policies.deck_latent import DeckLatentPolicy
-    from rl.policies.checkpoint import load_checkpoint
     from rl.training.native_vec_env import NativeSearchVecEnv
-    from rl.training.checkpoints import save_bundle, restore_learner
     from rl.search.full480 import full_seeded
+    from rl.search.paired_token_rollout import PairedTokenBatch
+    from rl.algorithms import full480
+    from rl.search.native import observation_as_tensor
+    from env.core import vocab
 
     assert torch.cuda.is_available(), 'full480 lifecycle requires explicit CUDA artifacts'
     import ctypes
     from rl.search.full480.run_device import lib, check
-    # A preceding in-process simulator oracle may leave its stack reservation.
-    # The real learner owns no simulator; only the child retains the 64 KiB stack.
-    torch.cuda.init()
+    torch.empty(1, device='cuda')
     stack = ctypes.c_size_t()
     lib.cuCtxGetLimit.argtypes = [ctypes.POINTER(ctypes.c_size_t), ctypes.c_int]
+    lib.cuCtxSetLimit.argtypes = [ctypes.c_int, ctypes.c_size_t]
     check(lib.cuCtxGetLimit(ctypes.byref(stack), 0), 'read idle oracle stack')
     check(lib.cuCtxSetLimit(0, 1024), 'release idle oracle stack')
     torch.cuda.empty_cache()
-    monkeypatch.setattr(full_seeded, 'P', tmp_path / 'runtime')
     env = VecMonitor(NativeSearchVecEnv([latent_training_factory] * 2, threads=2))
-    target = None
+    monkeypatch.setattr(full_seeded, 'P', tmp_path / 'runtime')
     try:
         model = AccumulatingMaskablePPO(DeckLatentPolicy, env, seed=20261111,
-            n_steps=32, batch_size=32, n_epochs=1, device='cuda', gamma=1., gae_lambda=1.,
+            n_steps=2, batch_size=2, n_epochs=1, device='cpu', gamma=1., gae_lambda=1.,
             learning_rate=5e-5, reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
             policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
                 reward_flow='sequential-v1', deck_combat_encoder='transformer64x2',
                 combat_value_target='pre-reward-anchor'))
-        configure_packed_updates(model, dict(token_budget=1024, max_rows=8, precision='fp32'))
-        model.deck_search_config = asdict(SearchTrainingConfig(backend='full480', fraction=1.,
-            normal_budget=16, boss_budget=16, max_depth=8, timeout_seconds=60.,
-            action_selection='search-filter-policy-rank-v1'))
-        executed = [[] for _ in range(2)]
-        original = env.venv.step_subset
-        def record(actions):
-            for i, action in actions.items():
-                executed[i].append(action)
-            return original(actions)
-        monkeypatch.setattr(env.venv, 'step_subset', record)
-        before = state_digest(model.policy.state_dict())
-        model.learn(64)
-        assert model.num_timesteps == 64
-        assert state_digest(model.policy.state_dict()) != before
-        assert max(int(s['step']) for s in model.policy.optimizer.state.values()) == 2
-        buffer = model.rollout_buffer
-        np.testing.assert_array_equal(buffer.actions[:, :, 0], np.asarray(executed).T)
-        assert np.all(buffer.row_positions == 32) and np.isfinite(buffer.returns).all()
-        assert len(buffer.search_targets) == len(buffer.search_actions) > 0
-        for (position, index), (action, logp) in buffer.search_actions.items():
-            assert action == buffer.actions[position, index, 0]
-            assert buffer.action_masks[position, index, action]
-            assert buffer.log_probs[position, index] == pytest.approx(logp, abs=1e-6)
-        assert not full_seeded.current_stream.service.process.is_alive()
-        rng = deepcopy(model._full480_rng)
-        bundle = save_bundle(model, tmp_path / 'first', rank=0, world_size=1,
-            run_id='full480-lifecycle', wandb_id=None, config={'ascension': 0})
-        restored = load_checkpoint(bundle / 'model.zip', device='cuda')
-        target = VecMonitor(NativeSearchVecEnv([latent_training_factory] * 2, threads=2))
-        restored.set_env(target, force_reset=False)
-        restored._setup_learn(64, reset_num_timesteps=False)
-        restore_learner(restored, bundle, rank=0, world_size=1)
-        assert restored._recovery_environment_restored and restored._full480_rng == rng
-        assert restored.full480_search_rng_version == model.full480_search_rng_version == 'pcg64-bulk-state-v1'
-        assert state_digest(restored.policy.state_dict()) == state_digest(model.policy.state_dict())
-        restored.learn(64, reset_num_timesteps=False)
-        assert restored.num_timesteps == 128
-        assert max(int(s['step']) for s in restored.policy.optimizer.state.values()) == 4
-        assert restored._full480_rng != rng
-        save_bundle(restored, tmp_path / 'second', rank=0, world_size=1,
-            run_id='full480-lifecycle', wandb_id=None, config={'ascension': 0})
-        assert not full_seeded.current_stream.service.process.is_alive()
-        class Stop(BaseCallback):
+        model.nosl_is_az_combat_strategy = 'small-playout'
+        model.nosl_is_az_inner_only = True
+        model.nosl_is_az_replay_enabled = False
+        model.nosl_is_az_upper_strategy = 'model'
+        model._outer_return = model._frozen_upper = False
+        model.episode_rollout_config = dict(games_per_rank=2, seed=20261111,
+            max_steps=64, max_seconds=120., censored_games='error')
+        model.episode_rollout_rank = 0
+        model.episode_rollout_world_size = 1
+        model.episode_rollouts_completed = model.episode_rollout_seed_offset = 0
+        model.independent_rollout_config = dict(mode='independent', threads=2,
+            upper_batch=64, upper_wait_seconds=0., seed=20261111, max_combat_turns=50)
+        model.deck_search_config = dict(backend='full480')
+        class Callback(BaseCallback):
+            _uses_rollout_observations = False
+            stop = False
+            def _on_rollout_start(self):
+                for i, base in enumerate(env.venv.native_search_batch.envs):
+                    if dome:
+                        base.thick.gc.set_relics(['Runic Dome'])
+                    for _ in range(64):
+                        if base.thick.bc is not None:
+                            break
+                        base.step(int(np.flatnonzero(base.action_masks())[0]))
+                    assert base.thick.bc is not None
+                    base.thick.bc.apply_custom_state({'player': {'hp': 1, 'powers': [('STRENGTH', -999)]}})
+                    base._invalidate_backend_cache()
+                    env.venv._save_obs(i, base._obs())
+                model._last_obs = env.venv._obs_from_buf()
             def _on_step(self):
-                return False
-        callback = Stop(); callback.init_callback(restored)
-        digest = state_digest(restored.policy.state_dict())
-        assert not restored.collect_rollouts(target, callback, restored.rollout_buffer, 32)
-        assert state_digest(restored.policy.state_dict()) == digest
-        assert not restored.rollout_buffer.full
+                return not self.stop
+        _, callback = model._setup_learn(1, callback=Callback())
+        def no_cpu_dome(*args):
+            raise AssertionError('Dome decisions must reuse the original GPU policy queue')
+        monkeypatch.setattr(PairedTokenBatch, 'dome_policy', no_cpu_dome)
+        pending, checked = {}, []
+        begin, take = full480.upper_begin, full480.upper_take
+        def begin_checked(obs, masks):
+            ident = begin(obs, masks)
+            pending[ident] = obs
+            return ident
+        def take_checked(ident):
+            answer = take(ident)
+            if answer is not None:
+                obs = pending.pop(ident)
+                rows = np.flatnonzero(obs['phase'].reshape(-1) == vocab.PHASE_VOCAB_INDEX['combat'])
+                if len(rows):
+                    with torch.inference_mode():
+                        expected, _ = model.policy.core.actor_critic(observation_as_tensor(
+                            {k:v[rows] for k,v in obs.items()}, 'cpu'))
+                    np.testing.assert_allclose(answer['logits'][rows], expected.numpy(), atol=3e-5, rtol=1e-5)
+                    checked.extend(rows.tolist())
+            return answer
+        monkeypatch.setattr(full480, 'upper_begin', begin_checked)
+        monkeypatch.setattr(full480, 'upper_take', take_checked)
+        before = state_digest(model.policy.state_dict())
+        assert model.collect_rollouts(env, callback, model.rollout_buffer, 2)
+        assert model.episode_rollout_stats['completed_games'] == 2
+        assert model.episode_rollout_stats['censored_games'] == 0
         assert not full_seeded.current_stream.service.process.is_alive()
+        if dome:
+            # The terminal-search case can select End Turn and die on its
+            # first action; only this case guarantees intermediate live rows.
+            assert model._independent_rollout_diagnostic['combat_observation_rows_omitted'] > 0
+            assert checked and full_seeded.count['roots'] == 0
+            assert model._small_playout_stats['dome_policy_decisions'] > 0
+        else:
+            assert model._small_playout_samples
+            for row in model._small_playout_samples:
+                assert len(row['action_bits']) == len(row['visits']) == len(row['values']) == len(row['prior_logits'])
+                assert row['observation']['combat_legal'].any()
+                assert np.isfinite(row['values']).all()
+        callback.stop = True
+        assert not model.collect_rollouts(env, callback, model.rollout_buffer, 2)
+        assert not full_seeded.current_stream.service.process.is_alive()
+        assert state_digest(model.policy.state_dict()) == before
+        assert not model.policy.optimizer.state
     finally:
-        if target is not None:
-            target.close()
         env.close()
         check(lib.cuCtxSetLimit(0, stack.value), 'restore oracle stack')

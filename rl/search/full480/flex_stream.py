@@ -51,7 +51,6 @@ class StreamingPool(ScoringPool):
    self.context_hash=arr((self.n,inputs.prototypes['outer_deck_misc'].shape[0]),torch.int64)
    self.context_dirty=arr((self.n,)).zero_();self.context_roots=arr((self.m,)).zero_()
    self.chain_inputs=arr((self.n,68),torch.float32)
-   self.chain_anchor=arr((self.n,256),torch.float32)
    self.root_misc=arr((self.m,inputs.prototypes['outer_deck_misc'].shape[0]),torch.float32)
    self.value_mode=arr((1,)).zero_()
    self.dynamic_context_roots=set()

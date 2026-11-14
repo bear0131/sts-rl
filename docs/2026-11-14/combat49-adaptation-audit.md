@@ -2,9 +2,9 @@
 
 用户原话：“你明确标出你自己加了哪些部分的适配哪些部分的改动”；并要求“最小化所有的适配，尽可能只在原本基础上改不加东西”。
 
-当前审查范围为恢复旧 480 自然局后的工作树，随本阶段提交；下方 JSON 给出固定原件基线和当前逐段改动。正式训练仍停止在 246，完整性能验收正在运行。
+当前审查范围为恢复旧 480 自然局后的工作树；下方 JSON 给出固定原件基线和当前逐段改动。正式训练仍停止在 246，首轮完整结果为 126.5 万/秒，后续修正仍在验收。
 
-已撤回我增加的固定 PPO 主循环、战斗根先走 upper、根完成时另造 teacher、CPU fallback 完整观测字典以及独立 add_rows 缓冲接口。当前采样循环的 AST 与归档 `stepfull480-01-collector.py` 相同，只有两处差异：新模型没有旧属性时用 getattr 读取；回调取消时 drain/cancel 原服务。
+已撤回我增加的固定 PPO 主循环、战斗根先走 upper、根完成时另造 teacher、CPU fallback 完整观测字典以及独立 add_rows 缓冲接口。e7d757f8 中采样循环 AST 除可选属性读取、回调取消清理外与归档相同。本阶段进一步在原循环中改了 Runic Dome 的无搜索决策分流：送入已有 GPU upper 队列，并补齐该批当前战斗输入，避免原 CPU 特例调用大模型。没有另建推理消息、队列或采样循环。
 
 **仍由我新增的模型适配包括构筑/锚点缓存消费者、当前输入表、当前输出头、原生 raw 数组的当前模型字段，以及结果包里的 64 个 float32 缓存投影。不能将这些也称为旧代码原封不动。**
 
@@ -20,16 +20,16 @@
 
 | 标号 | 文件与定位 | 我具体新增/改变的内容 | 与旧路径的关系 |
 | --- | --- | --- | --- |
-| C01 | `rl/algorithms/full480.py` 的 `collect`；`accumulating_ppo.py` 的入口校验 | 恢复原自然局函数，删除固定 PPO 循环、战斗根 upper、GAE 和 add_rows 调用；保留新模型属性兼容与取消回收 | 原 ready/submit/receive/自然结束/根记录顺序恢复；不接受固定 PPO 配置误用终局诊断 |
-| C02 | `full_seeded.py`、`paired_token_rollout.py`、`env/search/small_playout.py`、`training/small_playout.py` | 恢复 batch.prepare / accept_ready；在原 score_roots 替换模型输入与小网；根观测由现有 NativeRootObservationBatch 一次编码复用；当前记录保存 canonical observation、动作映射、visits、Q、prior_logits、推荐动作 | 未另造完成队列或根排序；GPU 已算出的 64 维投影随原结果包返回，避免 CPU 再编码整模型。Dome/无 GPU 评分根保留缓存消费者 |
+| C01 | `rl/algorithms/full480.py` 的 `collect`；`accumulating_ppo.py` 的入口校验 | 恢复原自然局函数，删除固定 PPO 循环、战斗根 upper、GAE 和 add_rows 调用；保留新模型属性兼容与取消回收；Dome 无搜索行进入原 GPU policy 队列 | 原 ready/submit/receive/自然结束/根记录顺序恢复；不接受固定 PPO 配置误用终局诊断 |
+| C02 | `full_seeded.py`、`paired_token_rollout.py`、`env/search/small_playout.py`、`training/small_playout.py` | 恢复 batch.prepare / accept_ready；在原 score_roots 替换模型输入与小网；根观测由现有 NativeRootObservationBatch 一次编码复用；当前记录保存 canonical observation、动作映射、visits、Q、prior_logits、推荐动作 | 未另造完成队列或根排序；GPU 已算出的 64 维投影随原结果包返回，避免 CPU 再编码整模型。Dome 改由 C01 的原 GPU 队列评分，其他无 GPU 投影的根仍有缓存消费者 |
 | C03 | `rl/search/rollout_inference.py`，`_DeckForward`、`_DeckConsumers`；`UpperPolicyInference` 的 deck 分支 | 新增构筑编码及两份静态投影消费者、动态 head、独立锚点结果缓存；旧 `_upper_graph_inputs` 接回；head 图容量设为 256；缓存权重登记检查和一次返回上下文 | 复用原 `ExactInputCache` 与 `CombatLeafGraphs`，但两个 Deck 消费者类和路由是我写的；未关闭构筑/锚点缓存 |
 | C04 | `rl/search/inference.py`，`CombatLeafGraphs._capture` | 增加 `scratch_only`、共享 scratch 时图外独立设备输出区、最后一个图淘汰时重置 scratch handle | 修改旧图执行器的内存所有权，不是仅换模型参数 |
 | C05 | `cpu_boundary.py`、`fallback_frame.py`、native `bindings.cpp::pack_raw` | 删除 compact→decoder→observations 字典；原 WaveDiag 原生批量填原始 scalars/category/牌堆升级数、布局、抽样数，进入原单份 pinned 区和融合图 | 当前数字布局由模型输入替换而来，仍是本次改动；没有逐分支 Gym 字典或 Python 观察解码。特征共用 GPU observer 的 token 函数 |
 | C06 | `native/bindings.cpp`、`native/wave.cpp`、`native/include/sim/search/WaveDiag.h` | 仍保留当前 AR 前缀和 PCG 状态字段；删除 compact 字典接口、叶子 neural anchor/cutoff 请求；恢复原终局值/未完成 NaN，并允许精确预算的末个不完整 world | 原 WaveDiag 线程池、任务队列、ready/choose 继续使用；新增接口和模型字段不是原件原有 |
 | C07 | `worker_devicestepfull480141.py`、`service_devicestepfull480141.py` | 删除根先请求 upper 后回传再提交的绕路；原 submit 内计算/查询构筑缓存，原根结果包附 64 维投影；fallback 沿原命令处理原始数组 | FIFO、64 命令后 tick、begin/take 保留；新数据只服务当前模型输入与缓存，不新增消息通道 |
 | C08 | 新文件 `rl/search/full480/deck_inputs.py`、`deck_inputs.cuh`；原 `observer_entry.cu`、`token_builder.cu`、`frame_modules.py`、`frame_pipeline.py` | 新增 `DeckInputTables` 和 CUDA 当前模型特征构造；原 observer/builder 增加 Deck 编译分支、当前物理槽位/token/查询映射；新增构建函数及升级表溢出增长 | 两个 deck_inputs 文件是本次从零新增的模型输入适配，不是旧文件搬迁。执行仍嵌在旧 observer → builder → frame 中 |
-| C09 | `rl/search/full480/combo_model.py`、`combo_kernels.py`、`fallback_ieee_model.py`、`fallback_ieee_kernels.py`；`rl/policies/deck_latent.py` | 新增 `DeckWeights`、当前输出头、global/subset/action 融合 kernel；旧 2×64 主体接当前头；从已有 `encode` 提取 `token_inputs` | 旧 attention/FFN、查询子集和融合执行保留，输入与输出头分支是我改写的；并非整套模型 kernel 原封未动 |
-| C10 | `rules_entry.cu`、`finite_plan.py`、`flex_runtime.py`、`flex_stream.py`、`frame_pipeline.py`、`step_pipeline.py` | 当前 PCG/AR 与永久变化缓存失效保留；恢复旧 finish/reap 终局 HP/Boss 胜负，不在完成后调用 anchor/cutoff 推理；根上传改回批量。dirty context 只刷新活跃链 | 原 GPU 原地 clone/step、页租约、整步图和回收保留。缓存代码保留，终局目标不调用 anchor 不是禁用缓存优化 |
+| C09 | `rl/search/full480/combo_model.py`、`combo_kernels.py`、`fallback_ieee_model.py`、`fallback_ieee_kernels.py`；`rl/policies/deck_latent.py` | 新增 `DeckWeights`、当前输出头、global/subset/action 融合 kernel；旧 2×64 主体接当前头；从已有 `encode` 提取 `token_inputs` | 旧 attention/FFN、查询子集和融合执行保留，输入与输出头分支是我改写的；当前较宽输出头复用结束使用的 QKV 存储，避免额外 576 MiB（生产帧）的分配 |
+| C10 | `rules_entry.cu`、`finite_plan.py`、`flex_runtime.py`、`flex_stream.py`、`frame_pipeline.py`、`step_pipeline.py` | 当前 PCG/AR 与永久变化缓存失效保留；恢复旧 finish/reap 终局 HP/Boss 胜负，不在完成后调用 anchor/cutoff 推理；根上传改回批量。dirty context 只刷新活跃链；删除本次旧终局目标不会调用的 complete 适配及逐链 anchor 副本（480×1000×256×4 字节） | 原 GPU 原地 clone/step、页租约、整步图和回收保留。缓存代码保留，终局目标不调用 anchor 不是禁用缓存优化 |
 | C11 | `search_auxiliary.py`、`room_returns.py`、`tests/unit/test_search_auxiliary.py` | 已撤回独立 add_rows/row_positions 及对应新测试、外传 last_values 改动；只保留 full480 后端名称的配置识别 | 原 PPO buffer、returns 与更新实现恢复任务起点；固定 PPO 和普通恢复仍未完成资格 |
 | C12 | `run_device.py`、`layout_bindings.py`、`sim/sts_lightspeed/CMakeLists.txt`，各运行模块的 import | 去掉历史固定目录/固定模型加载，改显式产物路径与包内 import；添加原生 full480 构建目标及依赖校验 | 运行绑定和构建改动，不是纯模型数学改动；部分文件只有 import 改动，不能与新增搜索逻辑混算 |
 
@@ -74,3 +74,9 @@
 第一次恢复旧目标的完整运行 `collection-1794653592544064387.log` 在121秒时根处理89.784秒，10215根；该轮主动中断，不算完整验收。原因之一是我在 PairedTokenBatch 新模型边界调用完整模型，在 CPU 另算大构筑编码。修正为原结果包携带 GPU 缓存的 64 维投影；原根评分只跑战斗小网，测试把大编码器设为抛错仍通过。后续相同480/相同种子启动的30秒检查中根处理5.719秒/6926根，前一版本19.219秒/882根。早期计数受进度影响，不当作整轮最终倍率。
 
 当前完整运行日志 `collection-1794653982223970963.log`；源与模型冻结、0更新，尚未出完整回执。
+
+### 已定位到我所加代码的后续证据
+
+- 45 秒提交阶段 profile：19.475 秒中 `dome_policy` 为 15.612 秒，CPU 大编码器 97 次、7.701 秒；当前模型被沿用到旧 CPU 特例而未转入已有 GPU 批量队列，是明确新增慢点。恢复后 90 秒检查提交 28261 根、累计 10.208 秒（约0.36ms/根），未作为最终吞吐。
+- 测试回调漏写已有 `_uses_rollout_observations=False`，使旧观察省略优化未启用；已在原测试入口修正。不是减少根记录：完整 e7d757f8 结果111139搜索根、111064多动作根训练记录，75个单动作根按原accept合同不写训练标签。
+- 第二轮 collection-1794654968469327901.log 在原状态页扩容时 OOM，退出1，不能称完整通过。90秒状态页已占5733220352字节、峰值333000在途simulation；新增逐链anchor副本和单独宽输出头合计1095499776字节，现已撤除冗余副本/复用原scratch。原缓存、精度、480环境、搜索预算与并发调度不缩减。

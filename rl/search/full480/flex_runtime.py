@@ -134,15 +134,13 @@ class BattlePool(CollectionPool):
    values=list(rows.values())
    if 'context_inputs' in values[0]:
     context=self.upload([r['context_inputs'] for r in values],np.float32)
-    anchor=self.upload([r['anchor_context'] for r in values],np.float32)
    else:
     data={key:np.stack([r['observation'][key] for r in values]) for key in self.flat.core.context.keys}
     projected=self.flat.inference.search_context(data)
     extra=self.upload([np.concatenate((r['observation']['run_keys'],r['observation']['ascension'])) for r in values],np.float32)
-    context=torch.cat((projected.combat,extra),1);anchor=projected.anchor
+    context=torch.cat((projected.combat,extra),1)
    self.root_inputs.index_copy_(0,indices,context)
    self.chain_inputs.view(self.m,self.budget_cap,68).index_copy_(0,indices,context[:,None,:].expand(-1,self.budget_cap,-1))
-   self.chain_anchor.view(self.m,self.budget_cap,256).index_copy_(0,indices,anchor[:,None,:].expand(-1,self.budget_cap,-1))
    width=max(len(r['worlds']) for r in values);worlds=np.zeros((count,width,5),np.uint64)
    for j,r in enumerate(values):worlds[j,:len(r['worlds'])]=r['worlds']
    self.paired_words[:,:width].index_copy_(0,indices,self.upload(worlds))

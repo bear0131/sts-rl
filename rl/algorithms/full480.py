@@ -48,6 +48,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     end_action = C.policy_offset(model.combat_action_contract)
     ready = set(range(vec.num_envs))
     upper_waiting, actions, masks, estimates = {}, {}, {}, {}
+    combat_upper = set()
     upper_policy = {}
     stats = dict(root_policy_seconds=0., env_step_seconds=0., search_wait_seconds=0.,
                  upper_batches=0, upper_rows=0, transition_batches=0, simulator_transitions=0,
@@ -74,6 +75,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
         campfire_rows = {int(j): p for j, p in zip(*packet['campfire'])}
         for j, i in enumerate(rows):
             del upper_waiting[i]
+            combat_upper.discard(i)
             actions[i] = chosen[j]
             estimates[i] = (float(values[j]), float(logps[j]))
             upper_policy[i] = (reward_rows.get(j), campfire_rows.get(j))
@@ -110,6 +112,13 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                     if mask[end_action] and mask.sum() == 1:
                         actions[i] = end_action
                         stats['forced_end_turn_roots'] += 1
+                    elif ('Runic Dome' in (r['id'] for r in vec.native_search_batch.envs[i].thick.gc.relic_state())):
+                        # This original no-search exception uses the same GPU
+                        # policy queue as upper decisions, including its cache.
+                        upper_waiting[i] = time.monotonic()
+                        combat_upper.add(i)
+                        batch = vec.small_playout_batch
+                        batch.stats['dome_policy_decisions'] = batch.stats.get('dome_policy_decisions', 0) + 1
                     else:
                         calls[i] = ((), dict(state_nonce=randoms.nonce(i)))
                 else:
@@ -122,6 +131,14 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 started = time.perf_counter()
                 rows = sorted(upper_waiting)[:cfg.upper_batch]
                 obs = {k: v[rows] for k, v in model._last_obs.items()}
+                combat_rows = [(j, i) for j, i in enumerate(rows) if i in combat_upper]
+                if combat_rows:
+                    encoded = vec.native_root_observations.encode([vec.native_search_batch.envs[i] for _, i in combat_rows])
+                    positions = [j for j, _ in combat_rows]
+                    for key, value in encoded.items():
+                        if key not in obs:
+                            obs[key] = np.zeros((len(rows), *value.shape[1:]), dtype=value.dtype)
+                        obs[key][positions] = value
                 action_masks = np.stack([masks[i] for i in rows])
                 upper_pending = (upper_begin(obs,action_masks),rows,started)
                 stats['upper_submit_cpu_seconds'] += time.perf_counter() - started

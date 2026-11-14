@@ -82,8 +82,13 @@ class GraphScorer:
   self.release();self.key=key;self.bound=bound;self.weights=(*(self.flat.tensors() if self.deck else (self.flat.lookup,self.flat.head_weight)),*self.net.parameters())
   self.capacity=tuple(triton.next_power_of_2(max(1,n)) for n in [nt,nq,ns]);ct,cq,cs=self.capacity
   def arr(shape,dtype=torch.float32):return torch.empty(shape,dtype=dtype,device='cuda')
-  self.buffers=dict(x=arr((ct,64)),qkv=arr((ct,192)) if qkv_workspace is None else qkv_workspace,attention=arr((ct,64)),
-   second=arr((cq,64)),token=arr((cq,288 if self.deck else 34)),z=arr((cs,225 if self.deck else 32)),coef=arr((cs,24)),
+  qkv=arr((ct,192)) if qkv_workspace is None else qkv_workspace
+  width=288 if self.deck else 34
+  # QKV dies before final_head; retain the original owned scratch reuse for
+  # the wider replacement head instead of allocating another full frame.
+  token=qkv.reshape(-1)[:cq*width].view(cq,width) if self.deck and cq*width<=qkv.numel() else arr((cq,width))
+  self.buffers=dict(x=arr((ct,64)),qkv=qkv,attention=arr((ct,64)),
+   second=arr((cq,64)),token=token,z=arr((cs,225 if self.deck else 32)),coef=arr((cs,24)),
    starts=arr((cs,4),torch.int64),lens=arr((cs,4),torch.int64),counts=arr((6,),torch.int32))
   self.counts['allocations']+=1
  def launch(self,name,kernel,grid,*args,warps=4):

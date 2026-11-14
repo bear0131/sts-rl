@@ -142,41 +142,8 @@ class FramePipeline:
   data['outer_deck_misc']=misc.cpu().numpy()
   context=self.completion_inference().search_context(data)
   index=selected.long()
-  p.chain_inputs[index,:64]=context.combat;p.chain_anchor[index]=context.anchor;p.context_dirty[index]=0
+  p.chain_inputs[index,:64]=context.combat;p.context_dirty[index]=0
   self.counts['context_refresh_rows']+=count
- @torch.inference_mode()
- def complete(self,handles):
-  """Score finished owned states before the original completion retires pages."""
-  p=self.pool;self.refresh_contexts()
-  jobs=np.concatenate([h.slot*p.budget_cap+np.arange(p.bank[h.slot]['budget'],dtype=np.int32) for h in handles])
-  root_rows=np.empty(p.m,np.int32)
-  for i,h in enumerate(handles):root_rows[h.slot]=i
-  relic_rows=np.stack([p.bank[h.slot]['relics'] for h in handles])
-  key_rows=np.stack([p.bank[h.slot]['observation']['run_keys'] for h in handles])
-  index=p.upload(jobs,np.int32);outcomes=p.outcomes[index.long()].cpu().numpy()
-  assert np.isin(outcomes,[1,2,3,4]).all(),outcomes
-  for start in range(0,len(jobs),self.F):
-   selected_jobs=jobs[start:start+self.F];kind=outcomes[start:start+self.F]
-   cut=selected_jobs[kind==4]
-   if len(cut):
-    selected=p.upload(cut,np.int32);owners=p.job_roots[selected.long()]
-    self.run(0,len(cut),selected=selected,worlds=owners,value_only=True)
-    values=self.model.buffers['coef'][:len(cut),12].clone()
-    assert bool(torch.isfinite(values).all())
-    p.values[selected.long()]=values.double();self.counts['cutoff_value_rows']+=len(cut)
-   anchors=selected_jobs[(kind==1)|(kind==3)]
-   if len(anchors):
-    selected=p.upload(anchors,np.int32);owners=p.job_roots[selected.long()];roots=root_rows[owners.cpu().numpy()]
-    R=p.root_relics.shape[1];dynamic=p.arr((len(anchors),10+R),torch.float32)
-    self.modules.launch('deck_anchor_inputs',[p.arena,selected,owners,p.flat.input_tables.bindings,p.root_relics,p.root_counters,dynamic],[len(anchors)],triton.cdiv(len(anchors),32))
-    d=dynamic.cpu().numpy()
-    data=dict(player_scalars=d[:,:2],potions=d[:,2:7].astype(np.int64),gold=d[:,7:8],combat_exit_anchor=d[:,8:10],relic_counters=d[:,10:],
-     relics=relic_rows[roots],run_keys=key_rows[roots])
-    context=p.chain_anchor[selected.long()].cpu().numpy()
-    values=self.completion_inference().anchor_values(data,context)
-    assert np.isfinite(values).all()
-    p.values[selected.long()]=p.upload(values,np.float64);self.counts['anchor_value_rows']+=len(anchors)
-  assert bool(torch.isfinite(p.values[index.long()]).all())
  def statistics(self):
   return dict(self.counts,cached=int(self.graph is not None),capacity=list(self.capacity),closed=self.closed,
    kernels=self.model.kernel_metadata,workspace_bytes=self.model.workspace_bytes(self.buffers.values()),workspace_alias_version=1,
