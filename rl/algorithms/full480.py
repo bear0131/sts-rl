@@ -1,5 +1,6 @@
 """The executed full480 collector, with current model inputs at its boundaries."""
 import time
+from contextlib import nullcontext
 import numpy as np
 from env.core import native_actions as C, vocab as V
 from rl.algorithms.independent_rollout import IndependentRolloutConfig, GameRandomStreams, _strategic_observations
@@ -12,18 +13,23 @@ from rl.search.full480.full_seeded import (Stream as SmallPlayoutStream, RemoteU
 def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=True, *, config):
     """Collect real policy/search samples with weights frozen for the whole cohort.
 
-    An explicit synchronous control isolates scheduling from the new RNG
-    contract. Per-game sample order is canonicalized before returning.
-    Legacy unused combat-value diagnostic rows are not materialized in either
-    mode. Complete cohorts are the only supported checkpoint boundary.
+    The same ready/submit/receive loop serves natural cohorts and fixed PPO
+    horizons. Fixed rows retain their original (time, environment) positions.
     """
     from stable_baselines3.common.vec_env import VecMonitor
     from rl.training.native_vec_env import NativeSearchVecEnv
     cfg = IndependentRolloutConfig(**config)
+    fixed = not getattr(model, 'episode_rollout_config', None)
+    if fixed:
+        from rl.algorithms.search_auxiliary import SearchRolloutBuffer, SearchTrainingConfig
+        search_config = SearchTrainingConfig(**model.deck_search_config)
+        if (not isinstance(rollout_buffer, SearchRolloutBuffer) or n_rollout_steps != rollout_buffer.buffer_size
+                or n_rollout_steps < 1 or cfg.max_combat_turns is not None):
+            raise ValueError('fixed full480 needs the existing PPO buffer and an exact per-slot horizon')
     if (not isinstance(env, VecMonitor) or type(env.venv) is not NativeSearchVecEnv
-            or not use_masking or not getattr(model, 'episode_rollout_config', None)
-            or model.nosl_is_az_combat_strategy != 'small-playout'
-            or not model.nosl_is_az_inner_only or model.nosl_is_az_replay_enabled
+            or not use_masking
+            or (not fixed and (model.nosl_is_az_combat_strategy != 'small-playout'
+                               or not model.nosl_is_az_inner_only or model.nosl_is_az_replay_enabled))
             or getattr(model, '_outer_return', False) or getattr(model, '_frozen_upper', False)
             or getattr(model.policy, 'upper_auxiliary_config', None) is not None
             or getattr(model, 'amp_mode', None) not in (None, 'off', 'fp32')
@@ -40,10 +46,17 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     reward_monitor.begin_collection(model)
     campfire_monitor.begin_collection(model)
     session = episode_rollout.begin(model, env)
+    started_collection = time.monotonic()
+    slot_steps = np.zeros(vec.num_envs, dtype=np.int64)
+    active = np.ones(vec.num_envs, dtype=bool) if fixed else vec.episode_rollout_active
+    if fixed and getattr(vec, 'episode_rollout_active', None) is not None:
+        raise ValueError('fixed collection cannot reuse an active natural cohort')
     record_start(session,env)
     configure_collection(model, env)
     callback.on_rollout_start()
-    randoms = GameRandomStreams(cfg.seed, session['first_seed'], vec.num_envs)
+    randoms = GameRandomStreams(cfg.seed, 0 if fixed else session['first_seed'], vec.num_envs)
+    if fixed and getattr(model, '_independent_rollout_rng', None):
+        randoms.load_state_dict(model._independent_rollout_rng)
     combat = V.PHASE_VOCAB_INDEX['combat']
     end_action = C.policy_offset(model.combat_action_contract)
     ready = set(range(vec.num_envs))
@@ -87,10 +100,10 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
 
 
     with (vec.omit_unused_combat_value_observations(),
-          _strategic_observations(model, vec, callback) as step_subset,
+          (nullcontext(vec.step_subset) if fixed else _strategic_observations(model, vec, callback)) as step_subset,
           UpperPolicyInference(model.policy.core, model.device) as upper_inference,
           SmallPlayoutStream(vec.small_playout_batch, threads=cfg.threads) as stream):
-        while vec.episode_rollout_active.any():
+        while active.any():
             if cfg.max_combat_turns is not None:
                 # Only inspect owned, ready slots before issuing another search or RNG draw.
                 for i in sorted(ready):
@@ -99,9 +112,9 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                         ready.remove(i)
                 if not vec.episode_rollout_active.any():
                     break
-            maximum = int(vec.episode_rollout_action_counts[vec.episode_rollout_active].max(initial=0))
-            if (maximum >= session['config'].max_steps
-                    or time.monotonic()-session['started'] >= session['config'].max_seconds):
+            maximum = int(slot_steps.max(initial=0)) if fixed else int(vec.episode_rollout_action_counts[active].max(initial=0))
+            if ((not fixed and maximum >= session['config'].max_steps)
+                    or time.monotonic()-started_collection >= (1800. if fixed else session['config'].max_seconds)):
                 raise TimeoutError('independent diagnostic budget exhausted; no incomplete-game result')
             calls = {}
             for i in sorted(ready):
@@ -109,7 +122,11 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 masks[i] = mask
                 estimates[i] = (0., 0.)
                 if int(model._last_obs['phase'][i, 0]) == combat:
-                    if mask[end_action] and mask.sum() == 1:
+                    if fixed and (mask.sum() == 1 or model._last_obs['combat_exit_anchor'][i].any()
+                                  or randoms.search[i].random() >= search_config.fraction):
+                        upper_waiting[i] = time.monotonic()
+                        combat_upper.add(i)
+                    elif mask[end_action] and mask.sum() == 1:
                         actions[i] = end_action
                         stats['forced_end_turn_roots'] += 1
                     elif ('Runic Dome' in (r['id'] for r in vec.native_search_batch.envs[i].thick.gc.relic_state())):
@@ -132,7 +149,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 rows = sorted(upper_waiting)[:cfg.upper_batch]
                 obs = {k: v[rows] for k, v in model._last_obs.items()}
                 combat_rows = [(j, i) for j, i in enumerate(rows) if i in combat_upper]
-                if combat_rows:
+                if combat_rows and not fixed:
                     encoded = vec.native_root_observations.encode([vec.native_search_batch.envs[i] for _, i in combat_rows])
                     positions = [j for j, _ in combat_rows]
                     for key, value in encoded.items():
@@ -144,13 +161,20 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 stats['upper_submit_cpu_seconds'] += time.perf_counter() - started
             consume_upper()
             waiting = not actions or (cfg.mode == 'barrier'
-                                      and len(actions) < int(vec.episode_rollout_active.sum()))
+                                      and len(actions) < int(active.sum()))
             started = time.perf_counter()
             decisions = stream.receive(timeout=.001 if waiting else 0.)
             stats['search_wait_seconds'] += time.perf_counter() - started
             actions.update({i: d['action'] for i, d in decisions.items()})
+            if fixed:
+                for i, decision in decisions.items():
+                    estimates[i] = (decision['value'], decision['log_prob'])
+                    key = (int(slot_steps[i]), i)
+                    assert key not in rollout_buffer.search_actions
+                    rollout_buffer.search_actions[key] = (decision['action'], decision['log_prob'])
+                    if 'sample' in decision:decision['sample']['position'] = key[0]
             consume_upper()
-            if not actions or (cfg.mode == 'barrier' and len(actions) < int(vec.episode_rollout_active.sum())):
+            if not actions or (cfg.mode == 'barrier' and len(actions) < int(active.sum())):
                 continue
             started = time.perf_counter()
             indices = sorted(actions)
@@ -170,6 +194,18 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             action_rows = np.array([actions.pop(i) for i in indices], dtype=np.int64)
             mask_rows = np.stack([masks.pop(i) for i in indices])
             value_rows, logp_rows = np.array([estimates.pop(i) for i in indices]).T
+            if fixed:
+                positions = slot_steps[indices]
+                assert (positions < n_rollout_steps).all()
+                # The original ready rows write their existing (time, env)
+                # destinations directly; no second collector or staging buffer.
+                for key, destination in rollout_buffer.observations.items():
+                    destination[positions, indices] = model._last_obs[key][indices]
+                rollout_buffer.actions[positions, indices, 0] = action_rows
+                rollout_buffer.action_masks[positions, indices] = mask_rows
+                rollout_buffer.episode_starts[positions, indices] = model._last_episode_starts[indices]
+                rollout_buffer.values[positions, indices] = value_rows
+                rollout_buffer.log_probs[positions, indices] = logp_rows
             mirror_before(ordered)
             observations, rewards, dones, infos = step_subset(ordered)
             mirror_after(ordered,infos)
@@ -183,8 +219,19 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                     env.episode_returns[i] = 0.
                     env.episode_lengths[i] = 0
                     env.episode_count += 1
-            capture_step(model, old, action_rows, mask_rows, value_rows, logp_rows,
-                         observations, dones, infos, indices=indices)
+            if fixed:
+                rollout_buffer.rewards[positions, indices] = rewards
+                for offset, info in enumerate(infos):
+                    if dones[offset] and info.get('TimeLimit.truncated'):
+                        import torch
+                        terminal, _ = model.policy.obs_to_tensor(info['terminal_observation'])
+                        with torch.no_grad():tail = float(model.policy.predict_values(terminal).flatten()[0])
+                        rollout_buffer.rewards[positions[offset], indices[offset]] += model.gamma * tail
+                slot_steps[indices] += 1
+                active[indices] = slot_steps[indices] < n_rollout_steps
+            else:
+                capture_step(model, old, action_rows, mask_rows, value_rows, logp_rows,
+                             observations, dones, infos, indices=indices)
             reward_rows, campfire_rows = [], []
             for offset, i in enumerate(indices):
                 rp, cp = upper_policy.pop(i, (None, None))
@@ -197,7 +244,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             campfire_monitor.record_step(model, action_rows, mask_rows,
                 ([r[0] for r in campfire_rows], np.asarray([r[1] for r in campfire_rows], dtype=np.float32)), infos)
             record_end(session,indices,dones,infos)
-            episode_rollout.record_terminals(session, dones, infos)
+            if not fixed:episode_rollout.record_terminals(session, dones, infos)
             prefix = sum(info.get('simulator_transition') is False for info in infos)
             stats['selection_prefix_decisions'] += prefix
             stats['simulator_transitions'] += len(indices)-prefix
@@ -207,11 +254,12 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             for k in observations:
                 model._last_obs[k][indices] = observations[k]
             model._last_episode_starts[indices] = dones
-            ready.update(i for i in indices if vec.episode_rollout_active[i])
+            ready.update(i for i in indices if active[i])
             stats['env_step_seconds'] += time.perf_counter()-started
             callback.update_locals(locals())
             if not callback.on_step():
                 stream.cancel('callback stopped collection')
+                if fixed:model._independent_rollout_rng = randoms.state_dict()
                 return False
         if stream.pending or upper_waiting or actions or upper_pending is not None:
             raise RuntimeError('completed cohort retained pending work')
@@ -221,12 +269,53 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     model._small_playout_stats = vec.small_playout_stats()
     model._small_playout_samples = sorted(vec.take_small_playout_samples(), key=lambda r: r['env'])
     model._upper_completed.sort(key=lambda r: (r['env'], r['episode']))
-    episode_rollout.exclude_samples(model, env)
-    episode_rollout.finish(model, env, session, int(vec.episode_rollout_action_counts.max(initial=0)))
+    if fixed:
+        import torch
+        from rl.algorithms.search_auxiliary import improved_prior
+        assert (slot_steps == n_rollout_steps).all()
+        rollout_buffer.pos, rollout_buffer.full = n_rollout_steps, True
+        started = time.perf_counter()
+        samples = model._small_playout_samples
+        for offset in range(0, len(samples), 512):
+            rows = samples[offset:offset+512]
+            positions = [r['position'] for r in rows]
+            indices = [r['env'] for r in rows]
+            legal = rollout_buffer.action_masks[positions, indices].astype(bool)
+            logits = np.zeros(legal.shape, np.float32)
+            values = np.zeros_like(logits)
+            worlds = np.empty(len(rows), np.float32)
+            for j, sample in enumerate(rows):
+                # Original public ordering: sorted legal codec IDs, with all
+                # actions evaluated in the same complete set of worlds.
+                choices = np.flatnonzero(sample['observation']['combat_legal'])
+                assert np.array_equal(choices, np.flatnonzero(legal[j]))
+                assert len(choices) == len(sample['action_bits'])
+                assert (sample['visits'] == sample['visits'][0]).all()
+                logits[j, choices] = sample['prior_logits']
+                values[j, choices] = sample['values']
+                worlds[j] = sample['visits'][0]
+            target = improved_prior(torch.from_numpy(logits), torch.from_numpy(values),
+                torch.from_numpy(legal), torch.from_numpy(worlds), search_config.target_std).numpy()
+            for j, sample in enumerate(rows):
+                rollout_buffer.add_search_target(sample['env'], target[j], position=sample['position'])
+        stats['search_target_seconds'] = time.perf_counter()-started
+        from rl.search.full480 import full_seeded
+        count = full_seeded.count
+        model.deck_search_last_stats = dict(searched_roots=count['roots'],
+            chains=count['simulations'], atomic_steps=count['atomic_steps'],
+            policy_rows=count['guide'], forced_rows=count['forced'],
+            cutoff_rows=count['cuts'], executed_search_actions=len(rollout_buffer.search_actions))
+        for key, value in model.deck_search_last_stats.items():model.logger.record('deck_search/'+key, value)
+        from rl.algorithms.room_returns import apply_room_returns
+        apply_room_returns(model, rollout_buffer)
+        stats.update(fixed_steps=n_rollout_steps, real_rows=int(slot_steps.sum()))
+    else:
+        episode_rollout.exclude_samples(model, env)
+        episode_rollout.finish(model, env, session, int(vec.episode_rollout_action_counts.max(initial=0)))
     model._independent_rollout_rng = randoms.state_dict()
-    stats['collection_seconds'] = time.monotonic()-session['started']
+    stats['collection_seconds'] = time.monotonic()-started_collection
     model._independent_rollout_diagnostic = dict(random_stream=randoms.version, **stats,
-        mode=cfg.mode, note='Only naturally completed games supply training targets.')
+        mode=cfg.mode, note='Fixed real PPO rows.' if fixed else 'Only naturally completed games supply training targets.')
     model._nosl_is_az_rollout_timings = dict(stats)
     model._nosl_is_az_rollout_upper_counts = dict(forced_end_turn_roots=stats['forced_end_turn_roots'])
     for k, value in stats.items():

@@ -46,13 +46,14 @@ class PairedTokenBatch(SmallPlayoutBatch):
             from rl.search.rollout_inference import _observed_width
             width=_observed_width(inputs['relics'])
             dynamic=dict(inputs,relics=inputs['relics'][:,:width],relic_counters=inputs['relic_counters'][:,:width])
-            logits, _ = self.policy.combat_with_context(observation_as_tensor(dynamic,self.device),projected)
+            logits, values = self.policy.combat_with_context(observation_as_tensor(dynamic,self.device),projected)
             logits = logits.cpu().numpy()
+            values = values.flatten().cpu().numpy()
             out = []
-            for env, obs, scores in zip(environments, observations, logits, strict=True):
+            for env, obs, scores, value in zip(environments, observations, logits, values, strict=True):
                 mapping = sorted(env._joint_policy_actions())
                 choices, bits = zip(*mapping)
-                out.append((dict(observation=obs, action_bits=np.asarray(bits,np.uint32)),
+                out.append((dict(observation=obs, action_bits=np.asarray(bits,np.uint32), value=float(value)),
                             scores[np.asarray(choices)].copy()))
             return out
         raw = [
@@ -92,7 +93,9 @@ class PairedTokenBatch(SmallPlayoutBatch):
 
     def accept_ready(self, completed):
         out = {}
-        ranked = [(job, z) for job, z in completed if len(z["action_bits"]) > 1]
+        ppo = self.pair.get('collect_ppo', False)
+        ranked = [(job, z) for job, z in completed if ppo or len(z["action_bits"]) > 1]
+        estimates = {}
         by_slot = {}
         for start in range(0, len(ranked), 128):
             group = ranked[start : start + 128]
@@ -108,8 +111,9 @@ class PairedTokenBatch(SmallPlayoutBatch):
                 visits = np.asarray(z["visits"])
                 q = np.asarray(z["values"], np.float64)
                 from env.search.action_selection import search_filtered_choice
-                chosen, _ = search_filtered_choice(logits, q, visits, job[3])
+                chosen, log_prob = search_filtered_choice(logits, q, visits, job[3])
                 z["action"] = int(bits[chosen])
+                if ppo:estimates[job[0]] = (row['value'], log_prob)
                 units = (100.0 if job[2].boss else float(z['max_hp'])) if self.deck else (
                     100.0 if job[2].boss else float(round(float(row["state"][1]) * 200)))
                 if self.deck:
@@ -124,8 +128,11 @@ class PairedTokenBatch(SmallPlayoutBatch):
                 )
         for job, z in completed:
             result = self.accept(job, z)
-            if job[0] in by_slot:
+            if job[0] in by_slot and len(z['action_bits']) > 1:
                 self.samples[-1].update(by_slot[job[0]])
             if result is not None:
+                if ppo:
+                    result['value'], result['log_prob'] = estimates[job[0]]
+                    if len(z['action_bits']) > 1:result['sample'] = self.samples[-1]
                 out[job[0]] = result
         return out

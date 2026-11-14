@@ -48,9 +48,10 @@ def aggregate(roots,plan,values,outcomes,statistics):
   assert len(select)==root['budget']
   outcome=np.asarray(outcomes)[select];terminal=outcome!=0;v=np.asarray(values)[select]
   paired=root.get('contract')==PAIRED_TERMINAL
-  assert np.array_equal(np.isfinite(v),terminal)
+  anchored=root.get('value_target')=='pre-reward-anchor'
+  assert np.isfinite(v).all() if anchored else np.array_equal(np.isfinite(v),terminal)
   visits=np.bincount(idx,minlength=n);terminal_visits=np.bincount(idx[terminal],minlength=n)
-  sums=np.bincount(idx[terminal],weights=v[terminal],minlength=n)
+  sums=np.bincount(idx if anchored else idx[terminal],weights=v if anchored else v[terminal],minlength=n)
   means=np.divide(sums,visits,out=np.zeros(n),where=visits>0)
   stats=np.asarray(statistics)[select].sum(0)
   rows.append(dict(action_bits=np.asarray(root['action_bits'],np.uint32),visits=visits,terminal_visits=terminal_visits,values=means,
@@ -58,5 +59,5 @@ def aggregate(roots,plan,values,outcomes,statistics):
    depth_cuts=int((~terminal).sum()),statistics=stats))
   if paired:
    rows[-1].update(atomic_decisions=int(stats[7]),actual_transitions=int(stats[7])-int(stats[11]),
-    selection_prefix_decisions=int(stats[11]),value_statistic=PAIRED_TERMINAL)
+    selection_prefix_decisions=int(stats[11]),value_statistic='pre-reward-anchor' if anchored else PAIRED_TERMINAL)
  return rows

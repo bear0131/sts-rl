@@ -129,10 +129,54 @@ class FramePipeline:
     self.leaf_inference=UpperPolicyInference(self.pool.flat.core,'cuda');self.owns_leaf_inference=True
   return self.leaf_inference
  @torch.inference_mode()
- def refresh_contexts(self):
+ def complete_values(self,handles):
+  """Score finished original pages before reap releases their leases."""
+  p=self.pool;inference=self.completion_inference()
+  slots=[h.slot for h in handles]
+  jobs=np.concatenate([s*p.budget_cap+np.arange(p.bank[s]['budget']) for s in slots])
+  selected=p.upload(jobs,np.int32);owners=p.job_roots[selected.long()]
+  outcomes=p.outcomes[selected.long()].cpu().numpy()
+  p.values[selected.long()]=0.
+  roots={s:i for i,s in enumerate(slots)}
+  context_data={key:np.stack([p.bank[s]['observation'][key] for s in slots]) for key in p.flat.core.context.keys}
+  root_context=inference.search_context(context_data).anchor.cpu().numpy()
+  for offset in range(0,len(jobs),self.F):
+   ids=selected[offset:offset+self.F];root_ids=owners[offset:offset+self.F]
+   state=outcomes[offset:offset+self.F];host_roots=root_ids.cpu().numpy()
+   anchors=np.flatnonzero((state==1)|(state==3))
+   cutoffs=np.flatnonzero(state==0)
+   if len(anchors):
+    chosen=ids[torch.as_tensor(anchors,device='cuda')];source=root_ids[torch.as_tensor(anchors,device='cuda')]
+    width=p.root_relics.shape[1];packed=torch.empty((len(anchors),10+width),device='cuda')
+    self.modules.launch('deck_anchor_inputs',[p.arena,chosen,source,p.flat.input_tables.bindings,
+      p.root_relics,p.root_counters,packed],[len(anchors)],triton.cdiv(len(anchors),32))
+    raw=packed.cpu().numpy();root_rows=np.array([roots[int(s)] for s in host_roots[anchors]])
+    projected=root_context[root_rows].copy()
+    dynamic=np.flatnonzero(np.isin(host_roots[anchors],list(p.dynamic_context_roots)))
+    if len(dynamic):
+     dynamic_rows=torch.as_tensor(dynamic,device='cuda');misc=torch.empty((len(dynamic),p.root_misc.shape[1]),device='cuda')
+     self.modules.launch('deck_context_misc',[p.arena,chosen[dynamic_rows],source[dynamic_rows],p.root_misc,misc],
+       [len(dynamic),misc.shape[1]],triton.cdiv(len(dynamic),32))
+     changed={key:value[root_rows[dynamic]].copy() for key,value in context_data.items()}
+     changed['outer_deck_misc']=misc.cpu().numpy()
+     projected[dynamic]=inference.search_context(changed).anchor.cpu().numpy()
+    inputs=dict(player_scalars=raw[:,:2],potions=raw[:,2:7].astype(np.int64),gold=raw[:,7:8],
+      combat_exit_anchor=raw[:,8:10],relic_counters=raw[:,10:],
+      relics=p.root_relics[source.long()].cpu().numpy(),
+      run_keys=np.stack([p.bank[s]['observation']['run_keys'] for s in slots])[root_rows])
+    p.values[chosen.long()]=torch.as_tensor(inference.anchor_values(inputs,projected).reshape(-1),device='cuda',dtype=p.values.dtype)
+   if len(cutoffs):
+    chosen=ids[torch.as_tensor(cutoffs,device='cuda')];source=root_ids[torch.as_tensor(cutoffs,device='cuda')]
+    self.refresh_contexts(chosen)
+    self.run(0,len(cutoffs),selected=chosen,worlds=source,value_only=True)
+    p.values[chosen.long()]=self.model.buffers['coef'][:len(cutoffs),12].to(p.values.dtype)
+   self.counts.update(anchor_rows=len(anchors),cutoff_rows=len(cutoffs),terminal_rows=int((state==2).sum()))
+ @torch.inference_mode()
+ def refresh_contexts(self,selected=None):
   p=self.pool
   if not p.dynamic_context_roots:return
-  selected=torch.nonzero(p.context_dirty & p.alive,as_tuple=False).flatten().to(torch.int32)
+  if selected is None:selected=torch.nonzero(p.context_dirty & p.alive,as_tuple=False).flatten().to(torch.int32)
+  else:selected=selected[p.context_dirty[selected.long()].bool()]
   count=len(selected)
   if not count:return
   owners=p.job_roots[selected.long()];roots=owners.cpu().tolist()

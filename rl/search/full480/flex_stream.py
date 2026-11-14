@@ -189,6 +189,8 @@ class StreamingPool(ScoringPool):
    b=self.bank[h.slot]['budget'];assert 0<=done[h.slot]<=b
    if done[h.slot]==b:handles.append(h)
   if not handles:return {}
+  anchored=[h for h in handles if self.bank[h.slot].get('value_target')=='pre-reward-anchor']
+  if anchored:self.frame_pipeline.complete_values(anchored)
   indices=self.upload([h.slot for h in handles],np.int64)
   stats=self.stats.view(self.m,self.budget_cap,STAT)[indices].cpu().numpy().view(np.uint64)
   values=self.values.view(self.m,self.budget_cap)[indices].cpu().numpy()

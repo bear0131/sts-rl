@@ -120,3 +120,122 @@ def test_full480_natural_rows_cached_dome_and_cancel(
     finally:
         env.close()
         check(lib.cuCtxSetLimit(0, stack.value), 'restore oracle stack')
+
+
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, latent_training_factory, device):
+    from dataclasses import asdict
+    import ctypes
+    from stable_baselines3.common.vec_env import VecMonitor
+    from stable_baselines3.common.callbacks import BaseCallback
+    from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+    from rl.algorithms.packed_ppo import configure_packed_updates
+    from rl.algorithms.search_auxiliary import SearchTrainingConfig
+    from rl.algorithms.upper_probe import state_digest
+    from rl.policies.deck_latent import DeckLatentPolicy
+    from rl.training.native_vec_env import NativeSearchVecEnv
+    from rl.training.checkpoints import save_bundle, restore_learner
+    from rl.search.full480 import full_seeded
+    from rl.search.full480.run_device import lib, check
+
+    assert torch.cuda.is_available(), 'full480 lifecycle requires explicit CUDA artifacts'
+    torch.empty(1, device='cuda')
+    stack = ctypes.c_size_t()
+    lib.cuCtxGetLimit.argtypes = [ctypes.POINTER(ctypes.c_size_t), ctypes.c_int]
+    lib.cuCtxSetLimit.argtypes = [ctypes.c_int, ctypes.c_size_t]
+    check(lib.cuCtxGetLimit(ctypes.byref(stack), 0), 'read idle oracle stack')
+    check(lib.cuCtxSetLimit(0, 1024), 'release idle oracle stack')
+    monkeypatch.setattr(full_seeded, 'P', tmp_path / 'runtime')
+    envs = []
+    def vector():
+        env = VecMonitor(NativeSearchVecEnv([latent_training_factory] * 2, threads=2))
+        envs.append(env)
+        return env
+    class Rows(BaseCallback):
+        def _on_rollout_start(self):
+            self.positions = np.zeros(2, np.int64)
+            self.records = []
+            self.digest = state_digest(self.model.policy.state_dict())
+            vec = self.training_env.venv
+            self.original = vec.step_subset
+            def step(actions):
+                for i, action in actions.items():
+                    self.records.append((int(self.positions[i]), i, action,
+                        {k: v[i].copy() for k, v in self.model._last_obs.items()},
+                        bool(self.model._last_episode_starts[i])))
+                    self.positions[i] += 1
+                return self.original(actions)
+            vec.step_subset = step
+        def _on_step(self):
+            return True
+        def _on_rollout_end(self):
+            self.training_env.venv.step_subset = self.original
+            b = self.model.rollout_buffer
+            assert b.full and b.pos == 32 and len(self.records) == 64
+            np.testing.assert_array_equal(self.positions, [32, 32])
+            assert np.isfinite(b.values).all() and np.isfinite(b.returns).all()
+            assert np.isfinite(b.log_probs).all() and np.isfinite(b.advantages).all()
+            for position, i, action, observation, start in self.records:
+                assert b.actions[position, i, 0] == action and b.action_masks[position, i, action]
+                assert b.episode_starts[position, i] == start
+                for key, value in observation.items():
+                    np.testing.assert_array_equal(b.observations[key][position, i], value, err_msg=key)
+            assert b.search_targets and b.search_actions
+            for (position, i), (action, logp) in b.search_actions.items():
+                assert b.actions[position, i, 0] == action
+                assert b.log_probs[position, i] == pytest.approx(logp, abs=1e-6)
+            for key, target in b.search_targets.items():
+                legal = b.action_masks[key].astype(bool)
+                assert np.isfinite(target[legal]).all() and np.isneginf(target[~legal]).all()
+                assert np.exp(target).sum() == pytest.approx(1., abs=1e-6)
+            for position, i, _, observation, _ in self.records[::8]:
+                tensors = {k: torch.as_tensor(v[None], device=device) for k, v in observation.items()}
+                with torch.inference_mode():value = self.model.policy.predict_values(tensors)
+                assert b.values[position, i] == pytest.approx(float(value.flatten()[0]), abs=3e-5)
+            assert state_digest(self.model.policy.state_dict()) == self.digest
+            assert not full_seeded.current_stream.service.process.is_alive()
+            assert full_seeded.count['submitted_cpu'] == 0
+            assert self.model.logger.name_to_value['pure_rl/search_simulations'] == self.model.deck_search_last_stats['chains']
+    try:
+        env = vector()
+        model = AccumulatingMaskablePPO(DeckLatentPolicy, env, seed=20261111,
+            n_steps=32, batch_size=32, n_epochs=1, device=device, gamma=1., gae_lambda=1.,
+            learning_rate=5e-5, reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
+            policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
+                reward_flow='sequential-v1', deck_combat_encoder='transformer64x2',
+                combat_value_target='pre-reward-anchor'))
+        configure_packed_updates(model, dict(token_budget=1024, max_rows=8, precision='fp32'))
+        model.deck_search_config = asdict(SearchTrainingConfig(backend='full480', fraction=1.,
+            normal_budget=2, boss_budget=2, max_depth=8, timeout_seconds=120.,
+            action_selection='search-filter-policy-rank-v1'))
+        before = state_digest(model.policy.state_dict())
+        updates = []
+        hook = model.policy.optimizer.register_step_post_hook(lambda *args: updates.append(1))
+        model.learn(64, callback=Rows())
+        hook.remove()
+        assert len(updates) == 2
+        assert model.num_timesteps == 64 and state_digest(model.policy.state_dict()) != before
+        steps = {int(s['step']) for s in model.policy.optimizer.state.values()}
+        assert steps == {2}
+        source = save_bundle(model, tmp_path/'first', rank=0, world_size=1,
+            run_id='full480-fixed-test', wandb_id=None, config={'ascension': 0})
+        target = vector()
+        restored = AccumulatingMaskablePPO.load(source/'model.zip', env=target, device=device)
+        restored._setup_learn(64, reset_num_timesteps=False)
+        restore_learner(restored, source, rank=0, world_size=1)
+        assert restored._recovery_environment_restored
+        assert restored._independent_rollout_rng == model._independent_rollout_rng
+        assert state_digest(restored.policy.state_dict()) == state_digest(model.policy.state_dict())
+        updates.clear()
+        hook = restored.policy.optimizer.register_step_post_hook(lambda *args: updates.append(1))
+        restored.learn(64, reset_num_timesteps=False, callback=Rows())
+        hook.remove()
+        assert len(updates) == 2
+        assert restored.num_timesteps == 128
+        # Phase-specific parameters can be absent from a physical batch.
+        assert {int(s['step']) for s in restored.policy.optimizer.state.values()} <= {3, 4}
+        save_bundle(restored, tmp_path/'resumed', rank=0, world_size=1,
+            run_id='full480-fixed-test', wandb_id=None, config={'ascension': 0})
+    finally:
+        for env in envs:env.close()
+        check(lib.cuCtxSetLimit(0, stack.value), 'restore oracle stack')

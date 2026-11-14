@@ -27,6 +27,7 @@ def plan_job(job,envs,obs):
   action_bits=np.asarray([bits for _,bits in mapping],np.uint32),
   semantic=np.asarray([semantic.get(bits,0) for _,bits in mapping],np.uint64),order=np.arange(len(mapping)),
   observation=obs,relics=obs['relics'],relic_counters=obs['relic_counters'])
+ if current_stream.batch.pair.get('collect_ppo'):r['value_target']='pre-reward-anchor'
  return r
 class Stream:
  def __init__(self,batch,*,threads):
@@ -38,7 +39,8 @@ class Stream:
   digest=state_digest(model.policy.state_dict());torch.save(model.policy,path)
   self.service=GpuService(len(batch.envs),path,expected_digest=digest,
    prototypes=batch.observer.prototypes,frozen_policy=model.policy,
-   budget_cap=max(batch.pair[t+'_simulations'] for t in ('common','elite','boss')))
+   budget_cap=max(198 if batch.pair.get('collect_ppo') else 1,
+    *(batch.pair[t+'_simulations'] for t in ('common','elite','boss'))))
   self.game=GameMirror(batch.envs,self.service.arena,verify=os.environ.get('BATTLE_VERIFY','off')=='all')
  def __enter__(self):return self
  def cancel(self,reason):
@@ -70,6 +72,8 @@ class Stream:
     rows[i]=dict(r,observation={key:r['observation'][key] for key in (*RunContextEncoder.keys,'run_keys','ascension')})
     count['submitted_gpu']+=1
    else:
+    if self.batch.pair.get('collect_ppo'):
+     raise RuntimeError('fixed PPO root needs a portable GPU continuation; CPU terminal-HP fallback is incompatible')
     self.queue.append(job);self.fallback_rows[i]=r;count['submitted_cpu']+=1
   if rows:
    count['overlap_submitted']+=len(rows) if self.service.outstanding else 0
@@ -126,13 +130,14 @@ def mirror_after(ordered,infos):current_stream.game.after(ordered,infos)
 
 def record_start(session,env):
  actual_game_ids[:]=[int(e.thick.gc.seed) for e in env.venv.native_search_batch.envs]
- assert len(set(actual_game_ids))==env.num_envs
- save('game-seeds',dict(first_seed=session['first_seed'],actual_game_ids=actual_game_ids))
+ if session is not None:assert len(set(actual_game_ids))==env.num_envs
+ save('game-seeds',dict(first_seed=None if session is None else session['first_seed'],actual_game_ids=actual_game_ids))
 
 def record_end(session,indices,dones,infos):
  for i,done,info in zip(indices,dones,infos,strict=True):
   if not done:continue
-  assert not info.get('TimeLimit.truncated') and not info.get('episode_cohort_censored') and i not in terminals
-  z=info['run_stats'];terminals[i]=dict(game_id=actual_game_ids[i],seed=session['first_seed']+i,
+  if session is not None:assert not info.get('TimeLimit.truncated') and not info.get('episode_cohort_censored') and i not in terminals
+  key=i if session is not None else str(i)+':'+str(len(terminals))
+  z=info['run_stats'];terminals[key]=dict(game_id=actual_game_ids[i],seed=None if session is None else session['first_seed']+i,
    win=int(z['act']>3 or z['outcome']=='PLAYER_VICTORY'),floor=float(z['floor']),outcome=z['outcome'],
    actions=info['episode']['l'],completion_wall_seconds=time.monotonic()-t0)

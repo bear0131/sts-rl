@@ -374,8 +374,10 @@ def test_full480_pcg64_matches_numpy_and_owns_each_chain():
     assert arena.modules.references == 0 and arena.modules.closed
 
 
-@pytest.mark.parametrize('scenario', ['prefix', 'growth', 'escape', 'gamble', 'toolbox', 'armaments'])
-def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, tmp_path, monkeypatch):
+@pytest.mark.parametrize('scenario,anchored', [(s, False) for s in
+    ('prefix', 'growth', 'escape', 'gamble', 'toolbox', 'armaments')] +
+    [(s, True) for s in ('prefix', 'growth', 'escape')])
+def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, anchored, tmp_path, monkeypatch):
     from rl.search.full480.combo_runtime import BattleArena, BattlePool
     from rl.search.full480.combo_model import DeckWeights
     from rl.search.full480.deck_inputs import DeckInputTables
@@ -456,6 +458,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 data['run_keys'], data['ascension']), 1)[0].cpu().numpy(),
             relics=obs['relics'], relic_counters=obs['relic_counters'],
             anchor_context=context.anchor[0].cpu().numpy(),observation={k:v.copy() for k,v in obs.items()})
+        if anchored:row['value_target'] = 'pre-reward-anchor'
         arena = BattleArena(1, deck=True)
         pool = None
         try:
@@ -526,7 +529,12 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
             from env.core import encode
             gold = []
             for branch, _, _ in branches:
-                if branch._at_combat_exit_anchor():
+                if anchored and (branch._at_combat_exit_anchor() or
+                        (branch.thick.bc is not None and branch.thick.bc.to_dict()['outcome'] == 0)):
+                    inputs = {k: torch.as_tensor(v[None], device='cuda') for k, v in branch._obs().items()}
+                    _, value = core.actor_critic(inputs)
+                    gold.append(float(value.flatten()[0]))
+                elif branch._at_combat_exit_anchor():
                     gold.append(float(branch._obs()['player_scalars'][0])*encode.HP_SCALE/row['max_hp'])
                 else:
                     gold.append(0.)
@@ -558,11 +566,16 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
             assert result['visits'].sum()==budget and result['visits'].max()-result['visits'].min()==1
             if scenario in ('prefix', 'gamble'):
                 assert pool.stats[:, 11].sum().item() > 0, 'AR prefix path was not exercised'
-            assert pool.frame_pipeline.counts['anchor_value_rows']==0
+            if anchored:
+                assert result['value_statistic'] == 'pre-reward-anchor'
+                assert sum(pool.frame_pipeline.counts[k] for k in ('anchor_rows','cutoff_rows','terminal_rows')) == budget
+            else:
+                assert pool.frame_pipeline.counts['anchor_rows']==0
             assert pool.graph_scorer.statistics()['step_overflow_retries'] > 0
             assert pool.graph_scorer.statistics()['step_replays'] > 0
             pool.close()
             arena.close()
+            if anchored:return  # CPU fallback retains the separate terminal-HP contract.
             # Exercise the original CPU owner and its real FIFO GPU service on
             # exactly the same root/worlds, including pre-existing callbacks.
             from rl.search.full480.service_devicestepfull480141 import GpuService

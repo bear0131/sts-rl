@@ -111,6 +111,9 @@ class SmallPlayoutBatch:
             if self.paired_worldlines:
                 cfg.paired_worldlines = True
             cfg.simulations = self.pair[tier+'_simulations']
+            if self.pair.get('collect_ppo'):
+                actions = len(env._joint_policy_actions())
+                cfg.simulations = actions * max(1, cfg.simulations // actions)
             cfg.playout_depth = self.pair['playout_depth']
             cfg.tree_depth = self.pair['tree_depth']
             cfg.boss = tier == 'boss'

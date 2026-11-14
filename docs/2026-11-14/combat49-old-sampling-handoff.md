@@ -171,3 +171,23 @@ rank0/1 的 native fallback 为 0，rank2/3 为41/67根，不能把全部差距�
 | `service_devicestepfull480141.py` / worker退出边界 | CPU collector/冻结GPU owner接当前更新及普通恢复；原固定模型digest、CPU-only断言与只读退出不能直接作为PPO更新协议 | 单GPU执行owner、64命令后的GPU tick、在途请求drain、完整权重/Adam/RNG恢复 |
 
 正式246保护和停止状态未改变。256个恢复状态上的512×8模型推理与缓存检查是消费者验证，不是256×768 collection；详细回执、失败修正和未完成范围追加在worklog同ID。
+
+## 10. 固定 PPO 接线改动清单
+
+本节按用户要求列出本次新增改动，比较基点为 `9390b0e3`。这是审查清单，验证结果以 worklog 的 COMBAT49-LEGACY-ENGINE 为准；未通过完整长度和恢复测试前不称完成。
+
+| 编号 | 原位置与本次改动 | 开销与验收重点 |
+| --- | --- | --- |
+| P01 | `rl/algorithms/full480.py:collect`：原 ready/submit/receive 循环增加每槽步数及768行停止条件；自然结束后仍由原 VecEnv 自动开局 | 不新增调度循环；检查每槽恰好768，终局、自重置、末行bootstrap与drain |
+| P02 | 同一 `collect` 的原真实动作推进边界：把已有完整观察、动作、mask、old value/logprob、reward、episode_start直接写原 SearchRolloutBuffer 的(time, env)位置 | 不加中间buffer/add_rows；保留完整PPO观察会增加原自然局省略模式下未做的写入，须实测，不以数据量猜归因 |
+| P03 | `rl/search/paired_token_rollout.py:score_roots/accept_ready`：返回已有根小网计算的value和search_filtered_choice的真实行为logprob；原根记录附position | 不再次推理整模型；结果包只增加标量。不得把搜索动作概率写成原模型动作概率 |
+| P04 | `collect`：未搜索战斗行、战斗退出锚点、真实强制动作进入原upper队列，获得真实old value | 真正的PPO行必须估值；内部搜索的强制动作跳过保持。新增外层评分行须单列 |
+| P05 | `collect`收尾：原搜索根visits/Q/logits调用现有improved_prior，写原search_targets；随后调用原apply_room_returns | 新增teacher转换；原稿逐根Tensor计算已改512根合批，记录search_target_seconds。未修改teacher公式、GAE或PPO更新 |
+| P06 | `rl/search/full480/flex_stream.py:reap`、`frame_pipeline.py:complete_values`、`finite_plan.py:aggregate`：原搜索完成边界接pre-reward-anchor/深度截断值 | 新增完成值消费函数；复用已有GPU anchor/misc观察kernel、只读小网图、构筑和锚点结果缓存；永久变化分支重算相应context。不能把此新增工作藏进“只换模型” |
+| P07 | `rl/training/small_playout.py:configure_collection`、`env/search/small_playout.py:prepare`、`full_seeded.py:Stream`：读取原训练64/64/256预算、覆盖率及完整配对world合同 | 训练的完整world可能使实际链数不等于自然局精确预算；两种结果必须分别标实际链数/根数/原子动作 |
+| P08 | `rl/algorithms/accumulating_ppo.py:collect_rollouts`：full480配置直接调用上述原collector；原训练更新继续消费原buffer | 不新增trainer或训练入口，不改变batch/epoch/Adam配置 |
+| P09 | `collect`与`full_seeded.py:record_start/record_end`：原完整局记录允许跨固定片段；保存现有随机流状态、先发布本轮search统计再计算returns | 完整退出、取消和普通保存恢复验证；不能将上一轮chains记到本轮 |
+
+另行审查的模拟器修改：`Actions.h/Actions.cpp/BattleContext.cpp`将实际开战回调和OnAfterCardUsed改成带类型的小对象，执行仍调用原动作函数；`ActionQueue.h`只增加队列只读访问。原state_codec/CPU桥接增加这类对象的序列化/恢复，并在原ArenaProxy/BattleArena/GameMirror边界允许CARD_SELECT。未知回调仍拒绝导入，不能宣称任意函数均已支持；固定PPO遇到未知回调明确报错，不能静默用旧terminal-HP回退产生错误标签。正式246初态186个战斗快照已全部可导入，完整片段中的覆盖仍需实跑。
+
+PPO阶段未改原页租约、根账本、命令队列、整步GPU图、帧容量、共享QKV空间、内部强制跳过和权重失效检查。以上声明须与逐文件diff及测试结果一起审查，不替代速度证明。
