@@ -1,0 +1,315 @@
+{
+  "scope": "Original executed pipeline before consumer adaptation. External generated simulator code and binaries remain outside Git. Unused fixed-checkpoint diagnostic loaders are not runtime consumers.",
+  "files": [
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\cpu_boundary.py",
+      "sha256": "efbd219d89ebe8978308c1d38e237945251b21c79b874cc48911ba2973be3907",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/cpu_boundary.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\full_seeded.py",
+      "sha256": "619f15c6539c0f719fa06ed9b4b80ce20c1fda4058feb9b92173abbb762dabb2",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/full_seeded.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\worker_devicestepfull480141.py",
+      "sha256": "99c23febc5c579ae2187c751d781206a03dabde6b54f378e5c8057d3586b2df0",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/worker_devicestepfull480141.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\service_devicestepfull480141.py",
+      "sha256": "b2de764e51f83325a856a7c3f4b88fe36d47c6fbdb671ef38ab7bc64811b4cd7",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/service_devicestepfull480141.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\flex_stream.py",
+      "sha256": "e6da9b44fc39aa56f2bbb038d63c2936643b395d699b2101b27c70fd2d97def3",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/flex_stream.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\flex_adapter.py",
+      "sha256": "58a688917809354807ac76dafd200a106bf335ce1281f3b509a9a0b44bbe0078",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/flex_adapter.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\flex_runtime.py",
+      "sha256": "c5fba5177b01db30384b29eefd492d338f3efb7a1a1e7523aefbe200ae9c59d3",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/flex_runtime.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\flex_ragged.py",
+      "sha256": "46f8aaaf26ec72a34db636c90d3feb5aecd106a0ca127de164309c8062eb6e03",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/flex_ragged.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\combo_runtime.py",
+      "sha256": "c328637a445b3a5f7db4c58d0eddbfd3516e8185e9e1df726be7296a4a8500fa",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/combo_runtime.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\combo_model.py",
+      "sha256": "aec7df0cce560ba447135295de63e5d5925cc581dda88e0bb2d82320fff29929",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/combo_model.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\combo_kernels.py",
+      "sha256": "d950c5fb44bf03cdef1469733403c3034c768abf45c08a4254a4bd9717cb3e18",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/combo_kernels.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\frame_pipeline.py",
+      "sha256": "eebeb1ed5cde1ca513eb7ea8f553047234ec62a0b59fe0d0e15bdbbf30384924",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/frame_pipeline.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\frame_kernels.py",
+      "sha256": "6b52f24ebc3d9691630e8523c5b3a13164ff7270933e05e16becf6871274e12e",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/frame_kernels.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\frame_modules.py",
+      "sha256": "b7e49f89ddc3af4ec46299e0f1fe6fba3b20acd852d6d2d24d8366a3ab01db3e",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/frame_modules.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\step_pipeline.py",
+      "sha256": "13ce132535d75543c0c29a4b77709a56d59664c504cdad6ddaf70235dfb2ad04",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/step_pipeline.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\step_kernels.py",
+      "sha256": "1f0acdbaac554476930b7919a5558735a4c7f011489cf0f976581251a588ab9b",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/step_kernels.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\root_ledger.py",
+      "sha256": "d77c141e3bc899846193f8d101ee7ce396c48af21d5c52343587a28585e46e50",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/root_ledger.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\state_pages.py",
+      "sha256": "33210f3c5da8a8f90ec7d0d077e4d63c1413d40363c7e227d1b853a2395f44ef",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/state_pages.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\fallback_frame.py",
+      "sha256": "fd80790077dc32174dd473ce5c6c4a3e79f9cf228be0099ce036c1e1508b60a3",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/fallback_frame.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\fallback_ieee_model.py",
+      "sha256": "3071c9077c1d994bda9299ceca6238bcc0ce71dfc1de24dab5368d25c8381d12",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/fallback_ieee_model.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\fallback_ieee_kernels.py",
+      "sha256": "082d92301f72fc26ff40b16817de9ea0fdb40c72bdee95b94ab5eef859a92a8f",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/fallback_ieee_kernels.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\layout_bindings.py",
+      "sha256": "95c92610d7c73a8a7ad07d25f44027c750dfded2548440965fa02e4e77cf6373",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/layout_bindings.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\actual-import-snapshot\\devicegraph141\\graph_runtime.py",
+      "sha256": "b3ca8f64e553837958aad8f5135ec76690f2e529f8d1aaa7473a777d987376e1",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/graph_runtime.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\actual-import-snapshot\\devicegraph141\\graph_model.py",
+      "sha256": "c5962bf449fcf3ffbe6082febeaaafcb3d72f2c1289b671e2405f28f8c2f5f92",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/graph_model.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\actual-import-snapshot\\devicegraph141\\graph_kernels.py",
+      "sha256": "771d92d86d53425dd808f106a134510b9840f4b1b1fb3588d8549629a88ce8b4",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/graph_kernels.py"
+    },
+    {
+      "original": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicerootsearch141\\search_runtime.py",
+      "sha256": "66b8d0ccf852ec350f3e13c3ee58afe750ee10b3412c4fd88e211e8d039d1b55",
+      "proof": {
+        "archive": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicerootsearch141-qualified-v1.tgz",
+        "archive_sha256": "97e46ecaa382ae72754b1e3525306d2d816922581aa5721fd9d3b58af5cfd17a",
+        "member": "devicerootsearch141/primary25/search_runtime.py"
+      },
+      "current": "rl/search/full480/search_runtime.py"
+    },
+    {
+      "original": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicerootsearch141\\finite_plan.py",
+      "sha256": "b524d9970103496454d3511916c5dab48c243796acac91111246123ce77122f3",
+      "proof": {
+        "archive": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicerootsearch141-qualified-v1.tgz",
+        "archive_sha256": "97e46ecaa382ae72754b1e3525306d2d816922581aa5721fd9d3b58af5cfd17a",
+        "member": "devicerootsearch141/finite_plan.py"
+      },
+      "current": "rl/search/full480/finite_plan.py"
+    },
+    {
+      "original": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicechoice141\\owned_pool.py",
+      "sha256": "027a6d44435479cad1710a5b0b9ef9342886d4e80b0c30da8ea64be836ef7afa",
+      "proof": {
+        "manifest": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicechoice141\\artifact-manifest.json"
+      },
+      "current": "rl/search/full480/owned_pool.py"
+    },
+    {
+      "original": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\deviceragged141\\ragged_runtime.py",
+      "sha256": "823264ce7b00a8920b14f51a26a36bacdb3adecfb34421af29d8071133d70b4e",
+      "proof": {
+        "manifest": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\deviceragged141\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/ragged_runtime.py"
+    },
+    {
+      "original": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\deviceragged141\\ragged_model.py",
+      "sha256": "d41a19add77d387b72cffd64b864347197dc8f5c940935c01ebc140f51a04394",
+      "proof": {
+        "manifest": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\deviceragged141\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/ragged_model.py"
+    },
+    {
+      "original": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\deviceragged141\\ragged_pack.py",
+      "sha256": "81fcc0681c41936355b7031d7ac905c273e41542f436bc3ab75a46e984e52866",
+      "proof": {
+        "manifest": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\deviceragged141\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/ragged_pack.py"
+    },
+    {
+      "original": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicepool141\\pool_gpu.py",
+      "sha256": "a8676199ab81e99ed8fdce40beed8c642b97a6d203060c9359f914d52dd641d4",
+      "proof": {
+        "archive": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicepool141-qualified-v1.tgz",
+        "archive_sha256": "b56cc42ac031bd5541963dbab52dcd4f2fe6f25cef0453cbb5019e23b4dbec05",
+        "member": "pool_gpu.py"
+      },
+      "current": "rl/search/full480/pool_gpu.py"
+    },
+    {
+      "original": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicecompact141\\cooperative_gpu.py",
+      "sha256": "d2762ad94d3481066a6eb12ef68d981b7f224ac464cd142f5254bd691e982119",
+      "proof": {
+        "manifest": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicecompact141\\artifact-manifest.json"
+      },
+      "current": "rl/search/full480/cooperative_gpu.py"
+    },
+    {
+      "original": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicecompact141\\run_device.py",
+      "sha256": "66fba6c842126c9f066a4b41cfd9047e31b1d9064059a0980a5593a45daf82ed",
+      "proof": {
+        "manifest": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicecompact141\\artifact-manifest.json"
+      },
+      "current": "rl/search/full480/run_device.py"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\observer_entry.cu",
+      "sha256": "5e521768c829ea84d45a0d89cce31002b4d81be0914f484c78b372676ee3b48a",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/observer_entry.cu"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\rules_entry.cu",
+      "sha256": "e3ce76010b05b51482f7a22d32ef22b573cd7fab83819475bbbbab72f4c118ee",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/rules_entry.cu"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\token_builder.cu",
+      "sha256": "1f74ebf719e2d9e02b39ee43691f85318741e9ac8c20eb95ee3fe78f8bcb4e69",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/search/full480/token_builder.cu"
+    },
+    {
+      "original": "runs\\local\\full480-reconnect\\original\\stepfull480-01-collector.py",
+      "sha256": "c654022201153d8e04bc5f9d025a5af23815acdd63baff1653d6cf6ef706c523",
+      "proof": {
+        "manifest": "runs\\local\\full480-reconnect\\original\\archive-manifest.json"
+      },
+      "current": "rl/algorithms/full480.py"
+    }
+  ]
+}
