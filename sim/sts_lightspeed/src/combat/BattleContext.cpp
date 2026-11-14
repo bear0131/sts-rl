@@ -1978,7 +1978,7 @@ void BattleContext::onUseSkillCard() {
     }
 
     if (p.hasStatus<PS::HEX>()) {
-        addToBot( Actions::MakeTempCardInDrawPile(CardInstance(CardId::DAZED), 1, true) );
+        addToBot( OpeningAction::create(OpeningAction::TempDraw, int(CardId::DAZED), 1, true) );
     }
 
     if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
@@ -2038,7 +2038,7 @@ void BattleContext::onUsePowerCard() {
     }
 
     if (p.hasStatus<PS::HEX>()) {
-        addToBot( Actions::MakeTempCardInDrawPile(CardInstance(CardId::DAZED), 1, true) );
+        addToBot( OpeningAction::create(OpeningAction::TempDraw, int(CardId::DAZED), 1, true) );
     }
 
     if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
@@ -2087,7 +2087,7 @@ void BattleContext::onUseStatusOrCurseCard() {
     }
 
     if (p.hasStatus<PS::HEX>()) {
-        addToBot( Actions::MakeTempCardInDrawPile(CardInstance(CardId::DAZED), 1, true) );
+        addToBot( OpeningAction::create(OpeningAction::TempDraw, int(CardId::DAZED), 1, true) );
     }
 
     if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {

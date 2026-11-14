@@ -216,3 +216,6 @@ PPO阶段未改原页租约、根账本、命令队列、整步GPU图、帧容�
 
 
 | P22 | 原`ppo_overlap.distributed_packed_epoch`允许多机锚点/搜索阶段进入既有448计划和早桶归约；仅增加三项原planned_ppo时间聚合 | 直接复用dffc1b79既有UpperFirstSchedule/EarlyUpperReduction与原8流ring，共享/战斗/锚点参数仍尾桶，完整梯度归约后统一裁剪/Adam；新5090上25项通过，未把单GPU模拟同伴测试称为真实多机性能证明。生产同进程两轮待续训验收 |
+
+
+| P23 | 原Hex三处DAZED入队接已有TempDraw；原怪物多层护甲扣减动作体移至OpeningAction，嵌套眩晕调用原SetMonsterMove；冻结GPU对应句同步替换 | 新增两个枚举值，旧值/队列次序/胜利清理/卡牌数量不变；不加执行路径或CPU回退。247真实失败现场保留，新三场景先portable=false复现，重建CPU后7项通过，GPU规则feb53d9b重建后完整53项通过；从247恢复同进程生产两轮仍待验收 |

@@ -402,19 +402,27 @@ def _full480_pending_block(env, scenario):
     import slaythespire as sts
     from tests.bridge_fixtures import native_card, native_card_state
     codex = scenario == 'codex_block'
-    env.thick.gc.set_deck([('HEADBUTT', 0)] + [('STRIKE_RED', 0)] * 9)
+    card = 'WARCRY' if scenario == 'warcry_hex' else 'HEADBUTT'
+    env.thick.gc.set_deck([(card, 0)] + [('STRIKE_RED', 0)] * 9)
     env.thick.gc.set_relics(["Nilry's Codex"] if codex else [])
     env.thick.gc.set_potion_state([])
     encounter = {'codex_block': 'Jaw Worm', 'headbutt_block': 'Snake Plant',
-                 'headbutt_curl': 'Two Louse', 'headbutt_reactive': 'Writhing Mass'}[scenario]
+                 'headbutt_curl': 'Two Louse', 'headbutt_reactive': 'Writhing Mass',
+                 'warcry_hex': 'Chosen', 'headbutt_plated': 'Shell Parasite',
+                 'headbutt_plated_last': 'Shell Parasite'}[scenario]
     env.thick.bc = bc = sts.create_battle(env.thick.gc, encounter)
     bc.set_card_state(native_card_state(
-        hand=[native_card('HEADBUTT', 0)] + [native_card('STRIKE_RED', i) for i in (1, 2)],
+        hand=[native_card(card, 0)] + [native_card('STRIKE_RED', i) for i in (1, 2)],
         draw=[native_card('STRIKE_RED', i) for i in range(3, 8)],
         discard=[native_card('STRIKE_RED', i) for i in (8, 9)]))
     if codex:
         bc.set_player_status('METALLICIZE', 6)
         bc.set_player_status('PLATED_ARMOR', 3)
+    if scenario == 'warcry_hex':
+        bc.set_player_status('HEX', 1)
+    if scenario.startswith('headbutt_plated'):
+        bc.set_monster_block(0, 0)
+        bc.set_monster_status(0, 'PLATED_ARMOR', 1 if scenario.endswith('_last') else 6)
     env._invalidate_backend_cache()
     bits = next(bits for _, bits in env._joint_policy_actions()
                 if (sts.Action(bits).action_type == sts.ActionType.END_TURN if codex else
@@ -422,10 +430,11 @@ def _full480_pending_block(env, scenario):
                     and sts.Action(bits).source_idx == 0 and sts.Action(bits).target_idx == 0))
     action = dict((bits, action) for action, bits in env._joint_policy_actions())[bits]
     env.step(action)
-    assert bc.select_info()['context'] == ('CODEX' if codex else 'HEADBUTT')
+    assert bc.select_info()['context'] == ('CODEX' if codex else card)
 
 
-@pytest.mark.parametrize('scenario', ['codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive'])
+@pytest.mark.parametrize('scenario', ['codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive',
+     'warcry_hex', 'headbutt_plated', 'headbutt_plated_last'])
 def test_full480_pending_block_roundtrip(combat_factory, scenario):
     import slaythespire as sts
     from rl.search.full480.run_device import cpu_bridge
@@ -441,11 +450,20 @@ def test_full480_pending_block_roundtrip(combat_factory, scenario):
     restored.step(bits)
     env.thick.bc.execute(sts.Action(bits))
     np.testing.assert_array_equal(restored.snapshot()['words'], cpu.State(env.thick.bc).snapshot()['words'])
+    state = env.thick.bc.to_dict()
+    if scenario == 'warcry_hex':
+        assert sum(card[0] == 'DAZED' for card in state['draw']) == 1
+    if scenario.startswith('headbutt_plated'):
+        powers = dict(state['monsters'][0]['powers'])
+        assert powers.get('Plated Armor', 0) == (0 if scenario.endswith('_last') else 5)
+        if scenario.endswith('_last'):
+            assert state['monsters'][0]['move'] == 'SHELLED_PARASITE_STUNNED'
 
 
 @pytest.mark.parametrize('scenario,anchored', [(s, False) for s in
     ('prefix', 'growth', 'escape', 'gamble', 'toolbox', 'armaments', 'burning_pact', 'burning_pact_up',
-     'codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive')] +
+     'codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive',
+     'warcry_hex', 'headbutt_plated', 'headbutt_plated_last')] +
     [(s, True) for s in ('prefix', 'growth', 'escape', 'anchor_duplicates')])
 def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, anchored, tmp_path, monkeypatch):
     from rl.search.full480.combo_runtime import BattleArena, BattlePool
@@ -503,7 +521,8 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                     and sts.Action(bits).source_idx == slot)
         action = dict((bits, action) for action, bits in latent_env._joint_policy_actions())[bits]
         latent_env.step(action)
-    if scenario in ('codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive'):
+    if scenario in ('codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive',
+                    'warcry_hex', 'headbutt_plated', 'headbutt_plated_last'):
         _full480_pending_block(latent_env, scenario)
     policy = DeckLatentPolicy(latent_env.observation_space, latent_env.action_space,
         lambda _: 5e-5, d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
@@ -523,7 +542,8 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
         budget = len(mapping) * len(worlds) - 1
         row = cpu.State(latent_env.thick.bc).root_plan(20261111, budget, 1., 8, False)
         if scenario in ('gamble', 'toolbox', 'armaments', 'burning_pact', 'burning_pact_up',
-                        'codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive'):
+                        'codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive',
+                        'warcry_hex', 'headbutt_plated', 'headbutt_plated_last'):
             assert row['snapshot']['input_state'] == 2
             assert row['snapshot']['queue_size'] > 0
             assert row['snapshot']['portable'] and row['eligible']

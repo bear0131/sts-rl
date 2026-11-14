@@ -56,6 +56,10 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
    assert original_text.count(old)==1 and replacement in (simulator/relative).read_text()
    target=continuation/relative;target.parent.mkdir(parents=True,exist_ok=True)
    original_text=original_text.replace(old,replacement)
+   old='Actions::MakeTempCardInDrawPile(CardInstance(CardId::DAZED), 1, true)'
+   replacement='OpeningAction::create(OpeningAction::TempDraw, int(CardId::DAZED), 1, true)'
+   assert original_text.count(old)==3 and (simulator/relative).read_text().count(replacement)==3
+   original_text=original_text.replace(old,replacement)
    begin=original_text.index('void BattleContext::callEndOfTurnActions()')
    end=original_text.index('void BattleContext::onTurnEnding()',begin)
    section=original_text[begin:end]
@@ -70,6 +74,12 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
    assert original_text.count('Actions::ReactiveRollMove(idx)')==1
    original_text=original_text.replace('Actions::MonsterGainBlock(', 'OpeningAction::create(OpeningAction::MonsterBlock, ')
    original_text=original_text.replace('Actions::ReactiveRollMove(idx)', 'OpeningAction::create(OpeningAction::ReactiveRoll, idx)')
+   # Move the original queued Plated Armor body to its typed action above.
+   start=original_text.index('        const int target = idx;', original_text.index('    if (hasStatus<MS::PLATED_ARMOR>()) {', original_text.index('    if (damage <= 0) return;')))
+   end=original_text.index('    } else if (hasStatus<MS::CURL_UP>()', start)
+   replacement='        bc.addToBot(OpeningAction::create(OpeningAction::PlatedArmorDamage, idx));\n\n'
+   assert replacement in (simulator/relative).read_text()
+   original_text=original_text[:start]+replacement+original_text[end:]
    target=continuation/relative;target.write_text(original_text)
    continuation_sources[relative]=dict(native_sha256=digest(simulator/relative),generated_sha256=digest(target))
   entry=(source/filename).read_text()

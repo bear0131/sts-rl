@@ -479,18 +479,7 @@ void Monster::attackedUnblockedHelper(BattleContext &bc, int damage) {
     if (damage <= 0) return;
 
     if (hasStatus<MS::PLATED_ARMOR>()) {
-        const int target = idx;
-        bc.addToBot({[target](BattleContext &ctx) {
-            auto &monster = ctx.monsters.arr[target];
-            if (!monster.hasStatus<MS::PLATED_ARMOR>()) return;
-            monster.decrementStatus<MS::PLATED_ARMOR>();
-            if (!monster.hasStatus<MS::PLATED_ARMOR>() && monster.id == MonsterId::SHELLED_PARASITE) {
-                // ReducePower/RemoveSpecificPower enqueue ChangeState at bottom.
-                ctx.addToBot({[target](BattleContext &next) {
-                    next.monsters.arr[target].setMove(MMID::SHELLED_PARASITE_STUNNED);
-                }});
-            }
-        }});
+        bc.addToBot(OpeningAction::create(OpeningAction::PlatedArmorDamage, idx));
 
     } else if (hasStatus<MS::CURL_UP>() && damage < curHp) {
         bc.addToBot(OpeningAction::create(OpeningAction::MonsterBlock, this->idx, getStatus<MS::CURL_UP>()) );

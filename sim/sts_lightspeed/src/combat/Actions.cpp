@@ -51,6 +51,16 @@ Action OpeningAction::materialize() const {
         case MonsterBlock: return Actions::MonsterGainBlock(a, b);
         case ReactiveRoll: return Actions::ReactiveRollMove(a);
         case EndTurnOrbs: return Actions::TriggerEndOfTurnOrbsAction();
+        case MonsterMove: return Actions::SetMonsterMove(a, MonsterMoveId(b));
+        case PlatedArmorDamage: return {[target=a](BattleContext &ctx) {
+            auto &monster = ctx.monsters.arr[target];
+            if (!monster.hasStatus<MS::PLATED_ARMOR>()) return;
+            monster.decrementStatus<MS::PLATED_ARMOR>();
+            if (!monster.hasStatus<MS::PLATED_ARMOR>() && monster.id == MonsterId::SHELLED_PARASITE) {
+                // ReducePower/RemoveSpecificPower enqueue ChangeState at bottom.
+                ctx.addToBot(OpeningAction::create(OpeningAction::MonsterMove, target, int(MMID::SHELLED_PARASITE_STUNNED)));
+            }
+        }};
         case RedSkull: return {[](BattleContext &bc) {
             auto &player = bc.player;
             if (!player.redSkullActive && player.bloodied) {
