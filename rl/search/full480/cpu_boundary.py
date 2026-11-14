@@ -78,12 +78,21 @@ class GameMirror:
   self.arena.close();self.identities.clear()
 
 class CpuFallback:
- def __init__(self,jobs,environments,service,*,capacity=128,threads=8,reference=False):
+ def __init__(self,jobs,environments,service,*,capacity=128,threads=8,reference=False,rows=None):
   assert jobs and capacity>0;self.jobs=list(jobs);self.service=service;self.reference=reference;self.pending=None;self.rows=0;self.calls=0;self.complete=False
   self.temps=[j[2].temperature for j in jobs]
-  self.roots=[sts.WaveRoot(environments[i].thick.gc,environments[i].thick.bc,cfg,nonce) for i,tier,cfg,nonce in jobs]
+  self.paired=rows is not None;self.root_rows=rows;self.environments=environments
+  if self.paired:
+   from .run_device import cpu_fallback
+   native=cpu_fallback()
+   self.roots=[native.WaveRoot(environments[i].thick.gc,environments[i].thick.bc,cfg,nonce,True) for i,tier,cfg,nonce in jobs]
+   for root,(i,_,_,_) in zip(self.roots,jobs,strict=True):
+    row=rows[i];root.configure_paired(row['action_bits'],row['prefix'],row['worlds'])
+  else:
+   native=sts
+   self.roots=[sts.WaveRoot(environments[i].thick.gc,environments[i].thick.bc,cfg,nonce) for i,tier,cfg,nonce in jobs]
   for i,r in enumerate(self.roots):r.inventory_key=i
-  self.wave=sts.WaveDiag(self.roots,min(capacity,sum(j[2].simulations for j in jobs)),threads)
+  self.wave=native.WaveDiag(self.roots,min(capacity,sum(j[2].simulations for j in jobs)),threads)
   self.wave.full_tokens=True;self.wave.fast_codec=False;self.wave.gpu_choice=True;self.wave.aos_mode=True;self.wave.short_atoms=False
   self.wave.raw_mode=True;self.wave.aos_mode=False
   assert len(set(self.temps))==1
@@ -121,20 +130,43 @@ class CpuFallback:
     return []
    self.pending=None;self.metrics['pending_wall_seconds']+=time.monotonic()-submitted
    picks=answer['picks']
-   if self.audit and not self.reference:
+   if self.audit and not self.reference and not self.paired:
     tick=time.monotonic();self.validate(fields,answer['logits'],picks,answer['gold'],raw);self.metrics['audit_seconds']+=time.monotonic()-tick
-   self.wave.choose(np.asarray(picks,np.int32));self.rows+=len(fields[0]);self.calls+=1
+   if self.paired:
+    self.wave.choose_paired(np.asarray(picks,np.int32),np.asarray(answer['values'],np.float64))
+    self.rows+=int((fields['kinds']==0).sum());self.metrics['anchor_rows']=self.metrics.get('anchor_rows',0)+int(np.isin(fields['kinds'],[1,3]).sum())
+   else:
+    self.wave.choose(np.asarray(picks,np.int32));self.rows+=len(fields[0])
+   self.calls+=1
    self.metrics['frames']+=1;self.metrics['shapes'][shape]=self.metrics['shapes'].get(shape,0)+1
    self.metrics['cpu_step_seconds']+=time.monotonic()-start
    return []
   b,n,t,q=self.wave.ready()
   if not b:
-   self.complete=True;results=self.wave.results()
-   assert sum(r['stats']['simulations'] for r in results)==sum(j[2].simulations for j in self.jobs)
-   assert sum(r['stats']['policy_calls'] for r in results)==self.rows
+   self.complete=True;results=self.wave.paired_results() if self.paired else self.wave.results()
+   assert sum(r['simulations'] if self.paired else r['stats']['simulations'] for r in results)==sum(j[2].simulations for j in self.jobs)
+   assert sum(r['nonforced_decisions'] if self.paired else r['stats']['policy_calls'] for r in results)==self.rows
    self.metrics.update(rows=self.rows,calls=self.calls,completed=True)
    self.metrics['cpu_step_seconds']+=time.monotonic()-start
    return list(zip(self.jobs,results,strict=True))
+  if self.paired:
+   from env.core.run_env import _nosl_compact_lut
+   packed=self.wave.compact(np.asarray(_nosl_compact_lut()['language_card_index'],np.int32))
+   obs={key:np.empty((b,)+value.shape,dtype=value.dtype) for key,value in self.root_rows[self.jobs[0][0]]['observation'].items()}
+   owners=np.asarray(packed['root_indices']);kinds=np.asarray(packed['leaf_kind'])
+   for root in np.unique(owners):
+    select=np.flatnonzero(owners==root);index=self.jobs[root][0];env=self.environments[index]
+    part={key:np.asarray(value)[select] for key,value in packed.items()}
+    current=env._native_packed_observation_batch(part)
+    for key in obs:obs[key][select]=current.get(key,self.root_rows[index]['observation'][key])
+    before=obs['outer_deck_misc'][select];misc=part['permanent_misc'];changed=np.isfinite(misc);before[changed]=misc[changed];obs['outer_deck_misc'][select]=before
+   obs['combat_exit_anchor'][:]=np.stack((kinds==1,kinds==3),1)
+   fields=dict(observations=obs,draws=np.asarray(packed['draws']),kinds=kinds)
+   tick=time.monotonic();ident=self.service.begin_call('fallback',(fields,1.,None,self.reference))
+   self.pending=(ident,fields,None,str((b,n)),tick)
+   self.metrics['encode_score_seconds']+=time.monotonic()-tick
+   self.metrics['cpu_step_seconds']+=time.monotonic()-start
+   return []
   e=self.wave.entity_count();ints=lambda shape:np.empty(shape,np.int32)
   fields=[np.empty((b,32),np.float32),np.empty((n,24),np.float32),ints((n,10)),ints(n),np.zeros((b,t),np.int32),
    np.zeros((b,t),np.int32),np.zeros((b,t),np.int32),np.zeros((b,t),bool),np.zeros((b,max(1,q)),np.int32),

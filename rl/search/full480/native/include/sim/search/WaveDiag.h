@@ -42,11 +42,16 @@ using WaveStatePtr=std::unique_ptr<BattleContext,WaveStateDelete>;
 
 namespace sts::search {
 struct WaveRoot {
+    bool pairedAnchor=false;
+    int prefix=0;
+    std::vector<std::array<std::uint64_t,5>> worlds;
     BattleContext root;
     std::vector<PlayoutEntity> inventory;
     std::vector<CardInstance> canonical;int keyForInventory=0;int deck; SmallSearchConfig cfg; std::uint64_t nonce;
     std::vector<Action> actions;std::vector<std::uint64_t> semantic;std::vector<int> order;
-    WaveRoot(const GameContext&,const BattleContext&,SmallSearchConfig,std::uint64_t);
+    WaveRoot(const GameContext&,const BattleContext&,SmallSearchConfig,std::uint64_t,bool=false);
+    void configurePaired(const std::vector<std::uint32_t>&,int,
+                        const std::vector<std::array<std::uint64_t,5>>&);
 };
 struct SharedStart {
     std::once_flag once;
@@ -55,6 +60,8 @@ struct SharedStart {
     std::array<double,64> uniforms{};
 };
 struct WaveLane { int factBound=0;
+    std::array<std::uint64_t,4> pcg{};
+    int prefix=0,leafKind=0,jobPrefixes=0,jobMaxActions=0;
     int sharedIndex=-1,drawIndex=0;std::uint64_t policySeed=0;
     WaveStatePtr state;
     std::unique_ptr<std::mt19937_64> rng; int task=-1, depth=0;
@@ -71,7 +78,8 @@ public:
     std::vector<std::shared_ptr<WaveRoot>> roots;
     bool zoneMode=false,zoneVerify=false,resident=false;bool shortAtoms=false;int shareMode=0;std::vector<int> worldOffsets;
     std::unique_ptr<SharedStart[]> starts;bool counterDraw=false;std::shared_ptr<NeuralSearchBatch> poolOwner;NeuralSearchBatch &pool; std::unique_ptr<MappedBattleBlock> mappedBlock; std::vector<WaveLane> lanes;std::vector<int> workRoot,local,chosen;
-    std::vector<int> depths,forceN,outcomes;std::vector<std::uint64_t> actionN;
+    std::vector<int> depths,forceN,outcomes,prefixN,maxActionN;std::vector<std::uint64_t> actionN;
+    std::vector<double> pendingValues;
     std::vector<double> values;std::vector<int> active;std::atomic<int> nextTask{0};bool awaiting=false;
     WaveDiag(std::vector<std::shared_ptr<WaveRoot>>,int,int);
     std::vector<int> pendingPicks;bool aosMode=false;bool gpuChoice=false;bool rawMode=false;std::vector<int> entityOffsets;bool fastCodec=true;bool fullTokens=false;std::vector<int> offset;

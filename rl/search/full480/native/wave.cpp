@@ -712,17 +712,39 @@ SmallSearchResult smallPairedRootSearch(const BattleContext &root,const SmallPla
 
 #include "sim/search/WaveDiag.h"
 namespace sts::search {
-WaveRoot::WaveRoot(const GameContext &gc,const BattleContext &bc,SmallSearchConfig c,std::uint64_t n):root(bc),inventory(playoutInventory(gc)),deck(gc.deck.size()),cfg(c),nonce(n) {
-    if(root.player.hasRelic<R::RUNIC_DOME>()||root.outcome!=Outcome::UNDECIDED||cfg.playoutDepth!=200)throw std::logic_error("invalid panel");
+WaveRoot::WaveRoot(const GameContext &gc,const BattleContext &bc,SmallSearchConfig c,std::uint64_t n,bool paired):pairedAnchor(paired),root(bc),inventory(playoutInventory(gc)),deck(gc.deck.size()),cfg(c),nonce(n) {
+    if((!pairedAnchor&&root.player.hasRelic<R::RUNIC_DOME>())||root.outcome!=Outcome::UNDECIDED||cfg.playoutDepth<1||cfg.playoutDepth>200)throw std::logic_error("invalid panel");
 #ifdef STS_ENABLE_RULE_TRACE
     root.atomicStepObserver={};
 #endif
-    auto rootObs=smallFeatures(root);for(auto &x:rootObs.actions){actions.emplace_back(x.bits);semantic.push_back(NoslCombatTrainer::strongActionKey(root,actions.back()));order.push_back(int(order.size()));}
-    std::mt19937_64 shuffle(noslMix(nonce^0x5045524dULL));std::shuffle(order.begin(),order.end(),shuffle);
+    if(!pairedAnchor){
+        auto rootObs=smallFeatures(root);for(auto &x:rootObs.actions){actions.emplace_back(x.bits);semantic.push_back(NoslCombatTrainer::strongActionKey(root,actions.back()));order.push_back(int(order.size()));}
+        std::mt19937_64 shuffle(noslMix(nonce^0x5045524dULL));std::shuffle(order.begin(),order.end(),shuffle);
+    }
     auto &draw=root.cards.drawPile;const int drawCount=int(draw.size()),known=root.player.hasRelic<R::FROZEN_EYE>()?drawCount:std::clamp(root.cards.knownDrawTop,0,drawCount);
-    canonical.assign(draw.begin(),draw.end()-known);
+    canonical.assign(draw.begin(),pairedAnchor?draw.end():draw.end()-known);
     std::sort(canonical.begin(),canonical.end(),[](const auto &a,const auto &b){return a.getUniqueId()<b.getUniqueId();});
 
+}
+void WaveRoot::configurePaired(const std::vector<std::uint32_t>&bits,int selected,
+        const std::vector<std::array<std::uint64_t,5>>&words){
+    if(!pairedAnchor||bits.size()<2||words.empty()||!actions.empty())throw std::logic_error("invalid paired root");
+    prefix=selected;worlds=words;
+    for(auto b:bits){Action a(b);if(!validAutoregressiveAction(a,root,prefix))throw std::logic_error("illegal paired root action");
+        actions.push_back(a);semantic.push_back(int(a.getActionType())<5?NoslCombatTrainer::strongActionKey(root,a):0);order.push_back(order.size());}
+    if(cfg.simulations!=int(actions.size()*worlds.size()))throw std::logic_error("incomplete paired world");
+}
+static bool executePaired(Action a,BattleContext&bc,int&prefix){
+    if(a.getActionType()==kSelectNext){prefix|=1<<a.getSourceIdx();return false;}
+    if(a.getActionType()==kSelectStop)Action(ActionType::MULTI_CARD_SELECT,prefix).execute(bc);else a.execute(bc);
+    prefix=0;return true;
+}
+static double pairedDraw(std::array<std::uint64_t,4>&s){
+    using U=unsigned __int128;
+    const U multiplier=(U(0x2360ed051fc65da4ULL)<<64)|0x4385df649fccf645ULL;
+    U state=(U(s[1])<<64)|s[0],inc=(U(s[3])<<64)|s[2];state=state*multiplier+inc;
+    s[0]=std::uint64_t(state);s[1]=std::uint64_t(state>>64);
+    auto x=s[0]^s[1];unsigned r=s[1]>>58;return double(((x>>r)|(x<<((-r)&63)))>>11)*0x1.0p-53;
 }
 void applyRootWorld(BattleContext &bc,const WaveRoot &r,std::uint64_t nonce){
     auto streamSeed=[](std::uint64_t v,std::uint64_t k){return noslMix(v^noslMix(k));};
@@ -734,7 +756,7 @@ void applyRootWorld(BattleContext &bc,const WaveRoot &r,std::uint64_t nonce){
     bc.shuffleRng = sts::Random(streamSeed(nonce, 6));
     auto &draw=bc.cards.drawPile;
     std::copy(r.canonical.begin(),r.canonical.end(),draw.begin());
-    java::Collections::shuffle(draw.begin(),draw.begin()+r.canonical.size(),java::Random(noslMix(nonce^0x534d414c4cULL)));
+    java::Collections::shuffle(draw.begin(),draw.begin()+r.canonical.size(),java::Random(r.pairedAnchor?streamSeed(nonce,7):noslMix(nonce^0x534d414c4cULL)));
 }
 static std::shared_ptr<NeuralSearchBatch> reusePool(int n){
     static std::mutex mutex;static std::unordered_map<int,std::shared_ptr<NeuralSearchBatch>> pools;
@@ -749,9 +771,9 @@ void WaveDiag::resetGroups(std::vector<std::shared_ptr<WaveRoot>> v,int batch){
     for(const auto &l:lanes)if(l.task>=0||l.ready)throw std::logic_error("live lane at reset");
     roots=std::move(v);lanes.resize(batch);nextTask.store(0);active.clear();pendingPicks.clear();
     workRoot.clear();local.clear();chosen.clear();worldOffsets.clear();starts.reset();
-    depths.clear();forceN.clear();outcomes.clear();actionN.clear();values.clear();
+    depths.clear();forceN.clear();outcomes.clear();actionN.clear();values.clear();prefixN.clear();maxActionN.clear();pendingValues.clear();
     for(auto &l:lanes){
-        l.lastRow=-1;l.sharedIndex=-1;l.drawIndex=0;l.chosenNext=-1;l.pubSec=l.encodeSec=0;l.dirtyTokens=l.allTokens=0;
+        l.lastRow=-1;l.sharedIndex=-1;l.drawIndex=0;l.chosenNext=-1;l.pubSec=l.encodeSec=0;l.dirtyTokens=l.allTokens=0;l.leafKind=0;l.prefix=0;
         l.forced=l.steps=l.scored=0;l.cached.reset();
         if(l.cardCache)for(auto &z:l.cardCache->zones)z.deck=-1;
     }
@@ -781,7 +803,7 @@ void WaveDiag::resetGroups(std::vector<std::shared_ptr<WaveRoot>> v,int batch){
     }else{
         for(int j=0;j<mx;++j)for(int i=0;i<int(roots.size());++i)if(j<roots[i]->cfg.simulations)addTask(i,j);
     }
-    depths.resize(local.size());forceN.resize(local.size());outcomes.resize(local.size());actionN.resize(local.size());values.resize(local.size(),std::numeric_limits<double>::quiet_NaN());
+    depths.resize(local.size());forceN.resize(local.size());outcomes.resize(local.size());prefixN.resize(local.size());maxActionN.resize(local.size());actionN.resize(local.size());values.resize(local.size(),std::numeric_limits<double>::quiet_NaN());
 }
 static unsigned waveHash(unsigned x){x=(x^(x>>16))*0x7feb352du;x=(x^(x>>15))*0x846ca68bu;return x^(x>>16);}
 struct WTable {unsigned id=~0u;std::array<unsigned,33> code{};};
@@ -801,12 +823,15 @@ static int normalFactBound(const BattleContext &bc){
 }
 void WaveDiag::encode(WaveLane &l){
     auto &r=*roots[workRoot[l.task]];auto &e=l.entity;
+    // Current compact observation is packed in the existing native batch
+    // transport. Its GPU consumer owns token projection and query compaction.
+    if(r.pairedAnchor)return;
     auto encodeStart=std::chrono::steady_clock::now();const bool plain=aosMode&&l.state->inputState==InputState::PLAYER_NORMAL;
     static const std::vector<SmallActionFeatures> noActions;
     if(plain){l.factBound=normalFactBound(*l.state);e.entities.clear();e.sources.clear();e.targets.clear();}
-    else playoutEntities(*l.state,r.deck,l.obs.actions,e,false);
+    else playoutEntities(*l.state,r.deck,l.obs.actions,e);
     auto pubEnd=std::chrono::steady_clock::now();l.pubSec+=std::chrono::duration<double>(pubEnd-encodeStart).count();int battleRows=e.entities.size();if(!aosMode)e.entities.insert(e.entities.end(),r.inventory.begin(),r.inventory.end());
-    
+
     if(plain){
         auto &state=*l.state;l.rawExtra.clear();l.live.resize(33);auto m=l.obs.actions.size();l.src.resize(m);l.target.resize(m);
         std::uint64_t query=1;
@@ -833,7 +858,7 @@ void WaveDiag::encode(WaveLane &l){
         if(used[i]&&sourceSlot[i]<0)sourceSlot[i]=33+extra++;
         owner[i]=s;
     }
-    
+
     const int t=33+extra;
     if(rawMode&&fullTokens){
         count.assign(t,0);l.symbols.assign(t,0);
@@ -904,18 +929,27 @@ l.features.assign(t,{});l.symbols.assign(t,0);count.assign(t,0);
 }
 void WaveDiag::prepareLane(std::size_t i){
         auto &l=lanes[i];l.ready=false;
+        if(l.leafKind&&l.lastRow>=0){
+            const double value=pendingValues.at(l.lastRow);if(!std::isfinite(value))throw std::logic_error("nonfinite paired leaf");
+            values[l.task]=value;depths[l.task]=l.depth;forceN[l.task]=l.jobForced;
+            outcomes[l.task]=l.leafKind;actionN[l.task]=l.jobActions;prefixN[l.task]=l.jobPrefixes;maxActionN[l.task]=l.jobMaxActions;
+            l.task=-1;l.leafKind=0;l.lastRow=-1;
+        }
         if(gpuChoice&&l.lastRow>=0)l.chosenNext=pendingPicks.at(l.lastRow);
         if(l.chosenNext>=0){
             int j=l.chosenNext; l.chosenNext=-1;l.lastRow=-1;
             if(j>=int(l.obs.actions.size()))throw std::logic_error("GPU chose illegal candidate");
-            Action(l.obs.actions[j].bits).execute(*l.state);++l.steps;++l.depth;++l.scored;l.jobActions+=l.obs.actions.size();
+            if(roots[workRoot[l.task]]->pairedAnchor)l.jobPrefixes+=!executePaired(Action(l.obs.actions[j].bits),*l.state,l.prefix);
+            else Action(l.obs.actions[j].bits).execute(*l.state);
+            ++l.steps;++l.depth;++l.scored;l.jobActions+=l.obs.actions.size();
         }thread_local std::vector<Action> acts;
         for(;;){
             if(l.task<0){
                 int task=nextTask.fetch_add(1);if(task>=int(local.size()))return;
                 l.task=task;if(resident&&l.cardCache)for(auto &z:l.cardCache->zones)z.deck=-1;auto &r=*roots[workRoot[task]];auto world=noslMix(noslMix(r.nonce)+local[task]/r.order.size());
+                if(r.pairedAnchor){const auto&w=r.worlds.at(local[task]/r.order.size());world=w[0];std::copy_n(w.begin()+1,4,l.pcg.begin());}
                 l.sharedIndex=-1;l.drawIndex=0;l.policySeed=noslMix(world^0x504149524544ULL);
-                if(shareMode&&gpuChoice){
+                if(shareMode&&gpuChoice&&!r.pairedAnchor){
                     l.sharedIndex=worldOffsets[workRoot[task]]+local[task]/r.order.size();auto &entry=starts[l.sharedIndex];
                     std::call_once(entry.once,[&]{
                         if(shareMode&1){std::mt19937_64 stream(l.policySeed);for(auto &u:entry.uniforms)u=std::generate_canonical<double,std::numeric_limits<double>::digits>(stream);}
@@ -924,27 +958,38 @@ void WaveDiag::prepareLane(std::size_t i){
                     if(shareMode&2){if(l.state)*l.state=*entry.base;else l.state=WaveStatePtr(new BattleContext(*entry.base));if(entry.remaining.fetch_sub(1,std::memory_order_acq_rel)==1)entry.base.reset();}
                     else {if(l.state)*l.state=r.root;else l.state=WaveStatePtr(new BattleContext(r.root));applyRootWorld(*l.state,r,world);}
                 }else {if(l.state)*l.state=r.root;else l.state=WaveStatePtr(new BattleContext(r.root));applyRootWorld(*l.state,r,world);}
-                int a=chosen[task];Edge edge{r.actions[a],r.semantic[a],0,0,{}};resolve(edge,*l.state).execute(*l.state);
-                if(!counterDraw&&(l.sharedIndex<0||!(shareMode&1))){if(!l.rng)l.rng=std::make_unique<std::mt19937_64>();l.rng->seed(l.policySeed);}l.depth=0;l.jobForced=0;l.jobActions=0;++l.steps;
+                int a=chosen[task];Edge edge{r.actions[a],r.semantic[a],0,0,{}};l.prefix=r.prefix;l.jobPrefixes=0;l.jobMaxActions=0;
+                if(r.pairedAnchor)l.jobPrefixes+=!executePaired(int(r.actions[a].getActionType())>=5?r.actions[a]:resolve(edge,*l.state),*l.state,l.prefix);
+                else resolve(edge,*l.state).execute(*l.state);
+                if(!r.pairedAnchor&&!counterDraw&&(l.sharedIndex<0||!(shareMode&1))){if(!l.rng)l.rng=std::make_unique<std::mt19937_64>();l.rng->seed(l.policySeed);}l.depth=r.pairedAnchor?1:0;l.jobForced=0;l.jobActions=0;++l.steps;
             }
             auto &s=*l.state;auto &r=*roots[workRoot[l.task]];
             if(s.outcome!=Outcome::UNDECIDED||l.depth>=r.cfg.playoutDepth){
+                if(r.pairedAnchor){
+                    l.leafKind=s.outcome==Outcome::UNDECIDED?4:int(s.outcome);
+                    if(s.outcome==Outcome::PLAYER_LOSS){values[l.task]=0;depths[l.task]=l.depth;forceN[l.task]=l.jobForced;outcomes[l.task]=2;actionN[l.task]=l.jobActions;prefixN[l.task]=l.jobPrefixes;maxActionN[l.task]=l.jobMaxActions;l.task=-1;l.leafKind=0;continue;}
+                    l.obs.actions.clear();l.ready=true;return;
+                }
                 if(s.outcome!=Outcome::UNDECIDED)values[l.task]=smallTerminalValue(s,r.cfg.boss)/(r.cfg.boss?1.:std::max(1,r.root.player.maxHp));
                 depths[l.task]=l.depth;forceN[l.task]=l.jobForced;outcomes[l.task]=int(s.outcome);actionN[l.task]=l.jobActions;
                 l.task=-1;continue;
             }
             acts.clear();
-            if(s.inputState==InputState::PLAYER_NORMAL){
+            if(r.pairedAnchor)acts=autoregressiveActions(s,l.prefix);
+            else if(s.inputState==InputState::PLAYER_NORMAL){
                 if(smallTurnCardLimitReached(s))acts.emplace_back(ActionType::END_TURN);
                 else Action::appendNormalActions(s,acts,false);
             }else acts=budgetActions(s);
-            if(acts.size()==1){acts[0].execute(s);++l.steps;++l.depth;++l.forced;++l.jobForced;continue;}
+            l.jobMaxActions=std::max(l.jobMaxActions,int(acts.size()));
+            if(acts.size()==1){if(r.pairedAnchor)l.jobPrefixes+=!executePaired(acts[0],s,l.prefix);else acts[0].execute(s);++l.steps;++l.depth;++l.forced;++l.jobForced;continue;}
             if(acts.empty())throw std::logic_error("empty live choices");
-            if(shortAtoms&&s.inputState==InputState::PLAYER_NORMAL){fillSmallState(s,l.obs);l.obs.actions.resize(acts.size());for(std::size_t j=0;j<acts.size();++j)l.obs.actions[j].bits=acts[j].bits;}
+            if(r.pairedAnchor){std::stable_sort(acts.begin(),acts.end(),[&](Action a,Action b){return jointActionId(a,s)<jointActionId(b,s);});l.obs.actions.resize(acts.size());for(std::size_t j=0;j<acts.size();++j)l.obs.actions[j].bits=acts[j].bits;}
+            else if(shortAtoms&&s.inputState==InputState::PLAYER_NORMAL){fillSmallState(s,l.obs);l.obs.actions.resize(acts.size());for(std::size_t j=0;j<acts.size();++j)l.obs.actions[j].bits=acts[j].bits;}
             else featuresForActions(s,acts,l.obs);
             encode(l);
             if(gpuChoice){
-                if(counterDraw)l.drawNext=double(noslMix(l.policySeed+0x9e3779b97f4a7c15ULL*std::uint64_t(l.drawIndex))>>11)*0x1.0p-53;
+                if(r.pairedAnchor)l.drawNext=pairedDraw(l.pcg);
+                else if(counterDraw)l.drawNext=double(noslMix(l.policySeed+0x9e3779b97f4a7c15ULL*std::uint64_t(l.drawIndex))>>11)*0x1.0p-53;
                 else if(l.sharedIndex>=0&&(shareMode&1)&&l.drawIndex<64)l.drawNext=starts[l.sharedIndex].uniforms[l.drawIndex];
                 else {if(l.sharedIndex>=0&&(shareMode&1)&&l.drawIndex==64){if(!l.rng)l.rng=std::make_unique<std::mt19937_64>();l.rng->seed(l.policySeed);l.rng->discard(64);}
                     l.drawNext=std::generate_canonical<double,std::numeric_limits<double>::digits>(*l.rng);}

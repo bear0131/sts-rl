@@ -32,43 +32,46 @@ def run_worker(commands,responses,settings):
  try:
   torch.set_num_threads(1);torch.set_float32_matmul_precision('highest')
   torch.backends.cuda.matmul.allow_tf32=False;torch.backends.cudnn.allow_tf32=False
-  sys.path.insert(0,str(P.parent/'devicegraph141'))
-  # Bind local layout BEFORE legacy import-time search paths can cache another ABI.
-  for module_name in ['root_ledger','state_pages','layout_bindings','frame_kernels','combo_kernels','combo_model','frame_modules','frame_pipeline','step_kernels','step_pipeline','combo_runtime','fallback_ieee_kernels','fallback_ieee_model','fallback_frame']:
-   path=(P/(module_name+'.py')).resolve()
-   spec=importlib.util.spec_from_file_location(module_name,path);module=importlib.util.module_from_spec(spec)
-   sys.modules[module_name]=module;spec.loader.exec_module(module)
-   assert Path(module.__file__).resolve()==path
+  import importlib
+  for module_name in ['root_ledger','state_pages','layout_bindings','frame_kernels','combo_kernels','combo_model','frame_modules','frame_pipeline','step_kernels','step_pipeline','combo_runtime','fallback_ieee_kernels','fallback_ieee_model','fallback_frame','flex_stream','flex_adapter','flex_runtime','flex_ragged']:
+   module=importlib.import_module('.'+module_name,__package__)
+   path=P/(module_name+'.py');assert Path(module.__file__).resolve()==path.resolve()
    loaded_modules[module_name]=dict(path=str(path),sha256=hashlib.sha256(path.read_bytes()).hexdigest())
-  for module_name in ['flex_stream','flex_adapter','flex_runtime','flex_ragged']:
-   path=(P/(module_name+'.py')).resolve()
-   assert Path(sys.modules[module_name].__file__).resolve()==path
-   loaded_modules[module_name]=dict(path=str(path),sha256=hashlib.sha256(path.read_bytes()).hexdigest())
-  sys.path.insert(0,str(P.parent/'devicefallback141'))
-  from packed_fallback import PackedScorer,encode_public_roots,pack_rows
-  from fallback_frame import FallbackFrame
-  from combo_runtime import BattleArena,BattlePool
+  from rl.policies.token_regret import encode_public_roots,pack_rows
+  from .fallback_frame import FallbackFrame
+  from .combo_runtime import BattleArena,BattlePool
+  from .combo_model import DeckWeights
+  from .deck_inputs import DeckInputTables
+  from .run_device import artifact_directory
+  artifacts=artifact_directory()
   from rl.algorithms.upper_probe import state_digest
   from rl.search.rollout_inference import UpperPolicyInference
   from rl.algorithms import independent_rollout as ind
   policy=torch.load(settings['policy_path'],map_location='cpu',weights_only=False)
-  before=state_digest(policy.state_dict());assert before=='6a0ace45db866af66fb2939fa966fbc5ff80e7154178fa536ea9ca78a1c0083e'
+  before=state_digest(policy.state_dict());assert before==settings['expected_digest']
   policy=policy.cuda().eval()
   with torch.inference_mode():
-   arena=BattleArena(settings['capacity'])
-   engine=BattlePool(arena,settings['budget_cap'],net=policy.small_playout,frame=settings['frame'],tile=settings['tile'])
-   actual=engine.frame_pipeline.modules.identity
-   expected={name:json.loads((P/receipt).read_text())['cubin_sha256'] for name,receipt in [('observer','observer-compile-0-result.json'),('builder','builder-build.json')]}
+   deck=getattr(policy.core,'model_contract',None)=='deck-latent-combat-v1'
+   upper=UpperPolicyInference(policy.core,'cuda');upper.__enter__()
+   flat=None
+   if deck:
+    flat=DeckWeights(policy.core);flat.input_tables=DeckInputTables(policy.core,settings['prototypes']);flat.inference=upper
+   arena=BattleArena(settings['capacity'],deck=deck)
+   engine=BattlePool(arena,settings['budget_cap'],net=policy.core.combat if deck else policy.small_playout,flat=flat,frame=settings['frame'],tile=settings['tile'])
+   actual=engine.frame_pipeline.modules.identity;directory=artifacts/'deck' if deck else artifacts
+   expected={name:json.loads((directory/receipt).read_text())['cubin_sha256'] for name,receipt in [('observer','observer-compile-0-result.json'),('builder','builder-build.json')]}
    assert {name:actual[name]['sha256'] for name in expected}==expected,('wrong compiled inference backend',actual,expected)
    rules=engine.modules.identity['rules']
-   assert rules['cubin_sha256']==json.loads((P/'rule-compile-0-result.json').read_text())['cubin_sha256']
+   assert rules['cubin_sha256']==json.loads((directory/'rule-compile-0-result.json').read_text())['cubin_sha256']
    assert rules['abi_layout']==[16864,112] and rules['chain_step_version']==1
    assert engine.graph_scorer.statistics()['chain_step_version']==1
-   upper=UpperPolicyInference(policy.core,'cuda');upper.__enter__()
-   scorer=FallbackFrame(policy.small_playout)
+   if deck:
+    fallback_flat=DeckWeights(policy.core);fallback_flat.precision='ieee'
+    scorer=FallbackFrame(policy.core.combat,flat=fallback_flat)
+   else:scorer=FallbackFrame(policy.small_playout)
    torch.cuda.synchronize();torch.cuda.reset_peak_memory_stats()
    pids=[int(x) for x in subprocess.check_output(['nvidia-smi','--query-compute-apps=pid','--format=csv,noheader'],text=True).split()]
-   assert pids==[os.getpid()],pids
+   assert set(pids)==({os.getpid(),settings['parent_pid']} if settings['parent_cuda'] else {os.getpid()}),pids
    startup=stats();startup['gpu_pids']=pids;emit('ready',startup)
    stop=False
    while not stop:
@@ -115,9 +118,22 @@ def run_worker(commands,responses,settings):
       answer=dict(probabilities=dist.distribution.probs.cpu().numpy(),logprobs=dist.distribution.logits.cpu().numpy(),
        values=values.float().flatten().cpu().numpy(),reward=ind.reward_monitor.policy_probabilities(dist,obs),
        campfire=ind.campfire_monitor.policy_probabilities(dist,obs))
+      if deck:
+       context=upper.search_context(obs)
+       answer.update(logits=logits.float().cpu().numpy(),context=(context.combat.cpu().numpy(),context.anchor.cpu().numpy()))
      elif kind=='fallback':
       fields,temp,raw,reference=payload
-      if reference:
+      if deck:
+       obs=fields['observations'];kinds=fields['kinds'];count=len(kinds)
+       context=upper.search_context(obs);picks=np.zeros(count,np.int32);values=np.zeros(count,np.float64)
+       anchors=np.flatnonzero(np.isin(kinds,[1,3]));chains=np.flatnonzero((kinds==0)|(kinds==4))
+       if len(anchors):values[anchors]=upper.anchor_values({k:v[anchors] for k,v in obs.items()},context.anchor[anchors].cpu().numpy())
+       if len(chains):
+        observations={k:v[chains] for k,v in obs.items()};observations['_combat_context']=context.combat[chains].cpu().numpy()
+        chosen,leaf_values,logits=scorer.score_deck(observations,fields['draws'][chains],kinds[chains]==4)
+        picks[chains]=chosen;values[chains]=leaf_values
+       answer=dict(picks=picks,values=values)
+      elif reference:
        assert raw is not None
        for row,token in zip(raw,encode_public_roots(raw),strict=True):row['tokens']=token
        gold=policy.small_playout.forward_packed(*pack_rows(raw,'cuda')).cpu().double().numpy()
@@ -148,7 +164,7 @@ def run_worker(commands,responses,settings):
      active_before=engine.active_count;start=time.perf_counter();ready=engine.receive(steps=1)
      elapsed=time.perf_counter()-start;counts['gpu_service_seconds']+=elapsed;counts['active_tick_time_sum']+=active_before*elapsed;counts['active_tick_sum']+=active_before;counts['ticks']+=1
      if ready:emit('roots',ready);counts['roots_published']+=len(ready)
-   scorer.close()
+   if scorer is not None:scorer.close()
    if not engine.closed:engine.close()
    arena.close();upper.__exit__(None,None,None);torch.cuda.synchronize()
    final=stats();assert final['weights_unchanged'];emit('closed',final)

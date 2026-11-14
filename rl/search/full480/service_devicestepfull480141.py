@@ -30,8 +30,12 @@ class ArenaProxy:
  def close(self):self.closed=True;self.versions.clear()
 
 class GpuService:
- def __init__(self,capacity,policy_path,*,budget_cap=1000,frame=65536,tile=16384,queue_size=None):
-  assert not torch.cuda.is_initialized()
+ def __init__(self,capacity,policy_path,*,expected_digest,prototypes=None,frozen_policy=None,budget_cap=1000,frame=65536,tile=16384,queue_size=None):
+  self.parent_cuda=torch.cuda.is_initialized();self.frozen_policy=frozen_policy
+  if self.parent_cuda:
+   assert frozen_policy is not None and not frozen_policy.training,'learner must hand over a frozen collection'
+   torch.cuda.synchronize()
+  self.parent_versions=None if frozen_policy is None else tuple((id(p),p._version) for p in frozen_policy.parameters())
   owner=Path(__file__).resolve().parent
   assert Path(inspect.getfile(run_worker)).resolve()==owner/'worker_devicestepfull480141.py'
   self.capacity=capacity;self.closed=False;self.stopping=False;self.failure=None;self.finished=False
@@ -39,20 +43,23 @@ class GpuService:
   ctx=mp.get_context('spawn')
   self.commands=ctx.Queue(maxsize=queue_size or 4*capacity+16);self.responses=ctx.Queue(maxsize=capacity+16)
   self.arena=ArenaProxy(self,capacity)
-  self.process=ctx.Process(target=run_worker,args=(self.commands,self.responses,dict(capacity=capacity,policy_path=str(policy_path),budget_cap=budget_cap,frame=frame,tile=tile,parent_pid=os.getpid())),name='device-search-owner')
+  self.process=ctx.Process(target=run_worker,args=(self.commands,self.responses,dict(capacity=capacity,policy_path=str(policy_path),budget_cap=budget_cap,frame=frame,tile=tile,parent_pid=os.getpid(),parent_cuda=self.parent_cuda,expected_digest=expected_digest,prototypes=prototypes)),name='device-search-owner')
   self.process.start();deadline=time.monotonic()+120
   try:
    while not self.status:
     self.poll(.1)
     if time.monotonic()>deadline:raise TimeoutError('GPU process startup exceeded120s')
    self.check()
-   expected=json.loads((owner/'builder-build.json').read_text())['cubin_sha256']
+   from .run_device import artifact_directory
+   directory=artifact_directory()/('deck' if prototypes is not None else '')
+   expected=json.loads((directory/'builder-build.json').read_text())['cubin_sha256']
    assert self.status['pool']['graph']['identity']['builder']['sha256']==expected
    assert self.status['worker_path']==str(owner/'worker_devicestepfull480141.py')
   except BaseException:
    self.process.terminate();self.process.join(timeout=10);raise
  def check(self):
-  assert not torch.cuda.is_initialized(),'CPU collector initialized CUDA'
+  assert torch.cuda.is_initialized()==self.parent_cuda,'collection changed CUDA ownership'
+  if self.frozen_policy is not None:assert not self.frozen_policy.training,'learner resumed before GPU collection drain'
   if self.failure:raise RuntimeError('GPU service failed:\n'+self.failure)
   if self.process.exitcode is not None and not self.finished:raise RuntimeError('GPU worker exited without completion '+str(self.process.exitcode))
  def poll(self,timeout=0.):
@@ -137,3 +144,5 @@ class GpuService:
    self.closed=True;self.commands.cancel_join_thread();self.commands.close();self.responses.close()
   if self.failure:raise RuntimeError('GPU service failed:\n'+self.failure)
   assert self.finished and self.process.exitcode==0
+  if self.frozen_policy is not None:
+   assert self.parent_versions==tuple((id(p),p._version) for p in self.frozen_policy.parameters()),'weights changed during collection'

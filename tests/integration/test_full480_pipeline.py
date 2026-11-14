@@ -329,7 +329,7 @@ def test_full480_pcg64_matches_numpy_and_owns_each_chain():
 
 
 @pytest.mark.parametrize('scenario', ['prefix', 'growth', 'escape'])
-def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario):
+def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, tmp_path):
     from rl.search.full480.combo_runtime import BattleArena, BattlePool
     from rl.search.full480.combo_model import DeckWeights
     from rl.search.full480.deck_inputs import DeckInputTables
@@ -462,6 +462,47 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
             assert pool.graph_scorer.statistics()['step_overflow_retries'] > 0
             assert pool.graph_scorer.statistics()['step_replays'] > 0
             pool.close()
+            arena.close()
+            # Exercise the original CPU owner and its real FIFO GPU service on
+            # exactly the same root/worlds, including pre-existing callbacks.
+            from rl.search.full480.service_devicestepfull480141 import GpuService
+            from rl.search.full480.cpu_boundary import CpuFallback
+            from rl.algorithms.upper_probe import state_digest
+            import ctypes
+            from rl.search.full480.run_device import lib,check
+            # The oracle in this parent just unloaded every simulator module.
+            # Match the normal learner's stack before starting a second CUDA
+            # context; retain the worker's original 64 KiB simulator stack.
+            stack=ctypes.c_size_t();lib.cuCtxGetLimit.argtypes=[ctypes.POINTER(ctypes.c_size_t),ctypes.c_int]
+            check(lib.cuCtxGetLimit(ctypes.byref(stack),0),'read idle oracle stack')
+            check(lib.cuCtxSetLimit(0,1024),'release idle oracle stack')
+            torch.cuda.empty_cache()
+            path=tmp_path/'frozen-policy.pt';torch.save(policy,path)
+            service=GpuService(1,path,expected_digest=state_digest(policy.state_dict()),
+                prototypes=obs,frozen_policy=policy,budget_cap=budget,frame=budget,tile=32)
+            try:
+                cfg=sts.SmallPlayoutConfig();cfg.simulations=budget;cfg.playout_depth=8;cfg.paired_worldlines=True
+                fallback=CpuFallback([(0,'hallway',cfg,20261111)],[latent_env],service,
+                    capacity=min(8,budget),threads=2,rows={0:row})
+                completed=[]
+                import time
+                deadline=time.monotonic()+90
+                while not fallback.complete:
+                    assert time.monotonic()<deadline,'original CPU fallback exceeded test budget'
+                    completed.extend(fallback.step())
+                    if fallback.pending is not None:service.poll(.001)
+                assert len(completed)==1
+                actual=completed[0][1]
+                for key in ('action_bits','visits','terminal_visits','statistics','playout_lengths'):
+                    np.testing.assert_array_equal(actual[key],result[key],err_msg=key)
+                np.testing.assert_allclose(actual['values'],result['values'],atol=3e-5,rtol=1e-5)
+                status=service.statistics()
+                assert status['fallback_graph']['captures']>0
+                assert status['upper_graph']['context_cache_hits']>0
+                service.close()
+            finally:
+                if not service.closed:service.close(cancel='test cleanup')
+                check(lib.cuCtxSetLimit(0,stack.value),'restore oracle stack')
         finally:
             if pool is not None and not pool.closed:
                 pool.graph_scorer.close()

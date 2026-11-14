@@ -62,6 +62,7 @@ py::dict result(const SmallSearchResult &r) {
 }
 }
 #include "sim/search/WaveDiag.h"
+#include "compact-observation.h"
 namespace {
 template<class T> py::array_t<T> wa(std::initializer_list<int> shape){std::vector<py::ssize_t> v(shape.begin(),shape.end());return py::array_t<T>(v);}
 py::object wavePacket(WaveDiag &batch) {
@@ -95,9 +96,67 @@ py::object wavePacket(WaveDiag &batch) {
 }
 void bindWave(py::module_ &m){
     py::class_<WaveRoot,std::shared_ptr<WaveRoot>>(m,"WaveRoot")
-        .def(py::init<const sts::GameContext&,const sts::BattleContext&,SmallSearchConfig,std::uint64_t>()).def_readwrite("inventory_key",&WaveRoot::keyForInventory).def("inventory_rows",[](WaveRoot &r){return entityRows(r.inventory);});
+        .def(py::init<const sts::GameContext&,const sts::BattleContext&,SmallSearchConfig,std::uint64_t>())
+        .def(py::init<const sts::GameContext&,const sts::BattleContext&,SmallSearchConfig,std::uint64_t,bool>())
+        .def("configure_paired",&WaveRoot::configurePaired)
+        .def_readwrite("inventory_key",&WaveRoot::keyForInventory).def("inventory_rows",[](WaveRoot &r){return entityRows(r.inventory);});
     py::class_<WaveDiag>(m,"WaveDiag")
         .def(py::init<std::vector<std::shared_ptr<WaveRoot>>,int,int>())
+        .def("compact",[](WaveDiag&b,py::array_t<std::int32_t,py::array::c_style> cardIndex){
+            using namespace compact_leaf;
+            if(!b.awaiting||cardIndex.ndim()!=1||cardIndex.size()!=kCardIds)throw std::logic_error("invalid compact request");
+            const int n=b.active.size();
+            auto cat=wa<int>({n,kCatSize});auto sc=wa<float>({n,kFloatSize});
+            auto ids=wa<int>({n,2,kLanguageSlots});auto feats=wa<float>({n,2,kLanguageSlots,3});
+            auto root=wa<int>({n}),prefix=wa<int>({n}),kind=wa<int>({n});
+            auto legal=wa<int>({n,kAutoregressiveSize});auto bits=wa<unsigned>({n,kAutoregressiveSize});
+            auto draws=wa<double>({n});auto misc=wa<float>({n,sts::Deck::MAX_SIZE});
+            std::fill_n(ids.mutable_data(),ids.size(),0);std::fill_n(feats.mutable_data(),feats.size(),0.f);
+            std::fill_n(legal.mutable_data(),legal.size(),-1);std::fill_n(bits.mutable_data(),bits.size(),0);
+            std::fill_n(misc.mutable_data(),misc.size(),std::numeric_limits<float>::quiet_NaN());
+            const auto lut=cardIndex.data();
+            {py::gil_scoped_release release;auto lock=b.pool.acquire();b.pool.runIndependent(n,[&](std::size_t i){
+                auto&l=b.lanes[b.active[i]];auto&s=*l.state;auto&r=*b.roots[b.workRoot[l.task]];
+                if(!r.pairedAnchor)throw std::logic_error("compact transport requires paired contract");
+                const auto packed=pack(s);std::copy(packed.categorical.begin(),packed.categorical.end(),cat.mutable_data()+i*kCatSize);
+                std::copy(packed.scalars.begin(),packed.scalars.end(),sc.mutable_data()+i*kFloatSize);
+                packLanguagePile(s.cards.drawPile,lut,ids.mutable_data()+i*2*kLanguageSlots,feats.mutable_data()+i*6*kLanguageSlots);
+                packLanguagePile(s.cards.discardPile,lut,ids.mutable_data()+(i*2+1)*kLanguageSlots,feats.mutable_data()+(i*2+1)*3*kLanguageSlots);
+                root.mutable_data()[i]=b.workRoot[l.task];prefix.mutable_data()[i]=l.prefix;kind.mutable_data()[i]=l.leafKind;draws.mutable_data()[i]=l.drawNext;
+                auto acts=l.leafKind==4?autoregressiveActions(s,l.prefix):std::vector<sts::search::Action>();
+                if(!l.leafKind)for(const auto&a:l.obs.actions)acts.emplace_back(a.bits);
+                for(std::size_t j=0;j<acts.size();++j){legal.mutable_data()[i*kAutoregressiveSize+j]=jointActionId(acts[j],s)-kJointEnd;bits.mutable_data()[i*kAutoregressiveSize+j]=acts[j].bits;}
+                auto add=[&](const sts::CardInstance&c){if(c.id==sts::CardId::RITUAL_DAGGER&&c.uniqueId>=0&&c.uniqueId<sts::Deck::MAX_SIZE)misc.mutable_data()[i*sts::Deck::MAX_SIZE+c.uniqueId]=float(c.specialData)/100.f;};
+                for(const auto&c:s.cards.drawPile)add(c);for(const auto&c:s.cards.discardPile)add(c);for(const auto&c:s.cards.exhaustPile)add(c);
+                for(int j=0;j<s.cards.cardsInHand;++j)add(s.cards.hand[j]);
+            });}
+            py::dict out;out["categorical"]=cat;out["scalars"]=sc;out["language_ids"]=ids;out["language_features"]=feats;
+            out["root_indices"]=root;out["selection_prefix"]=prefix;out["leaf_kind"]=kind;out["legal_policy_ids"]=legal;
+            out["action_bits"]=bits;out["draws"]=draws;out["permanent_misc"]=misc;return out;
+        })
+        .def("choose_paired",[](WaveDiag&b,py::array_t<int,py::array::c_style>picks,py::array_t<double,py::array::c_style>values){
+            const auto n=b.active.size();if(!b.awaiting||!b.gpuChoice||picks.ndim()!=1||values.ndim()!=1||picks.size()!=n||values.size()!=n)throw std::logic_error("invalid paired reply");
+            for(std::size_t i=0;i<n;++i){const auto&l=b.lanes[b.active[i]];
+                if(l.leafKind?!std::isfinite(values.data()[i]):(picks.data()[i]<0||picks.data()[i]>=int(l.obs.actions.size())))throw std::logic_error("invalid paired reply row");}
+            b.pendingPicks.assign(picks.data(),picks.data()+n);b.pendingValues.assign(values.data(),values.data()+n);b.awaiting=false;
+        })
+        .def("paired_results",[](WaveDiag&b){
+            if(b.awaiting||b.nextTask.load()<int(b.local.size()))throw std::logic_error("unfinished paired search");
+            for(const auto&l:b.lanes)if(l.task>=0)throw std::logic_error("live paired lane");
+            py::list out;
+            for(std::size_t i=0;i<b.roots.size();++i){auto&r=*b.roots[i];const int n=r.actions.size();
+                std::vector<int> visits(n),terminal(n),hist(201);std::vector<double> values(n);std::vector<unsigned>bits;
+                std::array<unsigned long long,12>stats{};
+                for(std::size_t t=0;t<b.local.size();++t)if(b.workRoot[t]==int(i)){
+                    if(!std::isfinite(b.values[t]))throw std::logic_error("unscored paired leaf");
+                    const int a=b.chosen[t],depth=b.depths[t],o=b.outcomes[t];++visits[a];terminal[a]+=o!=4;values[a]+=b.values[t];
+                    stats[0]+=depth-1;stats[1]+=depth-1-b.forceN[t];stats[2]+=b.forceN[t];stats[3]+=o==1;stats[4]+=o==2;stats[5]+=o==4;stats[7]+=depth;stats[8]+=b.maxActionN[t];stats[9]+=o==3;stats[10]+=b.actionN[t];stats[11]+=b.prefixN[t];++hist[depth];
+                }
+                for(int j=0;j<n;++j){if(visits[j]!=int(r.worlds.size()))throw std::logic_error("unpaired result");values[j]/=visits[j];bits.push_back(r.actions[j].bits);}
+                py::dict d;d["action_bits"]=bits;d["values"]=values;d["visits"]=visits;d["terminal_visits"]=terminal;d["statistics"]=stats;
+                d["simulations"]=r.cfg.simulations;d["nonforced_decisions"]=stats[1];d["forced_actions"]=stats[2];d["actual_transitions"]=stats[7]-stats[11];d["atomic_decisions"]=stats[7];d["selection_prefix_decisions"]=stats[11];d["depth_cuts"]=stats[5];d["playout_lengths"]=hist;d["value_statistic"]="paired-pcg64-pre-reward-anchor-v1";out.append(d);
+            }return out;
+        })
         .def("packet",&wavePacket)
         .def("advance",[](WaveDiag &b,py::array_t<float,py::array::c_style> logits){
             if(logits.ndim()!=2)throw std::invalid_argument("expected logits matrix");auto v=logits.data();auto nr=logits.shape(0),nc=logits.shape(1);
@@ -127,7 +186,7 @@ void bindWave(py::module_ &m){
                 ++v.stats.playoutLengths[b.depths[i]];const auto outcome=sts::Outcome(b.outcomes[i]);if(outcome==sts::Outcome::PLAYER_VICTORY)++v.stats.terminalWins;else if(outcome==sts::Outcome::PLAYER_LOSS)++v.stats.terminalLosses;else if(outcome==sts::Outcome::PLAYER_ESCAPE)++v.stats.terminalEscapes;else ++v.stats.depthCuts;}
             py::list output;for(auto &v:rows){for(int j=0;j<int(v.values.size());++j)if(v.visits[j])v.values[j]/=v.visits[j];v.action=v.features.actions.front().bits;output.append(result(v));}return output;
         })
-        
+
         .def("enable_mapped",&WaveDiag::enableMapped).def("reset_groups",&WaveDiag::resetGroups).def_readwrite("zone_mode",&WaveDiag::zoneMode).def_readwrite("zone_resident",&WaveDiag::resident).def_readwrite("short_atoms",&WaveDiag::shortAtoms).def_readwrite("aos_mode",&WaveDiag::aosMode)
         .def("produce",[](WaveDiag &b,py::list fields,int tokenCap,int grain){
             if(!b.aosMode||fields.size()!=14)throw std::logic_error("bad compact packet");
@@ -260,6 +319,7 @@ void bindWave(py::module_ &m){
 }
 }
 
+#ifndef STS_FULL480_STANDALONE
 #include <numeric>
 namespace sts::search { int writeNormalFacts(const BattleContext&,int,int*,float*,int); }
 #include "raw_public.h"
@@ -803,3 +863,15 @@ void bindSmallPlayout(py::module_ &m) {
         return out;
     });
 }
+#else
+PYBIND11_MODULE(_full480_cpu,m){
+    m.attr("battle_context_bytes")=sizeof(sts::BattleContext);
+#ifdef STS_ENABLE_RULE_TRACE
+    m.attr("rule_trace")=true;
+#else
+    m.attr("rule_trace")=false;
+#endif
+    m.attr("contract")="paired-pcg64-pre-reward-anchor-v1";
+    bindWave(m);
+}
+#endif

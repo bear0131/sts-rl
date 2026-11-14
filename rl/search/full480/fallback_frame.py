@@ -1,10 +1,9 @@
 """One owned, bounded fallback input arena and complete encode/score/sample graph."""
-from pathlib import Path
-import sys, collections
-P = Path(__file__).resolve().parent
-sys.path.insert(0, str(P.parent / 'devicefallback141'))
-from packed_fallback import torch, np, triton, tl, Fused, hash_table
-sys.path.insert(0, str(P.parent / 'devicecombo141'))
+import collections
+import torch
+import numpy as np
+import triton
+import triton.language as tl
 from .combo_model import GraphScorer
 
 
@@ -93,22 +92,28 @@ def select_frame(logits, offsets, lengths, draws, temperature, selected, header)
 
 
 class FallbackFrame:
-    def __init__(self, net, *, precision="ieee"):
+    def __init__(self, net, *, precision="ieee", flat=None):
         self.net = net
-        self.flat = Fused(net, precision)
+        if flat is None:
+            from packed_fallback import Fused, hash_table
+            self.flat = Fused(net, precision)
+        else:
+            self.flat = flat
+        self.deck = getattr(self.flat, 'consumer', None) == 'deck-latent-combat-v1'
         if precision == 'ieee':
-            from fallback_ieee_model import GraphScorer as Model
+            from .fallback_ieee_model import GraphScorer as Model
         elif precision == 'tf32x3':
             Model = GraphScorer
         else:
             raise ValueError(precision)
         self.model = Model(self.flat)
-        self.table = hash_table()
+        self.table = None if self.deck else hash_table()
         self.graph = None; self.capacity = (0,)*5
         self.host = self.device = None; self.dev = []; self.views = []
         self.buffers = {}; self.counts = collections.Counter(); self.closed = False
         self.net_signature = self.signature(tuple(self.net.parameters()))
         self.bound_signature = None
+        self.deck_views = {}; self.deck_device = {}; self.deck_shape = None
 
     @staticmethod
     def signature(values):
@@ -127,6 +132,7 @@ class FallbackFrame:
         self.host = self.device = None; self.dev = []; self.views = []; self.buffers = {}
         self.capacity = (0,)*5; self.bound_signature = None
         self.header_host = self.temp_host = self.header = self.temperature = self.picks_host = None
+        self.deck_views = {}; self.deck_device = {}; self.deck_shape = None
 
     def close(self):
         if not self.closed:
@@ -175,6 +181,8 @@ class FallbackFrame:
         self.counts['allocations']+=1
 
     def execute(self):
+        if self.deck:
+            return self.execute_deck()
         self.device.copy_(self.host,non_blocking=True)
         b,t,q,n,e=self.capacity; d=self.dev; w=self.buffers; m=self.model.buffers
         clear_features[(triton.cdiv(t*128,512),)](w['features'],self.header,512,num_warps=4)
@@ -186,6 +194,122 @@ class FallbackFrame:
         self.model.execute()
         select_frame[(b,)](w['logits'],d[15],d[16],d[17],self.temperature,w['picks'],self.header,num_warps=1)
         self.picks_host.copy_(w['picks'],non_blocking=True)
+
+    def allocate_deck(self, fields, shape):
+        """The same pinned arena and single graph, for the current token ABI."""
+        self.release(); self.deck_shape = shape
+        b,choice,nt,nq,na,nb1,nb2 = shape
+        self.capacity = (b,nt,nq,na,0)
+        def extent(key,value):
+            if key=='counts':return value.shape
+            if key in ('retained','symbols','present'):return (nt,)+value.shape[1:]
+            if key=='queries':return (nq,)
+            if key in ('keys','actions','owners'):return (na,)+value.shape[1:]
+            if key=='blocks1':return (nb1,2)
+            if key=='blocks2':return (nb2,2)
+            return (b,)+value.shape[1:]
+        owned={key:np.empty(extent(key,value),dtype=value.dtype) for key,value in fields.items()}
+        end=64; offsets={}
+        for key,value in owned.items():
+            end=(end+7)//8*8;offsets[key]=end;end+=value.nbytes
+        self.host=torch.empty(end,dtype=torch.uint8,pin_memory=True)
+        self.device=torch.empty_like(self.host,device='cuda');host=self.host.numpy()
+        for key,value in owned.items():
+            offset=offsets[key]
+            self.deck_views[key]=np.ndarray(value.shape,value.dtype,buffer=host,offset=offset)
+            dtype=torch.from_numpy(np.empty(0,dtype=value.dtype)).dtype
+            self.deck_device[key]=self.device[offset:offset+value.nbytes].view(dtype).reshape(value.shape)
+        self.header_host=np.ndarray((8,),np.int32,buffer=host,offset=0)
+        self.temp_host=np.ndarray((1,),np.float64,buffer=host,offset=32)
+        self.header=self.device[:32].view(torch.int32);self.temperature=self.device[32:40].view(torch.float64)
+        def arr(shape,dtype=torch.float32):return torch.empty(shape,device='cuda',dtype=dtype)
+        d=self.deck_device
+        self.buffers=dict(features=arr((nt,128)),picks=arr((b,),torch.int32),logits=arr((na,)))
+        self.picks_host=torch.empty(b,dtype=torch.int32,pin_memory=True)
+        self.values_host=torch.empty(b,dtype=torch.float32,pin_memory=True)
+        self.model.bind_deck(d['combat_legal'],d['select_hand_mask'],d['remaining'])
+        w=self.buffers
+        bound=(w['features'],d['symbols'],d['symbols'],d['present'],d['queries'],d['blocks1'],d['blocks2'],
+               d['state'],d['actions'],d['keys'],d['owners'],d['keys'],d['owners'],d['meta'],d['mapping'],w['logits'])
+        self.model.allocate(tuple(x.data_ptr() for x in bound),bound,nt,nq,b)
+        self.bound_signature=self.signature((*self.flat.tensors(),*self.net.parameters()))
+        self.counts['allocations']+=1
+
+    def execute_deck(self):
+        self.device.copy_(self.host,non_blocking=True)
+        d=self.deck_device;w=self.buffers;m=self.model.buffers;b,choice,nt,nq,na,nb1,nb2=self.deck_shape
+        obs={key:d[key] for key in self.obs_keys};obs['_choice_width']=choice
+        tokens,_,_,_=self.net.token_inputs(obs,card_table=self.flat.lookup)
+        # Key padding is removed and only consumed heads enter the second layer.
+        w['features'][:,:64].copy_(tokens.reshape(-1,64)[d['retained'].long()])
+        m['starts'][:b].copy_(d['starts']);m['lens'][:b].copy_(d['lens']);m['counts'].copy_(d['counts'])
+        self.model.execute()
+        select_frame[(b,)](w['logits'],d['offsets'],d['lengths'],d['draws'],self.temperature,w['picks'],self.header,num_warps=1)
+        self.picks_host.copy_(w['picks'],non_blocking=True)
+        self.values_host.copy_(m['coef'][:b,12],non_blocking=True)
+
+    @torch.inference_mode()
+    def score_deck(self,observations,draws,value_only):
+        from env.core import encode
+        assert self.deck and not self.closed
+        self.flat.validate()
+        b=len(draws);legal=np.asarray(observations['combat_legal'],bool)
+        assert legal.shape==(b,198) and legal.any(1).all()
+        required=(observations['select_native_indices']>0)|legal[:,91:187]
+        choice=max(1,int(np.nonzero(required)[1].max(initial=-1))+1)
+        # Keep the previous choice extent while its owned graph can serve it.
+        choice=max(choice,0 if self.deck_shape is None else self.deck_shape[1])
+        token_width=(25+choice+7)//8*8
+        retained=[];queries=[];starts=[];lens=[];blocks1=[];blocks2=[];present=[]
+        mapping=np.full((b,161),-1,np.int32)
+        for i in range(b):
+            q={0};ids=np.flatnonzero(legal[i])
+            for a in ids:
+                if 1<=a<91:
+                    source=(a-1)//6;target=(a-1)%6;q.add(1+source if source<10 else 16+source-10)
+                    if target<5:q.add(11+target)
+                elif 91<=a<187:q.add(25+a-91)
+                elif a>=187:q.update(1+j for j in range(10) if observations['hand_ids'][i,j]!=0)
+            live=np.concatenate(([True],observations['hand_ids'][i]!=0,observations['monster_id'][i]!=0,
+                 observations['potions'][i]!=0,np.ones(4,bool),observations['select_native_indices'][i,:choice]>0))
+            keep=np.flatnonzero(live|np.isin(np.arange(len(live)),list(q)));order=sorted(q)
+            lookup={int(slot):pos for pos,slot in enumerate(keep)}
+            nt,nq=len(retained),len(queries);starts.append([nt,nq,len(blocks1),len(blocks2)])
+            lens.append([len(keep),len(order),(len(keep)+15)//16,(len(order)+15)//16])
+            retained.extend(i*token_width+keep);present.extend(live[keep]);queries.extend(nt+lookup[j] for j in order)
+            mapping[i,order]=np.arange(len(order));blocks1.extend((i,j) for j in range(0,len(keep),16));blocks2.extend((i,j) for j in range(0,len(order),16))
+        owners,ids=np.nonzero(legal);na=len(ids);nt=len(retained);nq=len(queries)
+        keys=np.full((na,10),-1,np.int64);keys[:,0]=ids
+        lengths=legal.sum(1).astype(np.int32);meta=np.zeros((b,4),np.int32);meta[:,0]=lengths;meta[:,3]=np.where(value_only,2,1)
+        fields={key:np.ascontiguousarray(value) for key,value in observations.items()}
+        self.obs_keys=tuple(fields)
+        fields.update(retained=np.asarray(retained,np.int32),queries=np.asarray(queries,np.int64),
+            symbols=np.zeros(nt,np.int64),present=np.asarray(present,bool),starts=np.asarray(starts,np.int64),lens=np.asarray(lens,np.int64),
+            blocks1=np.asarray(blocks1,np.int32),blocks2=np.asarray(blocks2,np.int32),mapping=mapping,meta=meta,
+            counts=np.asarray([nt,nq,len(blocks1),len(blocks2),b,na],np.int32),state=np.zeros((b,32),np.float32),
+            actions=np.zeros((na,24),np.float32),keys=keys,owners=owners.astype(np.int32),lengths=lengths,
+            offsets=np.concatenate(([0],np.cumsum(lengths[:-1]))).astype(np.int32),draws=np.asarray(draws,np.float64),
+            remaining=np.rint(observations['pick_remaining'].reshape(-1)*encode.PICK_SCALE).astype(np.int32))
+        shape=(b,choice,nt,nq,na,len(blocks1),len(blocks2))
+        sig=self.signature((*self.flat.tensors(),*self.net.parameters()))
+        if self.host is None or any(a>c for a,c in zip(shape,self.deck_shape)) or sig!=self.bound_signature:
+            old=(0,)*7 if self.deck_shape is None else self.deck_shape
+            capacity=tuple(max(a,c) if j==1 else triton.next_power_of_2(max(1,a,c)) for j,(a,c) in enumerate(zip(shape,old)))
+            self.allocate_deck(fields,capacity)
+        for key,value in fields.items():
+            target=self.deck_views[key];target.fill(0);np.copyto(target[:len(value)],value)
+        self.header_host[:]=[b,0,0,na,0,0,0,0];self.temp_host[0]=1.
+        if self.graph is None:
+            self.execute();torch.cuda.synchronize();graph=torch.cuda.CUDAGraph()
+            try:
+                with torch.cuda.graph(graph):self.execute()
+            except BaseException:graph.reset();raise
+            self.graph=graph;self.counts['captures']+=1
+        self.graph.replay();torch.cuda.current_stream().synchronize()
+        picks=self.picks_host[:b].numpy().copy();values=self.values_host[:b].numpy().copy()
+        assert ((picks>=0)&(picks<lengths)).all() and np.isfinite(values).all()
+        self.counts['calls']+=1;self.counts['actual_rows']+=b;self.counts['input_bytes_copied']+=self.host.numel()
+        return picks,values,self.buffers['logits'][:na]
 
     @torch.inference_mode()
     def score(self,fields,t,temperatures):

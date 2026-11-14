@@ -67,14 +67,15 @@ def mix_feed(A,X,QUERY,MW,MB,NW,NB,F1,B1,F2,B2,OUT,COUNTS,SECOND:tl.constexpr,EP
   tl.store(OUT+r[:,None]*64+d[None,:],out,r[:,None]<n)
 
 @triton.jit
-def final_head(X,NW,NB,W,Y,COUNTS,EPS:tl.constexpr):
- n=tl.load(COUNTS+1);d=tl.arange(0,64);o=tl.arange(0,64)
- w=tl.load(W+o[None,:]*64+d[:,None],o[None,:]<34,0.)
+def final_head(X,NW,NB,W,Y,COUNTS,EPS:tl.constexpr,WIDTH:tl.constexpr=34,BIAS=None):
+ n=tl.load(COUNTS+1);d=tl.arange(0,64);o=tl.program_id(1)*64+tl.arange(0,64)
+ w=tl.load(W+o[None,:]*64+d[:,None],o[None,:]<WIDTH,0.)
  for block in range(tl.program_id(0),tl.cdiv(n,32),tl.num_programs(0)):
   r=block*32+tl.arange(0,32)
   x=tl.load(X+r[:,None]*64+d[None,:],r[:,None]<n,0.);v=norm64(x,NW,NB,EPS)
   y=tl.dot(v,w,input_precision='ieee')
-  tl.store(Y+r[:,None]*34+o[None,:],y,(r[:,None]<n)&(o[None,:]<34))
+  if WIDTH!=34:y+=tl.load(BIAS+o,o<WIDTH,0.)[None,:]
+  tl.store(Y+r[:,None]*WIDTH+o[None,:],y,(r[:,None]<n)&(o[None,:]<WIDTH))
 
 @triton.jit
 def state_head(STATE,W1,B1,W2,B2,PROJ,LIN,Z,COEF,COUNTS,H:tl.constexpr,HH:tl.constexpr):

@@ -2,6 +2,14 @@
   "scope": "Original executed pipeline before consumer adaptation. External generated simulator code and binaries remain outside Git. Unused fixed-checkpoint diagnostic loaders are not runtime consumers.",
   "files": [
     {
+      "original": "runs/local/nine-token-speed/online480/waves/deltazone/zones.h",
+      "current": "rl/search/full480/native/include/zones.h",
+      "sha256": "023240e79ff80bff8cd1877c2602698180e44732a4045200d923c34c533a8ffc",
+      "proof": {
+        "scope": "Original WaveDiag header dependency from the pre-existing rollout-200s workspace; exact bytes. This cache declaration is not used by the qualified raw-mode path. It was not included in directmapped141-qualified-v1.tgz."
+      }
+    },
+    {
       "original": "runs\\local\\full480-reconnect\\original\\cpu_boundary.py",
       "sha256": "efbd219d89ebe8978308c1d38e237945251b21c79b874cc48911ba2973be3907",
       "proof": {
