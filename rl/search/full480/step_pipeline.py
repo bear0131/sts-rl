@@ -65,11 +65,12 @@ class StepPipeline(FramePipeline):
    p.step_status[2].fill_(1)
  def grow_failed_frame(self,s):
   a,e,flags,me,ma,nt,nq,nb1,nb2,real=s[16:26]
-  assert flags==s[3] and flags>0 and flags&~63==0
+  assert flags==s[3] and flags>0 and flags&~127==0
   self.history.append(dict(kind='step',cursor=s[1],count=s[26],summary=s[16:26],capacity=list(self.capacity),
    action_capacity=self.pool.action_cap,entity_capacity=self.pool.entity_cap))
   self.counts['step_overflow_retries']+=1
   p=self.pool;self.release()
+  if flags&64:p.flat.input_tables.grow_upgrades(me)
   if a>p.action_cap:p.allocate_actions(triton.next_power_of_2(a))
   if e>p.entity_cap:p.allocate_entities(triton.next_power_of_2(e))
   if nt>self.requested_ct:self.requested_ct=triton.next_power_of_2(nt)

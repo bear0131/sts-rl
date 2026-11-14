@@ -50,10 +50,11 @@ class DeckInputTables:
         constants['PLAYER_BUFF_WIDTH'] = self.prototypes['player_buffs'].shape[-1]
         constants['MONSTER_BUFF_WIDTH'] = self.prototypes['monster_buffs'].shape[-1]
         # Unbounded upgrades are checked, never clamped to this printed table.
-        stats = _nosl_card_stats(128)
+        stats = _nosl_card_stats(getattr(self, 'upgrade_capacity', 128))
+        self.upgrade_capacity = stats['damage'].shape[1]
         arrays['damage'] = torch.as_tensor(stats['damage'], device=device)
         arrays['block'] = torch.as_tensor(stats['block'], device=device)
-        constants['UPGRADE_LEVELS'] = stats['damage'].shape[1]
+        arrays['upgrade_levels'] = torch.tensor([self.upgrade_capacity], device=device, dtype=torch.int32)
         for key in ('HP', 'BLOCK', 'ENERGY', 'TURN', 'BUFF', 'COUNTER', 'DMG',
                     'HITS', 'UPGRADE', 'PICK', 'GOLD', 'ASCENSION'):
             constants[key + '_SCALE'] = float(getattr(encode, key + '_SCALE'))
@@ -110,6 +111,21 @@ class DeckInputTables:
     def validate(self):
         if self.version != tuple((id(p), p._version) for p in self.net.parameters()):
             raise RuntimeError('full480 input weights changed before collection drain and refresh')
+
+    @torch.no_grad()
+    def grow_upgrades(self, required):
+        """Called only after the original overflow path has released its graphs."""
+        self.validate()
+        if required <= self.upgrade_capacity:
+            return
+        capacity = 1 << (int(required) - 1).bit_length()
+        stats = _nosl_card_stats(capacity)
+        device = self.bindings.device
+        for key in ('damage', 'block'):
+            self.tables[key] = torch.as_tensor(stats[key], device=device).clone()
+        self.upgrade_capacity = stats['damage'].shape[1]
+        self.tables['upgrade_levels'].fill_(self.upgrade_capacity)
+        self.bindings.copy_(torch.tensor([x.data_ptr() for x in self.tables.values()], device=device, dtype=torch.int64))
 
     def header(self):
         lines = ['#pragma once', 'namespace deck_input {']

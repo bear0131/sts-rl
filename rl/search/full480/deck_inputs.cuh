@@ -16,7 +16,7 @@ constexpr int PICK=HAND+20+3*compact_leaf::kCardIds;
 inline float scaled_cost(float cost){return (cost==-3.f?-2.f:cost)/ENERGY_SCALE;}
 inline int physical(const int*chunks,int row,int slot){return chunks[row*16+slot/64]+slot%64;}
 
-template<class Actions> inline void prepare(const BattleContext&b,const Actions&actions,int i,int prefix,
+template<class Actions> inline void prepare(const BattleContext&b,const Actions&actions,int i,int prefix,const unsigned long long*w,
  unsigned*bits,int*keys,int*source_rows,int*targets,int*ids,int*zones,int*monsters,
  int*meta,int*chunks,int*allocator,int action_capacity,int entity_capacity,
  float*raw,int*cat,int*legal,float*selected,int*remaining){
@@ -32,6 +32,12 @@ template<class Actions> inline void prepare(const BattleContext&b,const Actions&
  int start=atomicAdd(allocator,na);meta[i*4]=na;meta[i*4+1]=0;meta[i*4+2]=start;meta[i*4+3]=0;
  atomicMax(allocator+4,na);
  if(start>action_capacity-na){atomicOr(allocator+2,1);return;}
+ int needed=0;
+ for(int j=0;j<10;++j)needed=max(needed,int(packed.scalars[HAND+2*j])+1);
+ if(needed>upgrade_levels(w)[0]){
+  // Bit 2 already prevents packing and apply; bit 64 identifies table growth.
+  atomicMax(allocator+3,needed);atomicOr(allocator+2,66);return;
+ }
  int a=0;
  for(int id=0;id<198;++id){
   legal[i*198+id]=mask[id];if(!mask[id])continue;
@@ -118,9 +124,9 @@ inline float token(const BattleContext&b,const unsigned long long*w,const float*
   float card_value=card_token(w)[(id*2+int(up>0))*64+dim]+up*card_magnitude(w)[dim];
   float cost=scaled_cost(s[hand?HAND+2*j+1:PICK+100+j]);
   if(hand){
-   int level=int(s[HAND+2*j]);device_state::require(level>=0&&level<UPGRADE_LEVELS);
+   int level=int(s[HAND+2*j]),levels=upgrade_levels(w)[0];device_state::require(level>=0&&level<levels);
    const float*v=hand_weight(w)+dim*4;
-   float extra=hand_bias(w)[dim]+cost*v[0]+damage(w)[id*UPGRADE_LEVELS+level]/DMG_SCALE*v[1]+block(w)[id*UPGRADE_LEVELS+level]/BLOCK_SCALE*v[2]+float((prefix>>j)&1)*v[3];
+   float extra=hand_bias(w)[dim]+cost*v[0]+damage(w)[id*levels+level]/DMG_SCALE*v[1]+block(w)[id*levels+level]/BLOCK_SCALE*v[2]+float((prefix>>j)&1)*v[3];
    return value+(card_value+extra);
   }
   float extra=choice_bias(w)[dim]+cost*choice_weight(w)[dim*2]+float(c[127+j]>0&&id==0)*choice_weight(w)[dim*2+1];

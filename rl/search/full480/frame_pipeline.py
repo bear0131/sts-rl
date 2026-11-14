@@ -106,7 +106,7 @@ class FramePipeline:
    self.graph.replay();self.counts['replays']+=1
    values=list(map(int,w['summary'].cpu().tolist()))
    a,e,flags,me,ma,nt,nq,nb1,nb2,real=values
-   assert flags>=0 and flags&~63==0 and a>0 and e>=0 and 0<=real<=count,values
+   assert flags>=0 and flags&~127==0 and a>0 and e>=0 and 0<=real<=count,values
    if not flags:
     assert nt>=real and nq>=real and nq<=nt and (real>0 or nt==nq==nb1==nb2==0)
     self.counts['valid_frames']+=1
@@ -114,6 +114,7 @@ class FramePipeline:
    row=dict(base=base,count=count,attempt=attempt,summary=values,capacity=list(self.capacity),action_capacity=p.action_cap,entity_capacity=p.entity_cap)
    self.history.append(row);self.counts['overflow_retries']+=1
    self.release()
+   if flags&64:p.flat.input_tables.grow_upgrades(me)
    if a>p.action_cap:p.allocate_actions(triton.next_power_of_2(a))
    if e>p.entity_cap:p.allocate_entities(triton.next_power_of_2(e))
    if nt>self.requested_ct:self.requested_ct=triton.next_power_of_2(nt)

@@ -284,6 +284,28 @@ def test_full480_current_native_observer_and_packed_model(latent_env):
             assert checked >= 8 and selections >= 1 and prefixes >= 1, (checked, selections, prefixes)
             assert pool.frame_pipeline.counts['overflow_retries'] > 0
             assert pool.frame_pipeline.counts['replays'] >= checked
+            # Searing Blow's upgrade count is unbounded by the initial LUT.
+            # Grow through the same graph overflow path; never clamp the input.
+            for level in (129, 257):
+                latent_env.thick.gc.set_deck([('SEARING_BLOW', level)] * 5)
+                latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
+                latent_env._invalidate_backend_cache()
+                arena.drop([0]); arena.load({0: cpu.State(latent_env.thick.bc).snapshot()})
+                observation = latent_env._obs()
+                data = {k: torch.as_tensor(v[None], device='cuda') for k, v in observation.items()}
+                context = policy.core.prepare_search_context(data)
+                pool.chain_inputs[0] = torch.cat((context.combat[0], data['run_keys'][0], data['ascension'][0]))
+                pool.selection_prefix.zero_()
+                temporary = torch.empty(64 * 1024 * 1024, dtype=torch.uint8, device='cuda')
+                temporary.fill_(7); del temporary
+                torch.cuda.empty_cache()
+                pool.frame_pipeline.run(0, 1)
+                expected, values = policy.core.combat_with_context(data, context)
+                a = int(pool.meta[0, 0]); ids = pool.keys[:a, 0].long()
+                torch.testing.assert_close(pool.scores[:a], expected[0, ids], atol=3e-5, rtol=1e-5)
+                torch.testing.assert_close(pool.frame_pipeline.model.buffers['coef'][0, 12], values[0, 0], atol=3e-5, rtol=1e-5)
+                assert flat.input_tables.upgrade_capacity > level
+            assert sum(bool(row['summary'][2] & 64) for row in pool.frame_pipeline.history) >= 2
         finally:
             if pool is not None:
                 pool.arena.zero_()
