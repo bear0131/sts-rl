@@ -12,6 +12,88 @@ from rl.search.rollout_inference import ExactInputCache, _upper_graph_inputs
 pytestmark = [pytest.mark.native, pytest.mark.timeout(60)]
 
 
+@pytest.mark.parametrize('module', [None, object()])
+def test_full480_array_cache_retains_optional_extension_compatibility(monkeypatch, module):
+    import sys
+    from rl.search.rollout_inference import _DeckConsumers
+    monkeypatch.setitem(sys.modules, 'slaythespire', module)
+    consumer = _DeckConsumers(torch.nn.Linear(1, 1).eval(), 'cpu', 1024)
+    assert not consumer.native_anchor_cache
+    assert isinstance(consumer.anchor_cache, ExactInputCache)
+    consumer.close()
+
+
+@pytest.mark.parametrize('capacity', [0, 4096, 1024 * 1024])
+@pytest.mark.parametrize('threads', [1, 8])
+def test_full480_array_values_match_exact_cache(capacity, threads):
+    assert getattr(sts, 'array_value_cache_version', 0) == 1, 'rebuild the selected native extension'
+    native = sts.UpperValueRuntime(capacity, threads)
+    reference = ExactInputCache(capacity)
+    traces = [[], []]
+
+    def predict(batch, side):
+        traces[side].append(tuple((k, v.shape, v.dtype.str, v.tobytes()) for k, v in batch.items()))
+        return (batch['ids'][:, 0] * np.float32(3) + batch['features'][:, 0]).astype(np.float32)
+
+    for width in (1, 7, 65, 1):
+        ids = (np.arange(640, dtype=np.int64) % 32)[:, None]
+        features = np.repeat(ids.astype(np.float32), width * 2, axis=1)[:, ::2]
+        original = dict(ids=ids, features=features, empty=np.empty((640, 0), np.int32))
+        for batch in (original, {k: v[::-1] for k, v in original.items()},
+                      dict(reversed(list(original.items())))):
+            def old_forward(missing):
+                return np.empty((len(missing['ids']), 0), np.float32), predict(missing, 0)
+            expected = reference.forward(batch, old_forward)[1]
+            actual = native.forward_arrays(batch, lambda b: predict(b, 1))
+            assert actual.tobytes() == expected.tobytes()
+            assert traces[0] == traces[1]
+            for key in ('requests', 'misses', 'hits', 'batch_duplicates', 'evictions', 'bytes', 'peak_bytes'):
+                assert native.stats[key] == reference.stats[key], key
+            actual.fill(-999)
+    native.clear()
+    reference.clear()
+    assert native.stats['bytes'] == 0
+    np.testing.assert_array_equal(native.forward_arrays(original, lambda b: predict(b, 1)),
+                                  predict(original, 1))
+
+
+def test_full480_array_values_schema_scope_and_errors():
+    assert getattr(sts, 'array_value_cache_version', 0) == 1
+    cache = sts.UpperValueRuntime(1024 * 1024, 8)
+    calls = []
+    def predict(batch):
+        calls.append(tuple((k, v.shape, v.dtype.str) for k, v in batch.items()))
+        return np.full(len(next(iter(batch.values()))), len(calls), np.float32)
+    for width in range(1, 67):
+        row = dict(x=np.zeros((1, width), np.float32))
+        assert cache.forward_arrays(row, predict).tolist() == [width]
+        assert cache.forward_arrays(row, predict).tolist() == [width]
+    # The evicted schema cannot reuse an old scope whose entries remain live.
+    assert cache.forward_arrays(dict(x=np.zeros((1, 1), np.float32)), predict).tolist() == [67]
+    assert cache.forward_arrays(dict(x=np.zeros((1, 1), np.int32)), predict).tolist() == [68]
+    assert cache.forward_arrays(dict(y=np.zeros((1, 1), np.int32)), predict).tolist() == [69]
+    # Signed zero differs by bytes even though numeric equality says otherwise.
+    assert cache.forward_arrays(dict(x=np.full((1, 1), -0., np.float32)), predict).tolist() == [70]
+    for bad in ({}, dict(x=np.zeros((0, 1))), dict(x=np.zeros((2, 1)), y=np.zeros((1, 1))),
+                dict(x=np.array([object()]))):
+        with pytest.raises(ValueError):
+            cache.forward_arrays(bad, predict)
+    cache.clear()
+    def fail(batch):
+        with pytest.raises(RuntimeError, match='pending upper inference'):
+            cache.clear()
+        with pytest.raises(RuntimeError, match='pending upper inference'):
+            cache.forward_arrays(batch, predict)
+        raise RuntimeError('callback failure')
+    batch = dict(x=np.ones((640, 2), np.float32))
+    with pytest.raises(RuntimeError, match='callback failure'):
+        cache.forward_arrays(batch, fail)
+    with pytest.raises(ValueError, match='one float32 value'):
+        cache.forward_arrays(batch, lambda b: np.zeros((len(b['x']), 2), np.float32))
+    assert cache.stats['bytes'] == 0
+    np.testing.assert_array_equal(cache.forward_arrays(batch, lambda b: b['x'][:, 0]), np.ones(640))
+
+
 @pytest.mark.parametrize('capacity', [0, 4096, 1024 * 1024])
 @pytest.mark.parametrize('pad', [False, True])
 def test_native_groups_cache_eviction_and_owned_results(frozen_upper_source, capacity, pad):

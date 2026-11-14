@@ -76,6 +76,7 @@ def run_worker(commands,responses,settings):
    startup=stats();startup['gpu_pids']=pids;emit('ready',startup)
    stop=False;loop_started=time.perf_counter()
    while not stop:
+    advanced=False
     if not engine.pending:packet=commands.get()
     else:
      try:packet=commands.get_nowait()
@@ -110,20 +111,27 @@ def run_worker(commands,responses,settings):
         pool.closed=True;pool.modules.references-=1
        mirror.close()
      elif kind in ('upper','upper_reference'):
-      obs,masks=payload
-      if kind=='upper' and deck:logits,values,context=upper(obs,with_search_context=True)
-      elif kind=='upper':logits,values=upper(obs)
-      else:
-       from rl.search.native import observation_as_tensor
-       logits,values=policy.core.actor_critic(observation_as_tensor(obs,'cuda'))
-      dist=policy.action_dist.proba_distribution(action_logits=logits.float());dist.apply_masking(masks)
-      answer=dict(probabilities=dist.distribution.probs.cpu().numpy(),logprobs=dist.distribution.logits.cpu().numpy(),
-       values=values.float().flatten().cpu().numpy(),reward=ind.reward_monitor.policy_probabilities(dist,obs),
-       campfire=ind.campfire_monitor.policy_probabilities(dist,obs))
-      if deck:
-       if kind=='upper_reference':
-        projected=upper.search_context(obs);context=(projected.combat.cpu().numpy(),projected.anchor.cpu().numpy())
-       answer.update(logits=logits.float().cpu().numpy(),context=context)
+      finish_step=None
+      if kind=='upper' and deck and engine.active_count and not advanced:
+       finish_step=engine.frame_pipeline.tick(deferred=True);advanced=True
+       counts['upper_overlap_ticks']+=1
+      try:
+       obs,masks=payload
+       if kind=='upper' and deck:logits,values,context=upper(obs,with_search_context=True)
+       elif kind=='upper':logits,values=upper(obs)
+       else:
+        from rl.search.native import observation_as_tensor
+        logits,values=policy.core.actor_critic(observation_as_tensor(obs,'cuda'))
+       dist=policy.action_dist.proba_distribution(action_logits=logits.float());dist.apply_masking(masks)
+       answer=dict(probabilities=dist.distribution.probs.cpu().numpy(),logprobs=dist.distribution.logits.cpu().numpy(),
+        values=values.float().flatten().cpu().numpy(),reward=ind.reward_monitor.policy_probabilities(dist,obs),
+        campfire=ind.campfire_monitor.policy_probabilities(dist,obs))
+       if deck:
+        if kind=='upper_reference':
+         projected=upper.search_context(obs);context=(projected.combat.cpu().numpy(),projected.anchor.cpu().numpy())
+        answer.update(logits=logits.float().cpu().numpy(),context=context)
+      finally:
+       if finish_step is not None:finish_step()
      elif kind=='fallback':
       fields,temp,raw,reference=payload
       if deck:
@@ -170,7 +178,7 @@ def run_worker(commands,responses,settings):
      try:packet=commands.get_nowait()
      except queue.Empty:packet=None
     if not stop and engine.pending:
-     active_before=engine.active_count;start=time.perf_counter();ready=engine.receive(steps=1)
+     active_before=engine.active_count;start=time.perf_counter();ready=engine.receive(steps=0 if advanced else 1)
      elapsed=time.perf_counter()-start;counts['gpu_service_seconds']+=elapsed;counts['active_tick_time_sum']+=active_before*elapsed;counts['active_tick_sum']+=active_before;counts['ticks']+=1
      if ready:emit('roots',ready);counts['roots_published']+=len(ready)
    counts['loop_wall_seconds']=time.perf_counter()-loop_started

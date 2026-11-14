@@ -2,6 +2,7 @@
 // approximation or model state: Python supplies the unchanged GPU callback.
 #include "neural-observation.h"
 #include "upper-observation.h"
+#include "sim/search/NeuralSearchBatch.h"
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 #include <algorithm>
@@ -64,6 +65,10 @@ class UpperValueRuntime {
     std::unordered_map<std::string_view,Entries::iterator> index_;
     std::map<std::array<int,3>,std::uint64_t> scopes_;
     std::deque<std::array<int,3>> scopeOrder_;
+    std::map<std::string,std::uint64_t> arrayScopes_;
+    std::deque<std::string> arrayScopeOrder_;
+    std::unique_ptr<sts::search::NeuralSearchBatch> workers_;
+    int arrayThreads_=0;
     std::uint64_t nextScope_=0;
     std::size_t limit_, bytes_=0, peak_=0, requests_=0, misses_=0, hits_=0, duplicates_=0, evictions_=0;
     double keySeconds_=0, forwardSeconds_=0, prepareSeconds_=0;
@@ -101,6 +106,10 @@ class UpperValueRuntime {
         bytes_+=cost;peak_=std::max(peak_,bytes_);
     }
 public:
+    UpperValueRuntime(std::size_t maxBytes,int threads)
+        :limit_(maxBytes),combat_(-1),pad_(false),arrayThreads_(threads) {
+        if(threads<1 || threads>256) throw std::invalid_argument("cache threads must be in [1,256]");
+    }
     UpperValueRuntime(py::dict schemas,int combat,std::size_t maxBytes,bool pad)
         :limit_(maxBytes),combat_(combat),pad_(pad) {
         for(auto phase:schemas) {
@@ -129,6 +138,7 @@ public:
         if(busy_) throw std::runtime_error("cannot clear pending upper inference");
         index_.clear();entries_.clear();bytes_=0;
         scopes_.clear();scopeOrder_.clear();nextScope_=0;
+        arrayScopes_.clear();arrayScopeOrder_.clear();
     }
     py::dict stats() const {
         return py::dict("requests"_a=requests_,"misses"_a=misses_,"hits"_a=hits_,
@@ -138,7 +148,109 @@ public:
     double prepareSeconds() const { return prepareSeconds_; }
     std::size_t maxBytes() const { return limit_; }
 
+    py::array_t<float> forwardArrays(py::dict observations,py::function callback) {
+        if(!arrayThreads_) throw std::runtime_error("array values require the array cache constructor");
+        if(busy_) throw std::runtime_error("finish pending upper inference before another submission");
+        struct Guard { bool &flag;explicit Guard(bool &f):flag(f){flag=true;}~Guard(){flag=false;} } guard(busy_);
+        auto started=Clock::now();
+        std::map<std::string,py::array> fields;
+        py::ssize_t count=-1;
+        for(auto item:observations) {
+            auto a=py::array::ensure(item.second,py::array::c_style);
+            if(!a || a.ndim()<1 || a.shape(0)<1 || (count>=0 && count!=a.shape(0)))
+                throw std::invalid_argument("cache inputs require an equal nonempty batch");
+            const auto kind=py::cast<std::string>(a.dtype().attr("kind"));
+            if(kind.size()!=1 || std::string("biufc").find(kind[0])==std::string::npos)
+                throw std::invalid_argument("cache inputs require numeric arrays");
+            count=a.shape(0);fields.emplace(py::cast<std::string>(item.first),std::move(a));
+        }
+        if(fields.empty()) throw std::invalid_argument("cache inputs require an equal nonempty batch");
+        auto predict=[&](py::dict batch,std::size_t size) {
+            auto values=py::array_t<float,py::array::c_style>::ensure(callback(batch));
+            if(!values || values.ndim()!=1 || values.size()!=static_cast<py::ssize_t>(size))
+                throw std::invalid_argument("value callback must return one float32 value per missing row");
+            return values;
+        };
+        py::array_t<float> result(count);auto *out=result.mutable_data();
+        requests_+=count;
+        if(!limit_) {
+            misses_+=count;auto values=predict(observations,count);
+            std::memcpy(out,values.data(),count*sizeof(float));forwardSeconds_+=elapsed(started);
+            return result;
+        }
+        std::string schema;
+        auto append=[&](const std::string &s) {schema+=std::to_string(s.size())+":"+s;};
+        std::vector<const char *> inputs;
+        std::vector<std::size_t> offsets{0};
+        for(const auto &[name,a]:fields) {
+            append(name);append(py::cast<std::string>(a.dtype().attr("str")));
+            append(std::to_string(a.ndim()-1));
+            for(py::ssize_t j=1;j<a.ndim();++j) append(std::to_string(a.shape(j)));
+            inputs.push_back(static_cast<const char *>(a.data()));
+            offsets.push_back(offsets.back()+a.nbytes()/count);
+        }
+        if(!arrayScopes_.count(schema)) {
+            if(arrayScopes_.size()>=64) {arrayScopes_.erase(arrayScopeOrder_.front());arrayScopeOrder_.pop_front();}
+            arrayScopes_[schema]=nextScope_++;arrayScopeOrder_.push_back(schema);
+        }
+        const auto header=arrayScopes_.at(schema);
+        const std::size_t prefix=sizeof(header),cost=offsets.back()+sizeof(float)+512;
+        std::vector<std::string> keys(count);
+        std::vector<Entries::iterator> found(count,entries_.end());
+        // Workers only read the original index. LRU touches and insertions
+        // happen in input order after joining, preserving exact eviction.
+        auto pack=[&](std::size_t i) {
+            auto &key=keys[i];key.resize(prefix+offsets.back());std::memcpy(key.data(),&header,prefix);
+            for(std::size_t k=0;k<inputs.size();++k) {
+                const auto bytes=offsets[k+1]-offsets[k];
+                if(bytes) std::memcpy(key.data()+prefix+offsets[k],inputs[k]+i*bytes,bytes);
+            }
+            const auto &index=index_;auto hit=index.find(key);
+            if(hit!=index.end()) {found[i]=hit->second;out[i]=hit->second->value;}
+        };
+        {
+            py::gil_scoped_release release;
+            if(arrayThreads_>1 && count>=512) {
+                if(!workers_) workers_=std::make_unique<sts::search::NeuralSearchBatch>(arrayThreads_);
+                auto lock=workers_->acquire();
+                workers_->runIndependent((count+63)/64,[&](std::size_t block) {
+                    const auto end=std::min<std::size_t>(count,(block+1)*64);
+                    for(auto i=block*64;i<end;++i) pack(i);
+                });
+            } else for(py::ssize_t i=0;i<count;++i) pack(i);
+        }
+        std::vector<std::size_t> missing,source(count);
+        std::unordered_map<std::string_view,std::size_t> pending;
+        for(py::ssize_t i=0;i<count;++i) {
+            if(found[i]!=entries_.end()) {++hits_;entries_.splice(entries_.end(),entries_,found[i]);}
+            else {
+                const auto [entry,inserted]=pending.emplace(keys[i],missing.size());
+                source[i]=entry->second;
+                if(inserted) missing.push_back(i);else ++duplicates_;
+            }
+        }
+        misses_+=missing.size();keySeconds_+=elapsed(started);
+        if(missing.empty()) return result;
+        started=Clock::now();py::dict batch;
+        // Retain caller field order for the original graph input layout.
+        for(auto item:observations) {
+            const auto name=py::cast<std::string>(item.first);const auto &a=fields.at(name);
+            std::vector<py::ssize_t> shape(a.shape(),a.shape()+a.ndim());shape[0]=missing.size();
+            py::array selected(a.dtype(),shape);const auto bytes=a.nbytes()/count;
+            for(std::size_t i=0;i<missing.size();++i) if(bytes)
+                std::memcpy(static_cast<char *>(selected.mutable_data())+i*bytes,
+                            static_cast<const char *>(a.data())+missing[i]*bytes,bytes);
+            batch[item.first]=std::move(selected);
+        }
+        auto values=predict(batch,missing.size());forwardSeconds_+=elapsed(started);
+        // Scatter before insertions can evict nodes referenced by found.
+        for(py::ssize_t i=0;i<count;++i) if(found[i]==entries_.end()) out[i]=values.data()[source[i]];
+        for(std::size_t i=0;i<missing.size();++i) insert(std::move(keys[missing[i]]),values.data()[i],cost);
+        return result;
+    }
+
     py::array_t<float> forward(py::list rows,py::object teacher,py::function callback) {
+        if(arrayThreads_) throw std::runtime_error("row values require the schema cache constructor");
         if(busy_) throw std::runtime_error("finish pending upper inference before another submission");
         struct Guard { bool &flag;explicit Guard(bool &f):flag(f){flag=true;}~Guard(){flag=false;} } guard(busy_);
         auto started=Clock::now();validateFrozen(teacher);
@@ -252,9 +364,12 @@ public:
 void bindUpperValue(py::module_ &module) {
     py::class_<UpperValueRuntime>(module,"UpperValueRuntime")
         .def(py::init<py::dict,int,std::size_t,bool>())
+        .def(py::init<std::size_t,int>())
+        .def("forward_arrays",&UpperValueRuntime::forwardArrays)
         .def("forward",&UpperValueRuntime::forward)
         .def("clear",&UpperValueRuntime::clear)
         .def_property_readonly("stats",&UpperValueRuntime::stats)
         .def_property_readonly("prepare_seconds",&UpperValueRuntime::prepareSeconds)
         .def_property_readonly("max_bytes",&UpperValueRuntime::maxBytes);
+    module.attr("array_value_cache_version")=1;
 }

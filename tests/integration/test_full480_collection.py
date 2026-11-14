@@ -202,6 +202,7 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
             assert state_digest(self.model.policy.state_dict()) == self.digest
             assert not full_seeded.current_stream.service.process.is_alive()
             assert full_seeded.count['submitted_cpu'] == 0
+            assert full_seeded.current_stream.service.status['counts']['upper_overlap_ticks'] > 0
             assert self.model.logger.name_to_value['pure_rl/search_simulations'] == self.model.deck_search_last_stats['chains']
     try:
         env = vector()

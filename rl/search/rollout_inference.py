@@ -247,7 +247,15 @@ class _DeckConsumers:
             raise ValueError('deck sampling requires a positive context cache capacity')
         self.core, self.device = core, device
         self.cache = ExactInputCache(context_bytes)
-        self.anchor_cache = ExactInputCache(context_bytes)
+        try:
+            import slaythespire as sts
+        except ModuleNotFoundError as error:
+            if error.name != 'slaythespire':
+                raise
+            sts = None
+        self.native_anchor_cache = getattr(sts, 'array_value_cache_version', 0) == 1
+        self.anchor_cache = (sts.UpperValueRuntime(context_bytes, 8) if self.native_anchor_cache
+                             else ExactInputCache(context_bytes))
         self.encoder = _DeckForward(core, context=True)
         self.head = _DeckForward(core)
         self.enc_graphs = self.head_graphs = self.anchor_graphs = None
@@ -391,7 +399,10 @@ class _DeckConsumers:
             if isinstance(value, torch.Tensor):
                 out, value = out.cpu().numpy(), value.cpu().numpy()
             return out, value
-        _, value = self.anchor_cache.forward(inputs, score_anchor)
+        if self.native_anchor_cache:
+            value = self.anchor_cache.forward_arrays(inputs, lambda missing: score_anchor(missing)[1])
+        else:
+            _, value = self.anchor_cache.forward(inputs, score_anchor)
         return value
 
     def statistics(self):

@@ -188,9 +188,13 @@ rank0/1 的 native fallback 为 0，rank2/3 为41/67根，不能把全部差距�
 | P08 | `rl/algorithms/accumulating_ppo.py:collect_rollouts`：full480配置直接调用上述原collector；原训练更新继续消费原buffer | 不新增trainer或训练入口，不改变batch/epoch/Adam配置 |
 | P09 | `collect`与`full_seeded.py:record_start/record_end`：原完整局记录允许跨固定片段；保存现有随机流状态、先发布本轮search统计再计算returns | 完整退出、取消和普通保存恢复验证；不能将上一轮chains记到本轮 |
 | P10 | `full_seeded.py:submit`：固定PPO使用原_last_obs已有完整观测的批量拥有副本，删除第二次native root编码 | 数组必须拥有存储，不得随真实环境步被覆写；逐字段与原buffer对应行比较 |
-| P11 | `step_pipeline.py:tick`原图重放允许延后收取完成状态；`frame_pipeline.py:complete_values`在原锚点缓存查键期间推进其他活跃链，使用已有根遗物数组消除重复设备读取 | 在原函数内复用同一整步图/溢出重试；当前完成页保持租约，消费共享帧、释放页前必须收完；尚待完整性能验证。之前GPU排序去重整轮收益不足10%且小预算回退，已撤回 |
+| P11 | `step_pipeline.py:tick`原图重放允许延后收取完成状态；`frame_pipeline.py:complete_values`在原锚点缓存查键期间推进其他活跃链，使用已有根遗物数组消除重复设备读取 | 在原函数内复用同一整步图/溢出重试；当前完成页保持租约，消费共享帧、释放页前必须收完；完整256×768两预算已测，结果见worklog/2026-11-15.md。之前GPU排序去重整轮收益不足10%且小预算回退，已撤回 |
 | P12 | 原collector/worker/frame增加setup、循环、drain、finalize与root/step/completion计时，修正anchor计数 | 只增加计时/统计；父进程与owner重叠，不跨进程加总。新字段用于解释总墙钟 |
 | P13 | `accumulating_ppo.py:collect_rollouts`的full480默认配置使用原upper队列10ms收集窗口，原upper_batch=64不变，显式配置继续优先 | 这是调度合批实验，不是假称恢复旧参数（原实际full480为0ms）；不改每环境RNG、预算/目标/更新，须记录窗口及完整行数，并通过每轮10%耗时门槛 |
+
+| P14 | `rollout_inference.py:_DeckConsumers.anchor_values`和历史`sim/sts_lightspeed/bindings/upper-value.cpp`：旧UpperValueRuntime接批量数组输入，旧NeuralSearchBatch池在大批次用8线程打包和只读查键；串行保持输入顺序更新原LRU | 替换我增加的新模型锚点Python逐行查键/输出组装；完整字节/shape/dtype、限额、淘汰、权重失效、原GPU小网保留；旧扩展仍兼容原缓存。40项及后续4项已过；完整256×768两预算通过，结果见worklog/2026-11-15.md |
+
+| P15 | 原worker每64命令循环内，将该批尾原GPU tick前移到第一份upper请求的CPU准备前；finally收状态，批尾仍走原reap且不另加正常tick | 复用P11延后收取及原独立模型图；CPU/CUDA真实PPO与恢复已验证发生交错。属于P14同阶段消除串行等待，完整两预算均超过本阶段10%；计时upper包含重叠推进，不再把它当纯上层模型时间 |
 
 另行审查的模拟器修改：`Actions.h/Actions.cpp/BattleContext.cpp`将实际开战回调和OnAfterCardUsed改成带类型的小对象，执行仍调用原动作函数；`ActionQueue.h`只增加队列只读访问。原state_codec/CPU桥接增加这类对象的序列化/恢复，并在原ArenaProxy/BattleArena/GameMirror边界允许CARD_SELECT。未知回调仍拒绝导入，不能宣称任意函数均已支持；固定PPO遇到未知回调明确报错，不能静默用旧terminal-HP回退产生错误标签。正式246初态186个战斗快照已全部可导入，完整片段中的覆盖仍需实跑。
 
