@@ -200,6 +200,6 @@ rank0/1 的 native fallback 为 0，rank2/3 为41/67根，不能把全部差距�
 
 PPO阶段未改原页租约、根账本、命令队列、整步GPU图、帧容量、共享QKV空间、内部强制跳过和权重失效检查。以上声明须与逐文件diff及测试结果一起审查，不替代速度证明。
 
-| P16 | 原模拟器`BattleContext.cpp`燃烧契约的待执行抽牌接已有`OpeningAction::Draw`；`frame_modules.py`在冻结GPU源码的同一语句作相同替换 | 四rank资格发现rank2正式246的slot43/48/160在EXHAUST_ONE含未登记回调；不新增队列/执行路径、不回CPU。未升级/升级CPU序列化后抽牌逐字回归已过；GPU对照和四rank生产两轮仍待验收，属于正确性补漏，不能算10%性能阶段 |
+| P16 | 原模拟器`BattleContext.cpp`燃烧契约的待执行抽牌接已有`OpeningAction::Draw`；`frame_modules.py`在冻结GPU源码的同一语句作相同替换 | 四rank资格发现rank2正式246的slot43/48/160在EXHAUST_ONE含未登记回调；不新增队列/执行路径、不回CPU。未升级/升级CPU序列化后抽牌逐字回归已过；GPU39项与四rank两轮100%覆盖、16Adam/保存及普通恢复均通过；属于正确性补漏，不能算10%性能阶段 |
 
-| P17 | 用户指定原`deck_schedule.apply_stage`进入搜索即fraction=1；保留辅助损失权重ramp和64/64/256预算 | 这是用户要求的统计配置变化，不计提速收益；新启动/普通恢复一致，3项阶段语义测试通过，后续两轮四rank100%覆盖验收 |
+| P17 | 用户指定原`deck_schedule.apply_stage`进入搜索即fraction=1；保留辅助损失权重ramp和64/64/256预算 | 这是用户要求的统计配置变化，不计提速收益；新启动/普通恢复一致，3项阶段语义测试通过，两轮四rank100%覆盖/普通恢复已通过；64/64/256预算不变，详见worklog/2026-11-15.md |

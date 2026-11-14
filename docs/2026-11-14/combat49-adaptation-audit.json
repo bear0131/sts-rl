@@ -1,5 +1,5 @@
 {
-  "current_commit": "505b694926552da03fc7a68feab11850d221b2d0",
+  "current_commit": "b7118fe558e8ce1ea03d0bcec46bcb9a4f28d914",
   "scope": "Historical copied files compared to their original import, other shared files to task start; includes working tree; line counts are edits, not proof of semantic size.",
   "includes_working_tree": true,
   "collector_original_ast_verified": false,
@@ -89,7 +89,7 @@
     {"path":"tests/integration/test_native_upper_value_runtime.py","classification":"modified_original","baseline":"e507fdde","added":82,"removed":0,"hunks":[{"kind":"insert","old_start":13,"old_count":0,"current_start":13,"current_count":82}],"sha256":"4464b1bee0cc430ab72d8008e38a4318101a7c3e3407d555fdc9b4c840778b0f","uncommitted":false},
     {"path":"tests/unit/test_full480_terminal.py","baseline":"e507fdde","classification":"new_file","added":23,"removed":0,"uncommitted":false,"sha256":"dbd6f7f6e03c247aebb7ba93ce78095d78fcb61c33b2ce0aef33708c7962d42a","hunks":[{"kind":"insert","old_start":1,"old_count":0,"current_start":1,"current_count":23}]},
     {"path":"tests/unit/test_search_auxiliary.py","classification":"modified_original","baseline":"e507fdde","added":0,"removed":0,"uncommitted":false,"sha256":"a8c60a6b971d6831bc25759a2bf62ec66bbd99fd60bb9533e28e95bf54b1ffaa","hunks":[]},
-    {"path":"rl/algorithms/deck_schedule.py","baseline":"e507fdde","classification":"modified_original","added":3,"removed":2,"uncommitted":true,"sha256":"7742d12d1fe0ba16d56b3d277fe3164e0aa2d202da5b2100301324c6518c18f8","hunks":[{"kind":"replace","old_start":111,"old_count":2,"current_start":111,"current_count":3}]},
-    {"path":"tests/unit/test_deck_schedule.py","baseline":"e507fdde","classification":"modified_original","added":3,"removed":3,"uncommitted":true,"sha256":"7813d55297d15ce3046f39871829ad67020c5c5a2b5319521e356fc6d8bcdc5b","hunks":[{"kind":"replace","old_start":15,"old_count":1,"current_start":15,"current_count":1},{"kind":"replace","old_start":33,"old_count":1,"current_start":33,"current_count":1},{"kind":"replace","old_start":36,"old_count":1,"current_start":36,"current_count":1}]}
+    {"path":"rl/algorithms/deck_schedule.py","baseline":"e507fdde","classification":"modified_original","added":3,"removed":2,"uncommitted":false,"sha256":"7742d12d1fe0ba16d56b3d277fe3164e0aa2d202da5b2100301324c6518c18f8","hunks":[{"kind":"replace","old_start":111,"old_count":2,"current_start":111,"current_count":3}]},
+    {"path":"tests/unit/test_deck_schedule.py","baseline":"e507fdde","classification":"modified_original","added":3,"removed":3,"uncommitted":false,"sha256":"7813d55297d15ce3046f39871829ad67020c5c5a2b5319521e356fc6d8bcdc5b","hunks":[{"kind":"replace","old_start":15,"old_count":1,"current_start":15,"current_count":1},{"kind":"replace","old_start":33,"old_count":1,"current_start":33,"current_count":1},{"kind":"replace","old_start":36,"old_count":1,"current_start":36,"current_count":1}]}
   ]
 }
