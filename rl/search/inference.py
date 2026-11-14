@@ -43,6 +43,8 @@ class CombatLeafGraphs:
         self.graph_forward = (leaf
             if amp in ('bf16', 'fp16') and leaf is not None and getattr(core, 'autoregressive_actions', False)
             else None)
+        self.scratch_only = (self.graph_forward is not None
+                             or getattr(core, 'inference_scratch_only', False))
         compile_options = ({'mode': 'max-autotune-no-cudagraphs'} if amp == 'fp16' else {})
         self.compiled_forward = None
         if self.compile_forward and self.graph_forward is not None:
@@ -189,6 +191,8 @@ class CombatLeafGraphs:
             if len(self.entries) >= self.capacity:
                 self.entries.popitem(last=False)
                 self.evictions += 1
+                if not self.entries:
+                    self._scratch_pool = None
             started = time.perf_counter()
             self.entries[signature] = self._capture(observations, width, padded, writer=writer)
             self.capture_seconds += time.perf_counter()-started
@@ -259,7 +263,7 @@ class CombatLeafGraphs:
         entry['initialized'] = True
 
     def _capture(self, observations, width, padded, *, writer=None):
-        if self.graph_forward is not None and self._scratch_pool is None:
+        if self.scratch_only and self._scratch_pool is None:
             self._scratch_pool = torch.cuda.graph_pool_handle()
             if self._scratch_stream is None:
                 self._scratch_stream = torch.cuda.Stream(device=self.device)
@@ -312,6 +316,10 @@ class CombatLeafGraphs:
         graph = torch.cuda.CUDAGraph()
         host_output = (None if self.device_outputs else
                        torch.empty(warm_output.shape, dtype=warm_output.dtype, pin_memory=True))
+        # A pure consumer may retain device outputs while sharing temporary
+        # graph storage. Publication storage must be allocated outside capture.
+        published_output = (torch.empty_like(warm_output)
+                            if self.device_outputs and self.scratch_only else None)
         events = ([torch.cuda.Event(enable_timing=True, external=True,
                                    blocking=self.blocking_wait and index == 3) for index in range(4)]
                   if self.profile_interval else None)
@@ -324,6 +332,8 @@ class CombatLeafGraphs:
                 device.copy_(host, non_blocking=True)
             if events: events[1].record()
             output = forward()
+            if published_output is not None:
+                published_output.copy_(output)
             if events: events[2].record()
             if host_output is not None:
                 host_output.copy_(output, non_blocking=True)
@@ -333,9 +343,11 @@ class CombatLeafGraphs:
         entry.update(graph=graph, host_output=host_output,
                      host_output_array=None if host_output is None else host_output.numpy(),
                      events=events, done=done)
-        if self._scratch_pool is None:
+        if published_output is not None:
+            entry['output'] = published_output
+        elif self._scratch_pool is None:
             entry['output'] = output
-        # Shared-pool graphs must retain no device result: later captures may
-        # reuse every scratch byte. Replays are serialized by _pending, and
-        # each graph writes its own host result before releasing the scratch.
+        # Shared-pool graphs retain no result in the scratch pool: later
+        # captures may reuse every byte. Replays are serialized by _pending;
+        # publication owns either host storage or external device storage.
         return entry

@@ -127,3 +127,21 @@ canonical fallback use the original decoder. This changes only worker-side
 observation materialization; native tree expansion and backup are unchanged.
 
 Combat49 近期 GPU 采样/搜索重写已按用户要求撤除；旧源码基座、当前训练接口与待验收范围见 [交接文档](../../docs/2026-11-14/combat49-old-sampling-handoff.md)。本分支不能启动已撤除的 GPU 后端，也不会静默回退。
+
+### Full480 的当前模型消费者
+
+`UpperPolicyInference` 在原有 `ExactInputCache` / `CombatLeafGraphs` 上识别
+`deck-latent-combat-v1`。构筑编码及战斗/锚点投影按完整静态输入缓存，动态血量、
+牌堆、遗物计数继续由各自的小网络消费；`search_context(observations)` 发布独立的
+投影结果，不调用完整 actor。缓存拒绝零容量和连一行都容纳不了的容量。
+参数版本变化清空结果缓存，参数地址变化同时清空图；运行态缓存不进入 checkpoint。
+
+锚点结果另用原精确缓存，只以实际消费的 HP/maxHP、药水、遗物/计数、金币、钥匙、
+退出标志和投影构筑为键；怪物、牌堆和已不使用的战斗标量不降低命中率。
+CUDA 保留图捕获/重放、形状淘汰、共享临时存储及设备输出。
+共享临时存储的设备结果先写入 capture 外独立存储，后续图和淘汰不能改写返回值。
+
+该接口是原 full480 对接当前模型的消费者组件，**不是已接通的采样后端**。
+GPU 搜索/collector 的执行门仍保持关闭；不能据此恢复训练或宣称吞吐资格。
+原件逐文件来源与当前未完成项见
+[交接合同](../../docs/2026-11-14/combat49-old-sampling-handoff.md)及其来源映射。

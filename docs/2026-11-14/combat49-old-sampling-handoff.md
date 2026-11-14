@@ -149,3 +149,25 @@ rank0/1 的 native fallback 为 0，rank2/3 为41/67根，不能把全部差距�
 7. 通过后再固定 source/产物/计划，保护最新边界，恢复原run连续训练，**不设置首两轮自动暂停**。更新云端曲线和日志；每小时维护消息保持简短。没有通过则记录准确未完成项，不能再报告“已经完整复用旧实现/已到200万”。
 
 本轮清理检查只证明删除后的保留契约和一个真实环境仍可用；不证明新采样已实现、性能达标或四机带搜索恢复已验收。
+
+## 9. 原件复核与本次必要接口差异（13:10接续记录）
+
+用户新增硬约束：一小时内；不能复用11月13–14日写的采样代码；必须直接在原本整个采样代码上增加当前消费者；不能因适配关闭任何旧优化，内层与锚点均须缓存。用户再次确认锚点已有缓存资格，不能把它当作整体性能瓶颈。第7节rank1约3.522秒证据仍适用。
+
+[原件来源映射](combat49-full480-source-map.json)记录实际sources清单40项和patched collector，共41项逐SHA核验；归档SHA未变。整个原件已从归档解到本工作树忽略目录 `runs/local/full480-reconnect/original`，没有拿近期legacy实现覆盖。该清单不是完整传递依赖闭包：旧 `search_runtime`、`owned_pool`、`ragged_runtime` 等仍沿当时外部材料解析，不可擅自用名字相同的新文件代替。
+
+另发现7c947c28通用collector与实际运行collector有一处真实差异：Git版通过`stream_type`属性取stream，实际快照直接使用注入的`SmallPlayoutStream`。按full_seeded原拼接重建后，仅该处不同；映射保存原始diff。后续必须以实际patched文件为底，不能用Git函数名代替。
+
+本次只完成原推理消费者中的构筑/投影与锚点结果缓存接入，`rl/search/rollout_inference.py`和`inference.py`在开工e507fdde时与7c947c28全文相同，修改直接落在这两个旧文件上。未新写sampler/搜索调度器；未把失败的8318d305等采样实现带回。保留原精确缓存、CUDA图、共享scratch和device output，新增纯消费者的独立设备结果发布以维持二者同时成立。
+
+在下一次完整测速之前还必须一次接齐下列原件接口，不得把此组件验收写成整套接入：
+
+| 原件位置 | 必需改接的消费者合同 | 必须保留的旧执行机制 |
+| --- | --- | --- |
+| `worker_devicestepfull480141.py` / `combo_model.py` | 旧`policy.small_playout`/128输入/34输出硬布局与当前DeckLatent实体输入/198动作头不同；模型权重检查须接受正式246，而非替换其权重 | 原融合网络执行、帧内打包、特征/QKV存储共享、整步图 |
+| `frame_pipeline.py` / 原observer与builder产物 | 当前canonical候选、pending来源、空怪物槽、三个牌堆计数及动态遗物字段；缓存构筑投影进入GPU帧 | GPU观测与动态压缩，不能改为逐lane Python重建观察 |
+| `flex_runtime.py` / 原rules产物 | 旧counter随机数/HP及boss-win叶子改接当前配对PCG64、奖励前锚点/截断合同 | 根/兄弟隔离、非移动页租约、重试不多耗RNG、完成即回收 |
+| `stepfull480-01-collector.py` / `full_seeded.py` | 完整自然局NOSL消费者改接固定256×768真实PPO行、搜索筛选模型排序、原值/logprob/teacher、GAE与日志 | 原ready/submit/receive/立即推进和异步upper，不另写循环 |
+| `service_devicestepfull480141.py` / worker退出边界 | CPU collector/冻结GPU owner接当前更新及普通恢复；原固定模型digest、CPU-only断言与只读退出不能直接作为PPO更新协议 | 单GPU执行owner、64命令后的GPU tick、在途请求drain、完整权重/Adam/RNG恢复 |
+
+正式246保护和停止状态未改变。256个恢复状态上的512×8模型推理与缓存检查是消费者验证，不是256×768 collection；详细回执、失败修正和未完成范围追加在worklog同ID。

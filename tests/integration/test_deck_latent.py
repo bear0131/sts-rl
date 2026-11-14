@@ -42,6 +42,151 @@ def enter_combat(env):
     raise AssertionError('could not enter combat with bounded legal actions')
 
 
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_full480_existing_inference_consumes_cached_deck_heads(latent_env, device):
+    from rl.search.rollout_inference import UpperPolicyInference
+    if device == 'cuda':
+        assert torch.cuda.is_available(), 'GPU qualification needs the explicit CUDA runtime'
+    policy = policy_for(latent_env, 'transformer64x2').to(device)
+    policy.set_training_mode(False)
+    outer = deepcopy(latent_env._obs())
+    enter_combat(latent_env)
+    combat = deepcopy(latent_env._obs())
+    anchor = deepcopy(combat)
+    anchor['combat_exit_anchor'][0] = 1
+    data = {k: np.stack([outer[k], combat[k], anchor[k], combat[k]]) for k in outer}
+    core = policy.core
+
+    def reference(batch):
+        return core.eager_actor_critic({k: torch.as_tensor(v, device=device) for k, v in batch.items()})
+
+    with torch.no_grad(), UpperPolicyInference(core, device) as inference:
+        expected = reference(data)
+        result = inference(data)
+        torch.testing.assert_close(result, expected, rtol=2e-5, atol=2e-5)
+        misses = inference.statistics()['context_cache_misses']
+        assert misses == 2  # combat and its anchor share one permanent context
+        saved = tuple(t.clone() for t in result)
+        reordered = {k: v[[3, 1, 2, 0, 1]] for k, v in data.items()}
+        reordered['player_scalars'][:, 0] *= .75
+        reordered['relic_counters'] += .125
+        torch.testing.assert_close(inference(reordered), reference(reordered), rtol=2e-5, atol=2e-5)
+        assert inference.statistics()['context_cache_misses'] == misses
+        z = inference.search_context(reordered)
+        tensors = {k: torch.as_tensor(v, device=device) for k, v in reordered.items()}
+        direct_z = core.prepare_search_context(tensors)
+        torch.testing.assert_close(z.combat, direct_z.combat, rtol=2e-5, atol=2e-5)
+        torch.testing.assert_close(z.anchor, direct_z.anchor, rtol=2e-5, atol=2e-5)
+        # A permanent branch change refreshes exactly that context. Its sibling
+        # retains the old entry even if the caller then mutates the response.
+        changed = {k: v.copy() for k, v in reordered.items()}
+        changed['outer_deck_misc'][0, 0] += .25
+        torch.testing.assert_close(inference(changed), reference(changed), rtol=2e-5, atol=2e-5)
+        assert inference.statistics()['context_cache_misses'] == misses + 1
+        z.combat.zero_()
+        assert inference.search_context(reordered).combat.abs().sum() > 0
+        # Projected context and shared card embeddings must invalidate too.
+        for parameter in (core.combat.context_projection.bias, core.anchor.context_projection.weight,
+                          core.context.card.weight):
+            parameter.add_(.001)
+            before = inference.statistics()['context_cache_misses']
+            torch.testing.assert_close(inference(data), reference(data), rtol=2e-5, atol=2e-5)
+            assert inference.statistics()['context_cache_misses'] == before + 2
+        torch.testing.assert_close(result, saved, rtol=0, atol=0)
+        if device == 'cuda':
+            assert inference.deck.enc_graphs.captures > 0
+            assert inference.deck.head_graphs.captures >= 3
+            assert inference.deck.head_graphs.hits > 0
+            assert inference.deck.head_graphs.scratch_only
+    assert not inference.deck.cache.entries
+    if device == 'cuda':
+        assert not inference.deck.enc_graphs.entries and not inference.deck.head_graphs.entries
+
+
+def test_full480_deck_context_cache_cannot_be_disabled(latent_env):
+    from rl.search.rollout_inference import UpperPolicyInference
+    core = policy_for(latent_env, 'transformer64x2').core
+    with pytest.raises(ValueError, match='positive context cache'):
+        UpperPolicyInference(core, 'cpu', context_bytes=0)
+
+
+def test_full480_anchor_cache_keys_only_consumed_continuation_fields(latent_env):
+    from rl.search.rollout_inference import UpperPolicyInference
+    policy = policy_for(latent_env, 'transformer64x2')
+    policy.set_training_mode(False)
+    enter_combat(latent_env)
+    obs = {k: v[None].copy() for k, v in latent_env._obs().items()}
+    obs['combat_exit_anchor'][0, 0] = 1
+    with torch.no_grad(), UpperPolicyInference(policy.core, 'cpu') as inference:
+        first = inference(obs)[1].clone()
+        assert inference.statistics()['anchor_cache_misses'] == 1
+        obs['monster_scalars'] += .25
+        obs['draw_counts'] += 1
+        obs['player_scalars'][:, 2:] += .5
+        torch.testing.assert_close(inference(obs)[1], first, atol=0, rtol=0)
+        assert inference.statistics()['anchor_cache_misses'] == 1
+        assert inference.statistics()['anchor_cache_hits'] == 1
+        obs['player_scalars'][:, 0] *= .5
+        actual = inference(obs)
+        expected = policy.core.eager_actor_critic({k: torch.as_tensor(v) for k, v in obs.items()})
+        torch.testing.assert_close(actual, expected, atol=2e-5, rtol=2e-5)
+        assert inference.statistics()['anchor_cache_misses'] == 2
+        obs['relic_counters'] += .1
+        inference(obs)
+        assert inference.statistics()['anchor_cache_misses'] == 3
+
+
+def test_full480_deck_graph_lifetime_and_parameter_replacement(latent_env):
+    import gc
+    from rl.search.rollout_inference import UpperPolicyInference
+    assert torch.cuda.is_available(), 'graph lifetime qualification requires CUDA'
+    policy = policy_for(latent_env, 'transformer64x2').cuda()
+    policy.set_training_mode(False)
+    enter_combat(latent_env)
+    one = {k: v[None] for k, v in latent_env._obs().items()}
+    core = policy.core
+
+    def check(inference, batch):
+        actual = inference(batch)
+        expected = core.eager_actor_critic({k: torch.as_tensor(v, device='cuda') for k, v in batch.items()})
+        torch.testing.assert_close(actual, expected, atol=2e-5, rtol=2e-5)
+        return actual
+
+    with torch.no_grad(), UpperPolicyInference(core, 'cuda') as inference:
+        inference.deck.head_graphs.capacity = 1
+        inference.deck.enc_graphs.capacity = 1
+        first = check(inference, one)
+        saved = tuple(v.clone() for v in first)
+        for size in (9, 17, 33, 1):
+            batch = {k: np.repeat(v, size, axis=0) for k, v in one.items()}
+            # Distinct permanent contexts exercise the encoder's shape and
+            # scratch pool too, instead of only replaying the cheap heads.
+            batch['outer_deck_misc'][:, 0] += size + np.arange(size, dtype=np.float32) * .01
+            check(inference, batch)
+            temporary = torch.empty(16*1024*1024, device='cuda').fill_(.375)
+            del temporary
+            gc.collect()
+            torch._C._cuda_clearCublasWorkspaces()
+            torch.cuda.empty_cache()
+            check(inference, one)
+        assert inference.deck.enc_graphs.evictions >= 2
+        assert inference.deck.head_graphs.evictions >= 3
+        core.combat.context_projection.bias = torch.nn.Parameter(core.combat.context_projection.bias + .01)
+        check(inference, one)
+        torch.testing.assert_close(first, saved, atol=0, rtol=0)
+        inference.deck.cache.max_bytes = 1
+        inference.deck.cache.clear()
+        with pytest.raises(ValueError, match='cannot hold even one'):
+            inference(one)
+        assert not inference.deck.cache.entries
+    torch.cuda.synchronize()
+    gc.collect()
+    torch.cuda.empty_cache()
+    assert not inference.deck.head_graphs.entries and not inference.deck.enc_graphs.entries
+    assert inference.deck.head_graphs._scratch_pool is None
+    assert inference.deck.enc_graphs._scratch_pool is None
+
+
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 def test_repeated_status_cards_keep_three_pile_tokens_and_exact_counts(latent_env, device):
     from tests.bridge_fixtures import native_card, native_card_state

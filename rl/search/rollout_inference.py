@@ -41,14 +41,18 @@ class _UnifiedUpperCore:
 class UpperPolicyInference:
     """One collection's upper inference; no graph state enters a checkpoint.
 
-    Only CUDA unified-upper batches of at most 64 rows use bounded graphs.
-    Other devices, older policies and larger batches keep ordinary prediction.
+    CUDA unified-upper batches of at most 64 rows use bounded graphs.
+    Deck consumers use the same transport for cached context and dynamic heads.
+    Other devices and older policies retain their existing prediction path.
     The caller owns phase scheduling and categorical sampling, as before.
     """
-    def __init__(self, core, device):
+    def __init__(self, core, device, *, context_bytes=128*1024**2):
         self.core, self.device = core, device
         self.graphs = None
         self.closed = False
+        self.deck = None
+        if getattr(core, 'model_contract', None) == 'deck-latent-combat-v1':
+            self.deck = _DeckConsumers(core, device, context_bytes)
         if (torch.device(device).type == 'cuda'
                 and getattr(getattr(core, 'upper_config', None), 'architecture', None)
                     == 'upper-latent-actions-v1'):
@@ -64,10 +68,14 @@ class UpperPolicyInference:
         self.closed = True
         if self.graphs is not None:
             self.graphs.clear()
+        if self.deck is not None:
+            self.deck.close()
 
     def __call__(self, observations):
         if self.closed:
             raise RuntimeError('upper inference collection already closed')
+        if self.deck is not None:
+            return self.deck(observations)
         from env.core import vocab as V
         from rl.search.native import observation_as_tensor
         count = len(observations['phase'])
@@ -81,8 +89,19 @@ class UpperPolicyInference:
         return logits, values[:, None]
 
     def statistics(self):
+        if self.deck is not None:
+            return self.deck.statistics()
         values = self.graphs.statistics() if self.graphs is not None else dict.fromkeys(GRAPH_METRICS, 0)
         return {f'upper_graph_{key}': values[key] for key in GRAPH_METRICS}
+
+    def search_context(self, observations):
+        """The current consumer's frozen context, shared by its branch rows."""
+        if self.closed or self.deck is None:
+            raise RuntimeError('search context requires an open deck consumer')
+        from rl.policies.deck_latent import SearchContext
+        _, combat, anchor = self.deck.context(observations)
+        return SearchContext(torch.as_tensor(combat, device=self.device),
+                             torch.as_tensor(anchor, device=self.device))
 
 
 class ExactInputCache:
@@ -166,6 +185,160 @@ class ExactInputCache:
         output = np.stack([found[i] if i in found else results[pending[key]]
                            for i, key in enumerate(keys)])
         return output[:, :-1], output[:, -1]
+
+
+class _DeckForward:
+    """Only tensor interfaces for the old graph executor; no scheduling here."""
+    inference_scratch_only = True
+
+    def __init__(self, core, context=False):
+        self.core, self.context = core, context
+
+    @property
+    def training(self):
+        return self.core.training
+
+    def prepare_inference_cache(self):
+        self.core.combat.inference_card_table()
+
+    def combat_actor_critic(self, obs, *, active_relic_width):
+        core = self.core
+        if self.context:
+            z = core.context(obs, active_widths=active_relic_width)
+            return torch.cat((z, core.combat.context_projection(z),
+                              core.anchor.context_projection(z)), -1), z.new_zeros(len(z), 1)
+        phase, anchor, deck_width, relic_width, choice_width = active_relic_width
+        from env.core import vocab as V, native_actions as C
+        if anchor:
+            value = core.anchor_with_context(obs, obs['_anchor_context'])
+            return value.new_empty(len(value), 0), value
+        if phase == V.PHASE_VOCAB_INDEX['combat']:
+            return core.combat(dict(obs, _choice_width=choice_width))[:2]
+        return core.overworld(obs, core.upper_tokenizer, phase,
+                              upper_active_widths=(deck_width, relic_width))
+
+
+def _observed_width(values):
+    """Retain interior slots, including legal candidates whose card ID is PAD."""
+    present = np.asarray(values, bool).any(axis=0)
+    return max(1, int(np.flatnonzero(present)[-1]) + 1 if present.any() else 1)
+
+
+class _DeckConsumers:
+    """Current model heads on the original exact cache and graph transport.
+
+    The large encoder and both static projections are memoized together.
+    Dynamic HP, counters, piles and candidate slots only reach the small heads.
+    All cached rows and returned results have independent storage.
+    """
+    def __init__(self, core, device, context_bytes):
+        if context_bytes <= 0:
+            raise ValueError('deck sampling requires a positive context cache capacity')
+        self.core, self.device = core, device
+        self.cache = ExactInputCache(context_bytes)
+        self.anchor_cache = ExactInputCache(context_bytes)
+        self.encoder = _DeckForward(core, context=True)
+        self.head = _DeckForward(core)
+        self.enc_graphs = self.head_graphs = None
+        self.versions = self.addresses = None
+        if torch.device(device).type == 'cuda':
+            self.enc_graphs = CombatLeafGraphs(self.encoder, device, amp='off',
+                capacity=8, batch_multiple=8, compile_forward=False)
+            self.head_graphs = CombatLeafGraphs(self.head, device, amp='off',
+                capacity=32, batch_multiple=8, compile_forward=False, device_outputs=True)
+
+    def _check_weights(self):
+        if self.core.training or torch.is_grad_enabled():
+            raise RuntimeError('deck collection requires frozen inference without gradients')
+        tensors = tuple(self.core.parameters()) + tuple(self.core.buffers())
+        addresses = tuple((id(p), p.data_ptr(), str(p.device), p.dtype) for p in tensors)
+        versions = tuple(p._version for p in tensors)
+        if addresses != self.addresses:
+            for graphs in (self.enc_graphs, self.head_graphs):
+                if graphs is not None:
+                    graphs.clear()
+        if addresses != self.addresses or versions != self.versions:
+            self.cache.clear()
+            self.anchor_cache.clear()
+        self.addresses, self.versions = addresses, versions
+
+    def _forward(self, forward, graphs, obs, signature):
+        if graphs is not None:
+            return graphs(obs, signature)
+        tensors = {k: torch.as_tensor(v, device=self.device) for k, v in obs.items()}
+        logits, values = forward.combat_actor_critic(tensors, active_relic_width=signature)
+        return logits.float().cpu().numpy(), values.float().flatten().cpu().numpy()
+
+    def context(self, obs):
+        self._check_weights()
+        static = {k: np.asarray(obs[k]) for k in self.core.context.keys}
+        width = self.core.combat.context_projection.in_features
+        combat_width = self.core.combat.context_projection.out_features
+        anchor_width = self.core.anchor.context_projection.out_features
+        row_cost = sum(v[0].nbytes for v in static.values()) + (width+combat_width+anchor_width+1)*4 + 512
+        if self.cache.max_bytes < row_cost:
+            raise ValueError('context cache cannot hold even one complete context row')
+
+        def encode(missing):
+            widths = (_observed_width(missing['deck_ids']), _observed_width(missing['relics']))
+            return self._forward(self.encoder, self.enc_graphs, missing, widths)
+
+        encoded, _ = self.cache.forward(static, encode)
+        return encoded[:, :width], encoded[:, width:width+combat_width], encoded[:, width+combat_width:]
+
+    def __call__(self, obs):
+        from env.core import vocab as V, native_actions as C
+        run, combat, anchor = self.context(obs)
+        batch = dict(obs, _run_context=run, _combat_context=combat, _anchor_context=anchor)
+        phases = np.asarray(obs['phase']).reshape(-1)
+        anchored = np.asarray(obs['combat_exit_anchor'], bool).any(axis=1)
+        logits = torch.empty((len(phases), C.AUTOREGRESSIVE_SIZE), device=self.device)
+        values = torch.empty(len(phases), device=self.device)
+        for phase in np.unique(phases):
+            for at_anchor in ((False, True) if phase == V.PHASE_VOCAB_INDEX['combat'] else (False,)):
+                rows = np.flatnonzero((phases == phase) & (anchored == at_anchor))
+                if not len(rows):
+                    continue
+                data = {k: v[rows] for k, v in batch.items()}
+                pick = C.JOINT_PICK - C.JOINT_END
+                required = ((data['select_native_indices'] > 0)
+                            | data['combat_legal'][:, pick:pick+data['select_native_indices'].shape[1]].astype(bool))
+                signature = (int(phase), at_anchor, _observed_width(data['deck_ids']),
+                             _observed_width(data['relics']), _observed_width(required))
+                index = torch.as_tensor(rows, device=self.device)
+                if at_anchor:
+                    keys = ('player_scalars', 'potions', 'relics', 'relic_counters',
+                            '_anchor_context', *self.core.anchor.dynamic_keys)
+                    inputs = {k: data[k] for k in keys}
+                    inputs['player_scalars'] = inputs['player_scalars'][:, :2]
+                    def score_anchor(missing):
+                        out, value = self._forward(self.head, self.head_graphs, missing,
+                                                  (int(phase), True, 0, 0, 0))
+                        if isinstance(value, torch.Tensor):
+                            out, value = out.cpu().numpy(), value.cpu().numpy()
+                        return out, value
+                    _, value = self.anchor_cache.forward(inputs, score_anchor)
+                    logits[index] = 0
+                else:
+                    out, value = self._forward(self.head, self.head_graphs, data, signature)
+                    logits[index] = torch.as_tensor(out, device=self.device)
+                values[index] = torch.as_tensor(value, device=self.device)
+        return logits, values[:, None]
+
+    def statistics(self):
+        stats = {f'context_cache_{key}': value for key, value in self.cache.stats.items()}
+        stats.update({f'anchor_cache_{key}': value for key, value in self.anchor_cache.stats.items()})
+        for name, graphs in (('context', self.enc_graphs), ('upper', self.head_graphs)):
+            values = graphs.statistics() if graphs is not None else dict.fromkeys(GRAPH_METRICS, 0)
+            stats.update({f'{name}_graph_{key}': values[key] for key in GRAPH_METRICS})
+        return stats
+
+    def close(self):
+        for graphs in (self.enc_graphs, self.head_graphs):
+            if graphs is not None:
+                graphs.clear()
+        self.cache.clear()
+        self.anchor_cache.clear()
 
 
 class _UpperPhaseCore:

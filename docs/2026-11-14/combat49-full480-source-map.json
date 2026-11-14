@@ -1,0 +1,274 @@
+{
+  "commit": "7c947c28f215ccdb75f23e72090b21d9c7d1ba25",
+  "archive_sha256": "3a72e10edb48ae26a44655acfba717f3cc4cec707e3476c2229dd4d03258ebc3",
+  "collector_assembly_exact": false,
+  "collector_diff_from_git_base": "--- actual480\n+++ reassembled-7c947c28\n@@ -76,7 +76,8 @@\n     with (vec.omit_unused_combat_value_observations(),\n           _strategic_observations(model, vec, callback) as step_subset,\n           UpperPolicyInference(model.policy.core, model.device) as upper_inference,\n-          SmallPlayoutStream(vec.small_playout_batch, threads=cfg.threads) as stream):\n+          getattr(vec.small_playout_batch, 'stream_type', SmallPlayoutStream)(\n+              vec.small_playout_batch, threads=cfg.threads) as stream):\n         while vec.episode_rollout_active.any():\n             if cfg.max_combat_turns is not None:\n                 # Only inspect owned, ready slots before issuing another search or RNG draw.\n",
+  "files": [
+    {
+      "original": "devicestepfull480141/full_seeded.py",
+      "archive_member": "full_seeded.py",
+      "sha256": "619f15c6539c0f719fa06ed9b4b80ce20c1fda4058feb9b92173abbb762dabb2",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/service_devicestepfull480141.py",
+      "archive_member": "service_devicestepfull480141.py",
+      "sha256": "b2de764e51f83325a856a7c3f4b88fe36d47c6fbdb671ef38ab7bc64811b4cd7",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/worker_devicestepfull480141.py",
+      "archive_member": "worker_devicestepfull480141.py",
+      "sha256": "99c23febc5c579ae2187c751d781206a03dabde6b54f378e5c8057d3586b2df0",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/cpu_boundary.py",
+      "archive_member": "cpu_boundary.py",
+      "sha256": "efbd219d89ebe8978308c1d38e237945251b21c79b874cc48911ba2973be3907",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/combo_runtime.py",
+      "archive_member": "combo_runtime.py",
+      "sha256": "c328637a445b3a5f7db4c58d0eddbfd3516e8185e9e1df726be7296a4a8500fa",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/combo_model.py",
+      "archive_member": "combo_model.py",
+      "sha256": "aec7df0cce560ba447135295de63e5d5925cc581dda88e0bb2d82320fff29929",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/combo_kernels.py",
+      "archive_member": "combo_kernels.py",
+      "sha256": "d950c5fb44bf03cdef1469733403c3034c768abf45c08a4254a4bd9717cb3e18",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/frame_pipeline.py",
+      "archive_member": "frame_pipeline.py",
+      "sha256": "eebeb1ed5cde1ca513eb7ea8f553047234ec62a0b59fe0d0e15bdbbf30384924",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/frame_kernels.py",
+      "archive_member": "frame_kernels.py",
+      "sha256": "6b52f24ebc3d9691630e8523c5b3a13164ff7270933e05e16becf6871274e12e",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/frame_modules.py",
+      "archive_member": "frame_modules.py",
+      "sha256": "b7e49f89ddc3af4ec46299e0f1fe6fba3b20acd852d6d2d24d8366a3ab01db3e",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/observer_entry.cu",
+      "archive_member": "observer_entry.cu",
+      "sha256": "5e521768c829ea84d45a0d89cce31002b4d81be0914f484c78b372676ee3b48a",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/observer-0.cubin",
+      "archive_member": "observer-0.cubin",
+      "sha256": "02b10980e2e960abd18f04aadd4c2a1cae6a6792424cbd9d9c912328d81fd31d",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/token_builder.cu",
+      "archive_member": "token_builder.cu",
+      "sha256": "1f74ebf719e2d9e02b39ee43691f85318741e9ac8c20eb95ee3fe78f8bcb4e69",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/token_builder.cubin",
+      "archive_member": "token_builder.cubin",
+      "sha256": "cd64ea6dbc908b3064e6ff663c1a9ffe53921124725619f5b4bf3fecc96e8fd7",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/fallback_frame.py",
+      "archive_member": "fallback_frame.py",
+      "sha256": "fd80790077dc32174dd473ce5c6c4a3e79f9cf228be0099ce036c1e1508b60a3",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/fallback_ieee_model.py",
+      "archive_member": "fallback_ieee_model.py",
+      "sha256": "3071c9077c1d994bda9299ceca6238bcc0ce71dfc1de24dab5368d25c8381d12",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/fallback_ieee_kernels.py",
+      "archive_member": "fallback_ieee_kernels.py",
+      "sha256": "082d92301f72fc26ff40b16817de9ea0fdb40c72bdee95b94ab5eef859a92a8f",
+      "verified": true
+    },
+    {
+      "original": "devicegraph141/graph_runtime.py",
+      "archive_member": "actual-import-snapshot/devicegraph141/graph_runtime.py",
+      "sha256": "b3ca8f64e553837958aad8f5135ec76690f2e529f8d1aaa7473a777d987376e1",
+      "verified": true
+    },
+    {
+      "original": "devicegraph141/graph_model.py",
+      "archive_member": "actual-import-snapshot/devicegraph141/graph_model.py",
+      "sha256": "c5962bf449fcf3ffbe6082febeaaafcb3d72f2c1289b671e2405f28f8c2f5f92",
+      "verified": true
+    },
+    {
+      "original": "devicegraph141/graph_kernels.py",
+      "archive_member": "actual-import-snapshot/devicegraph141/graph_kernels.py",
+      "sha256": "771d92d86d53425dd808f106a134510b9840f4b1b1fb3588d8549629a88ce8b4",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/step_pipeline.py",
+      "archive_member": "step_pipeline.py",
+      "sha256": "13ce132535d75543c0c29a4b77709a56d59664c504cdad6ddaf70235dfb2ad04",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/step_kernels.py",
+      "archive_member": "step_kernels.py",
+      "sha256": "1f0acdbaac554476930b7919a5558735a4c7f011489cf0f976581251a588ab9b",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/builder-build.json",
+      "archive_member": "builder-build.json",
+      "sha256": "fc4e27fc9c699cc67984b5b55c8872ebecfe701781dbbb7aaf360ee455b787af",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/observer-compile-0-result.json",
+      "archive_member": "observer-compile-0-result.json",
+      "sha256": "23b79c6d9bd1c87cf246d226848a50cee8bcfbbaf9aae83c6bf765c912c7eda1",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/search-observer-0.cubin",
+      "archive_member": "search-observer-0.cubin",
+      "sha256": "3d6ed56f8b8835ef801ac50ecd3bd99f63f79469a4e8c36ca1881ec4bfff78d2",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/search-observer-compile-0-result.json",
+      "archive_member": "search-observer-compile-0-result.json",
+      "sha256": "aeb2f3d65c434ac02ace2537bf7ee7ec28daf5199d52374d24c82b3fe40ae320",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/rules_entry.cu",
+      "archive_member": "rules_entry.cu",
+      "sha256": "e3ce76010b05b51482f7a22d32ef22b573cd7fab83819475bbbbab72f4c118ee",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/rules-0.cubin",
+      "archive_member": "rules-0.cubin",
+      "sha256": "4a8672912f2e192ed3666a91d0335307ab16b58a809606e4be10e1b3b4ea193b",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/rule-compile-0-result.json",
+      "archive_member": "rule-compile-0-result.json",
+      "sha256": "5f36162a2f938ab0670e1d4659cfe592c24163ddac316c5a85bcc7ad286a2939",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/flex_runtime.py",
+      "archive_member": "flex_runtime.py",
+      "sha256": "c5fba5177b01db30384b29eefd492d338f3efb7a1a1e7523aefbe200ae9c59d3",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/flex_stream.py",
+      "archive_member": "flex_stream.py",
+      "sha256": "e6da9b44fc39aa56f2bbb038d63c2936643b395d699b2101b27c70fd2d97def3",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/flex_adapter.py",
+      "archive_member": "flex_adapter.py",
+      "sha256": "58a688917809354807ac76dafd200a106bf335ce1281f3b509a9a0b44bbe0078",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/flex_ragged.py",
+      "archive_member": "flex_ragged.py",
+      "sha256": "46f8aaaf26ec72a34db636c90d3feb5aecd106a0ca127de164309c8062eb6e03",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/layout_bindings.py",
+      "archive_member": "layout_bindings.py",
+      "sha256": "95c92610d7c73a8a7ad07d25f44027c750dfded2548440965fa02e4e77cf6373",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/state_pages.py",
+      "archive_member": "state_pages.py",
+      "sha256": "33210f3c5da8a8f90ec7d0d077e4d63c1413d40363c7e227d1b853a2395f44ef",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/root_ledger.py",
+      "archive_member": "root_ledger.py",
+      "sha256": "d77c141e3bc899846193f8d101ee7ce396c48af21d5c52343587a28585e46e50",
+      "verified": true
+    },
+    {
+      "original": "devicefallback141/packed_fallback.py",
+      "archive_member": "actual-import-snapshot/devicefallback141/packed_fallback.py",
+      "sha256": "e68ae1beb4125c5fa8b9f3b623c2a053eaca4e5c9b6f7fdbe71c9aaeea1a31e4",
+      "verified": true
+    },
+    {
+      "original": "devicefallback141/fallback_model.py",
+      "archive_member": "actual-import-snapshot/devicefallback141/fallback_model.py",
+      "sha256": "6d8ca9bcb044d99b53a12c5ef15e2840bbda79b67bba299025404b360e4f52b3",
+      "verified": true
+    },
+    {
+      "original": "directmapped141/native/slaythespire.cpython-311-x86_64-linux-gnu.so",
+      "archive_member": "actual-import-snapshot/directmapped141/native/slaythespire.cpython-311-x86_64-linux-gnu.so",
+      "sha256": "9b7439fa1c29ba4f6e2bd09d9d66ff5e6ba2aa4f4995d9b8c0b6e4c8ec9987e2",
+      "verified": true
+    },
+    {
+      "original": "devicerootsearch141/gpu_search_bridge.cpython-311-x86_64-linux-gnu.so",
+      "archive_member": "actual-import-snapshot/devicerootsearch141/gpu_search_bridge.cpython-311-x86_64-linux-gnu.so",
+      "sha256": "36da97eb79bff5c2e1fe42d8bc65e01fc87971c8dcf487cdd609421977396c76",
+      "verified": true
+    },
+    {
+      "original": "devicestepfull480141/stepfull480-01-collector.py",
+      "archive_member": "stepfull480-01-collector.py",
+      "sha256": "c654022201153d8e04bc5f9d025a5af23815acdd63baff1653d6cf6ef706c523",
+      "verified": true
+    }
+  ],
+  "canonical_consumers": [
+    {
+      "path": "rl/algorithms/independent_rollout.py",
+      "original_sha256": "a804ea32321ffdfc241c6aa91b48b9e42c6685840219f41e547e0423564dd4e2",
+      "baseline_text_equal": true
+    },
+    {
+      "path": "rl/search/rollout_inference.py",
+      "original_sha256": "04af82385c9fc32bc04c22a9362b5b425b43a3fccceae13cd99c197f78844863",
+      "baseline_text_equal": true
+    },
+    {
+      "path": "rl/search/inference.py",
+      "original_sha256": "356b51739c7492902e8871178519d38e3c5eb0f75a542f29bd1c33e495423c70",
+      "baseline_text_equal": true
+    }
+  ],
+  "audit_time": "2026-11-14T13:00:00+08:00",
+  "scope": "Actual sources manifest and collector only; not a transitive import closure or current training qualification",
+  "integration_status": "current cached inference consumer verified; original search/collector not connected to current PPO"
+}
