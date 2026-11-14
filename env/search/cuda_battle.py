@@ -16,11 +16,22 @@ import numpy as np
 import torch
 
 
+def upload_array(values, device, *, dtype=None):
+    """Own host bytes until an asynchronous CUDA copy has completed."""
+    if isinstance(values, torch.Tensor):
+        return values.to(device=device, dtype=dtype, non_blocking=True)
+    owned = torch.from_numpy(np.ascontiguousarray(values)).pin_memory()
+    return owned.to(device=device, dtype=dtype, non_blocking=True)
+
+
 def upload_arrays(host, device, arrays):
     """One owned byte transfer with typed, aligned views for existing consumers."""
     arrays = [np.ascontiguousarray(a) for a in arrays]
     packed,offsets = host.pack_arrays(arrays)
-    storage = torch.from_numpy(packed).to(device)
+    # Torch owns the pinned allocation and records the copy event on its host
+    # allocator. Releasing the temporary NumPy packet cannot recycle bytes
+    # while this transfer is queued. All consumers use the same owner stream.
+    storage = upload_array(packed, device)
     return [storage[offset:offset+a.nbytes].view(torch.from_numpy(a).dtype).reshape(a.shape)
             for offset,a in zip(offsets,arrays,strict=True)]
 
@@ -206,7 +217,7 @@ class CudaBattleArena:
         array = np.ascontiguousarray(values, dtype=dtype)
         if array.dtype == np.uint64:
             array = array.view(np.int64)
-        return torch.from_numpy(array).to(self.device)
+        return upload_array(array, self.device)
 
     def _upload_many(self, arrays):
         return upload_arrays(self.host,self.device,arrays)

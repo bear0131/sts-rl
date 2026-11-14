@@ -65,6 +65,8 @@ class _NativeStepPipe:
                     key: np.ndarray(shape, dtype=dtype, buffer=self.memory.buf, offset=offset)
                     for key, shape, dtype, offset in layout}
                 self.native = NativeSearchVecEnv([lambda env=env: env for env in self.envs], threads=1)
+                import slaythespire as sts
+                self.observation_copy = sts.ObservationRowCopy(self.arrays, self.native.buf_obs, 1)
                 self.remote.send(None)
             elif cmd == 'step' and self.native is not None:
                 if self.deck_resident is not None:
@@ -104,8 +106,7 @@ class _NativeStepPipe:
                 obs, rewards, dones, infos = self.native._step_subset(data, borrow=True)
                 indices = list(data)
                 local = np.asarray(indices, np.intp)
-                for key, value in obs.items():
-                    self.arrays[key][self.start + local] = value[local]
+                self.observation_copy.copy(self.start + local, local)
                 self.remote.send(dict(rows=[(i, rewards[j], dones[j], infos[j], self.native.reset_infos[i])
                     for j, i in enumerate(indices)],
                     seconds={k: v-before[k] for k, v in self.native.step_seconds.items()}))
@@ -163,9 +164,11 @@ class NativeSubprocVecEnv(cv.GroupedCachedMaskSubprocVecEnv):
     """Same logical ordering/control RPCs as grouped VecEnv, native step batches."""
     _worker_target = staticmethod(_native_group_worker)
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, native_threads=4, **kwargs):
         self.memory = None
-        self.native_threads = 1
+        if native_threads < 1:
+            raise ValueError('native search thread count must be positive')
+        self.native_threads = native_threads
         # These are sums over parallel worker wall intervals, never additive
         # with the collector's end-to-end environment wall time.
         self.step_seconds = dict(wrappers_sum=0., encoding_sum=0.)
@@ -190,6 +193,7 @@ class NativeSubprocVecEnv(cv.GroupedCachedMaskSubprocVecEnv):
             key: np.ndarray(shape, dtype=dtype, buffer=self.memory.buf, offset=offset)
             for key, shape, dtype, offset in layout}
         self.buf_obs = self.arrays
+        self.shared_observation_spec = self.memory.name, layout
         for remote, group in zip(self.remotes, self._groups, strict=True):
             remote.send(('native_shared', (self.memory.name, layout, group[0], group[-1] + 1)))
         self._receive_groups({r: i for i, r in enumerate(self.remotes)})
@@ -441,7 +445,8 @@ class _GroupedAnchorFrontier:
             self.members.setdefault(group, []).append((root, local))
         self.requests = {group: dict(indices=[local for _, local in members],
             roots=[roots[root] for root, _ in members], worlds=[worlds[root] for root, _ in members],
-            options=dict(options, threads=1)) for group, members in self.members.items()}
+            options=dict(options, threads=max(1, options['threads']//len(self.members))))
+            for group, members in self.members.items()}
         self.results = [None]*len(slots)
         self.finished, self.row_counts = {}, {}
         self.started = self.closed = False
@@ -449,6 +454,8 @@ class _GroupedAnchorFrontier:
     def advance(self, outputs=None):
         if self.closed or (outputs is None) == self.started:
             raise RuntimeError('out-of-order native frontier response')
+        if self.started and len(outputs) != sum(self.row_counts[g] for g in self.members if g not in self.finished):
+            raise ValueError('native frontier output count mismatch')
         pending = {}
         at = 0
         for group in sorted(self.members):
@@ -463,8 +470,6 @@ class _GroupedAnchorFrontier:
             remote = self.vector.remotes[group]
             remote.send((command, data))
             pending[remote] = group
-        if self.started and at != len(outputs):
-            raise ValueError('native frontier output count mismatch')
         self.started = True
         packets = self.vector._receive_groups(pending)
         rows = []

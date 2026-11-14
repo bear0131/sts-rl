@@ -35,7 +35,10 @@ class ResidentInference:
         self.core = core
         self.native_host = native_host
         self.policy = SimpleNamespace(core=core, training=False, parameters=core.parameters)
-        self.graphs = SharedCollectionGraphs(core, capacity=256)
+        # Native fallback heads and ordinary actor shapes share this owner.
+        # Retain their bounded working set instead of repeatedly retiring the
+        # actor graphs when a long special-state wave alternates frontiers.
+        self.graphs = SharedCollectionGraphs(core, capacity=512)
         self.cache = DeckSearchInferenceCache(core, cache_bytes)
         self.jobs = {}
         self.geometry = None

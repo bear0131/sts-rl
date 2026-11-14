@@ -155,8 +155,8 @@ class ResidentPool:
             at += count
         # Old prepare_pages uploads the whole admission together. Root-by-root
         # copies serialize the host and GPU despite independent page ownership.
-        self.arena.arena.index_copy_(0,torch.as_tensor(destination,device=self.arena.device),
-            torch.as_tensor(np.concatenate(page_addresses),device=self.arena.device))
+        destination_gpu, addresses_gpu = self.arena._upload_many((destination,np.concatenate(page_addresses)))
+        self.arena.arena.index_copy_(0,destination_gpu,addresses_gpu)
         for group in self.mirror.groups(payloads):
             group_slots=np.asarray([slots[i] for i in group],np.int64)
             actual_sources=self.mirror.prepare([payloads[i] for i in group],group_slots)
@@ -199,7 +199,8 @@ class ResidentPool:
             for start in range(0,len(selected),batch_size):
                 jobs=selected[start:start+batch_size]
                 raw,physical,compact=self.arena.observe_anchor_selected(self.capacity+jobs)
-                _,score=self.scorer._score_anchor(raw,pipeline.owners[jobs],physical,compact,return_host=True)
+                owner_rows=pipeline.owners[physical-self.capacity]
+                _,score=self.scorer._score_anchor(raw,owner_rows,physical,compact,return_host=True)
                 if not np.isfinite(score).all():
                     raise FloatingPointError('nonfinite streaming anchor value')
                 scores.append(score)

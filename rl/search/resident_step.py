@@ -299,7 +299,8 @@ class ResidentStepPipeline:
 
     def completed(self, jobs):
         """One owned rendezvous for exact values, anchor flags and integer depths."""
-        jobs=torch.as_tensor(jobs,device=self.arena.device,dtype=torch.long)
+        from env.search.cuda_battle import upload_array
+        jobs=upload_array(jobs,self.arena.device,dtype=torch.long)
         output=torch.empty((len(jobs),3),device=self.arena.device,dtype=torch.float64)
         K.completed_data[(triton.cdiv(len(jobs),256),)](
             jobs,self.final,self.anchors,self.depth,output,len(jobs),256)

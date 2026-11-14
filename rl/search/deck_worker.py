@@ -30,6 +30,16 @@ class DeckWorker:
         self.actor_batches = []
         self.parked_report = None
         self.generation = 0
+        self.shared_memory = self.shared_columns = None
+        shared = self.settings.get('shared_observations')
+        if shared is not None:
+            from multiprocessing import shared_memory
+            from env.search.resident_transport import ObservationColumnTransport
+            name, layout = shared
+            self.shared_memory = shared_memory.SharedMemory(name=name)
+            arrays = {key: np.ndarray(shape, dtype=dtype, buffer=self.shared_memory.buf, offset=offset)
+                      for key, shape, dtype, offset in layout}
+            self.shared_columns = ObservationColumnTransport(arrays)
         self.folder, self.manifest, self.host = load_artifacts(settings['artifacts'])
         if getattr(self.host, 'host_runtime_version', None) != 2:
             raise ValueError('deck state adapter requires native host runtime v2')
@@ -88,8 +98,14 @@ class DeckWorker:
         return bool(self.actor_queue or self.queued or (self.engine is not None and self.engine.pending))
 
     def submit(self, rows):
-        from env.search.resident_transport import unpack_actor_roots
-        rows, obs = unpack_actor_roots(rows, row_observations=False, packed=True)
+        from env.search.resident_transport import unpack_actor_roots, PackedObservationBatch
+        if rows.get('contract') == 'legacy-deck-shared-roots-v1':
+            if self.shared_columns is None:
+                raise ValueError('shared root packet has no bound observation bank')
+            rows = rows['rows']
+            obs = PackedObservationBatch(*self.shared_columns.pack([row['slot'] for row in rows.values()]))
+        else:
+            rows, obs = unpack_actor_roots(rows, row_observations=False, packed=True)
         if self.engine is None or (self.estimates.keys() | self.actor_queue.keys()) & rows.keys():
             raise RuntimeError('parked owner or duplicate search')
         if all('context' in row and 'slot' not in row for row in rows.values()):
@@ -169,6 +185,12 @@ class DeckWorker:
         if self.engine is None:
             raise RuntimeError('inference on parked weights')
         if kind == 'upper':
+            if payload[0] is None:
+                if self.shared_columns is None:
+                    raise ValueError('shared actor request has no bound observation bank')
+                from env.search.resident_transport import PackedObservationBatch
+                _, masks, slots, capacity = payload
+                payload = PackedObservationBatch(*self.shared_columns.pack(slots)), masks, slots, capacity
             return self._prepare_roots(payload)
         if kind == 'values':
             observations, masks, slots = payload
@@ -231,4 +253,8 @@ class DeckWorker:
         self.actor_queue.clear()
         self.actor_batches.clear()
         self.estimates.clear()
+        if self.shared_memory is not None:
+            self.shared_columns = None
+            self.shared_memory.close()
+            self.shared_memory = None
         return dict(report or {}, cancelled=cancelled)

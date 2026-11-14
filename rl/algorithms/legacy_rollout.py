@@ -138,7 +138,10 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                     or time.monotonic()-min(upper_waiting.values()) >= .002):
                 tick = time.monotonic()
                 rows = sorted(upper_waiting)[:64]
-                obs = {k: v[rows] for k, v in model._last_obs.items()}
+                # These slots cannot advance until this actor reply is consumed.
+                # The owner packs their shared rows before publishing its reply.
+                obs = (None if stream.shared_observations is not None else
+                       {k: v[rows] for k, v in model._last_obs.items()})
                 row_masks = np.stack([masks[i] for i in rows])
                 upper_pending = (stream.service.begin_call('upper',
                     (obs, row_masks, np.asarray(rows), vec.num_envs)), rows)

@@ -14,6 +14,38 @@ from env.core.cuda_observation import CudaObservationDecoder
 pytestmark = [pytest.mark.native, pytest.mark.cuda, pytest.mark.timeout(120)]
 
 
+def test_async_host_upload_owns_source_bytes_through_release_and_reuse(cuda_battle_artifacts):
+    from env.search.cuda_battle import load_artifacts, upload_array, upload_arrays
+    _, _, host = load_artifacts(cuda_battle_artifacts[0])
+    stream = torch.cuda.Stream()
+    received, expected = [], []
+    for size in (3, 8193, 17, 512):
+        sources = [np.arange(size * 3, dtype=np.int64).reshape(size, 3)[:, ::2],
+                   np.linspace(-1., 1., size, dtype=np.float32),
+                   np.arange(size, dtype=np.uint8)]
+        expected.append([v.copy() for v in sources])
+        with torch.cuda.stream(stream):
+            # Delay consumption so caller mutation/release exercises queued
+            # ownership rather than an already completed small host copy.
+            torch.cuda._sleep(10_000_000)
+            received.append(upload_arrays(host, 'cuda', sources))
+            independent = upload_array(sources[0], 'cuda')
+            received[-1].append(independent)
+        expected[-1].append(sources[0].copy())
+        for value in sources:
+            value.fill(0)
+        del sources, independent
+        gc.collect()
+        pressure = [torch.empty(128 * 1024, pin_memory=True, dtype=torch.uint8).fill_(211)
+                    for _ in range(8)]
+        del pressure
+    stream.synchronize()
+    torch.cuda.empty_cache()
+    for batch, references in zip(received, expected, strict=True):
+        for actual, reference in zip(batch, references, strict=True):
+            np.testing.assert_array_equal(actual.cpu().numpy(), reference)
+
+
 def test_resident_permanent_misc_matches_native_rounding_and_refreshes_only_real_changes():
     import triton
     from env.core.cuda_observation import canonical_misc

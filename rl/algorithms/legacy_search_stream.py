@@ -23,7 +23,9 @@ class Stream:
         self.exporter = (ResidentRootExporter(vec.envs, self.config.cuda_artifacts,
                                              observations=vec.buf_obs) if hasattr(vec, 'envs') else None)
         from env.search.resident_transport import ObservationColumnTransport
-        self.observation_transport = ObservationColumnTransport(vec.buf_obs)
+        self.shared_observations = getattr(vec, 'shared_observation_spec', None)
+        self.observation_transport = (ObservationColumnTransport(vec.buf_obs)
+                                      if self.shared_observations is None else None)
         self.stats = dict.fromkeys(('chains','atomic_steps','policy_rows','forced_rows',
             'anchor_rows','cutoff_rows','terminal_rows','max_active','budget_floor_overage',
             'searched_roots','selected_roots','eligible_roots','executed_search_actions',
@@ -49,6 +51,7 @@ class Stream:
         torch.cuda.synchronize(); gc.collect(); torch.cuda.empty_cache()
         capacity = vec.num_envs  # Old fixed real-root slots, no extra queued root generations.
         self.service = collection_service(model, capacity, self.snapshot, dict(
+            shared_observations=self.shared_observations,
             artifacts=self.config.cuda_artifacts, cache_bytes=self.config.inference_cache_bytes,
             normal_budget=self.config.normal_budget,
             budget_cap=max(self.config.boss_budget, self.config.normal_budget,
@@ -91,7 +94,9 @@ class Stream:
                 rows[key] = row
             self.stats['selected_roots'] += 1
         if rows:
-            self.service.submit(rows, columns=self.observation_transport.pack([key[1] for key in rows]))
+            columns = (self.observation_transport.pack([key[1] for key in rows])
+                       if self.observation_transport is not None else None)
+            self.service.submit(rows, columns=columns)
             self.stats['resident_frames'] += 1
             self.stats['resident_frame_roots_max'] = max(
                 self.stats['resident_frame_roots_max'], len(self.service.outstanding))

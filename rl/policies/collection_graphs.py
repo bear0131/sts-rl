@@ -11,6 +11,7 @@ import numpy as np
 import torch
 
 from env.core import encode, native_actions as C, vocab
+from env.search.cuda_battle import upload_array
 from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS
 from rl.policies.shared_wholerun import MERGED_UPPER_PHASE
 
@@ -213,7 +214,7 @@ class SharedCollectionGraphs:
             bank = previous
         for k,v in packed.items():
             bank['columns'][k][:count].copy_(v)
-        bank['slots'][:count].copy_(torch.as_tensor(slots,device=self.device))
+        bank['slots'][:count].copy_(upload_array(slots,self.device))
         if masks is not None:
             if bank['mask'] is None or bank['mask'].shape[1:] != masks.shape[1:]:
                 bank['mask'] = torch.empty((bank['capacity'],*masks.shape[1:]),device=self.device,dtype=masks.dtype)
@@ -263,7 +264,7 @@ class SharedCollectionGraphs:
             records = keys.view(np.dtype((np.void, keys.shape[1]))).ravel()
             _, first, inverse = np.unique(records, return_index=True, return_inverse=True)
             selected = rows[first]
-            indices = torch.as_tensor(selected, device=self.device)
+            indices = upload_array(selected, self.device)
             batch = ({k: observations[k][indices] for k in encoder.keys} if packed_bank is None
                      else {'_indices': indices})
             widths = tuple(self._width(host[k][selected], 1) for k in ('deck_ids', 'relics'))
@@ -284,14 +285,14 @@ class SharedCollectionGraphs:
             encoded = self._replay(self.context_entries, signature, batch, padded,
                                   encode_context, min(128,self.capacity),
                                   keep_alive=() if packed_bank is None else (packed_bank,))[0][:count]
-            latent[torch.as_tensor(slots[rows], device=self.device)] = encoded[
-                torch.as_tensor(inverse, device=self.device)]
+            latent[upload_array(slots[rows], self.device)] = encoded[
+                upload_array(inverse, self.device)]
             for k in encoder.keys:
                 previous[k][slots[rows]] = host[k][rows]
             valid[slots[rows]] = True
             self.stats['context_rows'] = self.stats.get('context_rows', 0) + len(selected)
         self.context_cache = versions, previous, latent, valid
-        return latent if context_slots is None else latent[torch.as_tensor(slots, device=self.device)]
+        return latent if context_slots is None else latent[upload_array(slots, self.device)]
 
     def _forward(self, observations, host=None, context_slots=None, packed=None, actor_masks=None, *, packed_layout=None):
         if self.closed or self.core.training or torch.is_grad_enabled():
@@ -321,7 +322,7 @@ class SharedCollectionGraphs:
             if use_map:
                 rooms, features = observations['map_full_rooms'], observations['map_full_features']
                 slots, capacity = (np.arange(len(host_phase)), len(host_phase)) if context_slots is None else context_slots
-                slot_tensor = torch.as_tensor(slots, device=self.device)
+                slot_tensor = upload_array(slots, self.device)
                 versions = tuple(p._version for p in self.parameters)
                 valid_shape = (self.map_cache is not None
                                and self.map_cache[0].shape == (capacity, *rooms.shape[1:])
@@ -374,7 +375,7 @@ class SharedCollectionGraphs:
         if use_map:
             changed = np.flatnonzero(meta[:, -1])
             if len(changed):
-                selected = torch.from_numpy(changed).to(device=phase.device, non_blocking=True)
+                selected = upload_array(changed, phase.device)
                 count = len(changed)
                 padded = 1 << (count - 1).bit_length()
                 batch = (dict(rooms=rooms[selected], features=features[selected])
@@ -439,7 +440,7 @@ class SharedCollectionGraphs:
             routes[ordinary_upper] = MERGED_UPPER_PHASE
         for phase_id in np.unique(routes).tolist():
             rows = np.flatnonzero(routes == phase_id)
-            selected = torch.from_numpy(rows).to(device=phase.device, non_blocking=True)
+            selected = upload_array(rows, phase.device)
             combat = phase_id in (combat_id, _ANCHOR_PHASE)
             keys = (COMBAT_OBSERVATION_KEYS if combat
                     else observations if phase_id == MERGED_UPPER_PHASE
