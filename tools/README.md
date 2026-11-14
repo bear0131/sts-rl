@@ -3,6 +3,9 @@
 `analysis/` 放诊断/绘图/实验分析，`benchmarks/` 放低层性能探针，`checkpoints/` 放 checkpoint 迁移/向量合并，`validation/` 放有预算的跨版本数值检查。
 运行方式：仓库根目录 `python -m tools.<package>.<command> --help`。这些命令允许依赖运行时，rl/env 不反向导入 tools。诊断结果不是源代码，写入 runs/local；需要长期复用的实验参数放 configs。
 
+`python -m tools.benchmarks.benchmark_ssh_mesh --inventory HOSTS.json --identity LOCAL_KEY --known-hosts LOCAL_KNOWN_HOSTS --remote-identity REMOTE_KEY --remote-known-hosts REMOTE_KNOWN_HOSTS --output runs/local/ssh-mesh --mib 128 --workers 4 --timeout 45`
+并行测所有机器的两个传输方向，每一轮每台机器只参与一对，避免同机争抢带宽。清单为含 `name/host/port/user/python` 的 JSON 数组（后两项可省略）；仅含地址，不存密码。要求本机到各机、各机互相已有密钥认证和校验过的 known_hosts，远端 Linux/Python3.9+/rsync。固定 seed 生成文件，单路 SSH、不压缩、SHA256 校验；速度含 SSH 启动和文件页缓存读写，校验单列，不代表物理磁盘吞吐或训练 allreduce。逐方向保存 JSON 与 CSV 矩阵，失败不丢已有结果，任何失败退出1；输出目录必须全新。远端只清理本次已校验的接收文件，源文件留在唯一临时目录。此入口独立于 GPU/模型基准，因为它只测试已授权机器间的 SSH 链路，不导入训练运行时。
+
 `python -m tools.operations.monitor_nosl --relic-guard --log RUN/rank0.log --state RUN/relic-guard/state.json --stop-file RUN/STOP --iteration-steps 786432 --pid-file RUN/rank0.pid --watch-seconds 259200 --poll-seconds 30`
 为已授权的四rank实验监控宝箱条件遗物领取率，不修改学习参数。每轮至少400个已决遗物机会；最高连续5轮均值作为参考，之后连续3轮均低于参考一半且下降至少20个百分点时，以独占创建方式写原STOP，训练入口通过现有ring协议在完整轮保存后全体停止。STOP保持且不得被自动故障恢复清除；监控只负责请求停止，操作方仍须核查四rank最终完整包并保护。日志轮转时保留已见参考，重复global step只算一轮，缺报/零分母/断档打断连续确认。`iteration-steps`必须是当前全局每轮实际transition数。默认只检查一次；watch必须显式限定秒数并绑定本run实际PID，停止、训练退出或预算耗尽时结束。结果是相关的训练窗口趋势，不是独立胜率评测。
 
