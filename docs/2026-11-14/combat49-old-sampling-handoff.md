@@ -218,7 +218,7 @@ PPO阶段未改原页租约、根账本、命令队列、整步GPU图、帧容�
 | P22 | 原`ppo_overlap.distributed_packed_epoch`允许多机锚点/搜索阶段进入既有448计划和早桶归约；仅增加三项原planned_ppo时间聚合 | 直接复用dffc1b79既有UpperFirstSchedule/EarlyUpperReduction与原8流ring，共享/战斗/锚点参数仍尾桶，完整梯度归约后统一裁剪/Adam；新5090上25项通过，未把单GPU模拟同伴测试称为真实多机性能证明。生产同进程两轮待续训验收 |
 
 
-| P23 | 原Hex三处DAZED入队接已有TempDraw；原怪物多层护甲扣减动作体移至OpeningAction，嵌套眩晕调用原SetMonsterMove；冻结GPU对应句同步替换 | 新增两个枚举值，旧值/队列次序/胜利清理/卡牌数量不变；不加执行路径或CPU回退。247真实失败现场保留，新三场景先portable=false复现，重建CPU后7项通过，GPU规则feb53d9b重建后完整53项通过；从247恢复同进程生产两轮仍待验收 |
+| P23 | 原Hex三处DAZED入队接已有TempDraw；原怪物多层护甲扣减动作体移至OpeningAction，嵌套眩晕调用原SetMonsterMove；冻结GPU对应句同步替换 | 新增两个枚举值，旧值/队列次序/胜利清理/卡牌数量不变；不加执行路径或CPU回退。247真实失败现场保留，新三场景先portable=false复现，重建CPU后7项通过，GPU规则feb53d9b重建后完整53项通过；随后并入6fa35e18，从248恢复同进程249/250完整生产验收通过 |
 
 
-P24按用户要求先全面枚举卡牌/药水与关联触发链，再集中补齐原队列的数据表示。具体来源和新增/原地改动位置见combat49-adaptation-audit.md#p24-选择停点与回调来源及同名JSON的callback_audit_stage；最新恢复边界已为共同248/global195035136，不得从247重复恢复。四台westd rank0/1/2/3为31061/30997/12981/44669，其余五台迁移后已关机；持续训练/监控及验收进度以worklog/2026-11-15.md本题为准。
+P24按用户要求先全面枚举卡牌/药水与关联触发链，再集中补齐原队列的数据表示。具体来源和新增/原地改动位置见combat49-adaptation-audit.md#p24-选择停点与回调来源及同名JSON的callback_audit_stage；6fa35e18已从共同248/global195035136普通恢复，并完成同一四learner的249/250全保存验收（250/global196608000/Adam4000），训练继续；恢复时必须重新核对当时最新共同完整包，不得盲用247或本段历史边界。四台westd rank0/1/2/3为31061/30997/12981/44669，其余五台迁移后已关机；持续训练/监控及验收进度以worklog/2026-11-15.md本题为准。
