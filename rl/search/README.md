@@ -210,12 +210,18 @@ weights/semantics are not substitutes for DeckLatent/paired-PCG64/anchor targets
 
 `resident_service.py` / `resident_worker.py` own the retained stepfull480 FIFO
 and bounded command-drain/GPU-tick loop. `deck_worker.py` is its current-model
-consumer: raw roots go directly to this single owner; actor context stays on
-device through admission. The columnar full-observation packet retains the
+consumer: raw roots go directly to this single owner; owned actor-context
+outputs enter its versioned root bank. The columnar full-observation packet retains the
 original field order and dtypes. Upper actions and native-frontier scoring use
 the same owner, while native branch advancement remains in `env/search`.
 No whole-vector search barrier or second CUDA model process is introduced.
-The physical inference frame is bounded by the normal-budget geometry; boss
-jobs retain their entire budget across frames. Per-collection local integer
+The physical inference frame retains the old 65536-row bound independently
+of the ordinary-root budget; boss jobs retain their entire budget across frames.
+The current policy-head adapter uses the original `CombatLeafGraphs` pinned
+transport and host-publication scratch reuse. Tensor-only consumers publish
+into externally owned outputs before reusing scratch; the last retired graph
+invalidates its pool token. Current fixed-length PPO requires every observation,
+old value, behavior log probability and search target, including rows that the
+old complete-game upper learner did not consume. Per-collection local integer
 work and owner timings are written beside the existing frozen snapshot before
 distributed scalar averaging. Timers from concurrent processes are not additive.

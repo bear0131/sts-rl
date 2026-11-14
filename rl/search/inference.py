@@ -25,21 +25,25 @@ def active_width(ids, minimum):
 class DeviceConsumerGraphs:
     """Old GraphScorer ownership, adapted only to current tensor consumers.
 
-    Each entry owns its bound inputs, outputs and independent graph until
-    synchronized release. There is no phase scheduler, shared pool, map bank,
-    observation conversion or collection state in this adapter.
+    Inputs and published outputs live outside capture. As in CombatLeafGraphs,
+    serialized graphs reuse scratch only after publishing their owned result.
+    There is no phase scheduler, map bank or observation conversion here.
     """
     def __init__(self, device, capacity=128):
         if capacity < 1 or torch.device(device).type != 'cuda':
             raise ValueError('device graphs require CUDA and positive capacity')
         self.device, self.capacity = device, capacity
         self.entries = OrderedDict()
+        self.pool = self.stream = None
         self.closed = False
 
     def _release(self, key):
         torch.cuda.synchronize(self.device)
         entry = self.entries.pop(key)
         entry[1].reset()
+        if not self.entries:
+            # The last graph can retire its pool; never reuse that token.
+            self.pool = None
 
     @torch.no_grad()
     def replay(self, signature, batch, padded, forward):
@@ -54,20 +58,30 @@ class DeviceConsumerGraphs:
             inputs = {k: torch.cat((v, v[:1].expand(padded-count, *v.shape[1:]))).clone()
                       for k, v in batch.items()}
             current = torch.cuda.current_stream(self.device)
-            stream = torch.cuda.Stream(device=self.device)
+            if self.pool is None:
+                self.pool = torch.cuda.graph_pool_handle()
+            if self.stream is None:
+                self.stream = torch.cuda.Stream(device=self.device)
+            stream = self.stream
             stream.wait_stream(current)
             with torch.cuda.stream(stream):
                 for _ in range(3):
-                    forward(inputs)
+                    warm = forward(inputs)
             current.wait_stream(stream)
             torch.cuda.synchronize(self.device)
+            outputs = tuple(torch.empty_like(value) for value in warm)
+            del warm
+            stream.wait_stream(current)
             # Retain the accepted workspace fix when adapting old lifecycle:
             # no capture may borrow a releasable eager cuBLAS allocation.
             torch._C._cuda_clearCublasWorkspaces()
             graph = torch.cuda.CUDAGraph()
             try:
-                with torch.cuda.graph(graph, stream=stream):
-                    outputs = forward(inputs)
+                with torch.cuda.graph(graph, stream=stream, pool=self.pool):
+                    for destination, value in zip(outputs, forward(inputs), strict=True):
+                        destination.copy_(value)
+                # No temporary tensor may keep shared scratch live.
+                del value
             except BaseException:
                 graph.reset()
                 raise
@@ -261,6 +275,8 @@ class CombatLeafGraphs:
             if len(self.entries) >= self.capacity:
                 self.entries.popitem(last=False)
                 self.evictions += 1
+                if not self.entries:
+                    self._scratch_pool = None
             started = time.perf_counter()
             self.entries[signature] = self._capture(observations, width, padded, writer=writer)
             self.capture_seconds += time.perf_counter()-started
@@ -331,7 +347,11 @@ class CombatLeafGraphs:
         entry['initialized'] = True
 
     def _capture(self, observations, width, padded, *, writer=None):
-        if self.graph_forward is not None and self._scratch_pool is None:
+        shared_scratch = (self.graph_forward is not None or
+                          getattr(self.core, 'graph_host_outputs_only', False))
+        if shared_scratch and self.device_outputs:
+            raise ValueError('shared graph scratch requires captured host publication')
+        if shared_scratch and self._scratch_pool is None:
             self._scratch_pool = torch.cuda.graph_pool_handle()
             if self._scratch_stream is None:
                 self._scratch_stream = torch.cuda.Stream(device=self.device)

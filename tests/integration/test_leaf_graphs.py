@@ -58,11 +58,13 @@ def test_native_writer_matches_materialized_model_inputs(combat_factory, contrac
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='captured transport requires a GPU runner')
 @pytest.mark.parametrize('profile_interval', [0, 2])
-@pytest.mark.parametrize('device_outputs', [False, True])
-def test_captured_transfers_own_buffers_and_return_independent_outputs(profile_interval, device_outputs):
+@pytest.mark.parametrize('device_outputs,shared_scratch', [(False, False), (True, False), (False, True)])
+def test_captured_transfers_own_buffers_and_return_independent_outputs(profile_interval, device_outputs, shared_scratch):
     import gc
 
     class Core(torch.nn.Module):
+        graph_host_outputs_only = shared_scratch
+
         def combat_actor_critic(self, obs, **kwargs):
             value = sum(v.float() for v in obs.values())
             return torch.cat((value, -value), dim=1), value
@@ -97,6 +99,45 @@ def test_captured_transfers_own_buffers_and_return_independent_outputs(profile_i
     if profile_interval:
         assert all(stats[key] > 0 for key in ('h2d_ms', 'replay_ms'))
         assert stats['d2h_ms'] == 0 if device_outputs else stats['d2h_ms'] > 0
+
+
+def test_consumer_graph_scratch_is_bounded_across_shapes_and_released_pools():
+    import gc
+    from rl.search.inference import DeviceConsumerGraphs
+    assert torch.cuda.is_available(), 'explicit graph ownership qualification requires CUDA'
+    torch.manual_seed(20261111)
+    cache = DeviceConsumerGraphs('cuda', capacity=4)
+    # This deliberately large intermediate has no output consumer. Retaining
+    # one copy per shape would reproduce the production owner memory growth.
+    def forward(batch):
+        scratch = batch['x'][:, :1].expand(-1, 1024*1024).square()
+        return (scratch[:, :1].clone(),)
+    try:
+        warm = torch.arange(8, device='cuda', dtype=torch.float32)[:, None]
+        cache.replay(('shape', 0), {'x': warm}, 8, forward)
+        torch.cuda.synchronize()
+        baseline = torch.cuda.memory_allocated()
+        retained = []
+        for index in range(1, 9):
+            values = warm + index
+            result = cache.replay(('shape', index), {'x': values}, 8, forward)[0]
+            retained.append((result, values.square()))
+            torch._C._cuda_clearCublasWorkspaces()
+            gc.collect(); torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        # Four independent 32MiB scratch buffers would exceed this allowance.
+        assert torch.cuda.memory_allocated() - baseline < 8*1024*1024
+        for actual, expected in retained:
+            torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        cache.close()
+        cache = DeviceConsumerGraphs('cuda', capacity=1)
+        for index in range(9, 12):
+            values = warm + index
+            result = cache.replay(('shape', index), {'x': values}, 8, forward)[0]
+            torch.testing.assert_close(result, values.square(), rtol=0, atol=0)
+            torch.cuda.empty_cache()
+    finally:
+        cache.close()
 
 
 def test_device_outputs_survive_pending_clear_and_stream_release():

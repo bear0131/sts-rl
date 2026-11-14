@@ -22,6 +22,10 @@ from rl.training import reward_monitor, campfire_monitor
 
 class _DeckHead:
     """Bind current head arguments to the old static forward interface."""
+    # Every result is copied to owned host storage inside CombatLeafGraphs;
+    # enable its original pure-forward scratch reuse for this adapter too.
+    graph_host_outputs_only = True
+
     def __init__(self, core, kind):
         self.core, self.kind = core, kind
 
