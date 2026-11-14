@@ -102,6 +102,66 @@ void bindWave(py::module_ &m){
         .def_readwrite("inventory_key",&WaveRoot::keyForInventory).def("inventory_rows",[](WaveRoot &r){return entityRows(r.inventory);});
     py::class_<WaveDiag>(m,"WaveDiag")
         .def(py::init<std::vector<std::shared_ptr<WaveRoot>>,int,int>())
+        .def("pack_raw",[](WaveDiag &b,py::dict obs,py::array_t<std::int64_t,py::array::c_style> rows){
+            // Current token consumers retain the original native pool/pack
+            // boundary. Python must not rebuild each lane's query layout.
+            if(!b.awaiting||rows.ndim()!=1||!rows.size())throw std::logic_error("invalid paired raw rows");
+            constexpr auto flags=py::array::c_style|py::array::forcecast;
+            py::array_t<float,flags> legal(obs["combat_legal"]);
+            py::array_t<std::int64_t,flags> hand(obs["hand_ids"]),monster(obs["monster_id"]),potion(obs["potions"]),select(obs["select_native_indices"]);
+            const int n=rows.size(),total=legal.shape(0);
+            if(legal.ndim()!=2||legal.shape(1)!=198||hand.size()!=total*10||monster.size()!=total*5||potion.size()!=total*5||select.size()!=total*96)
+                throw std::logic_error("invalid paired token schema");
+            struct Layout {std::array<bool,121> present{},query{};int tokens=0,queries=0,actions=0,choice=1;};
+            std::vector<Layout> layout(n);std::vector<std::array<int,5>> offset(n);
+            for(int i=0;i<n;++i)if(rows.data()[i]<0||rows.data()[i]>=total)throw std::logic_error("paired row outside batch");
+            int nt=0,nq=0,na=0,nb1=0,nb2=0,choice=1;
+            {py::gil_scoped_release release;auto lock=b.pool.acquire();
+                b.pool.runIndependent(n,[&](std::size_t i){
+                    auto &l=layout[i];const int r=rows.data()[i];const float *mask=legal.data()+r*198;
+                    l.present[0]=l.query[0]=true;
+                    for(int j=0;j<10;++j)l.present[1+j]=hand.data()[r*10+j]!=0;
+                    for(int j=0;j<5;++j){l.present[11+j]=monster.data()[r*5+j]!=0;l.present[16+j]=potion.data()[r*5+j]!=0;}
+                    for(int j=21;j<25;++j)l.present[j]=true;
+                    for(int j=0;j<96;++j){l.present[25+j]=select.data()[r*96+j]>0;if(l.present[25+j]||mask[91+j])l.choice=j+1;}
+                    for(int a=0;a<198;++a)if(mask[a]){
+                        ++l.actions;
+                        if(a>=1&&a<91){int source=(a-1)/6,target=(a-1)%6;l.query[source<10?1+source:16+source-10]=true;if(target<5)l.query[11+target]=true;}
+                        else if(a>=91&&a<187)l.query[25+a-91]=true;
+                        else if(a>=187)for(int j=0;j<10;++j)if(l.present[1+j])l.query[1+j]=true;
+                    }
+                    for(int j=0;j<121;++j){l.tokens+=l.present[j]||l.query[j];l.queries+=l.query[j];}
+                });
+                for(int i=0;i<n;++i){const auto &l=layout[i];if(!l.actions)throw std::logic_error("empty paired action row");
+                    offset[i]={nt,nq,na,nb1,nb2};nt+=l.tokens;nq+=l.queries;na+=l.actions;nb1+=(l.tokens+15)/16;nb2+=(l.queries+15)/16;choice=std::max(choice,l.choice);}
+            }
+            auto retained=wa<int>({nt}),blocks1=wa<int>({nb1,2}),blocks2=wa<int>({nb2,2}),mapping=wa<int>({n,161});
+            auto queries=wa<std::int64_t>({nq}),starts=wa<std::int64_t>({n,4}),lens=wa<std::int64_t>({n,4}),keys=wa<std::int64_t>({na,10});
+            auto present=wa<bool>({nt});auto owners=wa<int>({na}),lengths=wa<int>({n}),offsets=wa<int>({n}),counts=wa<int>({6});
+            std::fill_n(mapping.mutable_data(),mapping.size(),-1);std::fill_n(keys.mutable_data(),keys.size(),-1);
+            const int sizes[6]={nt,nq,nb1,nb2,n,na};std::copy_n(sizes,6,counts.mutable_data());
+            {py::gil_scoped_release release;auto lock=b.pool.acquire();constexpr int grain=8;
+                b.pool.runIndependent((n+grain-1)/grain,[&](std::size_t group){
+                    for(int i=group*grain;i<std::min(n,int(group+1)*grain);++i){
+                        const auto &l=layout[i];const auto &o=offset[i];const int r=rows.data()[i];
+                        const int begin[4]={o[0],o[1],o[3],o[4]},size[4]={l.tokens,l.queries,(l.tokens+15)/16,(l.queries+15)/16};
+                        std::copy_n(begin,4,starts.mutable_data()+i*4);std::copy_n(size,4,lens.mutable_data()+i*4);
+                        int t=0,q=0,a=0;
+                        for(int j=0;j<121;++j)if(l.present[j]||l.query[j]){
+                            retained.mutable_data()[o[0]+t]=i*128+j;present.mutable_data()[o[0]+t]=l.present[j];
+                            if(l.query[j]){queries.mutable_data()[o[1]+q]=o[0]+t;mapping.mutable_data()[i*161+j]=q++;}++t;
+                        }
+                        for(int j=0;j<198;++j)if(legal.data()[r*198+j]){keys.mutable_data()[(o[2]+a)*10]=j;owners.mutable_data()[o[2]+a]=i;++a;}
+                        for(int j=0;j<size[2];++j){blocks1.mutable_data()[(o[3]+j)*2]=i;blocks1.mutable_data()[(o[3]+j)*2+1]=j*16;}
+                        for(int j=0;j<size[3];++j){blocks2.mutable_data()[(o[4]+j)*2]=i;blocks2.mutable_data()[(o[4]+j)*2+1]=j*16;}
+                        lengths.mutable_data()[i]=l.actions;offsets.mutable_data()[i]=o[2];
+                    }
+                });
+            }
+            py::dict out;out["retained"]=retained;out["queries"]=queries;out["present"]=present;out["starts"]=starts;out["lens"]=lens;
+            out["blocks1"]=blocks1;out["blocks2"]=blocks2;out["mapping"]=mapping;out["keys"]=keys;out["owners"]=owners;
+            out["lengths"]=lengths;out["offsets"]=offsets;out["counts"]=counts;out["choice"]=choice;return out;
+        })
         .def("compact",[](WaveDiag&b,py::array_t<std::int32_t,py::array::c_style> cardIndex){
             using namespace compact_leaf;
             if(!b.awaiting||cardIndex.ndim()!=1||cardIndex.size()!=kCardIds)throw std::logic_error("invalid compact request");
@@ -111,6 +171,8 @@ void bindWave(py::module_ &m){
             auto root=wa<int>({n}),prefix=wa<int>({n}),kind=wa<int>({n});
             auto legal=wa<int>({n,kAutoregressiveSize});auto bits=wa<unsigned>({n,kAutoregressiveSize});
             auto draws=wa<double>({n});auto misc=wa<float>({n,sts::Deck::MAX_SIZE});
+            auto upgraded=wa<float>({n,3,kCardIds}),upgradeSums=wa<float>({n,3,kCardIds});
+            std::fill_n(upgraded.mutable_data(),upgraded.size(),0.f);std::fill_n(upgradeSums.mutable_data(),upgradeSums.size(),0.f);
             std::fill_n(ids.mutable_data(),ids.size(),0);std::fill_n(feats.mutable_data(),feats.size(),0.f);
             std::fill_n(legal.mutable_data(),legal.size(),-1);std::fill_n(bits.mutable_data(),bits.size(),0);
             std::fill_n(misc.mutable_data(),misc.size(),std::numeric_limits<float>::quiet_NaN());
@@ -127,12 +189,14 @@ void bindWave(py::module_ &m){
                 if(!l.leafKind)for(const auto&a:l.obs.actions)acts.emplace_back(a.bits);
                 for(std::size_t j=0;j<acts.size();++j){legal.mutable_data()[i*kAutoregressiveSize+j]=jointActionId(acts[j],s)-kJointEnd;bits.mutable_data()[i*kAutoregressiveSize+j]=acts[j].bits;}
                 auto add=[&](const sts::CardInstance&c){if(c.id==sts::CardId::RITUAL_DAGGER&&c.uniqueId>=0&&c.uniqueId<sts::Deck::MAX_SIZE)misc.mutable_data()[i*sts::Deck::MAX_SIZE+c.uniqueId]=float(c.specialData)/100.f;};
-                for(const auto&c:s.cards.drawPile)add(c);for(const auto&c:s.cards.discardPile)add(c);for(const auto&c:s.cards.exhaustPile)add(c);
+                auto addPile=[&](const auto&pile,int zone){for(const auto&c:pile){add(c);const auto at=(i*3+zone)*kCardIds+int(c.id);upgraded.mutable_data()[at]+=c.getUpgradeCount()>0;upgradeSums.mutable_data()[at]+=c.getUpgradeCount();}};
+                addPile(s.cards.drawPile,0);addPile(s.cards.discardPile,1);addPile(s.cards.exhaustPile,2);
                 for(int j=0;j<s.cards.cardsInHand;++j)add(s.cards.hand[j]);
             });}
             py::dict out;out["categorical"]=cat;out["scalars"]=sc;out["language_ids"]=ids;out["language_features"]=feats;
             out["root_indices"]=root;out["selection_prefix"]=prefix;out["leaf_kind"]=kind;out["legal_policy_ids"]=legal;
-            out["action_bits"]=bits;out["draws"]=draws;out["permanent_misc"]=misc;return out;
+            out["action_bits"]=bits;out["draws"]=draws;out["permanent_misc"]=misc;
+            out["pile_upgraded_counts"]=upgraded;out["pile_upgrade_sums"]=upgradeSums;return out;
         })
         .def("choose_paired",[](WaveDiag&b,py::array_t<int,py::array::c_style>picks,py::array_t<double,py::array::c_style>values){
             const auto n=b.active.size();if(!b.awaiting||!b.gpuChoice||picks.ndim()!=1||values.ndim()!=1||picks.size()!=n||values.size()!=n)throw std::logic_error("invalid paired reply");

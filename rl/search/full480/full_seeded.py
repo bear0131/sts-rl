@@ -69,7 +69,12 @@ class Stream:
    r=plan_job(job,self.batch.envs,calls[i]);count['allocated_'+tier]+=cfg.simulations
    source=self.game.source(i)
    if source is not None:
-    r['mirror']=source;rows[i]=r;count['submitted_gpu']+=1
+    # The real PPO row stays with the collector. GPU branches only consume the
+    # frozen context fields; their live observations come from the old observer.
+    from rl.policies.deck_latent import RunContextEncoder
+    r['mirror']=source
+    rows[i]=dict(r,observation={key:r['observation'][key] for key in (*RunContextEncoder.keys,'run_keys')})
+    count['submitted_gpu']+=1
     count['mirrored_pending_roots']+=int(r['snapshot']['input_state']==2);count['mirrored_callback_roots']+=int(r['snapshot']['queue_size']>0)
    else:
     self.queue.append(job);self.fallback_rows[i]=r;count['submitted_cpu']+=1

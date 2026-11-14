@@ -82,7 +82,8 @@ class GpuService:
  def send(self,kind,payload=None,reply=None):
   self.check();assert not self.closed and not self.stopping
   # Freeze NumPy data before the queue feeder thread runs.
-  packet=pickle.dumps((kind,payload,reply),protocol=5);deadline=time.monotonic()+120
+  started=time.monotonic();packet=pickle.dumps((kind,payload,reply),protocol=5);deadline=time.monotonic()+120
+  self.counts['pack_seconds_'+kind]+=time.monotonic()-started;self.counts['bytes_'+kind]+=len(packet)
   while True:
    try:self.commands.put(packet,timeout=.05);break
    except queue.Full:

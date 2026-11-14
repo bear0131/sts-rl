@@ -321,6 +321,9 @@ def test_full480_pcg64_matches_numpy_and_owns_each_chain():
     words = np.concatenate([paired_worlds(seed, actions, budget)
         for seed, actions, budget in [(20261111, 3, 64), (0, 197, 64), (2**63-1, 2, 256)]])
     assert len(paired_worlds(0, 197, 64)) == 1
+    np.testing.assert_array_equal(paired_worlds(20261111, 3, 64), paired_worlds(20261111, 3, 64))
+    assert not np.array_equal(paired_worlds(20261111, 3, 64), paired_worlds(20261112, 3, 64))
+    assert (words[:, 3] & np.uint64(1)).all()
     # Include duplicate worlds and rollover-prone 128-bit carries; independent
     # lane state must not become one shared mutable random stream.
     states = np.repeat(words[:, 1:], 2, axis=0).copy()
@@ -365,7 +368,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
             break
         latent_env.step(int(np.flatnonzero(latent_env.action_masks())[0]))
     import slaythespire as sts
-    latent_env.thick.gc.set_deck([(name, 0) for name in ['WARCRY', 'BURNING_PACT', 'HEADBUTT', 'TRUE_GRIT',
+    latent_env.thick.gc.set_deck([(name, int(name=='BASH')) for name in ['WARCRY', 'BURNING_PACT', 'HEADBUTT', 'TRUE_GRIT',
         'DEFEND_RED', 'BATTLE_TRANCE', 'STRIKE_RED', 'DEFEND_RED', 'BASH', 'EXHUME']])
     latent_env.thick.gc.set_potion_state(['Gamblers Brew', 'Liquid Memories'])
     latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
@@ -409,13 +412,18 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
             row['mirror'] = (0, *versions[0])
             pool = BattlePool(arena, budget, net=flat.net, flat=flat, frame=budget, tile=32,
                              frame_tokens=4, frame_queries=4)
-            for world in worlds[:, 0]:
+            for world, low, high, inc_low, inc_high in worlds:
                 for action, _ in mapping:
                     branch = latent_env.fork_run(worldline=int(world))
                     branch.thick.bc.nosl_redeterminize(int(world))
                     branch._invalidate_backend_cache()
                     branch.step(action)
-                    branches.append([branch, np.random.default_rng(int(world)^0x504F4C494359), 1])
+                    generator = np.random.PCG64()
+                    state = generator.state
+                    state['state'].update(state=int(low) | int(high) << 64,
+                        inc=int(inc_low) | int(inc_high) << 64)
+                    generator.state = state
+                    branches.append([branch, np.random.Generator(generator), 1])
             pool.submit({0: row})
             def compare_states():
                 ids = [i for i, (e, _, _) in enumerate(branches) if e.thick.bc is not None]

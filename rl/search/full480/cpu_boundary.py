@@ -88,6 +88,16 @@ class CpuFallback:
    self.roots=[native.WaveRoot(environments[i].thick.gc,environments[i].thick.bc,cfg,nonce,True) for i,tier,cfg,nonce in jobs]
    for root,(i,_,_,_) in zip(self.roots,jobs,strict=True):
     row=rows[i];root.configure_paired(row['action_bits'],row['prefix'],row['worlds'])
+   from env.core.native_observation import NativeRootObservationBatch
+   from rl.policies.deck_latent import RunContextEncoder
+   self.decoder=NativeRootObservationBatch(environments[jobs[0][0]])
+   globals=[]
+   for i,_,_,_ in jobs:
+    obs=rows[i]['observation'];fields=environments[i]._native_packed_global_fields(obs)
+    fields.update({key:obs[key] for key in RunContextEncoder.keys})
+    if 'deck_latent_context' in obs:fields['deck_latent_context']=obs['deck_latent_context']
+    globals.append(fields)
+   self.globals={key:np.stack([row[key] for row in globals]) for key in globals[0]}
   else:
    native=sts
    self.roots=[sts.WaveRoot(environments[i].thick.gc,environments[i].thick.bc,cfg,nonce) for i,tier,cfg,nonce in jobs]
@@ -150,18 +160,36 @@ class CpuFallback:
    self.metrics['cpu_step_seconds']+=time.monotonic()-start
    return list(zip(self.jobs,results,strict=True))
   if self.paired:
-   from env.core.run_env import _nosl_compact_lut
+   from env.core.run_env import _nosl_compact_lut,_nosl_card_stats
+   from env.core import encode
    packed=self.wave.compact(np.asarray(_nosl_compact_lut()['language_card_index'],np.int32))
-   obs={key:np.empty((b,)+value.shape,dtype=value.dtype) for key,value in self.root_rows[self.jobs[0][0]]['observation'].items()}
    owners=np.asarray(packed['root_indices']);kinds=np.asarray(packed['leaf_kind'])
-   for root in np.unique(owners):
-    select=np.flatnonzero(owners==root);index=self.jobs[root][0];env=self.environments[index]
-    part={key:np.asarray(value)[select] for key,value in packed.items()}
-    current=env._native_packed_observation_batch(part)
-    for key in obs:obs[key][select]=current.get(key,self.root_rows[index]['observation'][key])
-    before=obs['outer_deck_misc'][select];misc=part['permanent_misc'];changed=np.isfinite(misc);before[changed]=misc[changed];obs['outer_deck_misc'][select]=before
+   layout=_nosl_compact_lut()['layout']
+   hand=6+layout['player_status_count']+encode.COMBAT_COUNTERS+1+30+5*layout['monster_status_count']
+   needed=int(packed['scalars'][:,hand:hand+20:2].max(initial=0))+1
+   if needed>self.decoder.stats['damage'].shape[1]:
+    self.decoder.stats=_nosl_card_stats(needed);self.decoder.decoder.set_card_stats(self.decoder.stats)
+   packet=dict(packed,owners=owners.astype(np.int64))
+   if self.decoder.language is None:
+    packet.pop('language_ids');packet.pop('language_features')
+   obs=self.decoder.decoder.decode(packet,self.globals)
+   # Preserve the canonical root codec, including physical slots and unbounded
+   # upgrades. These are branch inputs; the root's frozen map/deck stays shared.
+   obs['pile_upgraded_counts'][:]=packed['pile_upgraded_counts']
+   obs['pile_upgrade_sums'][:]=packed['pile_upgrade_sums']/encode.UPGRADE_SCALE
+   misc=packed['permanent_misc'];changed=np.isfinite(misc);obs['outer_deck_misc'][changed]=misc[changed]
+   obs['monster_buffs'][obs['monster_scalars'][:,:,0]==0]=0
+   explosions=obs['monster_move']==encode.V.MOVE_VOCAB_INDEX['EXPLODER_EXPLODE']
+   obs['monster_intent_cat'][explosions]=0;obs['monster_scalars'][explosions,4:6]=0
+   for key in ('hand_costs','select_card_costs'):
+    obs[key][obs[key]==np.float32(-3/encode.ENERGY_SCALE)]=-2/encode.ENERGY_SCALE
+   pick=hand+20+3*layout['card_count']
+   selected=np.asarray([int(prefix).bit_count() for prefix in packed['selection_prefix']])
+   obs['pick_remaining'][:,0]=np.maximum(0,packed['scalars'][:,pick].astype(np.int64)-selected)/encode.PICK_SCALE
    obs['combat_exit_anchor'][:]=np.stack((kinds==1,kinds==3),1)
-   fields=dict(observations=obs,draws=np.asarray(packed['draws']),kinds=kinds)
+   chains=np.flatnonzero((kinds==0)|(kinds==4)).astype(np.int64)
+   layout=self.wave.pack_raw(obs,chains) if len(chains) else None
+   fields=dict(observations=obs,draws=np.asarray(packed['draws']),kinds=kinds,layout=layout)
    tick=time.monotonic();ident=self.service.begin_call('fallback',(fields,1.,None,self.reference))
    self.pending=(ident,fields,None,str((b,n)),tick)
    self.metrics['encode_score_seconds']+=time.monotonic()-tick

@@ -3,19 +3,21 @@ import numpy as np
 MASK=(1<<64)-1
 GOLDEN=0x9e3779b97f4a7c15
 PAIRED_ANCHOR='paired-pcg64-pre-reward-anchor-v1'
+WORLD_STATE_VERSION='pcg64-bulk-state-v1'
 
 def paired_worlds(nonce,actions,budget):
- """Current consumer's complete worlds and NumPy PCG64 initial state.
+ """Complete paired worlds with bulk random, independently owned PCG states.
 
  The original finite ledger still owns admission, jobs and completion. These
- five words only replace its former counter-draw seed contract.
+ five words only replace its former counter-draw seed contract. Initialization
+ is versioned separately: it need not reproduce NumPy's per-world SeedSequence.
  """
  if actions<2 or budget<1:raise ValueError('paired roots require choices and a positive budget')
- seeds=np.random.default_rng(nonce).integers(0,2**63-1,max(1,budget//actions),dtype=np.int64)
- words=np.empty((len(seeds),5),np.uint64)
- for i,seed in enumerate(seeds):
-  state=np.random.PCG64(int(seed)^0x504F4C494359).state['state']
-  words[i]=[seed,state['state']&MASK,state['state']>>64,state['inc']&MASK,state['inc']>>64]
+ rng=np.random.default_rng(nonce);count=max(1,budget//actions)
+ seeds=rng.integers(0,2**63-1,count,dtype=np.int64)
+ words=np.empty((count,5),np.uint64);words[:,0]=seeds
+ words[:,1:]=rng.bit_generator.random_raw(count*4).reshape(count,4)
+ words[:,3]|=np.uint64(1)  # PCG's 128-bit stream increment must be odd.
  return words
 def mix(value):
  value=(int(value)+GOLDEN)&MASK

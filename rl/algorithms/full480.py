@@ -36,6 +36,8 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     started_collection = time.monotonic()
     callback.on_rollout_start()
     randoms = GameRandomStreams(cfg.seed, 0, vec.num_envs)
+    from rl.search.full480.finite_plan import WORLD_STATE_VERSION
+    model.full480_search_rng_version = WORLD_STATE_VERSION
     if getattr(model, '_full480_rng', None) is not None:
         randoms.load_state_dict(model._full480_rng)
     combat = V.PHASE_VOCAB_INDEX['combat']
@@ -207,7 +209,8 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     model.deck_search_last_stats=dict(stats)
     from rl.search.full480.full_seeded import save,report
     save('complete',report())
-    model._independent_rollout_diagnostic = dict(random_stream=randoms.version, **stats,
+    model._independent_rollout_diagnostic = dict(random_stream=randoms.version,
+        search_random_stream=WORLD_STATE_VERSION, **stats,
         mode=cfg.mode, note='Fixed real PPO rows; complete paired search targets; original full480 scheduling.')
     model._nosl_is_az_rollout_timings = dict(stats)
     for k, value in stats.items():

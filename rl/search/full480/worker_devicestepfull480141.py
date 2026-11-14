@@ -130,7 +130,7 @@ def run_worker(commands,responses,settings):
        if len(anchors):values[anchors]=upper.anchor_values({k:v[anchors] for k,v in obs.items()},context.anchor[anchors].cpu().numpy())
        if len(chains):
         observations={k:v[chains] for k,v in obs.items()};observations['_combat_context']=context.combat[chains].cpu().numpy()
-        chosen,leaf_values,logits=scorer.score_deck(observations,fields['draws'][chains],kinds[chains]==4)
+        chosen,leaf_values,logits=scorer.score_deck(observations,fields['draws'][chains],kinds[chains]==4,fields['layout'])
         picks[chains]=chosen;values[chains]=leaf_values
        answer=dict(picks=picks,values=values)
       elif reference:

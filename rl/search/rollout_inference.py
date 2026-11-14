@@ -302,6 +302,8 @@ class _DeckConsumers:
 
     def __call__(self, obs):
         from env.core import vocab as V, native_actions as C
+        from env.core.encode import upper_observation_keys
+        from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS
         run, combat, anchor = self.context(obs)
         batch = dict(obs, _run_context=run, _combat_context=combat, _anchor_context=anchor)
         phases = np.asarray(obs['phase']).reshape(-1)
@@ -314,20 +316,24 @@ class _DeckConsumers:
                 if not len(rows):
                     continue
                 data = {k: v[rows] for k, v in batch.items()}
-                pick = C.JOINT_PICK - C.JOINT_END
-                required = ((data['select_native_indices'] > 0)
-                            | data['combat_legal'][:, pick:pick+data['select_native_indices'].shape[1]].astype(bool))
                 if phase == V.PHASE_VOCAB_INDEX['combat']:
+                    pick = C.JOINT_PICK - C.JOINT_END
+                    required = ((data['select_native_indices'] > 0)
+                                | data['combat_legal'][:, pick:pick+data['select_native_indices'].shape[1]].astype(bool))
                     # These small heads never consume deck/relic encoder widths.
                     # Including them used to evict an otherwise identical graph.
                     # The model already pads choices in groups of eight.
                     width = min(required.shape[1], (_observed_width(required) + 7) // 8 * 8)
                     signature = (int(phase), at_anchor, 0, 0, width)
+                    keys = COMBAT_OBSERVATION_KEYS | {'_combat_context', '_anchor_context',
+                        'pile_upgraded_counts', 'pile_upgrade_sums'}
                 else:
                     widths = (_observed_width(data['deck_ids']), _observed_width(data['relics']))
                     data, widths = _upper_graph_inputs(data, widths,
                         (data['deck_ids'].shape[1], data['relics'].shape[1]))
                     signature = (int(phase), False, *widths, 0)
+                    keys = upper_observation_keys(phase, data) | {'_run_context'}
+                data = {key: value for key, value in data.items() if key in keys}
                 index = torch.as_tensor(rows, device=self.device)
                 if at_anchor:
                     value = self.anchor_values(data)

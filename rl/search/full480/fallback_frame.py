@@ -241,7 +241,9 @@ class FallbackFrame:
         obs={key:d[key] for key in self.obs_keys};obs['_choice_width']=choice
         tokens,_,_,_=self.net.token_inputs(obs,card_table=self.flat.lookup)
         # Key padding is removed and only consumed heads enter the second layer.
-        w['features'][:,:64].copy_(tokens.reshape(-1,64)[d['retained'].long()])
+        logical=d['retained'].long()
+        selected=(logical//128)*tokens.shape[1]+logical%128
+        w['features'][:,:64].copy_(tokens.reshape(-1,64)[selected])
         m['starts'][:b].copy_(d['starts']);m['lens'][:b].copy_(d['lens']);m['counts'].copy_(d['counts'])
         self.model.execute()
         select_frame[(b,)](w['logits'],d['offsets'],d['lengths'],d['draws'],self.temperature,w['picks'],self.header,num_warps=1)
@@ -249,48 +251,24 @@ class FallbackFrame:
         self.values_host.copy_(m['coef'][:b,12],non_blocking=True)
 
     @torch.inference_mode()
-    def score_deck(self,observations,draws,value_only):
+    def score_deck(self,observations,draws,value_only,packed):
         from env.core import encode
         assert self.deck and not self.closed
         self.flat.validate()
         b=len(draws);legal=np.asarray(observations['combat_legal'],bool)
         assert legal.shape==(b,198) and legal.any(1).all()
-        required=(observations['select_native_indices']>0)|legal[:,91:187]
-        choice=max(1,int(np.nonzero(required)[1].max(initial=-1))+1)
         # Keep the previous choice extent while its owned graph can serve it.
-        choice=max(choice,0 if self.deck_shape is None else self.deck_shape[1])
-        token_width=(25+choice+7)//8*8
-        retained=[];queries=[];starts=[];lens=[];blocks1=[];blocks2=[];present=[]
-        mapping=np.full((b,161),-1,np.int32)
-        for i in range(b):
-            q={0};ids=np.flatnonzero(legal[i])
-            for a in ids:
-                if 1<=a<91:
-                    source=(a-1)//6;target=(a-1)%6;q.add(1+source if source<10 else 16+source-10)
-                    if target<5:q.add(11+target)
-                elif 91<=a<187:q.add(25+a-91)
-                elif a>=187:q.update(1+j for j in range(10) if observations['hand_ids'][i,j]!=0)
-            live=np.concatenate(([True],observations['hand_ids'][i]!=0,observations['monster_id'][i]!=0,
-                 observations['potions'][i]!=0,np.ones(4,bool),observations['select_native_indices'][i,:choice]>0))
-            keep=np.flatnonzero(live|np.isin(np.arange(len(live)),list(q)));order=sorted(q)
-            lookup={int(slot):pos for pos,slot in enumerate(keep)}
-            nt,nq=len(retained),len(queries);starts.append([nt,nq,len(blocks1),len(blocks2)])
-            lens.append([len(keep),len(order),(len(keep)+15)//16,(len(order)+15)//16])
-            retained.extend(i*token_width+keep);present.extend(live[keep]);queries.extend(nt+lookup[j] for j in order)
-            mapping[i,order]=np.arange(len(order));blocks1.extend((i,j) for j in range(0,len(keep),16));blocks2.extend((i,j) for j in range(0,len(order),16))
-        owners,ids=np.nonzero(legal);na=len(ids);nt=len(retained);nq=len(queries)
-        keys=np.full((na,10),-1,np.int64);keys[:,0]=ids
-        lengths=legal.sum(1).astype(np.int32);meta=np.zeros((b,4),np.int32);meta[:,0]=lengths;meta[:,3]=np.where(value_only,2,1)
+        choice=max(packed['choice'],0 if self.deck_shape is None else self.deck_shape[1])
+        nt,nq,nb1,nb2,rows,na=map(int,packed['counts']);assert rows==b
+        lengths=packed['lengths'];assert np.array_equal(lengths,legal.sum(1))
+        meta=np.zeros((b,4),np.int32);meta[:,0]=lengths;meta[:,3]=np.where(value_only,2,1)
         fields={key:np.ascontiguousarray(value) for key,value in observations.items()}
         self.obs_keys=tuple(fields)
-        fields.update(retained=np.asarray(retained,np.int32),queries=np.asarray(queries,np.int64),
-            symbols=np.zeros(nt,np.int64),present=np.asarray(present,bool),starts=np.asarray(starts,np.int64),lens=np.asarray(lens,np.int64),
-            blocks1=np.asarray(blocks1,np.int32),blocks2=np.asarray(blocks2,np.int32),mapping=mapping,meta=meta,
-            counts=np.asarray([nt,nq,len(blocks1),len(blocks2),b,na],np.int32),state=np.zeros((b,32),np.float32),
-            actions=np.zeros((na,24),np.float32),keys=keys,owners=owners.astype(np.int32),lengths=lengths,
-            offsets=np.concatenate(([0],np.cumsum(lengths[:-1]))).astype(np.int32),draws=np.asarray(draws,np.float64),
+        fields.update({key:value for key,value in packed.items() if key!='choice'})
+        fields.update(symbols=np.zeros(nt,np.int64),meta=meta,state=np.zeros((b,32),np.float32),
+            actions=np.zeros((na,24),np.float32),draws=np.asarray(draws,np.float64),
             remaining=np.rint(observations['pick_remaining'].reshape(-1)*encode.PICK_SCALE).astype(np.int32))
-        shape=(b,choice,nt,nq,na,len(blocks1),len(blocks2))
+        shape=(b,choice,nt,nq,na,nb1,nb2)
         sig=self.signature((*self.flat.tensors(),*self.net.parameters()))
         if self.host is None or any(a>c for a,c in zip(shape,self.deck_shape)) or sig!=self.bound_signature:
             old=(0,)*7 if self.deck_shape is None else self.deck_shape
