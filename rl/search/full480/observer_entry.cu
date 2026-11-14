@@ -550,3 +550,16 @@ extern "C" __global__ void deck_context_misc(unsigned char*arena,const int*jobs,
  for(int j=0;j<b.cards.cardsInHand;++j)deck_misc_card(b.cards.hand[j],dest,width);
 }
 #endif
+
+#ifdef STS_FULL480_DECK
+extern "C" __global__ void deck_fallback_features(const unsigned long long*weights,const float*raw,const int*cat,
+ const float*upgraded,const float*sums,const int*prefix,const float*context,const int*relics,const float*counters,
+ const int*retained,const int*counts,float*features){
+ const int token=blockIdx.x,dim=threadIdx.x;if(token>=counts[0]||dim>=64)return;
+ const int logical=retained[token],row=logical/128,slot=logical%128;
+ const float*s=raw+row*deck_input::RAW;const int*c=cat+row*deck_input::CAT;
+ deck_input::PackedPiles piles{s+deck_input::HAND+20,upgraded+row*3*compact_leaf::kCardIds,sums+row*3*compact_leaf::kCardIds};
+ features[token*128+dim]=deck_input::token(piles,weights,s,c,context+row*68,relics+row*deck_input::RELIC_WIDTH,
+  counters+row*deck_input::RELIC_WIDTH,prefix[row],slot,dim);
+}
+#endif

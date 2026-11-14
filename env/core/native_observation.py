@@ -90,6 +90,9 @@ class NativeRootObservationBatch:
                            for key, space in first.observation_space.spaces.items()}
         self.language = (_nosl_compact_lut()['language_card_index']
                          if first._card_language else None)
+        self.deck_context_schema = (dict(card_index=_nosl_compact_lut()['card'],
+            card_count=encode.N_CARDS, upgrade_scale=encode.UPGRADE_SCALE)
+            if first.deck_latent_context and getattr(sts, 'deck_root_context_version', 0) == 1 else None)
         # These are exactly the fields written by _encode_global. Other
         # (phase-gated) groups remain PAD, as in encode.encode on a combat root.
         names = set(_GLOBAL_KEYS)
@@ -140,7 +143,8 @@ class NativeRootObservationBatch:
             env._multi_desc()
         payload = sts.pack_neural_roots(
             [env.thick.bc for env in envs],
-            [sum(1 << i for i in (env._multi or ())) for env in envs], self.language)
+            [sum(1 << i for i in (env._multi or ())) for env in envs], self.language,
+            **({'deck_context_schema': self.deck_context_schema} if self.deck_context_schema else {}))
         layout = _nosl_compact_lut()['layout']
         hand_start = 6 + layout['player_status_count'] + encode.COMBAT_COUNTERS + 1 + 30 + 5*layout['monster_status_count']
         upgrades = payload['scalars'][:, hand_start:hand_start+20:2]
@@ -201,7 +205,9 @@ class NativeRootObservationBatch:
             result['combat_legal'][row] = env.action_masks()[env._policy_offset:]
             if env.deck_latent_context:
                 from .deck_context import project_native_root
-                project_native_root(env, {key: values[row] for key, values in result.items()})
+                packed = ((payload['pile_upgraded_counts'][row], payload['pile_upgrade_sums'][row])
+                          if self.deck_context_schema else None)
+                project_native_root(env, {key: values[row] for key, values in result.items()}, packed)
             if env.outer_return_context:
                 env._nosl_current_context = {key: result[key][row].copy() for key in CONTEXT_KEYS}
         return result

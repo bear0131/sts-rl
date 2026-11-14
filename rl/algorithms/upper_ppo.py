@@ -16,7 +16,9 @@ from rl.search.native import observation_as_tensor
 from rl.training import reward_monitor, campfire_monitor
 from rl.algorithms import upper_auxiliary
 
-UPPER_KEYS = OVERWORLD_OBSERVATION_KEYS | frozenset().union(*OVERWORLD_PHASE_OBSERVATION_KEYS.values())
+from rl.policies.deck_latent import RunContextEncoder
+UPPER_KEYS = (OVERWORLD_OBSERVATION_KEYS | frozenset().union(*OVERWORLD_PHASE_OBSERVATION_KEYS.values())
+              | frozenset(RunContextEncoder.keys) | {'combat_exit_anchor'})
 COMBAT_PHASE = V.PHASE_VOCAB_INDEX['combat']
 
 

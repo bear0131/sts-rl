@@ -911,9 +911,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self._wait_for_reasoning_samples()
         search = getattr(self, 'deck_search_config', None)
         if search is not None and search.get('backend') == 'full480':
+            if not getattr(self, 'independent_rollout_config', None) or not getattr(self, 'episode_rollout_config', None):
+                raise ValueError('full480 currently requires the original natural-game cohort contract')
             from rl.algorithms.full480 import collect
             return collect(self, env, callback, rollout_buffer, n_rollout_steps,
-                           use_masking, config=search)
+                           use_masking, config=self.independent_rollout_config)
         independent = getattr(self, 'independent_rollout_config', None)
         if independent is not None:
             from rl.algorithms.independent_rollout import collect

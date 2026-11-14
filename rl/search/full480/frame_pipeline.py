@@ -132,7 +132,7 @@ class FramePipeline:
  def refresh_contexts(self):
   p=self.pool
   if not p.dynamic_context_roots:return
-  selected=torch.nonzero(p.context_dirty,as_tuple=False).flatten().to(torch.int32)
+  selected=torch.nonzero(p.context_dirty & p.alive,as_tuple=False).flatten().to(torch.int32)
   count=len(selected)
   if not count:return
   owners=p.job_roots[selected.long()];roots=owners.cpu().tolist()

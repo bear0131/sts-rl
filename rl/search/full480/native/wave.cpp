@@ -728,11 +728,11 @@ WaveRoot::WaveRoot(const GameContext &gc,const BattleContext &bc,SmallSearchConf
 }
 void WaveRoot::configurePaired(const std::vector<std::uint32_t>&bits,int selected,
         const std::vector<std::array<std::uint64_t,5>>&words){
-    if(!pairedAnchor||bits.size()<2||words.empty()||!actions.empty())throw std::logic_error("invalid paired root");
+    if(!pairedAnchor||bits.empty()||words.empty()||!actions.empty())throw std::logic_error("invalid paired root");
     prefix=selected;worlds=words;
     for(auto b:bits){Action a(b);if(!validAutoregressiveAction(a,root,prefix))throw std::logic_error("illegal paired root action");
         actions.push_back(a);semantic.push_back(int(a.getActionType())<5?NoslCombatTrainer::strongActionKey(root,a):0);order.push_back(order.size());}
-    if(cfg.simulations!=int(actions.size()*worlds.size()))throw std::logic_error("incomplete paired world");
+    if(worlds.size()!=((cfg.simulations+actions.size()-1)/actions.size()))throw std::logic_error("incomplete paired world");
 }
 static bool executePaired(Action a,BattleContext&bc,int&prefix){
     if(a.getActionType()==kSelectNext){prefix|=1<<a.getSourceIdx();return false;}
@@ -965,13 +965,8 @@ void WaveDiag::prepareLane(std::size_t i){
             }
             auto &s=*l.state;auto &r=*roots[workRoot[l.task]];
             if(s.outcome!=Outcome::UNDECIDED||l.depth>=r.cfg.playoutDepth){
-                if(r.pairedAnchor){
-                    l.leafKind=s.outcome==Outcome::UNDECIDED?4:int(s.outcome);
-                    if(s.outcome==Outcome::PLAYER_LOSS){values[l.task]=0;depths[l.task]=l.depth;forceN[l.task]=l.jobForced;outcomes[l.task]=2;actionN[l.task]=l.jobActions;prefixN[l.task]=l.jobPrefixes;maxActionN[l.task]=l.jobMaxActions;l.task=-1;l.leafKind=0;continue;}
-                    l.obs.actions.clear();l.ready=true;return;
-                }
                 if(s.outcome!=Outcome::UNDECIDED)values[l.task]=smallTerminalValue(s,r.cfg.boss)/(r.cfg.boss?1.:std::max(1,r.root.player.maxHp));
-                depths[l.task]=l.depth;forceN[l.task]=l.jobForced;outcomes[l.task]=int(s.outcome);actionN[l.task]=l.jobActions;
+                depths[l.task]=l.depth;forceN[l.task]=l.jobForced;outcomes[l.task]=int(s.outcome);actionN[l.task]=l.jobActions;prefixN[l.task]=l.jobPrefixes;maxActionN[l.task]=l.jobMaxActions;
                 l.task=-1;continue;
             }
             acts.clear();

@@ -12,8 +12,9 @@ cpu=cpu_bridge()
 def native_result(features,result,turn_limit,seconds):
  np.testing.assert_array_equal(features['action_bits'],result['action_bits'])
  s=result['statistics'];n=result['simulations'];hist=np.asarray(result['playout_lengths'],np.int64)
- assert hist.shape==(201,) and hist.sum()==n and np.dot(hist,np.arange(201))==s[0]
+ assert hist.shape==(201,) and hist.sum()==n and np.dot(hist,np.arange(201))==s[7]
  z=dict(features,action=int(result['action_bits'][0]),visits=result['visits'],terminal_visits=result['terminal_visits'],values=result['values'],value_statistic='terminal-return-lower-bound')
+ if 'combat_context' in result:z['combat_context']=result['combat_context']
  z['stats']=dict(simulations=n,tree_transitions=0,playout_transitions=result['actual_transitions'],terminal_wins=int(s[3]),terminal_losses=int(s[4]),
   terminal_escapes=int(s[9]),depth_cuts=result['depth_cuts'],tree_cuts=0,chance_replays=0,nodes=0,policy_calls=result['nonforced_decisions'],
   action_scores=int(s[10]),forced_policy_skips=result['forced_actions'],prior_calls=0,draw_edges=0,guard_transitions=0,
@@ -81,24 +82,16 @@ class CpuFallback:
  def __init__(self,jobs,environments,service,*,capacity=128,threads=8,reference=False,rows=None):
   assert jobs and capacity>0;self.jobs=list(jobs);self.service=service;self.reference=reference;self.pending=None;self.rows=0;self.calls=0;self.complete=False
   self.temps=[j[2].temperature for j in jobs]
-  self.paired=rows is not None;self.root_rows=rows;self.environments=environments
+  self.root_contexts=None;self.paired=rows is not None;self.root_rows=rows;self.environments=environments
   if self.paired:
    from .run_device import cpu_fallback
    native=cpu_fallback()
    self.roots=[native.WaveRoot(environments[i].thick.gc,environments[i].thick.bc,cfg,nonce,True) for i,tier,cfg,nonce in jobs]
    for root,(i,_,_,_) in zip(self.roots,jobs,strict=True):
     row=rows[i];root.configure_paired(row['action_bits'],row['prefix'],row['worlds'])
-   from env.core.native_observation import NativeRootObservationBatch
    from rl.policies.deck_latent import RunContextEncoder
-   self.decoder=NativeRootObservationBatch(environments[jobs[0][0]])
-   globals=[]
-   for i,_,_,_ in jobs:
-    obs=rows[i]['observation'];fields=environments[i]._native_packed_global_fields(obs)
-    fields.update({key:obs[key] for key in RunContextEncoder.keys})
-    if 'deck_latent_context' in obs:fields['deck_latent_context']=obs['deck_latent_context']
-    globals.append(fields)
-   self.globals={key:np.stack([row[key] for row in globals]) for key in globals[0]}
-   self.context_globals={key:self.globals[key] for key in RunContextEncoder.keys}
+   keys=(*RunContextEncoder.keys,'run_keys','ascension','relic_counters')
+   self.context_globals={key:np.stack([rows[i]['observation'][key] for i,_,_,_ in jobs]) for key in keys}
   else:
    native=sts
    self.roots=[sts.WaveRoot(environments[i].thick.gc,environments[i].thick.bc,cfg,nonce) for i,tier,cfg,nonce in jobs]
@@ -141,11 +134,12 @@ class CpuFallback:
     return []
    self.pending=None;self.metrics['pending_wall_seconds']+=time.monotonic()-submitted
    picks=answer['picks']
+   if 'root_contexts' in answer:self.root_contexts=answer['root_contexts']
    if self.audit and not self.reference and not self.paired:
     tick=time.monotonic();self.validate(fields,answer['logits'],picks,answer['gold'],raw);self.metrics['audit_seconds']+=time.monotonic()-tick
    if self.paired:
     self.wave.choose_paired(np.asarray(picks,np.int32),np.asarray(answer['values'],np.float64))
-    self.rows+=int((fields['kinds']==0).sum());self.metrics['anchor_rows']=self.metrics.get('anchor_rows',0)+int(np.isin(fields['kinds'],[1,3]).sum())
+    self.rows+=len(fields['draws'])
    else:
     self.wave.choose(np.asarray(picks,np.int32));self.rows+=len(fields[0])
    self.calls+=1
@@ -155,47 +149,17 @@ class CpuFallback:
   b,n,t,q=self.wave.ready()
   if not b:
    self.complete=True;results=self.wave.paired_results() if self.paired else self.wave.results()
+   if self.root_contexts is not None:
+    for result,context in zip(results,self.root_contexts,strict=True):result['combat_context']=context
    assert sum(r['simulations'] if self.paired else r['stats']['simulations'] for r in results)==sum(j[2].simulations for j in self.jobs)
    assert sum(r['nonforced_decisions'] if self.paired else r['stats']['policy_calls'] for r in results)==self.rows
    self.metrics.update(rows=self.rows,calls=self.calls,completed=True)
    self.metrics['cpu_step_seconds']+=time.monotonic()-start
    return list(zip(self.jobs,results,strict=True))
   if self.paired:
-   from env.core.run_env import _nosl_compact_lut,_nosl_card_stats
-   from env.core import encode
-   packed=self.wave.compact(np.asarray(_nosl_compact_lut()['language_card_index'],np.int32))
-   owners=np.asarray(packed['root_indices']);kinds=np.asarray(packed['leaf_kind'])
-   layout=_nosl_compact_lut()['layout']
-   hand=6+layout['player_status_count']+encode.COMBAT_COUNTERS+1+30+5*layout['monster_status_count']
-   needed=int(packed['scalars'][:,hand:hand+20:2].max(initial=0))+1
-   if needed>self.decoder.stats['damage'].shape[1]:
-    self.decoder.stats=_nosl_card_stats(needed);self.decoder.decoder.set_card_stats(self.decoder.stats)
-   packet=dict(packed,owners=owners.astype(np.int64))
-   if self.decoder.language is None:
-    packet.pop('language_ids');packet.pop('language_features')
-   obs=self.decoder.decoder.decode(packet,self.globals)
-   # Preserve the canonical root codec, including physical slots and unbounded
-   # upgrades. These are branch inputs; the root's frozen map/deck stays shared.
-   obs['pile_upgraded_counts'][:]=packed['pile_upgraded_counts']
-   obs['pile_upgrade_sums'][:]=packed['pile_upgrade_sums']/encode.UPGRADE_SCALE
-   misc=packed['permanent_misc'];changed=np.isfinite(misc);obs['outer_deck_misc'][changed]=misc[changed]
-   obs['monster_buffs'][obs['monster_scalars'][:,:,0]==0]=0
-   explosions=obs['monster_move']==encode.V.MOVE_VOCAB_INDEX['EXPLODER_EXPLODE']
-   obs['monster_intent_cat'][explosions]=0;obs['monster_scalars'][explosions,4:6]=0
-   for key in ('hand_costs','select_card_costs'):
-    obs[key][obs[key]==np.float32(-3/encode.ENERGY_SCALE)]=-2/encode.ENERGY_SCALE
-   pick=hand+20+3*layout['card_count']
-   selected=np.asarray([int(prefix).bit_count() for prefix in packed['selection_prefix']])
-   obs['pick_remaining'][:,0]=np.maximum(0,packed['scalars'][:,pick].astype(np.int64)-selected)/encode.PICK_SCALE
-   obs['combat_exit_anchor'][:]=np.stack((kinds==1,kinds==3),1)
-   chains=np.flatnonzero((kinds==0)|(kinds==4)).astype(np.int64)
-   layout=self.wave.pack_raw(obs,chains) if len(chains) else None
-   from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS
-   keys=COMBAT_OBSERVATION_KEYS|{'pile_upgraded_counts','pile_upgrade_sums','outer_deck_misc'}
-   fields=dict(observations={key:value for key,value in obs.items() if key in keys},
-    context_roots=self.context_globals,root_indices=owners,
-    draws=np.asarray(packed['draws']),kinds=kinds,layout=layout)
-   tick=time.monotonic();ident=self.service.begin_call('fallback',(fields,1.,None,self.reference))
+   fields=self.wave.pack_raw()
+   fields['root_context_request']=self.root_contexts is None
+   tick=time.monotonic();ident=self.service.begin_call('fallback',(fields,1.,self.context_globals,self.reference))
    self.pending=(ident,fields,None,str((b,n)),tick)
    self.metrics['encode_score_seconds']+=time.monotonic()-tick
    self.metrics['cpu_step_seconds']+=time.monotonic()-start

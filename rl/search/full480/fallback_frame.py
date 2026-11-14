@@ -226,7 +226,7 @@ class FallbackFrame:
         d=self.deck_device
         self.buffers=dict(features=arr((nt,128)),picks=arr((b,),torch.int32),logits=arr((na,)))
         self.picks_host=torch.empty(b,dtype=torch.int32,pin_memory=True)
-        self.values_host=torch.empty(b,dtype=torch.float32,pin_memory=True)
+        self.context=torch.empty((b,68),device='cuda')
         self.model.bind_deck(d['combat_legal'],d['select_hand_mask'],d['remaining'])
         w=self.buffers
         bound=(w['features'],d['symbols'],d['symbols'],d['present'],d['queries'],d['blocks1'],d['blocks2'],
@@ -238,36 +238,26 @@ class FallbackFrame:
     def execute_deck(self):
         self.device.copy_(self.host,non_blocking=True)
         d=self.deck_device;w=self.buffers;m=self.model.buffers;b,choice,nt,nq,na,nb1,nb2=self.deck_shape
-        obs={key:d[key] for key in self.obs_keys};obs['_choice_width']=choice
-        tokens,_,_,_=self.net.token_inputs(obs,card_table=self.flat.lookup)
-        # Key padding is removed and only consumed heads enter the second layer.
-        logical=d['retained'].long()
-        selected=(logical//128)*tokens.shape[1]+logical%128
-        w['features'][:,:64].copy_(tokens.reshape(-1,64)[selected])
+        self.flat.modules.launch('deck_fallback_features',[
+            self.flat.input_tables.bindings,d['raw'],d['cat'],d['upgraded'],d['sums'],d['prefix'],
+            self.context,d['relics'],d['relic_counters'],d['retained'],d['counts'],w['features']],[],nt,threads=64)
         m['starts'][:b].copy_(d['starts']);m['lens'][:b].copy_(d['lens']);m['counts'].copy_(d['counts'])
         self.model.execute()
         select_frame[(b,)](w['logits'],d['offsets'],d['lengths'],d['draws'],self.temperature,w['picks'],self.header,num_warps=1)
         self.picks_host.copy_(w['picks'],non_blocking=True)
-        self.values_host.copy_(m['coef'][:b,12],non_blocking=True)
 
     @torch.inference_mode()
-    def score_deck(self,observations,draws,value_only,packed):
-        from env.core import encode
+    def score_deck(self,fields,context):
         assert self.deck and not self.closed
         self.flat.validate()
-        b=len(draws);legal=np.asarray(observations['combat_legal'],bool)
-        assert legal.shape==(b,198) and legal.any(1).all()
-        # Keep the previous choice extent while its owned graph can serve it.
-        choice=max(packed['choice'],0 if self.deck_shape is None else self.deck_shape[1])
-        nt,nq,nb1,nb2,rows,na=map(int,packed['counts']);assert rows==b
-        lengths=packed['lengths'];assert np.array_equal(lengths,legal.sum(1))
-        meta=np.zeros((b,4),np.int32);meta[:,0]=lengths;meta[:,3]=np.where(value_only,2,1)
-        fields={key:np.ascontiguousarray(value) for key,value in observations.items()}
-        self.obs_keys=tuple(fields)
-        fields.update({key:value for key,value in packed.items() if key!='choice'})
-        fields.update(symbols=np.zeros(nt,np.int64),meta=meta,state=np.zeros((b,32),np.float32),
-            actions=np.zeros((na,24),np.float32),draws=np.asarray(draws,np.float64),
-            remaining=np.rint(observations['pick_remaining'].reshape(-1)*encode.PICK_SCALE).astype(np.int32))
+        from env.core.run_env import _nosl_compact_lut
+        layout=_nosl_compact_lut()['layout'];hand=6+layout['player_status_count']+24+1+30+5*layout['monster_status_count']
+        needed=int(fields['raw'][:,hand:hand+20:2].max(initial=0))+1
+        if needed>self.flat.input_tables.upgrade_capacity:self.flat.input_tables.grow_upgrades(needed)
+        b=len(fields['draws']);choice=fields.pop('choice')
+        nt,nq,nb1,nb2,rows,na=map(int,fields['counts']);assert rows==b
+        lengths=fields['lengths'];meta=np.zeros((b,4),np.int32);meta[:,0]=lengths;meta[:,3]=1
+        fields.update(symbols=np.zeros(nt,np.int64),meta=meta,state=np.zeros((b,32),np.float32),actions=np.zeros((na,24),np.float32))
         shape=(b,choice,nt,nq,na,nb1,nb2)
         sig=self.signature((*self.flat.tensors(),*self.net.parameters()))
         if self.host is None or any(a>c for a,c in zip(shape,self.deck_shape)) or sig!=self.bound_signature:
@@ -276,6 +266,7 @@ class FallbackFrame:
             self.allocate_deck(fields,capacity)
         for key,value in fields.items():
             target=self.deck_views[key];target.fill(0);np.copyto(target[:len(value)],value)
+        self.context[:b].copy_(context)
         self.header_host[:]=[b,0,0,na,0,0,0,0];self.temp_host[0]=1.
         if self.graph is None:
             self.execute();torch.cuda.synchronize();graph=torch.cuda.CUDAGraph()
@@ -284,13 +275,14 @@ class FallbackFrame:
             except BaseException:graph.reset();raise
             self.graph=graph;self.counts['captures']+=1
         self.graph.replay();torch.cuda.current_stream().synchronize()
-        picks=self.picks_host[:b].numpy().copy();values=self.values_host[:b].numpy().copy()
-        assert ((picks>=0)&(picks<lengths)).all() and np.isfinite(values).all()
+        picks=self.picks_host[:b].numpy().copy()
+        assert ((picks>=0)&(picks<lengths)).all()
         self.counts['calls']+=1;self.counts['actual_rows']+=b;self.counts['input_bytes_copied']+=self.host.numel()
-        return picks,values,self.buffers['logits'][:na]
+        return picks,self.buffers['logits'][:na]
 
     @torch.inference_mode()
     def score(self,fields,t,temperatures):
+        if self.deck:return self.score_deck(fields,temperatures)
         assert not self.closed and len(fields)==18
         b,actual_t=fields[4].shape; q=fields[8].shape[1]; n=len(fields[1]); e=len(fields[11])
         assert b>0 and actual_t==t and 1<=q<=t and n>0 and e>0

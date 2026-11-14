@@ -2724,9 +2724,11 @@ PYBIND11_MODULE(slaythespire, m) {
     }, "printed card-instance traits used to validate real snapshot representability; never a current-state fallback");
     m.def("boss_opening_route_version", []() { return 1; });
     bindNeuralObservation(m);
+    m.attr("deck_root_context_version") = 1;
     m.def("pack_neural_roots", [](const std::vector<const BattleContext *> &battles,
                                   const std::vector<int> &prefixes,
-                                  pybind11::object language_card_index) {
+                                  pybind11::object language_card_index,
+                                  pybind11::object deck_context_schema) {
         if (battles.size() != prefixes.size())
             throw std::invalid_argument("root states and selection prefixes disagree");
         std::vector<search::NoslNeuralSearchSession::LeafRequest> requests(battles.size());
@@ -2744,9 +2746,45 @@ PYBIND11_MODULE(slaythespire, m) {
         for (std::size_t row = 0; row < battles.size(); ++row)
             owners.mutable_data()[row] = static_cast<std::int64_t>(row);
         out["owners"] = owners;
+        if (!deck_context_schema.is_none()) {
+            const auto schema = pybind11::cast<pybind11::dict>(deck_context_schema);
+            auto ids = pybind11::array_t<std::int32_t, pybind11::array::c_style |
+                pybind11::array::forcecast>::ensure(schema["card_index"]);
+            const double scale = pybind11::cast<double>(schema["upgrade_scale"]);
+            const auto width = pybind11::cast<pybind11::ssize_t>(schema["card_count"]);
+            if (!ids || ids.ndim()!=1 || ids.size()!=compact_leaf::kCardIds ||
+                    !std::isfinite(scale) || scale<=0 || width<1)
+                throw std::invalid_argument("invalid deck root projection schema");
+            for (auto i=0; i<ids.size(); ++i)
+                if (ids.data()[i]<0 || ids.data()[i]>=width)
+                    throw std::invalid_argument("deck root card index outside vocabulary");
+            const std::vector<pybind11::ssize_t> shape{static_cast<pybind11::ssize_t>(battles.size()),3,width};
+            pybind11::array_t<float> upgraded(shape), magnitude(shape);
+            std::fill_n(upgraded.mutable_data(),upgraded.size(),0.f);
+            std::fill_n(magnitude.mutable_data(),magnitude.size(),0.f);
+            {
+                pybind11::gil_scoped_release release;
+                for (std::size_t row=0; row<battles.size(); ++row) {
+                    const auto &cards=battles[row]->cards;
+                    auto add=[&](const auto &pile,int zone) {
+                        for (const auto &card:pile) {
+                            const auto at=(row*3+zone)*width+ids.data()[int(card.id)];
+                            const auto up=card.getUpgradeCount();
+                            upgraded.mutable_data()[at]+=up>0;
+                            // Match the public per-card float32 accumulation,
+                            // including repeated Searing Blow upgrade levels.
+                            magnitude.mutable_data()[at]+=static_cast<float>(up/scale);
+                        }
+                    };
+                    add(cards.drawPile,0);add(cards.discardPile,1);add(cards.exhaustPile,2);
+                }
+            }
+            out["pile_upgraded_counts"]=upgraded;out["pile_upgrade_sums"]=magnitude;
+        }
         return out;
     }, pybind11::arg("battles"), pybind11::arg("selection_prefixes"),
        pybind11::arg("language_card_index") = pybind11::none(),
+       pybind11::arg("deck_context_schema") = pybind11::none(),
        "pack current combat observations without copying or advancing environments");
     pybind11::class_<sts::search::NeuralSearchBatch>(m, "NeuralSearchBatch")
         .def(pybind11::init<int>(), pybind11::arg("threads") = 1)

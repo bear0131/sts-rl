@@ -290,18 +290,7 @@ namespace finite_search {
 inline double quiet_nan(){union{unsigned long long bits;double value;}v;v.bits=0x7ff8000000000000ull;return v.value;}
 inline void finish(const sts::BattleContext&s,unsigned long long*st,int&alive,int&outcome,double&value,int boss,int maximum,int limit){
  outcome=int(s.outcome);
-#ifdef STS_FULL480_DECK
- value=quiet_nan();
- if(s.outcome!=sts::Outcome::UNDECIDED){
-  alive=0;
-  if(s.outcome==sts::Outcome::PLAYER_VICTORY)st[3]=1;
-  else if(s.outcome==sts::Outcome::PLAYER_LOSS){st[4]=1;value=0.;}
-  else if(s.outcome==sts::Outcome::PLAYER_ESCAPE)st[9]=1;
-  else device_state::require(false);
- }else if(st[7]>=static_cast<unsigned long long>(limit)){alive=0;outcome=4;st[5]=1;}
- else alive=1;
- return;
-#endif
+
  if(s.outcome!=sts::Outcome::UNDECIDED){
   alive=0;value=boss?(s.outcome==sts::Outcome::PLAYER_VICTORY?1.:0.):double(std::max(0,s.player.curHp))/double(maximum);
   if(s.outcome==sts::Outcome::PLAYER_VICTORY)st[3]=1;

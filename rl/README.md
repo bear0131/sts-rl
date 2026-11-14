@@ -1009,20 +1009,13 @@ PAD卡ID等同于无效native候选。缓存、稀疏摘要接口、标量critic
 
 Combat49 采样重接待办见 [交接文档](../docs/2026-11-14/combat49-old-sampling-handoff.md)；近期重写实现已撤除，正式训练保持停止。
 
-`SearchRolloutBuffer.add_rows(indices, ...)` 消费旧collector已有的ready子集。
-它只写真实PPO行，不安排环境、搜索或重置；每环境独立计数，数据仍按(time,env)
-存放，GAE和learner的env-major shuffle不变。teacher与实际搜索动作/logprob必须
-随同一次写入交付，完整验证包后才写任何数组。`row_positions`返回副本；所有环境
-达到固定长度才置full，未完成时不能取样更新。不得与整批add/prefill混用。
-`rl/algorithms/full480.py` 的原 ready/submit/receive 循环直接消费此接口。
-显式 `SearchTrainingConfig.backend='full480'` 走这个 collector；支持
-`VecMonitor(NativeSearchVecEnv)`、FP32 `transformer64x2`、奖励前锚点和
-`search-filter-policy-rank-v1`，不支持自然局 cohort。固定长度完成后 drain 全部
-搜索/推理请求、退出原 GPU owner，再用原 packed PPO 更新。逐槽随机流随模型保存，
-普通 `save_bundle` / `restore_learner` 恢复实际环境和 learner，不保存运行中服务。
-原扩展/编译产物由 `STS_FULL480_ARTIFACT_DIR` 显式指定，原始来源及构建身份见
+`rl/algorithms/full480.py` 保留实际旧 `stepfull480-01` 的自然局 collector。
+使用原 `episode_rollout_config` 与 `independent_rollout_config`，完成槽不补局；
+原 `PairedTokenBatch.prepare/accept_ready` 保存每根的数据并在完成处排序真实动作。
+当前模型通过原生批量观测编码器和原 GPU observer 提供战斗输入，构筑投影随原
+结果包返回，根评分只运行战斗小网。CPU 回退在原 WaveDiag.pack_raw 打包数字数组，
+复用原连续 pinned 区、GPU 特征投影、融合评分与采样图，不展开完整观测字典。
+当前验收为旧终局 HP/Boss 胜负目标和精确 250/250/1000 预算；固定长度 PPO
+接口尚未验收，不允许从正式训练配置直接启动该诊断目标。
+原扩展/编译产物由 `STS_FULL480_ARTIFACT_DIR` 显式指定，来源与构建身份见
 [来源清单](../docs/2026-11-14/combat49-full480-runtime-sources.json)。
-根搜索默认120秒、完整采样默认600秒硬上限；有界资格运行可显式设置
-`collection_timeout_seconds`。构筑与锚点精确缓存均强制启用；当前消费者复用
-旧 `_upper_graph_inputs` 的有界填充宽度，锚点图与根部图分别持有缓存。
-这条入口仍在生产长度/性能资格阶段，小规模更新恢复通过不代表已获部署资格。

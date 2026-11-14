@@ -67,6 +67,7 @@ def run_worker(commands,responses,settings):
    assert engine.graph_scorer.statistics()['chain_step_version']==1
    if deck:
     fallback_flat=DeckWeights(policy.core);fallback_flat.precision='ieee'
+    fallback_flat.input_tables=flat.input_tables;fallback_flat.modules=engine.frame_pipeline.modules
     scorer=FallbackFrame(policy.core.combat,flat=fallback_flat)
    else:scorer=FallbackFrame(policy.small_playout)
    torch.cuda.synchronize();torch.cuda.reset_peak_memory_stats()
@@ -126,17 +127,17 @@ def run_worker(commands,responses,settings):
      elif kind=='fallback':
       fields,temp,raw,reference=payload
       if deck:
-       obs=fields['observations'];kinds=fields['kinds'];count=len(kinds)
-       context_obs={key:value[fields['root_indices']] for key,value in fields['context_roots'].items()}
-       context_obs['outer_deck_misc']=obs['outer_deck_misc']
-       context=upper.search_context(context_obs);picks=np.zeros(count,np.int32);values=np.zeros(count,np.float64)
-       anchors=np.flatnonzero(np.isin(kinds,[1,3]));chains=np.flatnonzero((kinds==0)|(kinds==4))
-       if len(anchors):values[anchors]=upper.anchor_values({k:v[anchors] for k,v in obs.items()},context.anchor[anchors].cpu().numpy())
-       if len(chains):
-        observations={k:v[chains] for k,v in obs.items()};observations['_combat_context']=context.combat[chains].cpu().numpy()
-        chosen,leaf_values,logits=scorer.score_deck(observations,fields['draws'][chains],kinds[chains]==4,fields['layout'])
-        picks[chains]=chosen;values[chains]=leaf_values
-       answer=dict(picks=picks,values=values)
+       root_contexts=upper.search_context(raw).combat.cpu().numpy() if fields.pop('root_context_request') else None
+       owners=fields.pop('root_indices');misc=fields.pop('permanent_misc')
+       context_obs={key:value[owners] for key,value in raw.items()}
+       changed=np.isfinite(misc);context_obs['outer_deck_misc'][changed]=misc[changed]
+       context=upper.search_context(context_obs)
+       extra=np.concatenate((context_obs['run_keys'],context_obs['ascension']),1)
+       projected=torch.cat((context.combat,torch.as_tensor(extra,device='cuda')),1)
+       fields['relics']=context_obs['relics'];fields['relic_counters']=context_obs['relic_counters']
+       picks,logits=scorer.score(fields,None,projected)
+       answer=dict(picks=picks,values=np.zeros(len(picks),np.float64))
+       if root_contexts is not None:answer['root_contexts']=root_contexts
       elif reference:
        assert raw is not None
        for row,token in zip(raw,encode_public_roots(raw),strict=True):row['tokens']=token

@@ -17,7 +17,6 @@ class SearchTrainingConfig:
     max_depth: int = 200
     max_active: int = 256
     timeout_seconds: float = 120.
-    collection_timeout_seconds: float = 600.
     target_std: float = .25
     seed: int = 20261111
     # Retained for reading saved configurations. Retired GPU execution is
@@ -43,8 +42,6 @@ class SearchTrainingConfig:
             raise ValueError('shadow search limits must be positive')
         if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
             raise ValueError('shadow search needs a finite positive timeout')
-        if not math.isfinite(self.collection_timeout_seconds) or self.collection_timeout_seconds <= 0:
-            raise ValueError('collection needs a finite positive timeout')
         if not math.isfinite(self.target_std) or self.target_std < 0:
             raise ValueError('invalid frozen search target scale')
 
@@ -55,12 +52,9 @@ class SearchRolloutBuffer(SharedRolloutBuffer):
         super().reset()
         self.search_targets = {}
         self.search_actions = {}
-        self._row_positions = None
 
 
     def add(self, obs, action, reward, episode_start, value, log_prob, *, action_masks=None):
-        if self._row_positions is not None:
-            raise ValueError('cannot mix independent rows and full-vector rollout writes')
         if self.search_actions:
             log_prob = log_prob.detach().cpu()
         for env_index in range(self.n_envs):
@@ -71,100 +65,7 @@ class SearchRolloutBuffer(SharedRolloutBuffer):
                     raise ValueError('rollout must record the executed search action and behavior probability')
         return super().add(obs, action, reward, episode_start, value, log_prob, action_masks=action_masks)
 
-    @property
-    def row_positions(self):
-        """Next real timestep per environment, independent of completion order."""
-        return (np.full(self.n_envs, self.pos, dtype=np.int64) if self._row_positions is None
-                else self._row_positions.copy())
-
-    def prefill_observation(self, obs):
-        if self._row_positions is not None:
-            raise ValueError('cannot prefill a full vector during independent row collection')
-        return super().prefill_observation(obs)
-
-    def add_rows(self, indices, obs, action, reward, episode_start, value, log_prob,
-                 *, action_masks, search_targets=None, search_actions=None):
-        """Consume ready rows from full480's existing subset step boundary.
-
-        This is storage only: it cannot schedule, step, reset or search an env.
-        The original (time, env) layout and learner's env-major shuffle remain
-        unchanged. A failed packet is rejected before modifying any row.
-        """
-        indices = np.asarray(indices)
-        if (indices.ndim != 1 or not len(indices) or indices.dtype.kind not in 'iu'
-                or len(np.unique(indices)) != len(indices)
-                or (indices < 0).any() or (indices >= self.n_envs).any()):
-            raise ValueError('independent rows require distinct valid environment indices')
-        if self.action_dim != 1 or self.full or self._prefilled is not None:
-            raise ValueError('independent rows require unfilled discrete rollout storage')
-        if self._row_positions is None and self.pos:
-            raise ValueError('cannot mix full-vector and independent rollout writes')
-        positions = self.row_positions[indices]
-        if (positions >= self.buffer_size).any():
-            raise ValueError('environment already completed its fixed rollout length')
-        count = len(indices)
-        if set(obs) != set(self.observations):
-            raise ValueError('independent rows must preserve every observation field')
-        observed = {}
-        for key, destination in self.observations.items():
-            row = np.asarray(obs[key], dtype=destination.dtype)
-            shape = (count, *destination.shape[2:])
-            if row.shape == (count,) and shape == (count, 1):
-                row = row[:, None]
-            if row.shape != shape:
-                raise ValueError('independent observation shape mismatch: ' + key)
-            observed[key] = row
-        actions = np.asarray(action).reshape(-1)
-        masks = np.asarray(action_masks, dtype=bool)
-        if (actions.shape != (count,) or actions.dtype.kind not in 'iu'
-                or masks.shape != (count, self.mask_dims)
-                or (actions < 0).any() or (actions >= self.mask_dims).any()
-                or not masks[np.arange(count), actions].all()):
-            raise ValueError('independent rows require the actual legal actions and masks')
-        def host(data):
-            array = data.detach().cpu().numpy() if isinstance(data, torch.Tensor) else data
-            return np.asarray(array, dtype=np.float32).reshape(-1)
-        rewards, starts, values, logps = map(host, (reward, episode_start, value, log_prob))
-        if any(x.shape != (count,) or not np.isfinite(x).all() for x in (rewards, starts, values, logps)):
-            raise ValueError('independent rows require finite aligned PPO fields')
-        if not np.isin(starts, (0, 1)).all():
-            raise ValueError('episode start must be a terminal/reset boundary flag')
-        teachers, executed = search_targets or {}, search_actions or {}
-        if not set(executed) <= set(teachers) <= set(indices):
-            raise ValueError('search actions require teachers for the same real rows')
-        pending_targets, pending_actions = {}, {}
-        for offset, env_index in enumerate(indices):
-            key = (int(positions[offset]), int(env_index))
-            if key in self.search_targets or key in self.search_actions:
-                raise ValueError('independent row search metadata was already supplied')
-            if env_index in teachers:
-                target = np.array(teachers[env_index], dtype=np.float32, copy=True)
-                if target.shape != (self.mask_dims,) or not np.isfinite(target[masks[offset]]).all():
-                    raise ValueError('invalid teacher for an independent real row')
-                pending_targets[key] = target
-            if env_index in executed:
-                chosen, behavior_logp = executed[env_index]
-                if (chosen != actions[offset] or not np.isfinite(behavior_logp)
-                        or not np.isclose(behavior_logp, logps[offset], rtol=0., atol=1e-6)):
-                    raise ValueError('independent row must record the executed search behavior')
-                pending_actions[key] = (int(chosen), float(behavior_logp))
-        if self._row_positions is None:
-            self._row_positions = np.zeros(self.n_envs, dtype=np.int64)
-        for key, rows in observed.items():
-            self.observations[key][positions, indices] = rows
-        self.actions[positions, indices, 0] = actions
-        for name, rows in (('rewards', rewards), ('episode_starts', starts),
-                           ('values', values), ('log_probs', logps), ('action_masks', masks)):
-            getattr(self, name)[positions, indices] = rows
-        self.search_targets.update(pending_targets)
-        self.search_actions.update(pending_actions)
-        self._row_positions[indices] += 1
-        self.pos = int(self._row_positions.min())
-        self.full = self.pos == self.buffer_size
-
     def add_search_target(self, env_index, log_target, *, position=None):
-        if self._row_positions is not None:
-            raise ValueError('independent search metadata must accompany add_rows')
         if ((position is None and self.full) or not 0 <= env_index < self.n_envs):
             raise ValueError('search target must refer to the current real pre-action row')
         position = self.pos if position is None else int(position)

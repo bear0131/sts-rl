@@ -2,18 +2,18 @@
 import numpy as np
 MASK=(1<<64)-1
 GOLDEN=0x9e3779b97f4a7c15
-PAIRED_ANCHOR='paired-pcg64-pre-reward-anchor-v1'
+PAIRED_TERMINAL='paired-pcg64-terminal-hp-boss-win-v1'
 WORLD_STATE_VERSION='pcg64-bulk-state-v1'
 
 def paired_worlds(nonce,actions,budget):
- """Complete paired worlds with bulk random, independently owned PCG states.
+ """Paired worlds covering the exact budget, including its partial last world.
 
  The original finite ledger still owns admission, jobs and completion. These
  five words only replace its former counter-draw seed contract. Initialization
  is versioned separately: it need not reproduce NumPy's per-world SeedSequence.
  """
- if actions<2 or budget<1:raise ValueError('paired roots require choices and a positive budget')
- rng=np.random.default_rng(nonce);count=max(1,budget//actions)
+ if actions<1 or budget<1:raise ValueError('paired roots require a legal action and positive budget')
+ rng=np.random.default_rng(nonce);count=(budget+actions-1)//actions
  seeds=rng.integers(0,2**63-1,count,dtype=np.int64)
  words=np.empty((count,5),np.uint64);words[:,0]=seeds
  words[:,1:]=rng.bit_generator.random_raw(count*4).reshape(count,4)
@@ -47,14 +47,10 @@ def aggregate(roots,plan,values,outcomes,statistics):
   select=np.flatnonzero(plan['root']==i);idx=plan['action_index'][select];n=len(root['action_bits'])
   assert len(select)==root['budget']
   outcome=np.asarray(outcomes)[select];terminal=outcome!=0;v=np.asarray(values)[select]
-  paired=root.get('contract')==PAIRED_ANCHOR
-  if paired:
-   assert np.isin(outcome,[1,2,3,4]).all() and np.isfinite(v).all()
-   terminal=outcome!=4
-  else:assert np.array_equal(np.isfinite(v),terminal)
+  paired=root.get('contract')==PAIRED_TERMINAL
+  assert np.array_equal(np.isfinite(v),terminal)
   visits=np.bincount(idx,minlength=n);terminal_visits=np.bincount(idx[terminal],minlength=n)
-  sums=np.bincount(idx if paired else idx[terminal],weights=v if paired else v[terminal],minlength=n)
-  if paired:assert (visits==len(root['worlds'])).all()
+  sums=np.bincount(idx[terminal],weights=v[terminal],minlength=n)
   means=np.divide(sums,visits,out=np.zeros(n),where=visits>0)
   stats=np.asarray(statistics)[select].sum(0)
   rows.append(dict(action_bits=np.asarray(root['action_bits'],np.uint32),visits=visits,terminal_visits=terminal_visits,values=means,
@@ -62,5 +58,5 @@ def aggregate(roots,plan,values,outcomes,statistics):
    depth_cuts=int((~terminal).sum()),statistics=stats))
   if paired:
    rows[-1].update(atomic_decisions=int(stats[7]),actual_transitions=int(stats[7])-int(stats[11]),
-    selection_prefix_decisions=int(stats[11]),value_statistic=PAIRED_ANCHOR)
+    selection_prefix_decisions=int(stats[11]),value_statistic=PAIRED_TERMINAL)
  return rows

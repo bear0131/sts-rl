@@ -20,13 +20,6 @@ def project(env, observation, canonical):
     Counts include all vocabulary IDs and exhaust, not only the older rule
     language's subset. Native incremental consumers must match this reference.
     """
-    def assign(key, value):
-        if key in observation:
-            observation[key][...] = value
-        else:
-            observation[key] = value
-    assign('deck_latent_context', np.ones(1, np.float32))
-    assign('outer_deck_misc', permanent_misc(env.thick.gc, env.thick.bc))
     counts = np.zeros((3, encode.N_CARDS), np.float32)
     upgrades = np.zeros_like(counts)
     for zone, pile in enumerate(('draw', 'discard', 'exhaust')):
@@ -34,6 +27,17 @@ def project(env, observation, canonical):
             card_id, up = encode._card_id_idx(card['id']), card.get('up', 0)
             counts[zone, card_id] += up > 0
             upgrades[zone, card_id] += up / encode.UPGRADE_SCALE
+    _publish(env, observation, counts, upgrades)
+
+
+def _publish(env, observation, counts, upgrades):
+    def assign(key, value):
+        if key in observation:
+            observation[key][...] = value
+        else:
+            observation[key] = value
+    assign('deck_latent_context', np.ones(1, np.float32))
+    assign('outer_deck_misc', permanent_misc(env.thick.gc, env.thick.bc))
     assign('pile_upgraded_counts', counts)
     assign('pile_upgrade_sums', upgrades)
     if env._phase() == 'combat':
@@ -43,8 +47,11 @@ def project(env, observation, canonical):
         encode._encode_options(observation, dict(phase='map', options={}), _map_observation=view)
 
 
-def project_native_root(env, observation):
+def project_native_root(env, observation, packed=None):
     """Supplement the packed root using the retained extension's live pile data."""
+    if packed is not None:
+        _publish(env, observation, packed[0], packed[1])
+        return
     from schemas.combat_state import _card, _sim_card_id
     raw = env.thick.bc.to_dict()
     piles = {pile: [_card(_sim_card_id(name), upgrades) for name, upgrades in raw[pile]]

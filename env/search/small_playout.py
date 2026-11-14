@@ -9,10 +9,11 @@ PAIRED_CONTRACT = 'paired-worldlines-eps005-terminal-hp-boss-win-turn128-v1'
 
 class SmallPlayoutBatch:
     def __init__(self, envs, pool, pair):
+        self.deck = pair['contract'] == 'deck-latent-combat-v1'
         public = pair['contract'] == 'sts1-small-playout-public-v1'
         mode = pair.get('context_mode', 'none')
         if ((public and mode not in ('root','turn','state')) or (not public and mode != 'none')
-                or (not public and pair['contract'] != 'sts1-small-playout-v1')):
+                or (not public and not self.deck and pair['contract'] != 'sts1-small-playout-v1')):
             raise ValueError('unknown small playout feature contract')
         self.paired_worldlines = pair.get('search_contract') == PAIRED_CONTRACT
         if self.paired_worldlines and (public or pair.get('prior') is not None or
@@ -31,7 +32,7 @@ class SmallPlayoutBatch:
             self.net = sts.SmallPlayoutNet(pair['policy'][:split])
             self.adapter = sts.PublicPlayoutAdapter(pair['policy'][split:])
         else:
-            self.net = sts.SmallPlayoutNet(pair['policy'])
+            self.net = None if self.deck else sts.SmallPlayoutNet(pair['policy'])
         self.prior = sts.SmallPlayoutNet(pair['prior']) if pair.get('prior') is not None else None
         self.stats = {}
         self.samples = []
@@ -102,7 +103,8 @@ class SmallPlayoutBatch:
                 p = np.exp(logits-logits.max()); p /= p.sum()
                 chosen = np.random.default_rng(nonce).choice(len(p), p=p)
                 bits = bits_by_index[chosen]
-                out[index] = env._apply_rulebase_turn_decision(bits, {'small_dome_policy_decisions': 1})
+                out[index] = (dict(action=dict((b,a) for a,b in env._joint_policy_actions())[int(bits)])
+                              if self.deck else env._apply_rulebase_turn_decision(bits, {'small_dome_policy_decisions': 1}))
                 self.stats['dome_policy_decisions'] = self.stats.get('dome_policy_decisions', 0)+1
                 self.stats['dome_turn_card_limit_decisions'] = self.stats.get('dome_turn_card_limit_decisions', 0)+int(sts.small_playout_turn_card_limit_reached(env.thick.bc))
                 continue
@@ -121,9 +123,13 @@ class SmallPlayoutBatch:
     def accept(self, job, result, *, apply_action=True):
         index, tier, _, _ = job
         if self.pair.get('online') and len(result['action_bits']) > 1:
-            self.samples.append({key: np.asarray(result[key], dtype=dtype) for key, dtype in
-                (('state', np.float32), ('actions', np.float32), ('keys', np.int32),
-                 ('action_bits', np.uint32), ('visits', np.float32))})
+            if self.deck:
+                self.samples.append(dict(observation=result['observation'],
+                    action_bits=np.asarray(result['action_bits'],np.uint32),visits=np.asarray(result['visits'],np.float32)))
+            else:
+                self.samples.append({key: np.asarray(result[key], dtype=dtype) for key, dtype in
+                    (('state', np.float32), ('actions', np.float32), ('keys', np.int32),
+                     ('action_bits', np.uint32), ('visits', np.float32))})
             self.samples[-1]['recommended_action'] = int(result['action'])
             self.samples[-1]['env'] = index
             if self.adapter is not None:
@@ -141,6 +147,8 @@ class SmallPlayoutBatch:
             if not self.pair.get('online'):
                 diagnostics = dict(search_decisions=1, search_simulations=int(result['stats']['simulations']),
                                    search_seconds=float(result['stats']['search_seconds']))
+            if self.deck:
+                return dict(action=dict((b,a) for a,b in self.envs[index]._joint_policy_actions())[int(result['action'])])
             return self.envs[index]._apply_rulebase_turn_decision(result['action'], diagnostics)
 
     def scalar_stats(self):

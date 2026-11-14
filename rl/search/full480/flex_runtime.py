@@ -110,9 +110,9 @@ class BattlePool(CollectionPool):
   # Validate every root before claiming or modifying any owned slot.
   for r in rows.values():
    if self.deck_consumer:
-    from .finite_plan import PAIRED_ANCHOR
-    assert self.modules.deck_consumer and r['contract']==PAIRED_ANCHOR
-    assert r['budget']==len(r['worlds'])*len(r['action_bits']) and r['worlds'].shape[1:]==(5,)
+    from .finite_plan import PAIRED_TERMINAL
+    assert self.modules.deck_consumer and r['contract']==PAIRED_TERMINAL
+    assert len(r['worlds'])==(r['budget']+len(r['action_bits'])-1)//len(r['action_bits']) and r['worlds'].shape[1:]==(5,)
     assert r['temperature']==1. and np.array_equal(r['order'],np.arange(len(r['action_bits'])))
    if 'mirror' in r:self.mirror.validate(*r['mirror'])
    else:assert r['eligible'] and r['snapshot']['portable'] and r['snapshot']['input_state']==1
@@ -130,18 +130,28 @@ class BattlePool(CollectionPool):
    raise
   root_ids=self.upload([h.slot for h in handles],np.int32);indices=root_ids.long();count=len(handles)
   if self.deck_consumer:
-   for h,r in zip(handles,rows.values(),strict=True):
-    self.paired_words[h.slot,:len(r['worlds'])].copy_(self.upload(r['worlds'],np.uint64))
-    span=slice(h.slot*self.budget_cap,h.slot*self.budget_cap+r['budget'])
-    self.chain_inputs[span].copy_(self.upload(r['context_inputs'],np.float32))
-    self.chain_anchor[span].copy_(self.upload(r['anchor_context'],np.float32))
-    self.root_misc[h.slot].copy_(self.upload(r['observation']['outer_deck_misc'],np.float32))
-    from env.core import encode
-    dynamic=bool(np.any(r['observation']['deck_ids']==encode._card_id_idx('Ritual Dagger')))
-    self.context_roots[h.slot]=int(dynamic)
-    if dynamic:self.dynamic_context_roots.add(h.slot)
-   for name,key,dtype in [('root_prefix','prefix',np.int32),('root_inputs','context_inputs',np.float32),('root_relics','relics',np.int32),('root_counters','relic_counters',np.float32)]:
-    getattr(self,name).index_copy_(0,indices,self.upload([r[key] for r in rows.values()],dtype))
+   from env.core import encode
+   values=list(rows.values())
+   if 'context_inputs' in values[0]:
+    context=self.upload([r['context_inputs'] for r in values],np.float32)
+    anchor=self.upload([r['anchor_context'] for r in values],np.float32)
+   else:
+    data={key:np.stack([r['observation'][key] for r in values]) for key in self.flat.core.context.keys}
+    projected=self.flat.inference.search_context(data)
+    extra=self.upload([np.concatenate((r['observation']['run_keys'],r['observation']['ascension'])) for r in values],np.float32)
+    context=torch.cat((projected.combat,extra),1);anchor=projected.anchor
+   self.root_inputs.index_copy_(0,indices,context)
+   self.chain_inputs.view(self.m,self.budget_cap,68).index_copy_(0,indices,context[:,None,:].expand(-1,self.budget_cap,-1))
+   self.chain_anchor.view(self.m,self.budget_cap,256).index_copy_(0,indices,anchor[:,None,:].expand(-1,self.budget_cap,-1))
+   width=max(len(r['worlds']) for r in values);worlds=np.zeros((count,width,5),np.uint64)
+   for j,r in enumerate(values):worlds[j,:len(r['worlds'])]=r['worlds']
+   self.paired_words[:,:width].index_copy_(0,indices,self.upload(worlds))
+   dynamic=[bool(np.any(r['observation']['deck_ids']==encode._card_id_idx('Ritual Dagger'))) for r in values]
+   self.context_roots.index_copy_(0,indices,self.upload(dynamic,np.int32))
+   self.dynamic_context_roots.update(h.slot for h,changed in zip(handles,dynamic) if changed)
+   self.root_misc.index_copy_(0,indices,self.upload([r['observation']['outer_deck_misc'] for r in values],np.float32))
+   for name,key,dtype in [('root_prefix','prefix',np.int32),('root_relics','relics',np.int32),('root_counters','relic_counters',np.float32)]:
+    getattr(self,name).index_copy_(0,indices,self.upload([r[key] for r in values],dtype))
   self.launch('stream_clear',[self.arena,self.constructed,self.alive,root_ids],[count,self.budget_cap],grid=count*self.budget_cap)
   self.grow_inventory(max(len(r['inventory']['ids']) for r in rows.values()))
   entries=list(zip(handles,rows.values()));ordered=np.zeros((count,self.action_width),np.uint32);semantics=np.zeros((count,self.action_width),np.uint64)

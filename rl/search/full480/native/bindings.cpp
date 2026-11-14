@@ -102,16 +102,31 @@ void bindWave(py::module_ &m){
         .def_readwrite("inventory_key",&WaveRoot::keyForInventory).def("inventory_rows",[](WaveRoot &r){return entityRows(r.inventory);});
     py::class_<WaveDiag>(m,"WaveDiag")
         .def(py::init<std::vector<std::shared_ptr<WaveRoot>>,int,int>())
-        .def("pack_raw",[](WaveDiag &b,py::dict obs,py::array_t<std::int64_t,py::array::c_style> rows){
-            // Current token consumers retain the original native pool/pack
-            // boundary. Python must not rebuild each lane's query layout.
-            if(!b.awaiting||rows.ndim()!=1||!rows.size())throw std::logic_error("invalid paired raw rows");
-            constexpr auto flags=py::array::c_style|py::array::forcecast;
-            py::array_t<float,flags> legal(obs["combat_legal"]);
-            py::array_t<std::int64_t,flags> hand(obs["hand_ids"]),monster(obs["monster_id"]),potion(obs["potions"]),select(obs["select_native_indices"]);
-            const int n=rows.size(),total=legal.shape(0);
-            if(legal.ndim()!=2||legal.shape(1)!=198||hand.size()!=total*10||monster.size()!=total*5||potion.size()!=total*5||select.size()!=total*96)
-                throw std::logic_error("invalid paired token schema");
+        .def("pack_raw",[](WaveDiag &b){
+            using namespace compact_leaf;
+            if(!b.awaiting||b.active.empty())throw std::logic_error("invalid raw frame");
+            const int n=b.active.size(),total=n;
+            auto rows=wa<std::int64_t>({n});auto cat=wa<int>({n,kCatSize});auto sc=wa<float>({n,kFloatSize});
+            auto legal=wa<float>({n,198});auto hand=wa<int>({n,10}),monster=wa<int>({n,5}),potion=wa<int>({n,5}),select=wa<int>({n,96});
+            auto prefix=wa<int>({n}),roots=wa<int>({n}),remaining=wa<int>({n});auto selected=wa<float>({n,10});
+            auto draws=wa<double>({n});auto misc=wa<float>({n,sts::Deck::MAX_SIZE});
+            auto upgraded=wa<float>({n,3,kCardIds}),sums=wa<float>({n,3,kCardIds});
+            std::fill_n(legal.mutable_data(),legal.size(),0.f);std::fill_n(upgraded.mutable_data(),upgraded.size(),0.f);std::fill_n(sums.mutable_data(),sums.size(),0.f);
+            std::fill_n(misc.mutable_data(),misc.size(),std::numeric_limits<float>::quiet_NaN());
+            {py::gil_scoped_release release;auto lock=b.pool.acquire();b.pool.runIndependent(n,[&](std::size_t i){
+                const auto&l=b.lanes[b.active[i]];const auto&state=*l.state;const auto raw=pack(state);
+                rows.mutable_data()[i]=i;roots.mutable_data()[i]=b.workRoot[l.task];prefix.mutable_data()[i]=l.prefix;draws.mutable_data()[i]=l.drawNext;
+                std::copy(raw.scalars.begin(),raw.scalars.end(),sc.mutable_data()+i*kFloatSize);std::copy(raw.categorical.begin(),raw.categorical.end(),cat.mutable_data()+i*kCatSize);
+                for(int j=0;j<10;++j){hand.mutable_data()[i*10+j]=raw.categorical[j];selected.mutable_data()[i*10+j]=(l.prefix>>j)&1;}
+                for(int j=0;j<5;++j){monster.mutable_data()[i*5+j]=raw.categorical[10+j];const int p=raw.categorical[25+j];potion.mutable_data()[i*5+j]=p==1?0:p;}
+                for(int j=0;j<96;++j)select.mutable_data()[i*96+j]=raw.categorical[127+j];
+                constexpr int pick=6+kPlayerStatus+24+1+30+5*kMonsterStatus+20+3*kCardIds;
+                remaining.mutable_data()[i]=std::max(0,int(raw.scalars[pick])-__builtin_popcount(unsigned(l.prefix)));
+                for(const auto&a:l.obs.actions)legal.mutable_data()[i*198+jointActionId(sts::search::Action(a.bits),state)-kJointEnd]=1.f;
+                auto add=[&](const sts::CardInstance&c){if(c.id==sts::CardId::RITUAL_DAGGER&&c.uniqueId>=0&&c.uniqueId<sts::Deck::MAX_SIZE)misc.mutable_data()[i*sts::Deck::MAX_SIZE+c.uniqueId]=float(c.specialData)/100.f;};
+                auto pile=[&](const auto&cards,int zone){for(const auto&c:cards){add(c);const auto at=(i*3+zone)*kCardIds+int(c.id);upgraded.mutable_data()[at]+=c.getUpgradeCount()>0;sums.mutable_data()[at]+=c.getUpgradeCount();}};
+                pile(state.cards.drawPile,0);pile(state.cards.discardPile,1);pile(state.cards.exhaustPile,2);for(int j=0;j<state.cards.cardsInHand;++j)add(state.cards.hand[j]);
+            });}
             struct Layout {std::array<bool,121> present{},query{};int tokens=0,queries=0,actions=0,choice=1;};
             std::vector<Layout> layout(n);std::vector<std::array<int,5>> offset(n);
             for(int i=0;i<n;++i)if(rows.data()[i]<0||rows.data()[i]>=total)throw std::logic_error("paired row outside batch");
@@ -120,6 +135,7 @@ void bindWave(py::module_ &m){
                 b.pool.runIndependent(n,[&](std::size_t i){
                     auto &l=layout[i];const int r=rows.data()[i];const float *mask=legal.data()+r*198;
                     l.present[0]=l.query[0]=true;
+                    for(int j=0;j<10;++j)if((prefix.data()[r]>>j)&1)l.query[1+j]=true;
                     for(int j=0;j<10;++j)l.present[1+j]=hand.data()[r*10+j]!=0;
                     for(int j=0;j<5;++j){l.present[11+j]=monster.data()[r*5+j]!=0;l.present[16+j]=potion.data()[r*5+j]!=0;}
                     for(int j=21;j<25;++j)l.present[j]=true;
@@ -128,7 +144,7 @@ void bindWave(py::module_ &m){
                         ++l.actions;
                         if(a>=1&&a<91){int source=(a-1)/6,target=(a-1)%6;l.query[source<10?1+source:16+source-10]=true;if(target<5)l.query[11+target]=true;}
                         else if(a>=91&&a<187)l.query[25+a-91]=true;
-                        else if(a>=187)for(int j=0;j<10;++j)if(l.present[1+j])l.query[1+j]=true;
+                        else if(a>=187&&a<197)l.query[1+a-187]=true;
                     }
                     for(int j=0;j<121;++j){l.tokens+=l.present[j]||l.query[j];l.queries+=l.query[j];}
                 });
@@ -160,43 +176,10 @@ void bindWave(py::module_ &m){
             }
             py::dict out;out["retained"]=retained;out["queries"]=queries;out["present"]=present;out["starts"]=starts;out["lens"]=lens;
             out["blocks1"]=blocks1;out["blocks2"]=blocks2;out["mapping"]=mapping;out["keys"]=keys;out["owners"]=owners;
-            out["lengths"]=lengths;out["offsets"]=offsets;out["counts"]=counts;out["choice"]=choice;return out;
-        })
-        .def("compact",[](WaveDiag&b,py::array_t<std::int32_t,py::array::c_style> cardIndex){
-            using namespace compact_leaf;
-            if(!b.awaiting||cardIndex.ndim()!=1||cardIndex.size()!=kCardIds)throw std::logic_error("invalid compact request");
-            const int n=b.active.size();
-            auto cat=wa<int>({n,kCatSize});auto sc=wa<float>({n,kFloatSize});
-            auto ids=wa<int>({n,2,kLanguageSlots});auto feats=wa<float>({n,2,kLanguageSlots,3});
-            auto root=wa<int>({n}),prefix=wa<int>({n}),kind=wa<int>({n});
-            auto legal=wa<int>({n,kAutoregressiveSize});auto bits=wa<unsigned>({n,kAutoregressiveSize});
-            auto draws=wa<double>({n});auto misc=wa<float>({n,sts::Deck::MAX_SIZE});
-            auto upgraded=wa<float>({n,3,kCardIds}),upgradeSums=wa<float>({n,3,kCardIds});
-            std::fill_n(upgraded.mutable_data(),upgraded.size(),0.f);std::fill_n(upgradeSums.mutable_data(),upgradeSums.size(),0.f);
-            std::fill_n(ids.mutable_data(),ids.size(),0);std::fill_n(feats.mutable_data(),feats.size(),0.f);
-            std::fill_n(legal.mutable_data(),legal.size(),-1);std::fill_n(bits.mutable_data(),bits.size(),0);
-            std::fill_n(misc.mutable_data(),misc.size(),std::numeric_limits<float>::quiet_NaN());
-            const auto lut=cardIndex.data();
-            {py::gil_scoped_release release;auto lock=b.pool.acquire();b.pool.runIndependent(n,[&](std::size_t i){
-                auto&l=b.lanes[b.active[i]];auto&s=*l.state;auto&r=*b.roots[b.workRoot[l.task]];
-                if(!r.pairedAnchor)throw std::logic_error("compact transport requires paired contract");
-                const auto packed=pack(s);std::copy(packed.categorical.begin(),packed.categorical.end(),cat.mutable_data()+i*kCatSize);
-                std::copy(packed.scalars.begin(),packed.scalars.end(),sc.mutable_data()+i*kFloatSize);
-                packLanguagePile(s.cards.drawPile,lut,ids.mutable_data()+i*2*kLanguageSlots,feats.mutable_data()+i*6*kLanguageSlots);
-                packLanguagePile(s.cards.discardPile,lut,ids.mutable_data()+(i*2+1)*kLanguageSlots,feats.mutable_data()+(i*2+1)*3*kLanguageSlots);
-                root.mutable_data()[i]=b.workRoot[l.task];prefix.mutable_data()[i]=l.prefix;kind.mutable_data()[i]=l.leafKind;draws.mutable_data()[i]=l.drawNext;
-                auto acts=l.leafKind==4?autoregressiveActions(s,l.prefix):std::vector<sts::search::Action>();
-                if(!l.leafKind)for(const auto&a:l.obs.actions)acts.emplace_back(a.bits);
-                for(std::size_t j=0;j<acts.size();++j){legal.mutable_data()[i*kAutoregressiveSize+j]=jointActionId(acts[j],s)-kJointEnd;bits.mutable_data()[i*kAutoregressiveSize+j]=acts[j].bits;}
-                auto add=[&](const sts::CardInstance&c){if(c.id==sts::CardId::RITUAL_DAGGER&&c.uniqueId>=0&&c.uniqueId<sts::Deck::MAX_SIZE)misc.mutable_data()[i*sts::Deck::MAX_SIZE+c.uniqueId]=float(c.specialData)/100.f;};
-                auto addPile=[&](const auto&pile,int zone){for(const auto&c:pile){add(c);const auto at=(i*3+zone)*kCardIds+int(c.id);upgraded.mutable_data()[at]+=c.getUpgradeCount()>0;upgradeSums.mutable_data()[at]+=c.getUpgradeCount();}};
-                addPile(s.cards.drawPile,0);addPile(s.cards.discardPile,1);addPile(s.cards.exhaustPile,2);
-                for(int j=0;j<s.cards.cardsInHand;++j)add(s.cards.hand[j]);
-            });}
-            py::dict out;out["categorical"]=cat;out["scalars"]=sc;out["language_ids"]=ids;out["language_features"]=feats;
-            out["root_indices"]=root;out["selection_prefix"]=prefix;out["leaf_kind"]=kind;out["legal_policy_ids"]=legal;
-            out["action_bits"]=bits;out["draws"]=draws;out["permanent_misc"]=misc;
-            out["pile_upgraded_counts"]=upgraded;out["pile_upgrade_sums"]=upgradeSums;return out;
+            out["lengths"]=lengths;out["offsets"]=offsets;out["counts"]=counts;out["choice"]=choice;
+            out["raw"]=sc;out["cat"]=cat;out["upgraded"]=upgraded;out["sums"]=sums;out["prefix"]=prefix;
+            out["combat_legal"]=legal;out["select_hand_mask"]=selected;out["remaining"]=remaining;
+            out["root_indices"]=roots;out["draws"]=draws;out["permanent_misc"]=misc;return out;
         })
         .def("choose_paired",[](WaveDiag&b,py::array_t<int,py::array::c_style>picks,py::array_t<double,py::array::c_style>values){
             const auto n=b.active.size();if(!b.awaiting||!b.gpuChoice||picks.ndim()!=1||values.ndim()!=1||picks.size()!=n||values.size()!=n)throw std::logic_error("invalid paired reply");
@@ -212,13 +195,13 @@ void bindWave(py::module_ &m){
                 std::vector<int> visits(n),terminal(n),hist(201);std::vector<double> values(n);std::vector<unsigned>bits;
                 std::array<unsigned long long,12>stats{};
                 for(std::size_t t=0;t<b.local.size();++t)if(b.workRoot[t]==int(i)){
-                    if(!std::isfinite(b.values[t]))throw std::logic_error("unscored paired leaf");
-                    const int a=b.chosen[t],depth=b.depths[t],o=b.outcomes[t];++visits[a];terminal[a]+=o!=4;values[a]+=b.values[t];
-                    stats[0]+=depth-1;stats[1]+=depth-1-b.forceN[t];stats[2]+=b.forceN[t];stats[3]+=o==1;stats[4]+=o==2;stats[5]+=o==4;stats[7]+=depth;stats[8]+=b.maxActionN[t];stats[9]+=o==3;stats[10]+=b.actionN[t];stats[11]+=b.prefixN[t];++hist[depth];
+                    if(std::isfinite(b.values[t]) != (b.outcomes[t]!=0))throw std::logic_error("unscored terminal leaf");
+                    const int a=b.chosen[t],depth=b.depths[t],o=b.outcomes[t];++visits[a];terminal[a]+=o!=0;if(o!=0)values[a]+=b.values[t];
+                    stats[0]+=depth-1;stats[1]+=depth-1-b.forceN[t];stats[2]+=b.forceN[t];stats[3]+=o==1;stats[4]+=o==2;stats[5]+=o==0;stats[7]+=depth;stats[8]+=b.maxActionN[t];stats[9]+=o==3;stats[10]+=b.actionN[t];stats[11]+=b.prefixN[t];++hist[depth];
                 }
-                for(int j=0;j<n;++j){if(visits[j]!=int(r.worlds.size()))throw std::logic_error("unpaired result");values[j]/=visits[j];bits.push_back(r.actions[j].bits);}
+                for(int j=0;j<n;++j){if(visits[j])values[j]/=visits[j];bits.push_back(r.actions[j].bits);}
                 py::dict d;d["action_bits"]=bits;d["values"]=values;d["visits"]=visits;d["terminal_visits"]=terminal;d["statistics"]=stats;
-                d["simulations"]=r.cfg.simulations;d["nonforced_decisions"]=stats[1];d["forced_actions"]=stats[2];d["actual_transitions"]=stats[7]-stats[11];d["atomic_decisions"]=stats[7];d["selection_prefix_decisions"]=stats[11];d["depth_cuts"]=stats[5];d["playout_lengths"]=hist;d["value_statistic"]="paired-pcg64-pre-reward-anchor-v1";out.append(d);
+                d["simulations"]=r.cfg.simulations;d["nonforced_decisions"]=stats[1];d["forced_actions"]=stats[2];d["actual_transitions"]=stats[7]-stats[11];d["atomic_decisions"]=stats[7];d["selection_prefix_decisions"]=stats[11];d["depth_cuts"]=stats[5];d["playout_lengths"]=hist;d["value_statistic"]="paired-pcg64-terminal-hp-boss-win-v1";out.append(d);
             }return out;
         })
         .def("packet",&wavePacket)
@@ -935,7 +918,7 @@ PYBIND11_MODULE(_full480_cpu,m){
 #else
     m.attr("rule_trace")=false;
 #endif
-    m.attr("contract")="paired-pcg64-pre-reward-anchor-v1";
+    m.attr("contract")="paired-pcg64-terminal-hp-boss-win-v1";
     bindWave(m);
 }
 #endif

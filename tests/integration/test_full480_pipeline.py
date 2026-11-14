@@ -354,11 +354,11 @@ def test_full480_pcg64_matches_numpy_and_owns_each_chain():
 
 
 @pytest.mark.parametrize('scenario', ['prefix', 'growth', 'escape'])
-def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, tmp_path):
+def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, tmp_path, monkeypatch):
     from rl.search.full480.combo_runtime import BattleArena, BattlePool
     from rl.search.full480.combo_model import DeckWeights
     from rl.search.full480.deck_inputs import DeckInputTables
-    from rl.search.full480.finite_plan import PAIRED_ANCHOR, paired_worlds
+    from rl.search.full480.finite_plan import PAIRED_TERMINAL, paired_worlds
     from rl.search.full480.run_device import cpu_bridge
     from rl.policies.deck_latent import DeckLatentPolicy
     assert torch.cuda.is_available()
@@ -394,11 +394,11 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
         flat.input_tables = DeckInputTables(core, obs)
         mapping = sorted(latent_env._joint_policy_actions())
         worlds = paired_worlds(20261111, len(mapping), 2 * len(mapping))
-        budget = len(mapping) * len(worlds)
+        budget = len(mapping) * len(worlds) - 1
         row = cpu.State(latent_env.thick.bc).root_plan(20261111, budget, 1., 8, False)
         semantic = dict(zip(row['action_bits'], row['semantic'], strict=True))
         row.update(cpu.inventory(latent_env.thick.gc))
-        row.update(contract=PAIRED_ANCHOR, worlds=worlds, prefix=0,
+        row.update(contract=PAIRED_TERMINAL, worlds=worlds, prefix=0,
             action_bits=np.array([bits for _, bits in mapping], np.uint32),
             semantic=np.array([semantic[bits] for _, bits in mapping], np.uint64),
             order=np.arange(len(mapping)), context_inputs=torch.cat((context.combat,
@@ -424,6 +424,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                         inc=int(inc_low) | int(inc_high) << 64)
                     generator.state = state
                     branches.append([branch, np.random.Generator(generator), 1])
+            branches = branches[:budget]
             pool.submit({0: row})
             def compare_states():
                 ids = [i for i, (e, _, _) in enumerate(branches) if e.thick.bc is not None]
@@ -468,27 +469,38 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 np.testing.assert_array_equal(pool.draws[active].cpu().numpy(), list(expected_draws.values()))
                 compare_states()
             assert not pool.active_count
+            # The old target consumes terminal HP, never a neural anchor or
+            # a value bootstrap at the depth limit. Unfinished visits add zero
+            # to the lower bound while remaining nonterminal in the counters.
+            from env.core import encode
             gold = []
             for branch, _, _ in branches:
-                if branch.thick.is_over:
-                    gold.append(0.)
+                if branch._at_combat_exit_anchor():
+                    gold.append(float(branch._obs()['player_scalars'][0])*encode.HP_SCALE/row['max_hp'])
                 else:
-                    leaf = {k:torch.as_tensor(v[None],device='cuda') for k,v in branch._obs().items()}
-                    branch_context = core.prepare_search_context(leaf) if scenario == 'growth' else context
-                    if branch._at_combat_exit_anchor():
-                        value = core.anchor_with_context(leaf,branch_context)
-                    else:
-                        _, value = core.combat_with_context(leaf,branch_context)
-                    gold.append(float(value.item()))
+                    gold.append(0.)
             result = pool.reap()[0]
-            np.testing.assert_allclose(result['values'],np.array(gold).reshape(len(worlds),-1).mean(0),atol=3e-5,rtol=1e-5)
+            owners=np.arange(budget)%len(mapping)
+            expected=np.bincount(owners,weights=gold,minlength=len(mapping))/np.bincount(owners,minlength=len(mapping))
+            np.testing.assert_allclose(result['values'],expected,atol=3e-5,rtol=1e-5)
             assert result['simulations'] == budget
+            np.testing.assert_allclose(result['combat_context'],context.combat[0].cpu().numpy(),atol=0,rtol=0)
+            from rl.search.paired_token_rollout import PairedTokenBatch
+            from env.search.small_playout import PAIRED_CONTRACT
+            pair=dict(contract='deck-latent-combat-v1',search_contract=PAIRED_CONTRACT,online=True)
+            batch=PairedTokenBatch([latent_env],None,pair,core)
+            def no_large_encoder(*args,**kwargs):
+                raise AssertionError('root scoring repeated the large encoder')
+            with monkeypatch.context() as patch:
+                patch.setattr(core.context,'forward',no_large_encoder)
+                scored=batch.score_roots([latent_env],observations=[obs],contexts=[result['combat_context']])
+                expected_root,_=core.combat_with_context(data,context)
+                np.testing.assert_allclose(scored[0][1],expected_root[0,[a for a,_ in mapping]].cpu().numpy(),atol=3e-5,rtol=1e-5)
+            batch.inference.__exit__(None,None,None)
+            assert result['visits'].sum()==budget and result['visits'].max()-result['visits'].min()==1
             if scenario == 'prefix':
                 assert pool.stats[:, 11].sum().item() > 0, 'AR prefix path was not exercised'
-            else:
-                assert pool.frame_pipeline.counts['anchor_value_rows'] > 0
-                if scenario == 'growth':
-                    assert pool.frame_pipeline.counts['context_refresh_rows'] > 0
+            assert pool.frame_pipeline.counts['anchor_value_rows']==0
             assert pool.graph_scorer.statistics()['step_overflow_retries'] > 0
             assert pool.graph_scorer.statistics()['step_replays'] > 0
             pool.close()
@@ -528,6 +540,17 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 np.testing.assert_allclose(actual['values'],result['values'],atol=3e-5,rtol=1e-5)
                 status=service.statistics()
                 assert status['fallback_graph']['captures']>0
+                if scenario == 'growth':
+                    repeat=CpuFallback([(0,'hallway',cfg,20261111)],[latent_env],service,
+                        capacity=min(8,budget),threads=2,rows={0:row})
+                    repeated=[]
+                    while not repeat.complete:
+                        assert time.monotonic()<deadline
+                        repeated.extend(repeat.step())
+                        if repeat.pending is not None:service.poll(.001)
+                    np.testing.assert_array_equal(repeated[0][1]['statistics'],actual['statistics'])
+                    np.testing.assert_array_equal(repeated[0][1]['values'],actual['values'])
+                    status=service.statistics()
                 assert status['upper_graph']['context_cache_hits']>0
                 service.close()
             finally:

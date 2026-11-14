@@ -57,6 +57,24 @@ def install_policy_pair(model, path):
 
 
 def configure_collection(model, env):
+    if getattr(model.policy.core, 'model_contract', None) == 'deck-latent-combat-v1':
+        from rl.search.paired_token_rollout import PairedTokenBatch
+        from env.search.small_playout import PAIRED_CONTRACT
+        from rl.algorithms.upper_probe import state_digest
+        pair = dict(contract='deck-latent-combat-v1', search_contract=PAIRED_CONTRACT,
+                    sha256=state_digest(model.policy.state_dict()), online=True,
+                    common_simulations=250, elite_simulations=250, boss_simulations=1000,
+                    playout_depth=200, tree_depth=1024)
+        env.configure_small_playout(pair, batch_factory=lambda envs, pool, snapshot:
+            PairedTokenBatch(envs, pool, snapshot, model.policy.core))
+        batch = env.venv.small_playout_batch
+        batch.model = model
+        batch.observer = env.venv.native_root_observations
+        if batch.observer is None:raise ValueError('full480 requires the existing native root encoder')
+        if batch.inference.closed:
+            from rl.search.rollout_inference import UpperPolicyInference
+            batch.inference = UpperPolicyInference(model.policy.core, model.device)
+        return
     if getattr(model.policy, 'small_playout_config', None) and model.policy.small_playout_config.get('context_mode') in ('token-root-64x2', 'token-budget-64x2'):
         from rl.policies.token_regret import OnlineTokenRegretPolicy, TOKEN_REGRET_CONTRACT
         from rl.search.paired_token_rollout import PairedTokenBatch

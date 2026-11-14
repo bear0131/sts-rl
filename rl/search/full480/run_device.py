@@ -68,7 +68,7 @@ def cpu_fallback():
         return module
     spec=importlib.util.spec_from_file_location(name,path)
     module=importlib.util.module_from_spec(spec);sys.modules[name]=module;spec.loader.exec_module(module)
-    if module.contract!='paired-pcg64-pre-reward-anchor-v1':raise RuntimeError('wrong full480 CPU contract')
+    if module.contract!='paired-pcg64-terminal-hp-boss-win-v1':raise RuntimeError('wrong full480 CPU contract')
     if bool(module.rule_trace)!=hasattr(sts.BattleContext,'set_player_strength'):raise RuntimeError('CPU simulator trace ABI differs')
     return module
 

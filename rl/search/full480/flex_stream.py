@@ -190,16 +190,17 @@ class StreamingPool(ScoringPool):
    b=self.bank[h.slot]['budget'];assert 0<=done[h.slot]<=b
    if done[h.slot]==b:handles.append(h)
   if not handles:return {}
-  if self.deck_consumer:self.frame_pipeline.complete(handles)
   indices=self.upload([h.slot for h in handles],np.int64)
   stats=self.stats.view(self.m,self.budget_cap,STAT)[indices].cpu().numpy().view(np.uint64)
   values=self.values.view(self.m,self.budget_cap)[indices].cpu().numpy()
   outcomes=self.outcomes.view(self.m,self.budget_cap)[indices].cpu().numpy()
+  contexts=self.root_inputs[indices,:64].cpu().numpy() if self.deck_consumer else None
   output={}
   for k,h in enumerate(handles):
    r=self.bank[h.slot];b=r['budget'];na=len(r['action_bits'])
    plan=dict(root=np.zeros(b,np.int32),action_index=np.asarray(r['order'],np.int32)[np.arange(b)%na])
    result=aggregate([r],plan,values[k,:b],outcomes[k,:b],stats[k,:b])[0]
+   if contexts is not None:result['combat_context']=contexts[k]
    result['root_generation']=h.generation;result['root_slot']=h.slot
    assert result.get('atomic_decisions',result['actual_transitions'])-b==result['nonforced_decisions']+result['forced_actions']
    self.completed_counts.update(roots=1,simulations=b,actual_transitions=result['actual_transitions'],nonforced=result['nonforced_decisions'],forced=result['forced_actions'],cuts=result['depth_cuts'])

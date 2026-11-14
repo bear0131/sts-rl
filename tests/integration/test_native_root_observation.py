@@ -136,6 +136,7 @@ def assert_roots(encoder, envs):
 
 
 def test_deck_context_root_upgrades_map_and_direct_destination():
+    assert getattr(sts, 'deck_root_context_version', 0) == 1, 'rebuild the explicitly selected extension'
     env = SlayTheSpireEnv(global_map_view=True, upper_public_context=True, card_language=True, event_option_observation=True,
         combat_exit_anchor=True, reward_flow='sequential-v1', deck_latent_context=True,
         combat_action_contract='autoregressive-v2')
@@ -146,10 +147,11 @@ def test_deck_context_root_upgrades_map_and_direct_destination():
                 break
             env.step(int(np.flatnonzero(env.action_masks())[0]))
         assert env.thick.bc is not None
-        env.thick.bc.apply_custom_state({'draw': [('SEARING_BLOW', 13), ('BASH', 1)],
+        env.thick.bc.apply_custom_state({'draw': [('SEARING_BLOW', up) for up in (13, 13, 13, 129, 257)] + [('BASH', 1)],
             'discard': [('BASH', 0), ('BASH', 1)], 'exhaust': [('ANGER', 1)]})
         env._invalidate_backend_cache()
         encoder = NativeRootObservationBatch(env)
+        assert encoder.deck_context_schema is not None
         owned = assert_roots(encoder, [env])
         assert np.count_nonzero(owned['pile_upgraded_counts']) == 4
         assert owned['map_full_rooms'].any()

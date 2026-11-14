@@ -98,7 +98,7 @@ class FrameModules:
      assert schema is not None and hashlib.sha256(schema.encode()).hexdigest()==r['schema_sha256'],'full480 input schema does not match compiled observer'
     for filename,digest in r['package_sources'].items():
      assert hashlib.sha256((Path(__file__).resolve().parent/filename).read_bytes()).hexdigest()==digest,('stale full480 artifact',filename)
-    if kind=='observer':functions=functions+['deck_anchor_inputs','deck_context_misc']
+    if kind=='observer':functions=functions+['deck_anchor_inputs','deck_context_misc','deck_fallback_features']
    binary=directory/name;digest=hashlib.sha256(binary.read_bytes()).hexdigest();assert digest==r['cubin_sha256']
    h=ptr();check(lib.cuModuleLoad(ctypes.byref(h),str(binary).encode()),'load frame '+kind);self.handles.append(h)
    self.identity[kind]=dict(sha256=digest)

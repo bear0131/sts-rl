@@ -108,7 +108,23 @@ inline float player_feature(const unsigned long long*w,const float*s,const float
  float hp=s[1]?s[0]/s[1]:0.f;return 1.f/(1.f+expf(-12.f*(hp-.25f*float(j-1))));
 }
 
-inline float token(const BattleContext&b,const unsigned long long*w,const float*s,const int*c,
+inline float pile_value(const BattleContext&b,const unsigned long long*w,int slot,int dim){
+ const auto&pile=slot==22?b.cards.drawPile:slot==23?b.cards.discardPile:b.cards.exhaustPile;
+ float base=0.f,upgrade=0.f,magnitude=0.f;int count=0;
+ for(const auto&item:pile){int id=card(w)[int(item.id)],up=item.getUpgradeCount();
+  base+=pile_base(w)[id*64+dim];if(up>0)upgrade+=pile_upgrade(w)[id*64+dim];magnitude+=float(up)/UPGRADE_SCALE;count+=id!=0;
+ }
+ return ((base+upgrade)+magnitude*pile_magnitude(w)[dim])/float(max(1,count))+log1pf(float(count))*pile_count(w)[dim]+pile_bias(w)[dim];
+}
+struct PackedPiles {const float*counts;const float*upgraded;const float*sums;};
+inline float pile_value(const PackedPiles&b,const unsigned long long*w,int slot,int dim){
+ float base=0.f,upgrade=0.f,magnitude=0.f;int count=0;const int offset=(slot-22)*compact_leaf::kCardIds;
+ for(int native=0;native<compact_leaf::kCardIds;++native){const int n=int(b.counts[offset+native]);if(!n)continue;const int id=card(w)[native];
+  base+=float(n)*pile_base(w)[id*64+dim];upgrade+=b.upgraded[offset+native]*pile_upgrade(w)[id*64+dim];magnitude+=b.sums[offset+native]/UPGRADE_SCALE;count+=id?n:0;
+ }
+ return ((base+upgrade)+magnitude*pile_magnitude(w)[dim])/float(max(1,count))+log1pf(float(count))*pile_count(w)[dim]+pile_bias(w)[dim];
+}
+template<class Piles> inline float token(const Piles&b,const unsigned long long*w,const float*s,const int*c,
  const float*root,const int*relic_ids,const float*relic_counts,int prefix,int slot,int dim){
  int role=slot==0?0:slot<=10?1:slot<=15?2:slot<=20?3:slot==21?4:slot<=24?slot-17:8;
  float value=roles(w)[role*64+dim];
@@ -154,11 +170,6 @@ inline float token(const BattleContext&b,const unsigned long long*w,const float*
   }
   return value+total;
  }
- const auto&pile=slot==22?b.cards.drawPile:slot==23?b.cards.discardPile:b.cards.exhaustPile;
- float base=0.f,upgrade=0.f,magnitude=0.f;int count=0;
- for(const auto&item:pile){int id=card(w)[int(item.id)],up=item.getUpgradeCount();
-  base+=pile_base(w)[id*64+dim];if(up>0)upgrade+=pile_upgrade(w)[id*64+dim];magnitude+=float(up)/UPGRADE_SCALE;count+=id!=0;
- }
- return value+(((base+upgrade)+magnitude*pile_magnitude(w)[dim])/float(max(1,count))+log1pf(float(count))*pile_count(w)[dim]+pile_bias(w)[dim]);
+ return value+pile_value(b,w,slot,dim);
 }
 }
