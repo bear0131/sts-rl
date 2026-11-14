@@ -126,7 +126,7 @@ def test_full480_phase_heads_reuse_their_batch_buckets(latent_env):
     policy = policy_for(latent_env, 'transformer64x2').cuda().eval()
     one = {k: v[None] for k, v in latent_env._obs().items()}
     batches = []
-    for phase in ('map', 'combat_reward', 'rest', 'event', 'neow'):
+    for phase in ('map', 'combat_reward', 'rest', 'event', 'neow', 'shop', 'boss_relic', 'card_select'):
         for size in range(1, 65, 8):
             batch = {k: np.repeat(v, size, axis=0) for k, v in one.items()}
             batch['phase'][:] = vocab.PHASE_VOCAB_INDEX[phase]
@@ -136,6 +136,16 @@ def test_full480_phase_heads_reuse_their_batch_buckets(latent_env):
             actual = inference(batch)
             expected = policy.core.eager_actor_critic(obs_as_tensor(batch, 'cuda'))
             torch.testing.assert_close(actual, expected, atol=2e-5, rtol=2e-5)
+        # The existing shared encoder merges ordinary screens in one graph;
+        # card-selection keeps its separate candidate/slot contract.
+        mixed = {key: np.concatenate([batch[key][:1] for batch in batches[::8]]) for key in one}
+        before = inference.deck.head_graphs.captures + inference.deck.head_graphs.hits
+        actual = inference(mixed)
+        expected = policy.core.eager_actor_critic(obs_as_tensor(mixed, 'cuda'))
+        torch.testing.assert_close(actual, expected, atol=2e-5, rtol=2e-5)
+        assert inference.deck.head_graphs.captures + inference.deck.head_graphs.hits - before == 2
+        saved = tuple(value.clone() for value in actual)
+        batches.append(mixed)
         captured = inference.statistics()['upper_graph_captures']
         temporary = torch.empty(16*1024*1024, device='cuda').fill_(.375)
         del temporary
@@ -145,6 +155,7 @@ def test_full480_phase_heads_reuse_their_batch_buckets(latent_env):
             inference(batch)
         assert inference.statistics()['upper_graph_captures'] == captured
         assert inference.statistics()['upper_graph_evictions'] == 0
+        torch.testing.assert_close(actual, saved, atol=0, rtol=0)
 
 
 def test_full480_anchor_cache_keys_only_consumed_continuation_fields(latent_env):

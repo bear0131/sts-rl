@@ -223,8 +223,10 @@ class _DeckForward:
             return value.new_empty(len(value), 0), value
         if phase == V.PHASE_VOCAB_INDEX['combat']:
             return core.combat(dict(obs, _choice_width=choice_width))[:2]
-        return core.overworld(obs, core.upper_tokenizer, phase,
-                              upper_active_widths=(deck_width, relic_width))
+        from rl.policies.shared_wholerun import MERGED_UPPER_PHASE
+        widths = ((deck_width, relic_width, choice_width) if phase == MERGED_UPPER_PHASE
+                  else (deck_width, relic_width))
+        return core.overworld(obs, core.upper_tokenizer, phase, upper_active_widths=widths)
 
 
 def _observed_width(values):
@@ -322,12 +324,18 @@ class _DeckConsumers:
         run, combat, anchor = self.context(obs)
         batch = dict(obs, _run_context=run, _combat_context=combat, _anchor_context=anchor)
         phases = np.asarray(obs['phase']).reshape(-1)
+        from rl.policies.shared_wholerun import MERGED_UPPER_PHASE
+        routes = phases.copy()
+        if self.core.map_dag_enabled and 'upper_public_context' in obs:
+            ordinary = ((phases != V.PHASE_VOCAB_INDEX['combat'])
+                        & (phases != V.PHASE_VOCAB_INDEX['card_select']))
+            routes[ordinary] = MERGED_UPPER_PHASE
         anchored = np.asarray(obs['combat_exit_anchor'], bool).any(axis=1)
         logits = torch.empty((len(phases), C.AUTOREGRESSIVE_SIZE), device=self.device)
         values = torch.empty(len(phases), device=self.device)
-        for phase in np.unique(phases):
+        for phase in np.unique(routes):
             for at_anchor in ((False, True) if phase == V.PHASE_VOCAB_INDEX['combat'] else (False,)):
-                rows = np.flatnonzero((phases == phase) & (anchored == at_anchor))
+                rows = np.flatnonzero((routes == phase) & (anchored == at_anchor))
                 if not len(rows):
                     continue
                 data = {k: v[rows] for k, v in batch.items()}
@@ -348,8 +356,13 @@ class _DeckConsumers:
                     widths = (_observed_width(data['deck_ids']), _observed_width(data['relics']))
                     data, widths = _upper_graph_inputs(data, widths,
                         (data['deck_ids'].shape[1], data['relics'].shape[1]))
-                    signature = (int(phase), False, *widths, 0)
+                    union_width = (self.core.overworld.encoder.merged_width(data)
+                                   if phase == MERGED_UPPER_PHASE else 0)
+                    signature = (int(phase), False, *widths, union_width)
                     keys = upper_observation_keys(phase, data) | {'_run_context'}
+                    if phase == MERGED_UPPER_PHASE:
+                        for screen in ('combat_reward', 'map', 'shop', 'boss_relic', 'event'):
+                            keys |= upper_observation_keys(V.PHASE_VOCAB_INDEX[screen], data)
                 data = {key: value for key, value in data.items() if key in keys}
                 index = torch.as_tensor(rows, device=self.device)
                 if at_anchor:
