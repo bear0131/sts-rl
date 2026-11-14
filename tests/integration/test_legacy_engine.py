@@ -159,9 +159,9 @@ def test_native_search_projection_reads_lane_state_without_mutating_root(complet
 
 @pytest.mark.cuda
 @pytest.mark.parametrize('force_fallback,environment_count', [(False,4), (True,4), (False,40)])
-@pytest.mark.parametrize('subprocess_vector', [False, True])
+@pytest.mark.parametrize('restore_via_subprocess', [False, True])
 def test_legacy_native_real_ppo_two_rounds_and_ordinary_restore(tmp_path,cuda_battle_artifacts,
-                                                            monkeypatch,force_fallback,environment_count,subprocess_vector):
+                                                            monkeypatch,force_fallback,environment_count,restore_via_subprocess):
     from stable_baselines3.common.vec_env import VecMonitor
     from stable_baselines3.common.callbacks import BaseCallback
     from gymnasium.wrappers import TimeLimit
@@ -172,7 +172,7 @@ def test_legacy_native_real_ppo_two_rounds_and_ordinary_restore(tmp_path,cuda_ba
     from rl.training.reward import StrategicRewardWrapper
     from rl.training.checkpoints import save_bundle,restore_learner
     from rl.search.resident_service import close_collection_service
-    if force_fallback and not subprocess_vector:
+    if force_fallback:
         from env.search.resident_transport import ResidentRootExporter
         original = ResidentRootExporter.export
         def native_first_slot(self,indices,generation=None):
@@ -182,24 +182,11 @@ def test_legacy_native_real_ppo_two_rounds_and_ordinary_restore(tmp_path,cuda_ba
             return result
         monkeypatch.setattr(ResidentRootExporter,'export',native_first_slot)
     def factory():
-        if force_fallback and subprocess_vector:
-            # Install the same controlled route in each spawned CPU owner;
-            # parent monkeypatches are deliberately not inherited by spawn.
-            from env.search.resident_transport import ResidentRootExporter
-            if not getattr(ResidentRootExporter.export, '_test_native_first', False):
-                original_export = ResidentRootExporter.export
-                def native_first(self, indices, generation=None):
-                    result = original_export(self, indices, generation)
-                    for i, row in zip(indices, result, strict=True):
-                        if i == 0: row['native_fallback'] = True
-                    return result
-                native_first._test_native_first = True
-                ResidentRootExporter.export = native_first
         return TrainingStateWrapper(TimeLimit(StrategicRewardWrapper(SlayTheSpireEnv(
             card_language=True,global_map_view=True,upper_public_context=True,event_option_observation=True,
             combat_action_contract='autoregressive-v2',combat_exit_anchor=True,reward_flow='sequential-v1',
             deck_latent_context=True)),6000))
-    def vector():
+    def vector(subprocess_vector=False):
         if subprocess_vector:
             import multiprocessing
             from rl.training.native_subproc_vec_env import NativeSubprocVecEnv
@@ -238,6 +225,20 @@ def test_legacy_native_real_ppo_two_rounds_and_ordinary_restore(tmp_path,cuda_ba
         source=save_bundle(model,tmp_path/'first',rank=0,world_size=1,run_id='legacy-test',
                            wandb_id=None,config={'ascension':0})
         close_collection_service(model)
+        if restore_via_subprocess:
+            # Retained formal checkpoints were produced by native-subproc.
+            # Transfer the same live journals/RNG/wrappers through that backend,
+            # then restore to the old local NativeSearchVecEnv execution chain.
+            bridge = vector(subprocess_vector=True)
+            try:
+                migrated = AccumulatingMaskablePPO.load(source/'model.zip', env=bridge, device='cuda')
+                migrated._setup_learn(samples, reset_num_timesteps=False)
+                restore_learner(migrated, source, rank=0, world_size=1)
+                source = save_bundle(migrated, tmp_path/'transport-source', rank=0, world_size=1,
+                    run_id='legacy-test', wandb_id=None, config={'ascension':0})
+                del migrated
+            finally:
+                bridge.close()
         target=vector()
         restored=AccumulatingMaskablePPO.load(source/'model.zip',env=target,device='cuda')
         restored._setup_learn(samples,reset_num_timesteps=False)

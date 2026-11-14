@@ -17,9 +17,8 @@ from rl.training import reward_monitor, campfire_monitor
 
 def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=True):
     from rl.training.native_vec_env import NativeSearchVecEnv
-    from rl.training.native_subproc_vec_env import NativeSubprocVecEnv
     from rl.algorithms.search_auxiliary import SearchRolloutBuffer, SearchTrainingConfig
-    if (not isinstance(env, VecMonitor) or type(env.venv) not in (NativeSearchVecEnv, NativeSubprocVecEnv)
+    if (not isinstance(env, VecMonitor) or type(env.venv) is not NativeSearchVecEnv
             or not isinstance(rollout_buffer, SearchRolloutBuffer) or not use_masking
             or model.device.type != 'cuda' or model.amp_mode != 'off'
             or model.nosl_supervision_contract != 'shared-wholerun-ppo-room-v1'
@@ -32,11 +31,9 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     if n_rollout_steps != rollout_buffer.buffer_size:
         raise ValueError('rollout must fill its declared sample count')
     vec = env.venv
-    mask_getters = ([e.get_wrapper_attr('action_masks') for e in vec.envs]
-                    if isinstance(vec, NativeSearchVecEnv) else None)
+    mask_getters = [e.get_wrapper_attr('action_masks') for e in vec.envs]
     def read_masks(indices):
-        return ([mask_getters[i]() for i in indices] if mask_getters is not None else
-                vec.env_method('action_masks', indices=indices))
+        return [mask_getters[i]() for i in indices]
     import slaythespire as sts
     if not hasattr(sts, 'ObservationRowCopy'):
         raise RuntimeError('legacy PPO consumer requires the explicit native row-copy build')
@@ -61,7 +58,6 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     upper_waiting, actions, masks, estimates, upper_policy = {}, {}, {}, {}, {}
     deferred_values = []
     upper_pending = None
-    action_deadline = None
     combat = vocab.PHASE_VOCAB_INDEX['combat']
     runic_dome = vocab.RELIC_VOCAB_INDEX['Runic Dome']
     stats = dict(policy_seconds=0., env_step_seconds=0., search_wait_seconds=0.,
@@ -133,22 +129,20 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             stream.submit(calls)
             stats['root_submit_seconds'] += time.monotonic()-tick
             consume_upper()
-            if upper_pending is None and upper_waiting and (
-                    len(upper_waiting) >= 64 or not stream.pending
-                    or time.monotonic()-min(upper_waiting.values()) >= .002):
+            # stepfull480-01's full_seeded override used upper_wait_seconds=0,
+            # not IndependentRolloutConfig's .002 default. Ready upper rows
+            # are sent immediately, with the original 64-row physical limit.
+            if upper_pending is None and upper_waiting:
                 tick = time.monotonic()
                 rows = sorted(upper_waiting)[:64]
-                # These slots cannot advance until this actor reply is consumed.
-                # The owner packs their shared rows before publishing its reply.
-                obs = (None if stream.shared_observations is not None else
-                       {k: v[rows] for k, v in model._last_obs.items()})
+                obs = {k: v[rows] for k, v in model._last_obs.items()}
                 row_masks = np.stack([masks[i] for i in rows])
                 upper_pending = (stream.service.begin_call('upper',
                     (obs, row_masks, np.asarray(rows), vec.num_envs)), rows)
                 stats['policy_seconds'] += time.monotonic()-tick
             consume_upper()
             tick = time.monotonic()
-            decisions = stream.receive(timeout=.001 if len(actions) < 32 and stream.pending else 0.)
+            decisions = stream.receive(timeout=.001 if not actions else 0.)
             stats['search_wait_seconds'] += time.monotonic()-tick
             for i, result in decisions.items():
                 actions[i] = result['action']
@@ -156,19 +150,9 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 upper_policy[i] = result['reward'], result['campfire']
             consume_upper()
             if not actions:
-                action_deadline = None
                 continue
-            # Ready slots remain exclusively owned here. Coalesce arrivals at
-            # the existing step boundary, without a vector-wide search barrier.
-            # Seeds/draws belong to (position, slot), never completion order.
-            # A bounded wait prevents a slow native fallback from holding up
-            # unrelated games or the last partially completed rollout slots.
-            if action_deadline is None:
-                action_deadline = time.monotonic() + .004
-            if (len(actions) < 32 and (stream.pending or upper_pending is not None)
-                    and time.monotonic() < action_deadline):
-                continue
-            action_deadline = None
+            # Retain the accepted ready -> search/upper -> receive -> step
+            # order. No extra action-count threshold or coalescing deadline.
             tick = time.monotonic()
             indices = sorted(actions)
             ordered = {i: actions.pop(i) for i in indices}

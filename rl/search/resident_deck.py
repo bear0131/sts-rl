@@ -6,7 +6,7 @@ import torch
 from env.core.cuda_observation import CudaObservationDecoder, canonical_misc
 from env.core import encode
 from rl.policies.combat_summary import CombatSummary
-from rl.policies.collection_graphs import SharedCollectionGraphs
+from rl.search.inference import DeviceConsumerGraphs, active_width
 from rl.policies.deck_latent import SearchContext
 from rl.search.rollout_inference import ExactInputCache
 
@@ -21,7 +21,7 @@ class ResidentDeckScorer:
         self.policy, self.core = policy, policy.core
         self.device = next(policy.parameters()).device
         self.decoder = CudaObservationDecoder(policy.observation_space, self.device)
-        self.runtime = SharedCollectionGraphs(self.core, capacity=graph_capacity)
+        self.runtime = DeviceConsumerGraphs(self.device, capacity=graph_capacity)
         self.anchor_cache = (ExactInputCache(cache_bytes // 4) if native_host is None
                              else native_host.ExactValueCache(cache_bytes // 4))
         self.anchor_contexts = OrderedDict()
@@ -127,7 +127,7 @@ class ResidentDeckScorer:
         # maximum-capacity PAD suffix otherwise creates a multi-GiB basis
         # tensor for thousands of search lanes, despite only a few real relics.
         relics = np.stack([o['relics'] for o in observations])
-        self.relic_width = SharedCollectionGraphs._width(relics, 4)
+        self.relic_width = active_width(relics, 4)
         # Port the old consumer-field pack: cached context already owns the
         # deck/map encoder result. Never expand those large static tensors for
         # every hypothetical lane just to discard them in the combat head.
@@ -211,7 +211,6 @@ class ResidentDeckScorer:
     @torch.no_grad()
     def update_roots(self, slots, observations, context, capacity, *, anchor_context_host=None):
         """Current-model adapter for the old pool's versioned root bank."""
-        from rl.policies.collection_graphs import SharedCollectionGraphs
         identities=self._intern_anchor_contexts(context.anchor if anchor_context_host is None else anchor_context_host)
         if not hasattr(self, 'stream_observations'):
             initial_context=SearchContext(*(torch.as_tensor(x,device=self.device)
@@ -246,7 +245,7 @@ class ResidentDeckScorer:
             relic_identity_rows=torch.as_tensor(relic_identities,device=self.device)
             incoming_banks=[torch.as_tensor(np.concatenate([np.stack([o[k] for o in observations]).reshape(len(slots),-1)
                            for k in layout],1),device=self.device) for _,layout in self.stream_root_banks]
-        width = SharedCollectionGraphs._width(relics, 4)
+        width = active_width(relics, 4)
         if width > self.relic_width:
             self.context.combat.index_copy_(0, index, context.combat)
             self.context.anchor.index_copy_(0, index, context.anchor)
@@ -291,13 +290,13 @@ class ResidentDeckScorer:
         # to live root slots in padded batches.
         signature=('admit-roots',len(slots),self.bank_key,
                    tuple((k,tuple(v.shape[1:]),v.dtype) for k,v in batch.items()))
-        self.runtime._replay(self.runtime.entries,signature,batch,len(slots),update,self.runtime.capacity)
+        self.runtime.replay(signature,batch,len(slots),update)
 
     def bind_wave(self, arena, owners, offset):
         if self.bound_arena is not arena:
             if self.bound_arena is not None:
                 self.runtime.close()
-                self.runtime = SharedCollectionGraphs(self.core, capacity=self.runtime.capacity)
+                self.runtime = DeviceConsumerGraphs(self.device, capacity=self.runtime.capacity)
             self.bound_arena = arena
             self.wave_owners = torch.empty(arena.capacity, dtype=torch.long, device=self.device)
             self.wave_offset = torch.zeros((), dtype=torch.long, device=self.device)
@@ -429,10 +428,10 @@ class ResidentDeckScorer:
             count = len(owners)
             padded = max(16, 1 << (count-1).bit_length())
             rows = torch.arange(count, device=self.device)
-            output = self.runtime._replay(self.runtime.map_entries,
+            output = self.runtime.replay(
                 ('resident-metadata', padded, *self.bank_key),
                 self._pad_indices({'rows': rows}, padded), padded,
-                self._metadata_gather, 16)
+                self._metadata_gather)
             return output[0][:count].cpu().numpy()
         required = (raw['categorical'][:, 127:223] > 0) | raw['mask'][:, 91:187].bool()
         width = (required * self.choice_columns).amax(1).clamp_min(1)
@@ -535,10 +534,10 @@ class ResidentDeckScorer:
             if uniforms is not None:
                 batch['uniforms'] = uniforms
             batch = self._pad_indices(batch, padded)
-            out = self.runtime._replay(self.runtime.entries,
+            out = self.runtime.replay(
                 ('resident-gather', width, padded, uniforms is not None, *self.bank_key), batch, padded,
                 lambda x: (self._forward_gather(x, width) if uniforms is None
-                           else self._forward_sample(x, width)), self.runtime.capacity)
+                           else self._forward_sample(x, width)))
             return out[0][:len(rows)], out[1][:len(rows)].flatten()
         owner = owners[rows]
         batch = {'raw:'+k: v[rows] for k, v in raw.items()}
@@ -569,8 +568,8 @@ class ResidentDeckScorer:
         # Only masked trailing padding changes physical shape; no candidate cap.
         width = min(96, 1 << (width-1).bit_length())
         padded = max(16, 1 << (len(rows)-1).bit_length())
-        outputs = self.runtime._replay(self.runtime.entries, ('resident', width, padded, self.relic_width), batch,
-            padded, lambda x: self._forward(x, width, False), self.runtime.capacity)
+        outputs = self.runtime.replay(('resident', width, padded, self.relic_width), batch,
+            padded, lambda x: self._forward(x, width, False))
         logits = outputs[0][:len(rows)]
         if uniforms is not None:
             logits = self._sample(logits, raw['mask'][rows], uniforms)
@@ -606,8 +605,8 @@ class ResidentDeckScorer:
             return floats, integers
         signature = ('anchor-key', padded, self.bank_key,
                      tuple((k,v.data_ptr(),tuple(v.shape)) for k,v in raw.items()))
-        floats, integers = self.runtime._replay(self.runtime.entries, signature,
-            dict(owner=owner, rows=rows, compact=scalar_rows), padded, key_forward, self.runtime.capacity)
+        floats, integers = self.runtime.replay(signature,
+            dict(owner=owner, rows=rows, compact=scalar_rows), padded, key_forward)
         host_f = floats[:count].cpu().numpy()
         host_i = integers[:count].cpu().numpy()
         if host_i[:,-1].any():
@@ -631,9 +630,9 @@ class ResidentDeckScorer:
                 dynamic = self.core.combat.summaries.relic_counter_terms(x['relics'],x['relic_counters'])
                 relics = self.root_relic_identity[owners]+(dynamic*x['relics'].ne(0)[...,None]).sum(1)
                 return (self.core.anchor_with_context(x,self.context.anchor[owners],relics),)
-            output = self.runtime._replay(self.runtime.entries,
+            output = self.runtime.replay(
                 ('anchor-value',physical,self.bank_key,key_width,potion_width),
-                dict(f=f,i=i,owner=owners),physical,evaluate,self.runtime.capacity)[0]
+                dict(f=f,i=i,owner=owners),physical,evaluate)[0]
             return np.empty((n,0),np.float32),output[:n].flatten().cpu().numpy()
         _, values = self.anchor_cache.forward(dict(floats=host_f, integers=host_i[:,:-2]),
             forward, namespace=('resident-anchor-packed-v1',width,key_width,potion_width), indexed=True)

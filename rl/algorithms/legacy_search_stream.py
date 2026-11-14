@@ -20,12 +20,10 @@ class Stream:
         self.meta, self.queue, self.inline = {}, [], {}
         self.target_batches = []
         self.fallback = None
-        self.exporter = (ResidentRootExporter(vec.envs, self.config.cuda_artifacts,
-                                             observations=vec.buf_obs) if hasattr(vec, 'envs') else None)
+        self.exporter = ResidentRootExporter(vec.envs, self.config.cuda_artifacts,
+                                            observations=vec.buf_obs)
         from env.search.resident_transport import ObservationColumnTransport
-        self.shared_observations = getattr(vec, 'shared_observation_spec', None)
-        self.observation_transport = (ObservationColumnTransport(vec.buf_obs)
-                                      if self.shared_observations is None else None)
+        self.observation_transport = ObservationColumnTransport(vec.buf_obs)
         self.stats = dict.fromkeys(('chains','atomic_steps','policy_rows','forced_rows',
             'anchor_rows','cutoff_rows','terminal_rows','max_active','budget_floor_overage',
             'searched_roots','selected_roots','eligible_roots','executed_search_actions',
@@ -52,7 +50,6 @@ class Stream:
         torch.cuda.synchronize(); gc.collect(); torch.cuda.empty_cache()
         capacity = vec.num_envs  # Old fixed real-root slots, no extra queued root generations.
         self.service = collection_service(model, capacity, self.snapshot, dict(
-            shared_observations=self.shared_observations,
             artifacts=self.config.cuda_artifacts, cache_bytes=self.config.inference_cache_bytes,
             normal_budget=self.config.normal_budget,
             budget_cap=max(self.config.boss_budget, self.config.normal_budget,
@@ -70,8 +67,7 @@ class Stream:
         if not calls:
             return
         indices = list(calls)
-        roots = (self.exporter.export(indices, generation=self.generation) if self.exporter is not None
-                 else self.vec.deck_resident_roots(indices, self.config.cuda_artifacts, self.generation)[0])
+        roots = self.exporter.export(indices, generation=self.generation)
         rows = {}
         for i, root in zip(indices, roots, strict=True):
             position = int(self.positions[i])
@@ -95,8 +91,7 @@ class Stream:
                 rows[key] = row
             self.stats['selected_roots'] += 1
         if rows:
-            columns = (self.observation_transport.pack([key[1] for key in rows])
-                       if self.observation_transport is not None else None)
+            columns = self.observation_transport.pack([key[1] for key in rows])
             self.service.submit(rows, columns=columns)
             self.stats['resident_frames'] += 1
             self.stats['resident_frame_roots_max'] = max(
@@ -108,7 +103,7 @@ class Stream:
         if self.fallback is None and self.queue:
             from env.search.anchor_wave import CpuFallback
             keys, self.queue = self.queue, []
-            self.fallback = CpuFallback(keys, self.meta, getattr(self.vec, 'envs', self.vec), self.service,
+            self.fallback = CpuFallback(keys, self.meta, self.vec.envs, self.service,
                 self.config, threads=self.vec.native_threads)
         if self.fallback is not None:
             complete = self.fallback.step()
@@ -152,8 +147,7 @@ class Stream:
         return out
 
     def before(self, actions):
-        if self.exporter is not None:
-            self.exporter.before_step(actions.values(), indices=actions.keys())
+        self.exporter.before_step(actions.values(), indices=actions.keys())
 
     def finish(self):
         if self.pending or self.service.outstanding:

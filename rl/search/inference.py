@@ -16,6 +16,78 @@ import torch
 from rl.policies.precision import bf16_autocast, fp16_autocast
 
 
+def active_width(ids, minimum):
+    columns = np.flatnonzero(np.any(ids != 0, axis=0))
+    width = int(columns[-1]) + 1 if len(columns) else 1
+    return min(ids.shape[1], max(minimum, 1 << (width - 1).bit_length()))
+
+
+class DeviceConsumerGraphs:
+    """Old GraphScorer ownership, adapted only to current tensor consumers.
+
+    Each entry owns its bound inputs, outputs and independent graph until
+    synchronized release. There is no phase scheduler, shared pool, map bank,
+    observation conversion or collection state in this adapter.
+    """
+    def __init__(self, device, capacity=128):
+        if capacity < 1 or torch.device(device).type != 'cuda':
+            raise ValueError('device graphs require CUDA and positive capacity')
+        self.device, self.capacity = device, capacity
+        self.entries = OrderedDict()
+        self.closed = False
+
+    def _release(self, key):
+        torch.cuda.synchronize(self.device)
+        entry = self.entries.pop(key)
+        entry[1].reset()
+
+    @torch.no_grad()
+    def replay(self, signature, batch, padded, forward):
+        if self.closed:
+            raise RuntimeError('device graph adapter closed')
+        count = len(next(iter(batch.values())))
+        if count < 1 or padded < count or any(len(v) != count for v in batch.values()):
+            raise ValueError('device consumers require equal, nonempty rows')
+        if signature not in self.entries:
+            if len(self.entries) >= self.capacity:
+                self._release(next(iter(self.entries)))
+            inputs = {k: torch.cat((v, v[:1].expand(padded-count, *v.shape[1:]))).clone()
+                      for k, v in batch.items()}
+            current = torch.cuda.current_stream(self.device)
+            stream = torch.cuda.Stream(device=self.device)
+            stream.wait_stream(current)
+            with torch.cuda.stream(stream):
+                for _ in range(3):
+                    forward(inputs)
+            current.wait_stream(stream)
+            torch.cuda.synchronize(self.device)
+            # Retain the accepted workspace fix when adapting old lifecycle:
+            # no capture may borrow a releasable eager cuBLAS allocation.
+            torch._C._cuda_clearCublasWorkspaces()
+            graph = torch.cuda.CUDAGraph()
+            try:
+                with torch.cuda.graph(graph, stream=stream):
+                    outputs = forward(inputs)
+            except BaseException:
+                graph.reset()
+                raise
+            finally:
+                torch._C._cuda_clearCublasWorkspaces()
+            current.wait_stream(stream)
+            self.entries[signature] = inputs, graph, outputs
+        self.entries.move_to_end(signature)
+        inputs, graph, outputs = self.entries[signature]
+        for key, value in batch.items():
+            inputs[key][:count].copy_(value)
+        graph.replay()
+        return outputs
+
+    def close(self):
+        while self.entries:
+            self._release(next(iter(self.entries)))
+        self.closed = True
+
+
 class CombatLeafGraphs:
     def __init__(self, core, device, *, amp='off', capacity=32, failure_path=None,
                  profile_interval=0, batch_multiple=0, compile_forward=True,

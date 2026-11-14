@@ -17,9 +17,9 @@ from env.search import resident_step_kernels as K
 
 
 class ResidentStepPipeline:
-    # Current anchor/context heads share the device with the unchanged PPO
-    # actor. Bound only physical scoring storage; every logical job is retained.
-    frame_capacity = 32768
+    # The accepted stepfull480 physical frame. Logical search budgets and
+    # per-environment samples remain the current training contract.
+    frame_capacity = 65536
 
     def __init__(self, scorer, arena, max_depth, capacity=128, *, root_stride=0, lane_capacity=None):
         if 'observe_live' not in arena.functions:

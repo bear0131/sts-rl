@@ -788,7 +788,7 @@ def test_packed_owner_actor_matches_masked_policy_through_shapes_weights_and_evi
     combat,combat_mask=latent_env._obs(),latent_env.action_masks().copy()
     host_runtime=load_artifacts(cuda_battle_artifacts[0])[2]
     inference=ResidentInference(policy.core,64*1024**2,host_runtime)
-    inference.graphs.capacity=2
+    inference.actor_graphs.capacity = inference.context_graphs.capacity = 2
     retained=[]
     try:
         with torch.no_grad():
@@ -822,13 +822,13 @@ def test_packed_owner_actor_matches_masked_policy_through_shapes_weights_and_evi
                     retained.append((actual[key],actual[key].copy()))
                 context=policy.core.prepare_search_context(tensors)
                 for x,y in zip(actual['context'],(context.combat,context.anchor),strict=True):
-                    torch.testing.assert_close(x,y,rtol=3e-5,atol=3e-6)
+                    torch.testing.assert_close(torch.as_tensor(x, device=y.device),y,rtol=3e-5,atol=3e-6)
                 # The complete rollout's deferred critic consumes float32
                 # SB3 storage, then returns to the live categorical layout.
                 stored={k:v.astype(np.float32) for k,v in reversed(list(obs.items()))}
                 critic=inference.actor((stored,masks,np.arange(count),max(32,count)),values_only=True)
                 np.testing.assert_allclose(critic,expected[2],rtol=3e-5,atol=2e-5)
-            assert inference.graphs.stats['evictions']>0
+            assert inference.actor_graphs.evictions > 0
             for actual,saved in retained:np.testing.assert_array_equal(actual,saved)
     finally:inference.close()
 
@@ -856,7 +856,7 @@ def test_native_fallback_heads_match_eager_after_shape_eviction_and_release(
             with torch.no_grad():
                 policy.core.combat.value_head[-1].bias.add_(.11)
         owner = ResidentInference(policy.core, 0, native)
-        owner.graphs.capacity = 1  # Also retire the last graph pool.
+        owner.fallback_graphs.capacity = 1  # Also retire the last graph pool.
         plain = DeckLatentScorer(policy, [root], tables=owner.tables,
             inference_cache=DeckSearchInferenceCache(policy.core, 0))
         captured = DeckLatentScorer(policy, [root], context=plain.context, tables=owner.tables,
@@ -888,7 +888,7 @@ def test_native_fallback_heads_match_eager_after_shape_eviction_and_release(
                     torch._C._cuda_clearCublasWorkspaces()
                     gc.collect()
                     torch.cuda.empty_cache()
-            assert owner.graphs.stats['evictions'] > 0
+            assert owner.fallback_graphs.evictions > 0
             assert torch.equal(cpu_rng, torch.get_rng_state())
             assert torch.equal(cuda_rng, torch.cuda.get_rng_state())
         finally:

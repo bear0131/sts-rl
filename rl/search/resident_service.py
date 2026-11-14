@@ -85,12 +85,6 @@ class GpuService:
   if set(rows)&self.outstanding or len(self.outstanding)+len(rows)>self.capacity:
    raise ValueError('duplicate search or root capacity exceeded')
   if rows:
-   if self.settings.get('shared_observations') is not None and all('slot' in r for r in rows.values()):
-    # Collector retains exclusive ownership of each slot until its result.
-    # No observation bytes enter the queue; the owner makes an owned native
-    # column packet while those real environment rows are still immutable.
-    self.send('submit',dict(contract='legacy-deck-shared-roots-v1',rows=rows))
-    self.outstanding.update(rows);return
    from env.search.resident_transport import pack_actor_roots
    if not hasattr(self,'native_host'):
     from env.search.cuda_battle import load_artifacts
