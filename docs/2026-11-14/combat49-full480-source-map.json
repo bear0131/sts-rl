@@ -270,5 +270,20 @@
   ],
   "audit_time": "2026-11-14T13:00:00+08:00",
   "scope": "Actual sources manifest and collector only; not a transitive import closure or current training qualification",
-  "integration_status": "current cached inference consumer verified; original search/collector not connected to current PPO"
+  "integration_status": "current cached inference consumer verified; original search/collector not connected to current PPO",
+  "additional_verified_original_dependencies": {
+    "owned_pool.py": {
+      "source": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicechoice141\\owned_pool.py",
+      "sha256": "027a6d44435479cad1710a5b0b9ef9342886d4e80b0c30da8ea64be836ef7afa",
+      "receipt": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicechoice141\\artifact-manifest.json",
+      "verified_against_artifact_manifest": true
+    },
+    "run_device.py": {
+      "source": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicecompact141\\run_device.py",
+      "sha256": "66fba6c842126c9f066a4b41cfd9047e31b1d9064059a0980a5593a45daf82ed",
+      "receipt": "D:\\sts-rl\\runs\\local\\rollout-200s-worktree\\runs\\local\\nine-token-speed\\online480\\waves\\devicecompact141\\artifact-manifest.json",
+      "verified_against_artifact_manifest": true
+    }
+  },
+  "additional_dependency_scope": "Unchanged original GPU mirror boundary diagnostic only. This is still not a complete transitive runtime closure or an assembled sampling implementation."
 }
