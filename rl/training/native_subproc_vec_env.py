@@ -4,6 +4,7 @@ Control, masks, terminal infos and recovery use the existing grouped protocol.
 Only current observations use shared storage; public returns always own copies.
 """
 from multiprocessing import shared_memory
+from contextlib import contextmanager
 import os
 import selectors
 import time
@@ -26,6 +27,8 @@ class _NativeStepPipe:
         self.deck_search = None
         self.deck_frontier = None
         self.deck_resident = None
+        self.anchor = None
+        self.collection_context = None
 
     def send(self, x):
         self.remote.send(x)
@@ -35,6 +38,10 @@ class _NativeStepPipe:
             return
         self.closed = True
         try:
+            if self.anchor is not None:
+                self.anchor.close()
+            if self.collection_context is not None:
+                self.collection_context.__exit__(None, None, None)
             if self.deck_frontier is not None:
                 self.deck_frontier.close()
             if self.native is not None:
@@ -72,6 +79,50 @@ class _NativeStepPipe:
                 obs = self.native.reset()
                 self.write(obs)
                 self.remote.send([(None, i) for i in self.native.reset_infos])
+            elif cmd == 'native_restore':
+                if self.anchor is not None or self.collection_context is not None:
+                    raise RuntimeError('restore requires a drained environment worker')
+                self.write(self.native.restore_training_states(data))
+                self.deck_resident = None
+                self.remote.send(self.native.reset_infos)
+            elif cmd == 'native_collection_begin':
+                if self.collection_context is not None:
+                    raise RuntimeError('collection already owns the environment worker')
+                self.collection_context = self.native.omit_unused_combat_value_observations()
+                self.collection_context.__enter__()
+                self.remote.send(None)
+            elif cmd == 'native_collection_end':
+                if self.collection_context is None or self.anchor is not None:
+                    raise RuntimeError('collection exit requires drained native frontiers')
+                self.collection_context.__exit__(None, None, None)
+                self.collection_context = None
+                self.remote.send(None)
+            elif cmd == 'native_subset':
+                before = dict(self.native.step_seconds)
+                if self.deck_resident is not None:
+                    self.deck_resident.before_step(data.values(), indices=data.keys())
+                obs, rewards, dones, infos = self.native._step_subset(data, borrow=True)
+                indices = list(data)
+                local = np.asarray(indices, np.intp)
+                for key, value in obs.items():
+                    self.arrays[key][self.start + local] = value[local]
+                self.remote.send(dict(rows=[(i, rewards[j], dones[j], infos[j], self.native.reset_infos[i])
+                    for j, i in enumerate(indices)],
+                    seconds={k: v-before[k] for k, v in self.native.step_seconds.items()}))
+            elif cmd == 'native_anchor_start':
+                if self.anchor is not None:
+                    raise RuntimeError('native frontier already active')
+                from env.search.anchor_wave import NativeAnchorFrontier
+                self.anchor = NativeAnchorFrontier([self.envs[i].unwrapped for i in data['indices']],
+                    data['roots'], data['worlds'], **data['options'])
+                self.remote.send(self.anchor.advance())
+            elif cmd == 'native_anchor_advance':
+                self.remote.send(self.anchor.advance(data))
+            elif cmd == 'native_anchor_close':
+                if self.anchor is not None:
+                    self.anchor.close()
+                    self.anchor = None
+                self.remote.send(None)
             elif cmd == 'deck_shadow_search':
                 if self.deck_search is None:
                     from rl.training.deck_search_worker import DeckSearchWorker
@@ -114,6 +165,10 @@ class NativeSubprocVecEnv(cv.GroupedCachedMaskSubprocVecEnv):
 
     def __init__(self, *args, **kwargs):
         self.memory = None
+        self.native_threads = 1
+        # These are sums over parallel worker wall intervals, never additive
+        # with the collector's end-to-end environment wall time.
+        self.step_seconds = dict(wrappers_sum=0., encoding_sum=0.)
         try:
             super().__init__(*args, **kwargs)
             self._create_shared_observations()
@@ -134,9 +189,60 @@ class NativeSubprocVecEnv(cv.GroupedCachedMaskSubprocVecEnv):
         self.arrays = {
             key: np.ndarray(shape, dtype=dtype, buffer=self.memory.buf, offset=offset)
             for key, shape, dtype, offset in layout}
+        self.buf_obs = self.arrays
         for remote, group in zip(self.remotes, self._groups, strict=True):
             remote.send(('native_shared', (self.memory.name, layout, group[0], group[-1] + 1)))
         self._receive_groups({r: i for i, r in enumerate(self.remotes)})
+
+    def restore_training_states(self, states):
+        if self.waiting or len(states) != self.num_envs:
+            raise ValueError('native restore requires a drained matching vector')
+        for remote, group in zip(self.remotes, self._groups, strict=True):
+            remote.send(('native_restore', [states[i] for i in group]))
+        groups = self._receive_groups({r: i for i, r in enumerate(self.remotes)})
+        self.reset_infos = [info for i in range(len(self._groups)) for info in groups[i]]
+        self._cached_action_masks = [self._info_mask(info) for info in self.reset_infos]
+        return self.observations()
+
+    @contextmanager
+    def omit_unused_combat_value_observations(self):
+        if self.waiting:
+            raise RuntimeError('collection requires a drained vector')
+        for remote in self.remotes:
+            remote.send(('native_collection_begin', None))
+        self._receive_groups({r: i for i, r in enumerate(self.remotes)})
+        try:
+            yield
+        finally:
+            for remote in self.remotes:
+                remote.send(('native_collection_end', None))
+            self._receive_groups({r: i for i, r in enumerate(self.remotes)})
+
+    def _step_subset(self, actions, *, borrow=False):
+        if self.waiting or not actions or any(not 0 <= i < self.num_envs for i in actions):
+            raise ValueError('subset steps require idle valid logical slots')
+        pending = {}
+        for group, members in self._grouped(actions).items():
+            remote = self.remotes[group]
+            remote.send(('native_subset', {local: actions[i] for i, local in members}))
+            pending[remote] = group
+        result = {}
+        for group, packet in self._receive_groups(pending).items():
+            for local, reward, done, info, reset in packet['rows']:
+                i = self._groups[group][local]
+                result[i] = reward, done, info
+                self.reset_infos[i] = reset
+                self._cached_action_masks[i] = self._info_mask(reset if done else info)
+            for key, value in packet['seconds'].items():
+                self.step_seconds[key+'_sum'] += value
+        ordered = [result[i] for i in actions]
+        rewards, dones, infos = zip(*ordered, strict=True)
+        rows = np.asarray(list(actions), np.intp)
+        observations = self.arrays if borrow else {k: v[rows] for k, v in self.arrays.items()}
+        return observations, np.asarray(rewards, np.float32), np.asarray(dones, bool), list(infos)
+
+    def anchor_frontier(self, slots, roots, worlds, options):
+        return _GroupedAnchorFrontier(self, slots, roots, worlds, options)
 
     def observations(self):
         # SB3 retains the previous observation until after step_wait. Returning
@@ -323,3 +429,75 @@ class NativeSubprocVecEnv(cv.GroupedCachedMaskSubprocVecEnv):
                 self.memory.close()
                 self.memory.unlink()
                 self.memory = None
+
+
+class _GroupedAnchorFrontier:
+    """Same native wave in each existing environment owner, one frozen scorer."""
+    def __init__(self, vector, slots, roots, worlds, options):
+        self.vector = vector
+        self.members = {}
+        for root, slot in enumerate(slots):
+            group, local = vector._env_to_group[slot]
+            self.members.setdefault(group, []).append((root, local))
+        self.requests = {group: dict(indices=[local for _, local in members],
+            roots=[roots[root] for root, _ in members], worlds=[worlds[root] for root, _ in members],
+            options=dict(options, threads=1)) for group, members in self.members.items()}
+        self.results = [None]*len(slots)
+        self.finished, self.row_counts = {}, {}
+        self.started = self.closed = False
+
+    def advance(self, outputs=None):
+        if self.closed or (outputs is None) == self.started:
+            raise RuntimeError('out-of-order native frontier response')
+        pending = {}
+        at = 0
+        for group in sorted(self.members):
+            if group in self.finished:
+                continue
+            if not self.started:
+                command, data = 'native_anchor_start', self.requests[group]
+            else:
+                count = self.row_counts[group]
+                command, data = 'native_anchor_advance', outputs[at:at+count]
+                at += count
+            remote = self.vector.remotes[group]
+            remote.send((command, data))
+            pending[remote] = group
+        if self.started and at != len(outputs):
+            raise ValueError('native frontier output count mismatch')
+        self.started = True
+        packets = self.vector._receive_groups(pending)
+        rows = []
+        for group in sorted(packets):
+            packet, members = packets[group], self.members[group]
+            if packet['done']:
+                self.finished[group] = packet['stats']
+                for (root, _), result in zip(members, packet['results'], strict=True):
+                    self.results[root] = result
+            else:
+                self.row_counts[group] = len(packet['rows'])
+                rows.extend((members[root][0], job, kind, mask, delta)
+                            for root, job, kind, mask, delta in packet['rows'])
+        if rows:
+            return dict(done=False, rows=rows)
+        if len(self.finished) != len(self.members) or any(r is None for r in self.results):
+            raise RuntimeError('native frontier lost a root')
+        stats = {}
+        for counts in self.finished.values():
+            for key, value in counts.items():
+                # Peak concurrent lanes are group-local, as in grouped CPU
+                # search. Other counters are disjoint exact integer work.
+                stats[key] = max(stats.get(key, 0), value) if key == 'max_active' else stats.get(key, 0)+value
+        return dict(done=True, results=self.results, stats=stats)
+
+    def close(self):
+        if self.closed:
+            return
+        if self.started:
+            pending = {}
+            for group in self.members:
+                remote = self.vector.remotes[group]
+                remote.send(('native_anchor_close', None))
+                pending[remote] = group
+            self.vector._receive_groups(pending)
+        self.closed = True

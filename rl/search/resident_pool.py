@@ -127,7 +127,10 @@ class ResidentPool:
             values = [rows[h.key]['context'][k] for h in handles]
             return torch.stack(values) if isinstance(values[0], torch.Tensor) else np.stack(values)
         context = SearchContext(*(stack_context(k) for k in (0,1)))
-        self.scorer.update_roots(slots,[rows[h.key]['observation'] for h in handles],context,self.capacity)
+        anchor_host = (np.stack([rows[h.key]['anchor_context_host'] for h in handles])
+                       if all('anchor_context_host' in rows[h.key] for h in handles) else None)
+        self.scorer.update_roots(slots,[rows[h.key]['observation'] for h in handles],context,self.capacity,
+                                 anchor_context_host=anchor_host)
         if self.pipeline is None:
             owners = torch.zeros(self.n,dtype=torch.long,device=self.arena.device)
             self.scorer.bind_wave(self.arena,owners,self.capacity)

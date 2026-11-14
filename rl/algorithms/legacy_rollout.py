@@ -17,8 +17,9 @@ from rl.training import reward_monitor, campfire_monitor
 
 def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=True):
     from rl.training.native_vec_env import NativeSearchVecEnv
+    from rl.training.native_subproc_vec_env import NativeSubprocVecEnv
     from rl.algorithms.search_auxiliary import SearchRolloutBuffer, SearchTrainingConfig
-    if (not isinstance(env, VecMonitor) or type(env.venv) is not NativeSearchVecEnv
+    if (not isinstance(env, VecMonitor) or type(env.venv) not in (NativeSearchVecEnv, NativeSubprocVecEnv)
             or not isinstance(rollout_buffer, SearchRolloutBuffer) or not use_masking
             or model.device.type != 'cuda' or model.amp_mode != 'off'
             or model.nosl_supervision_contract != 'shared-wholerun-ppo-room-v1'
@@ -31,7 +32,11 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     if n_rollout_steps != rollout_buffer.buffer_size:
         raise ValueError('rollout must fill its declared sample count')
     vec = env.venv
-    mask_getters = [e.get_wrapper_attr('action_masks') for e in vec.envs]
+    mask_getters = ([e.get_wrapper_attr('action_masks') for e in vec.envs]
+                    if isinstance(vec, NativeSearchVecEnv) else None)
+    def read_masks(indices):
+        return ([mask_getters[i]() for i in indices] if mask_getters is not None else
+                vec.env_method('action_masks', indices=indices))
     import slaythespire as sts
     if not hasattr(sts, 'ObservationRowCopy'):
         raise RuntimeError('legacy PPO consumer requires the explicit native row-copy build')
@@ -68,9 +73,8 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     model._independent_rollout_progress = stats
     started = time.monotonic()
     stream = None
-    previous_value_observations = [e.unwrapped._emit_nosl_value_observations for e in vec.envs]
-    for e in vec.envs:
-        e.unwrapped._emit_nosl_value_observations = False
+    collection_context = vec.omit_unused_combat_value_observations()
+    collection_context.__enter__()
     model._reasoning_rollout_samples = []
 
     def consume_upper():
@@ -102,8 +106,9 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
         while not rollout_buffer.full:
             tick = time.monotonic()
             calls = {}
-            for i in sorted(ready):
-                mask = np.asarray(mask_getters[i](), bool)
+            ready_slots = sorted(ready)
+            for i, mask in zip(ready_slots, read_masks(ready_slots), strict=True):
+                mask = np.asarray(mask, bool)
                 masks[i] = mask
                 legal = (int(model._last_obs['phase'][i, 0]) == combat
                          and not model._last_obs['combat_exit_anchor'][i].any())
@@ -238,7 +243,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 (obs, rollout_buffer.action_masks[t,e], np.arange(len(e))))
             rollout_buffer.values[t,e] = answer
         values = stream.service.call('values', (model._last_obs,
-            np.stack([get_mask() for get_mask in mask_getters]), np.arange(vec.num_envs)))
+            np.stack(read_masks(range(vec.num_envs))), np.arange(vec.num_envs)))
         stats['value_rows'] = len(deferred_values)+vec.num_envs
         stats['value_seconds'] = time.monotonic()-tick
         if not np.isfinite(rollout_buffer.values).all():
@@ -269,7 +274,8 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
         callback.on_rollout_end()
         return True
     finally:
-        for e, enabled in zip(vec.envs, previous_value_observations, strict=True):
-            e.unwrapped._emit_nosl_value_observations = enabled
-        if stream is not None:
-            stream.close()
+        try:
+            if stream is not None:
+                stream.close()
+        finally:
+            collection_context.__exit__(None, None, None)

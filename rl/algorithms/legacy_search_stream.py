@@ -20,8 +20,8 @@ class Stream:
         self.meta, self.queue, self.inline = {}, [], {}
         self.target_batches = []
         self.fallback = None
-        self.exporter = ResidentRootExporter(vec.envs, self.config.cuda_artifacts,
-                                             observations=vec.buf_obs)
+        self.exporter = (ResidentRootExporter(vec.envs, self.config.cuda_artifacts,
+                                             observations=vec.buf_obs) if hasattr(vec, 'envs') else None)
         from env.search.resident_transport import ObservationColumnTransport
         self.observation_transport = ObservationColumnTransport(vec.buf_obs)
         self.stats = dict.fromkeys(('chains','atomic_steps','policy_rows','forced_rows',
@@ -66,7 +66,8 @@ class Stream:
         if not calls:
             return
         indices = list(calls)
-        roots = self.exporter.export(indices, generation=self.generation)
+        roots = (self.exporter.export(indices, generation=self.generation) if self.exporter is not None
+                 else self.vec.deck_resident_roots(indices, self.config.cuda_artifacts, self.generation)[0])
         rows = {}
         for i, root in zip(indices, roots, strict=True):
             position = int(self.positions[i])
@@ -101,7 +102,7 @@ class Stream:
         if self.fallback is None and self.queue:
             from env.search.anchor_wave import CpuFallback
             keys, self.queue = self.queue, []
-            self.fallback = CpuFallback(keys, self.meta, self.vec.envs, self.service,
+            self.fallback = CpuFallback(keys, self.meta, getattr(self.vec, 'envs', self.vec), self.service,
                 self.config, threads=self.vec.native_threads)
         if self.fallback is not None:
             complete = self.fallback.step()
@@ -145,7 +146,8 @@ class Stream:
         return out
 
     def before(self, actions):
-        self.exporter.before_step(actions.values(), indices=actions.keys())
+        if self.exporter is not None:
+            self.exporter.before_step(actions.values(), indices=actions.keys())
 
     def finish(self):
         if self.pending or self.service.outstanding:

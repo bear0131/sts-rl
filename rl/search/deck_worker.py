@@ -134,6 +134,7 @@ class DeckWorker:
             self.queued[key] = dict(root=row['root'],
                 observation={k: obs[k][j] for k in fields},
                 context=tuple(v[j] for v in actor['context']),
+                anchor_context_host=actor['anchor_context_host'][j],
                 worlds=row['worlds'], budget=row['budget'], submitted_at=row['submitted_at'])
         if upper is not None:
             count = len(keys)

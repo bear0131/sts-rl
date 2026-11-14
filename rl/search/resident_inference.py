@@ -120,7 +120,18 @@ class ResidentInference:
             _, values = self.graphs(tensor)
             return values.flatten().cpu().numpy()
         width = masks.shape[1]
-        packet = self.graphs.host_actor(tensor, obs, (slots,capacity), packed, uploaded[-1], layout=self.layout).cpu().numpy()
+        device_packet = self.graphs.host_actor(tensor, obs, (slots,capacity), packed, uploaded[-1], layout=self.layout)
+        projected = None
+        if context:
+            projected = self.core.actor_search_context(torch.arange(len(masks), device='cuda'))
+            # The anchor cache needs these exact bytes on the host. Publish
+            # them with the actor's existing rendezvous, rather than creating
+            # a second synchronization at every root admission.
+            combined = torch.cat((device_packet, projected.anchor), 1).cpu().numpy()
+            packet = combined[:, :device_packet.shape[1]]
+            anchor_host = combined[:, device_packet.shape[1]:]
+        else:
+            packet = device_packet.cpu().numpy()
         # Monitoring consumes the already published probabilities on the CPU,
         # without another device gather/copy for each reward or campfire batch.
         dist = SimpleNamespace(distribution=SimpleNamespace(probs=torch.from_numpy(packet[:,:width])))
@@ -128,10 +139,10 @@ class ResidentInference:
                       values=packet[:, -1], reward=reward_monitor.policy_probabilities(dist, obs),
                       campfire=campfire_monitor.policy_probabilities(dist, obs))
         if context:
-            projected = self.core.actor_search_context(torch.arange(len(masks), device='cuda'))
             # This owner admits the root immediately. Its frozen context never
             # has to roundtrip through the collector or host observation codec.
             result['context'] = projected.combat, projected.anchor
+            result['anchor_context_host'] = anchor_host
         return result
 
     @torch.no_grad()
@@ -148,7 +159,7 @@ class ResidentInference:
         key, rows = payload
         scorer, caches = self.jobs[key]
         requests = [ChainRequest(root, dict(scorer.roots[root], **delta), mask, kind,
-                                 caches.setdefault(lane, {}), lane)
+                                 caches.setdefault((root, lane), {}), lane)
                     for root, lane, kind, mask, delta in rows]
         return scorer(requests)
 

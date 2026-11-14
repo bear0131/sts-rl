@@ -209,10 +209,10 @@ class ResidentDeckScorer:
             self.stream_root_banks.append((storage,layout))
 
     @torch.no_grad()
-    def update_roots(self, slots, observations, context, capacity):
+    def update_roots(self, slots, observations, context, capacity, *, anchor_context_host=None):
         """Current-model adapter for the old pool's versioned root bank."""
         from rl.policies.collection_graphs import SharedCollectionGraphs
-        identities=self._intern_anchor_contexts(context.anchor)
+        identities=self._intern_anchor_contexts(context.anchor if anchor_context_host is None else anchor_context_host)
         if not hasattr(self, 'stream_observations'):
             initial_context=SearchContext(*(torch.as_tensor(x,device=self.device)
                                           for x in (context.combat,context.anchor)))
