@@ -79,43 +79,6 @@ def test_shared_observations_masks_terminal_ownership_recovery_and_cleanup(start
         shared_memory.SharedMemory(name=name)
 
 
-@pytest.mark.parametrize('start_method', [m for m in ('spawn', 'forkserver')
-                                        if m in get_all_start_methods()])
-def test_shared_subset_preserves_slot_order_terminal_state_and_restored_bank(start_method):
-    serial = NativeSearchVecEnv([_environment]*3, threads=1)
-    grouped = NativeSubprocVecEnv([_environment]*3, envs_per_worker=2, start_method=start_method)
-    retained = []
-    try:
-        for env in (serial, grouped):
-            env.seed(20261111)
-            env.reset()
-        before = grouped.get_attr('_emit_nosl_value_observations')
-        with serial.omit_unused_combat_value_observations(), grouped.omit_unused_combat_value_observations():
-            for step in range(40):
-                slots = ((2, 0), (1,), (2, 1, 0))[step % 3]
-                masks = serial.env_method('action_masks', indices=slots)
-                _equal(masks, grouped.env_method('action_masks', indices=slots))
-                actions = {i: int(np.flatnonzero(mask)[-1]) for i, mask in zip(slots, masks, strict=True)}
-                expected, actual = serial._step_subset(actions), grouped._step_subset(actions)
-                _equal(expected, actual)
-                _equal(serial.buf_obs, grouped.buf_obs)
-                retained.append((actual, deepcopy(actual)))
-        assert grouped.get_attr('_emit_nosl_value_observations') == before
-        states = serial.env_method('export_training_state')
-        _equal(states, grouped.env_method('export_training_state'))
-        saved = deepcopy(grouped.buf_obs)
-        masks = grouped.env_method('action_masks', indices=[2, 0])
-        grouped._step_subset({i: int(np.flatnonzero(m)[0]) for i, m in zip((2, 0), masks)})
-        _equal(grouped.restore_training_states(states), saved)
-        _equal(grouped.buf_obs, saved)
-        _equal(grouped.env_method('export_training_state'), states)
-        for actual, snapshot in retained:
-            _equal(actual, snapshot)
-    finally:
-        serial.close()
-        grouped.close()
-
-
 @pytest.mark.parametrize('capacity', [1, 2])
 def test_phase_graph_eviction_weight_refresh_and_released_scratch(capacity):
     from rl.policies.collection_graphs import SharedCollectionGraphs

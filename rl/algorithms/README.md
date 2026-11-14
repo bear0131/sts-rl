@@ -19,20 +19,4 @@ NOSL CUDA learner 对至少32768条的有效 batch 用最多4个线程提取独�
 
 `budget_calibration.py` 提供成熟策略的独立预算头附加、审计特征保存及有界拟合；复用 `updates.optimizer_step`，不执行 PPO 或下层动作监督。特征由 `AdaptiveTokenRegretPolicy.budget_features` 统一生成并 detach。预算头以单独文件绑定原模型 SHA 和 tensor digest，不能替代完整训练恢复文件。采集和冻结评测复用现有 episode runner/策略与 eval CLI，支持范围见 `rl/evaluation/README.md`。
 
-Deck-latent 的 `SearchTrainingConfig.action_selection` 默认 `shadow`，用于兼容
-历史旁路教学 checkpoint。显式 `search-filter-policy-rank-v1` 则在真实环境推进前
-完成当前根搜索：保留已访问动作中 Q 距最大值不超过 .005 的集合，选择模型
-logit 最大者，完全同分用独立 nonce 均匀选择。此规则与 `PairedTokenBatch`
-共用 `env/search/action_selection.py`，不增加搜索预算或丢弃候选槽。
-调度配置对应 `search_action_selection`，训练目标标记为
-`deck-latent-search-acting-v1`；改变此字段是采样行为迁移，不能称等价加速。
-
-真实动作和同分选择概率写入 rollout；`_search_executed` 区分确定性搜索决策。
-这些行参加真实回报 value 与原搜索辅助损失，不参加模型随机采样的 PPO
-actor ratio、entropy 或 KL。其余行保持 PPO，逻辑 batch、全行分母和 Adam
-边界不变。`cuda-resident` 实际选动作模式使用 `legacy_rollout.py` 的旧
-ready/search/upper/receive/step 循环；每个逻辑环境只等待自己的根，完成便推进，
-不会等待整批环境。`legacy_search_stream.py` 只接当前冻结上下文、配对随机流、
-目标与PPO存储，每个环境仍严格填满原定采样长度。图和常驻页在更新前全部排空，
-普通恢复重新创建进程；它们不进入训练 checkpoint。CPU/shadow 旧保存仍按其
-原合同读取，不能把旁路搜索速度当实际选动作的验收。
+Combat49 近期 GPU 采样/搜索重写已按用户要求撤除；旧源码基座、当前训练接口与待验收范围见 [交接文档](../../docs/2026-11-14/combat49-old-sampling-handoff.md)。本分支不能启动已撤除的 GPU 后端，也不会静默回退。

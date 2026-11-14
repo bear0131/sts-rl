@@ -1,33 +1,8 @@
 import torch
-import numpy as np
-import pytest
 from types import SimpleNamespace
 from dataclasses import asdict
 
 from rl.algorithms.search_auxiliary import improved_prior, search_kl
-
-
-def test_deferred_teacher_keeps_real_time_and_env_through_shuffle_and_reset():
-    from gymnasium import spaces
-    from rl.algorithms.search_auxiliary import SearchRolloutBuffer
-    buffer = SearchRolloutBuffer(4, spaces.Dict(x=spaces.Box(0, 100, (1,), dtype=np.float32)),
-                                 spaces.Discrete(2), device='cpu', n_envs=2)
-    target = np.log([.25, .75]).astype(np.float32)
-    with pytest.raises(ValueError, match='captured'):
-        buffer.add_search_target(0, target, position=1)
-    for t in range(4):
-        buffer.add({'x': np.array([[t], [10+t]], np.float32)}, np.zeros(2), np.zeros(2),
-                   np.zeros(2), torch.zeros(2), torch.zeros(2))
-    buffer.add_search_target(1, target, position=0)
-    buffer.add_search_target(0, target[::-1], position=3)
-    with pytest.raises(ValueError, match='already supplied'):
-        buffer.add_search_target(1, target, position=0)
-    batch = buffer._get_samples(np.array([4, 3, 0, 7]))
-    torch.testing.assert_close(batch.observations['x'].flatten(), torch.tensor([10., 3., 0., 13.]))
-    torch.testing.assert_close(batch.observations['_search_valid'], torch.tensor([1., 1., 0., 0.]))
-    np.testing.assert_array_equal(batch.observations['_search_target'][:2], np.stack([target, target[::-1]]))
-    buffer.reset()
-    assert not buffer.search_targets
 
 
 def test_equal_values_preserve_prior_and_illegal_atoms_have_no_gradient():
@@ -42,102 +17,6 @@ def test_equal_values_preserve_prior_and_illegal_atoms_have_no_gradient():
     assert torch.isfinite(current.grad).all()
     assert current.grad[0, 1] == 0
     assert old.grad is None and not q.requires_grad
-
-
-def test_deferred_resident_targets_keep_skips_world_counts_and_original_positions(monkeypatch):
-    from collections import Counter
-    from gymnasium import spaces
-    from rl.algorithms.deck_search import ShadowSearchCollection
-    from rl.algorithms.search_auxiliary import SearchRolloutBuffer, SearchTrainingConfig
-    from rl.policies.deck_latent import SearchContext
-    buffer = SearchRolloutBuffer(4, spaces.Dict(x=spaces.Box(0, 100, (1,), dtype=np.float32)),
-                                 spaces.Discrete(3), device='cpu', n_envs=2)
-    buffer.full = True
-    items = []
-    for position, indices in ((0, [1, 0]), (3, [0, 1])):
-        items.append(dict(position=position, indices=np.array(indices), roots=[None, None],
-            observations=[None, None], budgets=[64, 64], groups=[0, 0], seed=20261111+position,
-            context=SearchContext(torch.zeros(2, 64), torch.zeros(2, 256)),
-            logits=torch.tensor([[.5, 5., -.2], [-.8, 2., .3]])+position,
-            masks=np.array([[True, False, True], [True, False, True]])))
-    results = [dict(actions=np.array([0, 2]), values=np.array([a, b]), visits=np.array([n, n]))
-               for a, b, n in ((.2, .4, 4), (0., 0., 1), (.3, .1, 8), (.4, .5, 16))]
-    results[1]['skipped'] = 'forced'
-    obj = SimpleNamespace(config=SearchTrainingConfig(),buffer=buffer,stats=Counter())
-    expected = {}
-    for k in (0, 2, 3):
-        item, j = items[k//2], k%2
-        q = torch.zeros(1, 3);q[0, results[k]['actions']] = torch.tensor(results[k]['values'], dtype=q.dtype)
-        expected[(item['position'], int(item['indices'][j]))] = improved_prior(
-            item['logits'][j:j+1], q, torch.from_numpy(item['masks'][j:j+1]),
-            torch.tensor([results[k]['visits'][0]]), obj.config.target_std)[0].numpy()
-    stored = ShadowSearchCollection._store_targets(obj,items,results)
-    assert set(buffer.search_targets) == set(expected)
-    for key in expected:
-        np.testing.assert_array_equal(buffer.search_targets[key], expected[key])
-    assert stored == 3
-
-
-def test_resident_native_fallback_keeps_whole_worker_group_seed_and_target_positions(monkeypatch):
-    from collections import Counter
-    from gymnasium import spaces
-    import rl.algorithms.deck_search as search
-    from rl.algorithms.search_auxiliary import SearchRolloutBuffer, SearchTrainingConfig
-    from rl.policies.deck_latent import SearchContext
-    buffer = SearchRolloutBuffer(4, spaces.Dict(x=spaces.Box(0, 100, (1,), dtype=np.float32)),
-        spaces.Discrete(2), device='cpu', n_envs=3)
-    buffer.full = True
-    context = SearchContext(torch.arange(6).reshape(3,2), torch.arange(9).reshape(3,3))
-    roots = [{}, {'native_fallback': 'pending-without-portable-origin'}, {'actions':np.array([0,1])}]
-    calls = []
-    def central(request, scorer):
-        calls.append(request)
-        return [dict(actions=np.array([0,1]),values=np.array([.1,.2]),visits=np.array([32,32]))
-                for _ in request['indices']], dict(chains=128, context_refreshes=0)
-    def make_scorer(policy, observations, **kwargs):
-        assert [int(o['x'][0]) for o in observations] == [0,1]
-        torch.testing.assert_close(kwargs['context'].combat,context.combat[:2])
-        return object()
-    monkeypatch.setattr(search, 'DeckLatentScorer', make_scorer)
-    obj = SimpleNamespace(model=SimpleNamespace(policy=object(),_last_obs=dict(
-            x=np.arange(3)[:,None],combat_is_boss=np.zeros((3,1)))),
-        env=SimpleNamespace(deck_resident_roots=lambda *args,**kwargs:(roots,[7,7,8]),deck_batched_search=central),
-        pending=(np.array([0,1,2]),np.ones((3,2),bool),torch.zeros(3,2),context),
-        config=SearchTrainingConfig(),rng=np.random.default_rng(20261111),inference_cache=None,
-        generation=(1,2),buffer=buffer,stats=Counter(),
-        resident_items={},resident_root_keys={'x'},previous=lambda actions:'real-step')
-    packets=[]
-    obj.resident_service=SimpleNamespace(capacity=3,outstanding=set(),submit=lambda rows:packets.append(rows))
-    obj._receive_resident=lambda *args: None
-    expected_seed=int(np.random.default_rng(20261111).integers(0,2**63-1))
-    assert search.ShadowSearchCollection._resident_step(obj,np.array([0,1,0]))=='real-step'
-    assert calls[0]['indices']==[0,1] and calls[0]['budgets']==[64,64]
-    assert calls[0]['seed']==expected_seed
-    assert set(buffer.search_targets)=={(0,0),(0,1)}
-    assert list(packets[0])==[(0,2)]
-    assert set(packets[0][(0,2)]['observation'])=={'x'}
-    group_seed=int(np.random.SeedSequence([expected_seed,8]).generate_state(1,dtype=np.uint64)[0])
-    np.testing.assert_array_equal(packets[0][(0,2)]['worlds'],
-        np.random.default_rng(group_seed).integers(0,2**63-1,32,dtype=np.int64))
-    assert obj.stats['selected_roots']==3 and obj.stats['searched_roots']==2
-    assert obj.stats['native_fallback_roots']==2 and obj.stats['chains']==128
-
-
-@pytest.mark.parametrize('position', [0, 3])
-def test_resident_pool_released_before_last_real_step_and_bootstrap(position):
-    from collections import Counter
-    from rl.algorithms.deck_search import ShadowSearchCollection
-    calls = []
-    outstanding = {'root'}
-    def receive(*args):
-        calls.append('receive')
-        outstanding.clear()
-    service = SimpleNamespace(outstanding=outstanding, park=lambda: calls.append('park'))
-    obj = SimpleNamespace(pending=None, buffer=SimpleNamespace(pos=position, buffer_size=4),
-        stats=Counter(), resident_service=service, _receive_resident=receive,
-        previous=lambda actions: calls.append('real-step'))
-    ShadowSearchCollection._resident_step(obj, np.array([0]))
-    assert calls == (['receive', 'park', 'real-step'] if position == 3 else ['receive', 'real-step'])
 
 
 def test_more_worlds_strengthen_bounded_improvement_and_constant_shift_cancels():

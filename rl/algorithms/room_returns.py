@@ -87,24 +87,17 @@ def combat_anchor_returns(rewards, values, episode_starts, phases, anchors,
     return result - values, result
 
 
-def apply_room_returns(model, buffer, *, last_values=None):
-    if last_values is None:
-        from stable_baselines3.common.utils import obs_as_tensor
-        with torch.no_grad(), full_precision(model.device):
-            last_values = model.policy.predict_values(obs_as_tensor(model._last_obs, model.device))
-    if isinstance(last_values, torch.Tensor):
-        last_values = last_values.detach().flatten().cpu().numpy()
-    else:
-        last_values = np.asarray(last_values).reshape(-1)
-    if last_values.shape != (buffer.rewards.shape[1],) or not np.isfinite(last_values).all():
-        raise ValueError('invalid frozen room-return tail values')
+def apply_room_returns(model, buffer):
+    from stable_baselines3.common.utils import obs_as_tensor
+    with torch.no_grad(), full_precision(model.device):
+        last_values = model.policy.predict_values(obs_as_tensor(model._last_obs, model.device))
     def ids(obs, key, scale):
         return np.rint(obs[key][..., 0] * scale).astype(np.int64)
     advantages, returns, lambdas = room_gae(
         buffer.rewards, buffer.values, buffer.episode_starts,
         ids(buffer.observations, 'act', encode.ACT_SCALE),
         ids(buffer.observations, 'floor', encode.FLOOR_SCALE),
-        last_values=last_values, last_dones=model._last_episode_starts,
+        last_values=last_values.flatten().cpu().numpy(), last_dones=model._last_episode_starts,
         last_acts=ids(model._last_obs, 'act', encode.ACT_SCALE),
         last_floors=ids(model._last_obs, 'floor', encode.FLOOR_SCALE),
         room_lambda=model.policy.room_lambda)
@@ -115,7 +108,7 @@ def apply_room_returns(model, buffer, *, last_values=None):
     if anchored:
         advantages, returns = combat_anchor_returns(
             buffer.rewards, buffer.values, buffer.episode_starts, phase, anchors, returns,
-            last_values=last_values, last_dones=model._last_episode_starts,
+            last_values=last_values.flatten().cpu().numpy(), last_dones=model._last_episode_starts,
             last_phases=model._last_obs['phase'][:, 0],
             last_anchors=model._last_obs['combat_exit_anchor'].any(axis=-1))
     if anchors is not None:

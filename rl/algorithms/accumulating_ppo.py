@@ -909,11 +909,6 @@ class AccumulatingMaskablePPO(MaskablePPO):
         # keep this guard so an early callback/error cannot leave a compiler
         # thread racing with a later buffer reuse.
         self._wait_for_reasoning_samples()
-        search = getattr(self, 'deck_search_config', None)
-        if (search and search.get('backend') == 'cuda-resident'
-                and search.get('action_selection') == 'search-filter-policy-rank-v1'):
-            from rl.algorithms.legacy_rollout import collect
-            return collect(self, env, callback, rollout_buffer, n_rollout_steps, use_masking)
         independent = getattr(self, 'independent_rollout_config', None)
         if independent is not None:
             from rl.algorithms.independent_rollout import collect

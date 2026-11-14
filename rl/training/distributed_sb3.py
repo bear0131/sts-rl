@@ -4377,11 +4377,7 @@ def main() -> None:
     finally:
         iteration_budget.cancel()
         try:
-            try:
-                resource_stack.close()
-            finally:
-                from rl.search.resident_service import close_collection_service
-                close_collection_service(model)
+            resource_stack.close()
         finally:
             callback.on_training_end()
             if ring_transport is not None:

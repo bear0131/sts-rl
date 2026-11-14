@@ -16,92 +16,6 @@ import torch
 from rl.policies.precision import bf16_autocast, fp16_autocast
 
 
-def active_width(ids, minimum):
-    columns = np.flatnonzero(np.any(ids != 0, axis=0))
-    width = int(columns[-1]) + 1 if len(columns) else 1
-    return min(ids.shape[1], max(minimum, 1 << (width - 1).bit_length()))
-
-
-class DeviceConsumerGraphs:
-    """Old GraphScorer ownership, adapted only to current tensor consumers.
-
-    Inputs and published outputs live outside capture. As in CombatLeafGraphs,
-    serialized graphs reuse scratch only after publishing their owned result.
-    There is no phase scheduler, map bank or observation conversion here.
-    """
-    def __init__(self, device, capacity=128):
-        if capacity < 1 or torch.device(device).type != 'cuda':
-            raise ValueError('device graphs require CUDA and positive capacity')
-        self.device, self.capacity = device, capacity
-        self.entries = OrderedDict()
-        self.pool = self.stream = None
-        self.closed = False
-
-    def _release(self, key):
-        torch.cuda.synchronize(self.device)
-        entry = self.entries.pop(key)
-        entry[1].reset()
-        if not self.entries:
-            # The last graph can retire its pool; never reuse that token.
-            self.pool = None
-
-    @torch.no_grad()
-    def replay(self, signature, batch, padded, forward):
-        if self.closed:
-            raise RuntimeError('device graph adapter closed')
-        count = len(next(iter(batch.values())))
-        if count < 1 or padded < count or any(len(v) != count for v in batch.values()):
-            raise ValueError('device consumers require equal, nonempty rows')
-        if signature not in self.entries:
-            if len(self.entries) >= self.capacity:
-                self._release(next(iter(self.entries)))
-            inputs = {k: torch.cat((v, v[:1].expand(padded-count, *v.shape[1:]))).clone()
-                      for k, v in batch.items()}
-            current = torch.cuda.current_stream(self.device)
-            if self.pool is None:
-                self.pool = torch.cuda.graph_pool_handle()
-            if self.stream is None:
-                self.stream = torch.cuda.Stream(device=self.device)
-            stream = self.stream
-            stream.wait_stream(current)
-            with torch.cuda.stream(stream):
-                for _ in range(3):
-                    warm = forward(inputs)
-            current.wait_stream(stream)
-            torch.cuda.synchronize(self.device)
-            outputs = tuple(torch.empty_like(value) for value in warm)
-            del warm
-            stream.wait_stream(current)
-            # Retain the accepted workspace fix when adapting old lifecycle:
-            # no capture may borrow a releasable eager cuBLAS allocation.
-            torch._C._cuda_clearCublasWorkspaces()
-            graph = torch.cuda.CUDAGraph()
-            try:
-                with torch.cuda.graph(graph, stream=stream, pool=self.pool):
-                    for destination, value in zip(outputs, forward(inputs), strict=True):
-                        destination.copy_(value)
-                # No temporary tensor may keep shared scratch live.
-                del value
-            except BaseException:
-                graph.reset()
-                raise
-            finally:
-                torch._C._cuda_clearCublasWorkspaces()
-            current.wait_stream(stream)
-            self.entries[signature] = inputs, graph, outputs
-        self.entries.move_to_end(signature)
-        inputs, graph, outputs = self.entries[signature]
-        for key, value in batch.items():
-            inputs[key][:count].copy_(value)
-        graph.replay()
-        return outputs
-
-    def close(self):
-        while self.entries:
-            self._release(next(iter(self.entries)))
-        self.closed = True
-
-
 class CombatLeafGraphs:
     def __init__(self, core, device, *, amp='off', capacity=32, failure_path=None,
                  profile_interval=0, batch_multiple=0, compile_forward=True,
@@ -275,8 +189,6 @@ class CombatLeafGraphs:
             if len(self.entries) >= self.capacity:
                 self.entries.popitem(last=False)
                 self.evictions += 1
-                if not self.entries:
-                    self._scratch_pool = None
             started = time.perf_counter()
             self.entries[signature] = self._capture(observations, width, padded, writer=writer)
             self.capture_seconds += time.perf_counter()-started
@@ -347,11 +259,7 @@ class CombatLeafGraphs:
         entry['initialized'] = True
 
     def _capture(self, observations, width, padded, *, writer=None):
-        shared_scratch = (self.graph_forward is not None or
-                          getattr(self.core, 'graph_host_outputs_only', False))
-        if shared_scratch and self.device_outputs:
-            raise ValueError('shared graph scratch requires captured host publication')
-        if shared_scratch and self._scratch_pool is None:
+        if self.graph_forward is not None and self._scratch_pool is None:
             self._scratch_pool = torch.cuda.graph_pool_handle()
             if self._scratch_stream is None:
                 self._scratch_stream = torch.cuda.Stream(device=self.device)

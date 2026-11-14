@@ -69,17 +69,14 @@ class AdditiveCombatInputs(nn.Module):
         terms = terms + upgrades[..., None].to(terms) * self.upgrade_projection
         return terms * ids.ne(0)[..., None]
 
-    def relic_counter_terms(self, ids, counters):
+    def relic_terms(self, ids, counters):
         x = counters.float()
         count = (x * encode.COUNTER_SCALE).round()
         # Original scale stays available, including binary live-relic fields.
         basis = torch.stack((x, x.sign() * x.abs().log1p(),
             *(torch.remainder(count, period) / period for period in (2, 3, 4, 5, 6, 7, 8, 10))), -1)
         gates = self.relic_counter(ids.long()).unflatten(-1, (self.counter_features, self.width))
-        return (gates * basis[..., None]).sum(-2)
-
-    def relic_terms(self, ids, counters):
-        result = self.relic_identity(ids.long()) + self.relic_counter_terms(ids, counters)
+        result = self.relic_identity(ids.long()) + (gates * basis[..., None]).sum(-2)
         return result * ids.ne(0)[..., None]
 
     def rebuild(self, obs):

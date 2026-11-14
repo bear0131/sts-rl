@@ -492,8 +492,7 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
             multiprocessing.set_forkserver_preload([
                 'torch', 'rl.training.native_subproc_vec_env', 'rl.training.environments'])
         venv = NativeSubprocVecEnv(env_fns, envs_per_worker=args.envs_per_worker,
-                                  start_method=args.start_method,
-                                  native_threads=getattr(args, 'native_search_threads', 4))
+                                  start_method=args.start_method)
     elif args.vec == "subproc":
         if args.envs_per_worker == 1:
             venv = CachedMaskSubprocVecEnv(

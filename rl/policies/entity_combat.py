@@ -278,22 +278,9 @@ class EntityCombatNetwork(nn.Module):
     def forward(self, obs, *, active_relic_width=None, evaluate_subsets=True, auxiliary_actions=None,
                 card_table=None):
         state, blocks = self.encode(obs, active_relic_width, card_table=card_table)
-        if '_resident_selection' in blocks:
-            from rl.policies.resident_heads import frozen_combat_logits
-            logits = frozen_combat_logits(self, state, blocks, obs['combat_legal'],
-                obs['select_hand_mask'], (obs['pick_remaining']*encode.PICK_SCALE).round(),
-                obs['_resident_rows'])
-            values, outputs = self._value(state, obs)
-            return logits, values, outputs
         if self.autoregressive_actions:
-            selection = self._pointer(state, blocks['select'])
-            if '_resident_rows' in obs and selection.shape[1] < 96:
-                # Only scalar logits need the native 96-slot tail. The packed
-                # output path never scatters a padded 96 x 64 entity tensor.
-                padding = self._pointer(state, state.new_zeros((len(state), 1, state.shape[-1])))
-                selection = torch.cat((selection, padding.expand(-1, 96-selection.shape[1])), -1)
-            pointers = (self._pointer(state, blocks['hand']), self._pointer(state, blocks['potion']), selection)
-            source = torch.cat((self.end(state), *pointers), -1)
+            source = torch.cat((self.end(state), *(self._pointer(state, blocks[role])
+                for role in ('hand', 'potion', 'select'))), -1)
         else:
             source = state.new_zeros((state.shape[0], C.JOINT_END))
             source[:, A.END_TURN] = self.end(state).flatten()

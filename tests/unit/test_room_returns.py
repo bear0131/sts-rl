@@ -86,31 +86,3 @@ def test_anchor_missing_boundary_is_an_error_not_future_reward_leak():
         combat_anchor_returns(x, x, x, np.full_like(x, vocab.PHASE_VOCAB_INDEX['combat']),
             x.astype(bool), x, last_values=np.array([.7]), last_dones=np.array([False]),
             last_phases=np.array([vocab.PHASE_VOCAB_INDEX['map']]), last_anchors=np.array([False]))
-
-
-@pytest.mark.parametrize('precomputed', [False, True])
-def test_room_returns_reuses_frozen_tail_without_another_policy_forward(precomputed):
-    import torch
-    from types import SimpleNamespace
-    from env.core import encode, vocab
-    from rl.algorithms.room_returns import apply_room_returns
-    upper = vocab.PHASE_VOCAB_INDEX['map']
-    observations = dict(act=np.full((2,1,1), 1/encode.ACT_SCALE),
-                        floor=np.full((2,1,1), 3/encode.FLOOR_SCALE),
-                        phase=np.full((2,1,1), upper))
-    tail = {k:v[-1].copy() for k,v in observations.items()}
-    calls = []
-    def predict(obs):
-        calls.append(True)
-        return torch.tensor([[.4]])
-    model = SimpleNamespace(device=torch.device('cpu'), _last_obs=tail,
-        _last_episode_starts=np.array([False]), logger=SimpleNamespace(record=lambda *args:None),
-        policy=SimpleNamespace(predict_values=predict, room_lambda=1., combat_value_target='whole-run'))
-    buffer = SimpleNamespace(observations=observations, rewards=np.array([[.1],[.2]]),
-        values=np.array([[3.],[4.]]), episode_starts=np.zeros((2,1)),
-        advantages=np.zeros((2,1)), returns=np.zeros((2,1)))
-    apply_room_returns(model,buffer,**({'last_values':np.array([.4],np.float32)} if precomputed else {}))
-    np.testing.assert_allclose(buffer.returns, [[.7],[.6]], atol=1e-7)
-    assert calls == ([] if precomputed else [True])
-    with pytest.raises(ValueError,match='tail values'):
-        apply_room_returns(model,buffer,last_values=np.array([float('nan')]))

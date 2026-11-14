@@ -19,6 +19,8 @@ class SearchTrainingConfig:
     timeout_seconds: float = 120.
     target_std: float = .25
     seed: int = 20261111
+    # Retained for reading saved configurations. Retired GPU execution is
+    # rejected at collection entry; it must never silently become CPU/shadow.
     backend: str = 'native-cpu'
     inference_cache_bytes: int = 0
     cuda_artifacts: str = ''
@@ -50,31 +52,7 @@ class SearchRolloutBuffer(SharedRolloutBuffer):
         super().reset()
         self.search_targets = {}
         self.search_actions = {}
-        self.slot_positions = np.zeros(self.n_envs, dtype=np.int64)
 
-    def add_subset(self, indices, obs, action, reward, episode_start, value, log_prob, *, action_masks):
-        """Same time/environment storage, with independent ready-slot writes."""
-        indices = np.asarray(indices, dtype=np.intp)
-        positions = self.slot_positions[indices]
-        if (len(np.unique(indices)) != len(indices) or (positions >= self.buffer_size).any()):
-            raise ValueError('duplicate or completed rollout slot')
-        for j, (position, index) in enumerate(zip(positions, indices, strict=True)):
-            chosen = self.search_actions.get((int(position), int(index)))
-            if chosen is not None and (int(action[j]) != chosen[0]
-                    or not math.isfinite(float(log_prob[j]))
-                    or abs(float(log_prob[j])-chosen[1]) > 1e-6+1e-5*abs(chosen[1])):
-                raise ValueError('rollout must record the executed search action and behavior probability')
-        rows = positions, indices
-        if obs is not None:
-            for key in self.observations:
-                self.observations[key][rows] = obs[key]
-        self.actions[rows] = np.asarray(action).reshape(-1, self.action_dim)
-        self.rewards[rows], self.episode_starts[rows] = reward, episode_start
-        self.values[rows], self.log_probs[rows] = value, log_prob
-        self.action_masks[rows] = action_masks
-        self.slot_positions[indices] += 1
-        self.pos = int(self.slot_positions.max())
-        self.full = bool((self.slot_positions == self.buffer_size).all())
 
     def add(self, obs, action, reward, episode_start, value, log_prob, *, action_masks=None):
         if self.search_actions:

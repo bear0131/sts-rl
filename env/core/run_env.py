@@ -601,7 +601,7 @@ class SlayTheSpireEnv(gym.Env):
             "action_mask_sha256": self._array_mapping_digest({"mask": action_mask}),
         }
 
-    def restore_training_state(self, state, *, replay_observer=None):
+    def restore_training_state(self, state):
         """Rebuild one live episode and reject any replay divergence."""
         if state.get("schema_version") not in (1, 2):
             raise ValueError("unsupported environment state schema")
@@ -646,8 +646,6 @@ class SlayTheSpireEnv(gym.Env):
         for position, record in enumerate(state["actions"]):
             if self.combat_exit_anchor and position == anchor_start:
                 self.thick.combat_exit_anchor_enabled = True
-            if replay_observer is not None:
-                replay_observer(self, record)
             kind = record.get("kind")
             if kind == "thin":
                 pending = record.get("native_pending")
@@ -735,17 +733,9 @@ class SlayTheSpireEnv(gym.Env):
         branch._nosl_cpp_stochastic = False
         branch._nosl_cpp_state_nonce = 0
         branch._nosl_cpp_decision_index = 0
-        # Committed records contain scalar action metadata, not simulator state.
-        # Copy each mutable record once; avoid deepcopy's per-scalar memo work
-        # on the entire episode for every search chain. Preserve isolation for
-        # pending lists from JSON snapshots and any nested record metadata.
-        branch._episode_action_journal = []
-        for record in self._episode_action_journal:
-            cloned = record.copy()
-            for key, value in record.items():
-                if value is not None and type(value) not in (str, int):
-                    cloned[key] = copy.deepcopy(value)
-            branch._episode_action_journal.append(cloned)
+        branch._episode_action_journal = copy.deepcopy(
+            self._episode_action_journal
+        )
         branch._np_random = copy.deepcopy(self._np_random)
         branch._invalidate_backend_cache()
         return branch
@@ -827,7 +817,6 @@ class SlayTheSpireEnv(gym.Env):
 
     def _invalidate_thin_cache(self):
         self._cached_action_mask = None
-        self._cached_joint_actions = _UNCACHED
 
     def _invalidate_backend_cache(self):
         self._nosl_current_context = None
@@ -1109,14 +1098,9 @@ class SlayTheSpireEnv(gym.Env):
     def _joint_policy_actions(self):
         if self._autoregressive_actions:
             self._multi_desc()
-        if self._cached_joint_actions is _UNCACHED:
-            if self._autoregressive_actions:
-                prefix = sum(1 << i for i in (self._multi or ()))
-                actions = self.thick.bc.autoregressive_policy_actions(prefix)
-            else:
-                actions = self.thick.bc.joint_policy_actions()
-            self._cached_joint_actions = tuple(actions)
-        return self._cached_joint_actions
+            prefix = sum(1 << i for i in (self._multi or ()))
+            return self.thick.bc.autoregressive_policy_actions(prefix)
+        return self.thick.bc.joint_policy_actions()
 
     def native_combat_actions(self):
         """Complete legal bits for the current live root; no legacy slot mapping."""
@@ -1342,9 +1326,6 @@ class SlayTheSpireEnv(gym.Env):
                     self._invalidate_thin_cache()
                     info = self._info()
                     info['simulator_transition'] = False
-                    if self._defer_combat_observation:
-                        self._combat_observation_pending = True
-                        return {}, 0.0, False, False, info
                     return self._obs(), 0.0, False, False, info
                 if bits >> 29 == 6:
                     bits = (3 << 29) | sum(1 << i for i in self._multi)

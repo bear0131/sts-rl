@@ -160,16 +160,4 @@ continuity of a live remote experiment.
 Archive verification hashes each file against the pre-move manifest; archived
 user material deliberately retains original whitespace via .gitattributes.
 
-Deck-latent search frontier encoding and head projection can be checked on CPU
-with the explicitly selected native extension:
-
-    python -m pytest -q tests/integration/test_deck_latent.py::test_native_search_frontiers_match_reference_observations_and_results tests/integration/test_deck_latent.py::test_search_head_projection_refreshes_branch_context_and_preserves_siblings tests/integration/test_deck_latent.py::test_cpu_shadow_search_native_rounds_and_resume
-
-These cover complete observation bytes, branch context changes, paired search
-results, and two real PPO rounds plus ordinary restore. They do not qualify a
-production-length GPU search collection or replace the CUDA lifecycle tests.
-
-Search fork journal isolation and replay (including JSON pending-action lists)
-use the supported full-map observation configuration:
-
-    python -m pytest -q tests/integration/test_environment_recovery.py::test_run_fork_history_isolation_and_replay
+Combat49 已撤除 GPU 采样重写的实现专用测试；保留模型、搜索选动作、PPO 和恢复契约测试。后续完整 GPU 验收见 [交接文档](../docs/2026-11-14/combat49-old-sampling-handoff.md)。

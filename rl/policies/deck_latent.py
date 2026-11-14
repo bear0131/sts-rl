@@ -81,9 +81,8 @@ class RunContextEncoder(nn.Module):
         return self._pool_tokens(tokens, mask)
 
     def _pool_tokens(self, tokens, mask, *, packed_width=None):
-        if not self.training and packed_width is None:
-            # Unbound/legacy inference keeps its original full layout. A
-            # frozen owner may explicitly provide the exact live-key capacity.
+        if not self.training:
+            # Keep inference shapes and qualified collection graphs unchanged.
             return self.norm(self.transformer(tokens, src_key_padding_mask=mask))[:, 0]
         # Only the first (always present) query is consumed. Masked keys cannot
         # affect it at any layer; their unused queries can be dropped. Public
@@ -92,11 +91,6 @@ class RunContextEncoder(nn.Module):
         positions = torch.argsort(mask.to(torch.int32), dim=1, stable=True)[:, :width]
         tokens = tokens.gather(1, positions[:, :, None].expand(-1, -1, tokens.shape[-1]))
         mask = mask.gather(1, positions)
-        if not self.training:
-            # Retain the accepted fused inference arithmetic. The training
-            # final-query layout below changes FP32 reduction order beyond
-            # the frozen-context tolerance even though its math is equivalent.
-            return self.norm(self.transformer(tokens, src_key_padding_mask=mask))[:, 0]
         bias = torch.zeros_like(mask, dtype=tokens.dtype).masked_fill(mask, float('-inf'))
         x = tokens
         for layer in self.transformer.layers[:-1]:
@@ -149,64 +143,25 @@ class FastCombatNetwork(ScalarCombatNetwork):
         # Conservative physical memory proxy, not an attention FLOP claim.
         return (obs['deck_ids'] != 0).sum(1) + (obs['relics'] != 0).sum(1) + 128
 
-    @property
-    def search_input_keys(self):
-        """Head inputs when frozen run projections and pile summaries exist."""
-        return (*self.scalar_keys, 'select_context', 'hand_ids', 'hand_upgrades',
-                'hand_costs', 'hand_damage', 'hand_block', 'select_hand_mask',
-                'monster_id', 'monster_move', 'monster_intent_cat', 'monster_scalars',
-                'monster_buffs', 'potions', 'select_card_ids', 'select_card_upgrades',
-                'select_card_costs', 'select_native_indices', 'select_zone', 'combat_legal')
-
-    def _player_inputs(self, obs):
+    def _dynamic_inputs(self, obs, card_table=None):
+        table = (self._encode_card_table() if self.training or torch.is_grad_enabled()
+                 else self.inference_card_table()) if card_table is None else card_table
         hp = obs['player_scalars'].float(); batch = len(hp)
         turn = hp[:, 4:5] * encode.TURN_SCALE
         extra = torch.cat((hp[:, 1:2] - hp[:, :1], turn.clamp_min(0).log1p()/4,
                            torch.sigmoid((hp[:, 5:6] - self.hp_thresholds)*12)), -1)
-        features = torch.cat([obs[k].float().reshape(batch, -1) for k in self.scalar_keys] + [extra], -1)
-        if '_resident_rows' in obs:
-            from rl.policies.resident_ragged import frozen_bounded_linear
-            player = frozen_bounded_linear(self.player_projection, features, obs['_resident_rows'])
-        else:
-            player = self.player_projection(features)
+        player = self.player_projection(torch.cat(
+            [obs[k].float().reshape(batch, -1) for k in self.scalar_keys] + [extra], -1))
         player = player + self.turn_bucket(turn.long().flatten().clamp(0, 31))
         player = player + self.choice_reason(obs['select_context'].long().flatten())
-        return player
-
-    def _dynamic_inputs(self, obs, card_table=None):
-        table = (self._encode_card_table() if self.training or torch.is_grad_enabled()
-                 else self.inference_card_table()) if card_table is None else card_table
-        projected = obs.get('_resident_card_projection')
-        def card_tokens(ids, upgrades):
-            if projected is None:
-                return self._card_tokens(table, ids, upgrades)
-            if self.training or torch.is_grad_enabled():
-                raise ValueError('frozen card projection cannot be used for training')
-            # The old frozen input lookup folds the static embedding and
-            # projection once. Keep upgrade magnitude separate and unbounded.
-            encoded, magnitude = projected
-            index = ids.long() * 2 + upgrades.gt(0).long()
-            return F.embedding(index, encoded.reshape(-1, encoded.shape[-1])) + upgrades[..., None] * magnitude
-        player = self._player_inputs(obs)
-        hand = card_tokens(obs['hand_ids'], obs['hand_upgrades'])
+        hand = self._card_tokens(table, obs['hand_ids'], obs['hand_upgrades'])
         hand = hand + self.hand_context(torch.stack([obs[k] for k in
             ('hand_costs', 'hand_damage', 'hand_block', 'select_hand_mask')], -1).float())
-        monster_tables = obs.get('_resident_monster_projection')
-        if monster_tables is None:
-            monsters = self.monster_projection(torch.cat((self.monster_id(obs['monster_id'].long()),
-                self.monster_move(obs['monster_move'].long()), self.monster_intent(obs['monster_intent_cat'].long()),
-                obs['monster_scalars'].float(), obs['monster_buffs'].float()), -1))
-        else:
-            if self.training or torch.is_grad_enabled():
-                raise ValueError('frozen monster projection cannot be used for training')
-            identity, move, intent, dynamic_weight = monster_tables
-            monsters = F.linear(torch.cat((obs['monster_scalars'].float(),
-                obs['monster_buffs'].float()), -1), dynamic_weight, self.monster_projection.bias)
-            monsters = monsters + F.embedding(obs['monster_id'].long(), identity)
-            monsters = monsters + F.embedding(obs['monster_move'].long(), move)
-            monsters = monsters + F.embedding(obs['monster_intent_cat'].long(), intent)
+        monsters = self.monster_projection(torch.cat((self.monster_id(obs['monster_id'].long()),
+            self.monster_move(obs['monster_move'].long()), self.monster_intent(obs['monster_intent_cat'].long()),
+            obs['monster_scalars'].float(), obs['monster_buffs'].float()), -1))
         potions = self.potion(obs['potions'].long())
-        choices = card_tokens(obs['select_card_ids'], obs['select_card_upgrades'])
+        choices = self._card_tokens(table, obs['select_card_ids'], obs['select_card_upgrades'])
         valid = obs['select_native_indices'] > 0
         choices = choices + self.choice_context(torch.stack((obs['select_card_costs'].float(),
             (valid & (obs['select_card_ids'] == 0)).float()), -1))
@@ -252,35 +207,17 @@ class TransformerCombatNetwork(FastCombatNetwork):
         self.blocks = nn.ModuleList([EntityBlock(64, 4) for _ in range(2)])
 
     def encode(self, obs, active_relic_width=None, *, card_table=None):
+        player, entities, summary = self._dynamic_inputs(obs, card_table)
+        context = obs.get('_combat_context')
+        if context is None:
+            context = self.context_projection(obs['_run_context'])
         valid = obs['select_native_indices'] > 0
-        card_table = obs.get('_resident_card_table', card_table)
         # Legal PAD-ID/handle-only candidates must retain their query slot.
         pick = C.JOINT_PICK - C.JOINT_END
         required = valid | obs['combat_legal'][:, pick:pick + valid.shape[1]].bool()
         choice_width = obs.get('_choice_width')
         if choice_width is None:
             choice_width = _active_prefix_width(required)
-        dynamic = obs
-        if not self.training and not torch.is_grad_enabled():
-            # The same trailing PAD suffix already excluded from attention
-            # also has no head consumer. Avoid embedding/projecting all 96
-            # candidates before immediately discarding most of them.
-            dynamic = dict(obs)
-            for key in ('select_card_ids', 'select_card_upgrades',
-                        'select_card_costs', 'select_native_indices'):
-                dynamic[key] = obs[key][:, :choice_width]
-        context = obs.get('_combat_context')
-        if context is None:
-            context = self.context_projection(obs['_run_context'])
-        if '_resident_rows' in obs:
-            from rl.policies.resident_ragged import frozen_entity_blocks, frozen_bounded_linear
-            player = self._player_inputs(dynamic)
-            summary = obs['_combat_summary']
-            piles = frozen_bounded_linear(self.pile_projection,
-                self.summaries.features(summary).reshape(len(player), 3, 65), obs['_resident_rows'])
-            return frozen_entity_blocks(self, dynamic, player + context, summary.relics,
-                piles, valid, required, obs['_resident_rows'], obs['_resident_workspace'])
-        player, entities, summary = self._dynamic_inputs(dynamic, card_table)
         piles = self.pile_projection(self.summaries.features(summary).reshape(len(player), 3, 65))
         blocks = [
             ('global', (player + context)[:, None], torch.ones_like(valid[:, :1])),
@@ -303,11 +240,7 @@ class TransformerCombatNetwork(FastCombatNetwork):
             x = torch.nn.functional.pad(x, (0, 0, 0, padding))
             mask = torch.nn.functional.pad(mask, (0, padding), value=False)
         for block in self.blocks:
-            if obs.get('_resident_fused_blocks', False):
-                from rl.policies.resident_transformer import frozen_block
-                x = frozen_block(block, x, mask)
-            else:
-                x = block(x, mask)
+            x = block(x, mask)
         x = self.norm(x)
         result = {name: x[:, lo:hi] for name, (lo, hi) in spans.items()}
         # Heads still see the complete native candidate index space.

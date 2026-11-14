@@ -974,8 +974,8 @@ token 数按每八个一档分组，组内按精确上下文 ID 排序。牌、�
 
 FP32 DeckLatentPolicy 的 packed 配置可启用 `direct_masked_categorical`。纯 PPO
 更新在设备上按 SB3 的归一化顺序计算离散动作的 log-prob 和熵，非法输入进入
-Adam 之前的全局有限值检查。带搜索监督时直接复用同一次前向、按同一顺序归一化的
-掩码 logits，搜索行归一化仍以原始 Adam 组为单位。该选项随 checkpoint 保存，旧配置默认关闭。
+Adam 之前的全局有限值检查。带搜索监督的更新沿用策略分布对象，以便辅助损失
+读取同一组掩码 logits。该选项随 checkpoint 保存，旧配置默认关闭。
 
 使用 `SharedRolloutBuffer` 的 packed 更新可设置 `prefetch_groups`。CUDA
 学习器按原置换从主机提取下一组，在独立流上传输，消费流等待就绪后开始计算。
@@ -990,10 +990,7 @@ Adam 之前的全局有限值检查。带搜索监督时直接复用同一次前
 从当前块复制输入，权重与 Adam 共享存储。显存不足时先释放图、重试同一块，
 仍然不足才拆块。各 rank 的更新记录 `planned_ppo` 给出实际分块、图命中和
 退避次数。每轮更新结束释放这些图；checkpoint 保存配置和分块上限。
-单 CUDA 学习器的预热、战后锚点和搜索阶段也使用上述计划；没有跨卡通信时按原块顺序
-计算，不建立上层梯度传输/延后队列。锚点路由仍使用独立价值头，搜索KL复用当前策略前向。
-CPU和多卡锚点/搜索仍沿用常规 packed 更新。单rank梯度在设备内物化缺失项并保留原零加/乘1
-和Adam动量语义，不再写梯度文件或经CPU往返；`grad_bytes`表示梯度向量大小，`sync_mbps=0`。
+CPU、没有 SSH 环及进入战后锚点或搜索阶段时沿用常规 packed 更新。
 
 Deck训练阶段配置可显式设置`anchor_start_round`，在指定已完成轮数后从预热切到
 战后锚点PPO。这是操作者决定，记录`configured-anchor-start`，不伪造准备度通过
@@ -1010,28 +1007,4 @@ PAD卡ID等同于无效native候选。缓存、稀疏摘要接口、标量critic
 权重布局/内核。`pooled-mlp`是旧checkpoint缺省几何；新旧权重互不兼容，几何
 写入policy构造参数和搜索worker冻结快照，旧checkpoint仍按原MLP恢复。
 
-Deck-latent 的原生子进程搜索复用 `NativeRootObservationBatch`：模拟动作仍经
-环境的原奖励、终局和动作编解码路径执行，将活跃战斗观测推迟到待评分分支
-集合形成后统一编码；强制动作中间帧不送评分器。战后锚点、终局和薄动作前缀
-保持普通观测路径。`paired_anchor_search` 不传 `observation_batch` 时保留参考
-逐步编码，供同根同预算对照。评分器只打包当前战斗头或锚点头使用的字段；
-分支永久构筑变化仍比较完整静态键并单独刷新上下文，观测和checkpoint格式不变。
-该CPU路径的语义/速度对照不能代替正式搜索的完整GPU collection与更新恢复资格。
-
-`cuda-resident` 的下层搜索由 `rl/search/resident_service.py` 的单个 CUDA
-worker 持有，复用旧持续服务的 FIFO、根代际和非移动状态页。实际选动作模式
-由 `algorithms/legacy_rollout.py` 的旧执行循环拥有采样；各根搜索完成后立即
-推进对应环境，结果仍写回原来的 `(time, env)`，每个环境填满原采样长度。
-当前冻结模型、配对 world 和辅助目标由消费者适配，旧模型/旧目标不替换它们。
-不能移植含 CPU 回调指针的根，须走持久 native 分支 wave / 同 GPU owner 评分，
-保持根与兄弟隔离、原种子/预算和目标顺序，不能接受部分搜索结果。
-
-当前产物合同为 `deck-resident-battle-v1`、transport 2，另须声明
-`observation_storage=bounded-frame-v1`、`root_import=indexed-v1`，bridge 提供
-`host_runtime_version=2` 的主机账本/缓存/打包接口，构建与线程所有权约定见
-`env/search/README.md`。
-连续地址和状态页两种入口共用 `env/search/cuda_battle_kernels.cuh` 的逻辑，
-页寻址及有界观测帧由 `cuda_battle_paged_kernels.cuh` 适配；加载时核对
-CUDA module 与 native bridge 的 SHA。外部原生规则构建和产物仍由部署管理，
-不把旧地址布局的 cubin 当作兼容新适配的产物。更新源码或产物后须重新验证
-真实 collection、更新及普通恢复；组件回归通过不表示已获生产资格。
+Combat49 采样重接待办见 [交接文档](../docs/2026-11-14/combat49-old-sampling-handoff.md)；近期重写实现已撤除，正式训练保持停止。

@@ -135,7 +135,7 @@ def assert_roots(encoder, envs):
     return actual
 
 
-def test_deck_context_root_upgrades_map_and_direct_destination(monkeypatch):
+def test_deck_context_root_upgrades_map_and_direct_destination():
     env = SlayTheSpireEnv(global_map_view=True, upper_public_context=True, card_language=True, event_option_observation=True,
         combat_exit_anchor=True, reward_flow='sequential-v1', deck_latent_context=True,
         combat_action_contract='autoregressive-v2')
@@ -150,7 +150,6 @@ def test_deck_context_root_upgrades_map_and_direct_destination(monkeypatch):
             'discard': [('BASH', 0), ('BASH', 1)], 'exhaust': [('ANGER', 1)]})
         env._invalidate_backend_cache()
         encoder = NativeRootObservationBatch(env)
-        assert encoder.deck_encoder is not None, 'select the explicit deck projection native build'
         owned = assert_roots(encoder, [env])
         assert np.count_nonzero(owned['pile_upgraded_counts']) == 4
         assert owned['map_full_rooms'].any()
@@ -158,20 +157,6 @@ def test_deck_context_root_upgrades_map_and_direct_destination(monkeypatch):
         encoder.encode([env], destination=target)
         for k in owned:
             assert target[k].tobytes() == owned[k].tobytes(), k
-        # Temporary repeated cards and permanent growth must match the full
-        # reference byte-for-byte, including sequential float32 accumulation.
-        env.thick.gc.set_deck([('RITUAL_DAGGER', 1), ('SEARING_BLOW', 13), ('BASH', 1)])
-        env.thick.bc.apply_custom_state({'draw': [('SEARING_BLOW', 13)]*129 + [('BASH', 1)]*19,
-            'discard': [('RITUAL_DAGGER', 1), ('BASH', 0)], 'exhaust': [('ANGER', 1)]*73})
-        env._invalidate_backend_cache()
-        expected = assert_roots(encoder, [env])
-        with monkeypatch.context() as patch:
-            patch.delattr(sts, 'DeckContextEncoder')
-            fallback = NativeRootObservationBatch(env)
-            assert fallback.deck_encoder is None
-            original = fallback.encode([env])
-        for key in expected:
-            assert original[key].tobytes() == expected[key].tobytes(), key
     finally:
         env.close()
 
@@ -260,24 +245,6 @@ def test_root_batch_pending_selection_and_nonhand_handles(combat_factory):
     envs[0]._multi.add(1)
     envs[0]._invalidate_thin_cache()
     assert_roots(encoder,envs)
-
-
-def test_deferred_selection_prefix_keeps_complete_observation_and_no_transition(combat_factory):
-    from env.core.native_actions import AUTOREGRESSIVE_MULTI
-    env = combat_factory(['PURITY']*5,combat_action_contract='autoregressive-v2',card_language=True)
-    env.thick.bc.apply_custom_state({'hand':['PURITY','STRIKE_RED','DEFEND_RED']})
-    env.thick.bc.execute(sts.Action(sts.ActionType.CARD,0))
-    env._invalidate_backend_cache()
-    before = env.thick.bc.to_dict()
-    env._defer_combat_observation = True
-    try:
-        observation,reward,terminated,truncated,info = env.step(AUTOREGRESSIVE_MULTI+1)
-    finally:
-        env._defer_combat_observation = False
-    assert observation == {} and env._combat_observation_pending
-    assert reward == 0 and not terminated and not truncated and not info['simulator_transition']
-    assert env._multi == {1} and env.thick.bc.to_dict() == before
-    assert_roots(NativeRootObservationBatch(env),[env])
 
 
 @pytest.mark.parametrize('hp', [0, 25])
@@ -837,70 +804,3 @@ def test_root_destination_preserves_rows_and_owned_default_output(combat_factory
     with pytest.raises(ValueError, match='exactly one row'):
         encoder.encode(envs[:1], destination=destination)
     assert_nested_equal(destination, before)
-
-
-def test_native_observation_row_copy_preserves_all_fields_and_rejects_partial_write(combat_factory):
-    import slaythespire as sts
-    assert hasattr(sts, 'copy_observation_rows'), 'explicit deck observation build required'
-    env = combat_factory(['STRIKE_RED','DEFEND_RED']*5, seed=42,
-                         combat_action_contract='autoregressive-v2', card_language=True)
-    source = NativeRootObservationBatch(env).encode([env,env,env])
-    destination = {k:np.full((2,4,*v.shape[1:]),7,dtype=v.dtype) for k,v in source.items()}
-    rows, selected = np.array([7,0,5],np.int64), np.array([2,1,0],np.int64)
-    expected = {k:v.copy() for k,v in destination.items()}
-    for k,v in expected.items():v.reshape(8,*source[k].shape[1:])[rows]=source[k][selected]
-    sts.copy_observation_rows(destination, source, rows, selected, 2)
-    for k,v in expected.items():assert destination[k].tobytes()==v.tobytes(),k
-
-    floating = {k:np.full(v.shape,7,dtype=np.float32) for k,v in destination.items()}
-    expected_floating = {k:v.copy() for k,v in floating.items()}
-    for k,v in expected_floating.items():
-        v.reshape(8,*source[k].shape[1:])[rows] = source[k][selected]
-    sts.copy_observation_rows(floating,source,rows,selected,2)
-    for k,v in floating.items():
-        np.testing.assert_array_equal(v,expected_floating[k])
-    with pytest.raises(ValueError,match='index out of range'):
-        sts.copy_observation_rows(destination,source,np.array([0,8]),np.array([0,1]),2)
-    for k,v in expected.items():assert destination[k].tobytes()==v.tobytes(),k
-
-
-def test_bound_observation_copy_and_columns_keep_owned_storage_and_reject_mutation():
-    import slaythespire as sts
-    from env.search.resident_transport import ObservationColumnTransport, pack_actor_roots, unpack_actor_roots
-    source = dict(cat=np.arange(30,dtype=np.int64).reshape(5,2,3),
-                  number=np.arange(20,dtype=np.float32).reshape(5,4),
-                  flag=np.array([[True],[False],[True],[False],[True]]))
-    target = {k:np.zeros((2,5,*v.shape[1:]),np.float32) for k,v in source.items()}
-    plan = sts.ObservationRowCopy(target,source,2)
-    transport = ObservationColumnTransport(source)
-    rows = np.array([3,0,4],np.int64)
-    destination = np.array([9,1,7],np.int64)
-    plan.copy(destination,rows)
-    for k in source:
-        np.testing.assert_array_equal(target[k].reshape(10,*source[k].shape[1:])[destination],source[k][rows])
-    packet = pack_actor_roots({i:{'slot':i} for i in rows},None,columns=transport.pack(rows))
-    _, packed = unpack_actor_roots(packet,row_observations=False)
-    for k in source:assert packed[k].tobytes()==source[k][rows].tobytes()
-    saved = {k:v.copy() for k,v in packed.items()}
-    source['cat'] += 11
-    plan.copy(destination,rows)
-    np.testing.assert_array_equal(target['cat'].reshape(10,2,3)[destination],source['cat'][rows])
-    for k in source:assert packed[k].tobytes()==saved[k].tobytes()
-    before = {k:v.copy() for k,v in target.items()}
-    for out,inside in [(np.array([0,10]),np.array([0,1])),(np.array([0,1]),np.array([0,5]))]:
-        with pytest.raises(ValueError,match='index out of range'):plan.copy(out,inside)
-        for k in target:assert target[k].tobytes()==before[k].tobytes()
-    source['cat'].shape = (5,6)
-    with pytest.raises(ValueError,match='storage changed'):plan.copy(destination,rows)
-    with pytest.raises(ValueError,match='storage changed'):transport.pack(rows)
-    for k in target:assert target[k].tobytes()==before[k].tobytes()
-
-
-def test_bound_observation_copy_rejects_readonly_destination_without_partial_write():
-    import slaythespire as sts
-    src = dict(x=np.ones((4,2),np.int64),y=np.ones((4,1),bool))
-    dst = {k:np.zeros(v.shape,np.float32) for k,v in src.items()}
-    plan=sts.ObservationRowCopy(dst,src,1)
-    dst['y'].flags.writeable=False
-    with pytest.raises(ValueError,match='readonly'):plan.copy(np.array([0]),np.array([1]))
-    assert not dst['x'].any() and not dst['y'].any()
