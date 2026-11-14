@@ -146,6 +146,10 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
     check(lib.cuCtxGetLimit(ctypes.byref(stack), 0), 'read idle oracle stack')
     check(lib.cuCtxSetLimit(0, 1024), 'release idle oracle stack')
     monkeypatch.setattr(full_seeded, 'P', tmp_path / 'runtime')
+    from rl.search.paired_token_rollout import PairedTokenBatch
+    def no_parent_root_forward(*args, **kwargs):
+        raise AssertionError('portable GPU roots must be scored by their original GPU owner')
+    monkeypatch.setattr(PairedTokenBatch, 'score_roots', no_parent_root_forward)
     envs = []
     def vector():
         env = VecMonitor(NativeSearchVecEnv([latent_training_factory] * 2, threads=2))
@@ -181,6 +185,9 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
                 for key, value in observation.items():
                     np.testing.assert_array_equal(b.observations[key][position, i], value, err_msg=key)
             assert b.search_targets and b.search_actions
+            for sample in self.model._small_playout_samples:
+                for key,value in sample['observation'].items():
+                    np.testing.assert_array_equal(value,b.observations[key][sample['position'],sample['env']],err_msg=key)
             for (position, i), (action, logp) in b.search_actions.items():
                 assert b.actions[position, i, 0] == action
                 assert b.log_probs[position, i] == pytest.approx(logp, abs=1e-6)
@@ -189,7 +196,7 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
                 assert np.isfinite(target[legal]).all() and np.isneginf(target[~legal]).all()
                 assert np.exp(target).sum() == pytest.approx(1., abs=1e-6)
             for position, i, _, observation, _ in self.records[::8]:
-                tensors = {k: torch.as_tensor(v[None], device=device) for k, v in observation.items()}
+                tensors = {k: torch.as_tensor(v[None], device=self.model.device) for k, v in observation.items()}
                 with torch.inference_mode():value = self.model.policy.predict_values(tensors)
                 assert b.values[position, i] == pytest.approx(float(value.flatten()[0]), abs=3e-5)
             assert state_digest(self.model.policy.state_dict()) == self.digest
@@ -214,6 +221,7 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
         model.learn(64, callback=Rows())
         hook.remove()
         assert len(updates) == 2
+        assert model.device.type == device and model.policy.device.type == device
         assert model.num_timesteps == 64 and state_digest(model.policy.state_dict()) != before
         steps = {int(s['step']) for s in model.policy.optimizer.state.values()}
         assert steps == {2}
@@ -231,6 +239,7 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
         restored.learn(64, reset_num_timesteps=False, callback=Rows())
         hook.remove()
         assert len(updates) == 2
+        assert restored.device.type == device and restored.policy.device.type == device
         assert restored.num_timesteps == 128
         # Phase-specific parameters can be absent from a physical batch.
         assert {int(s['step']) for s in restored.policy.optimizer.state.values()} <= {3, 4}

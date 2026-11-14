@@ -103,6 +103,8 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
           (nullcontext(vec.step_subset) if fixed else _strategic_observations(model, vec, callback)) as step_subset,
           UpperPolicyInference(model.policy.core, model.device) as upper_inference,
           SmallPlayoutStream(vec.small_playout_batch, threads=cfg.threads) as stream):
+        loop_started = time.monotonic()
+        stats['setup_seconds'] = loop_started-started_collection
         while active.any():
             if cfg.max_combat_turns is not None:
                 # Only inspect owned, ready slots before issuing another search or RNG draw.
@@ -266,6 +268,10 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
         stats['root_policy_seconds'] = stats['upper_submit_cpu_seconds'] + stats['upper_accept_cpu_seconds']
         stats.update(upper_inference.statistics())
         stats['combat_observation_rows_omitted'] = vec.strategic_observation_rows_omitted
+        loop_finished = time.monotonic()
+        stats['active_loop_seconds'] = loop_finished-loop_started
+    drained = time.monotonic()
+    stats['drain_seconds'] = drained-loop_finished
     model._small_playout_stats = vec.small_playout_stats()
     model._small_playout_samples = sorted(vec.take_small_playout_samples(), key=lambda r: r['env'])
     model._upper_completed.sort(key=lambda r: (r['env'], r['episode']))
@@ -304,7 +310,9 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
         model.deck_search_last_stats = dict(searched_roots=count['roots'],
             chains=count['simulations'], atomic_steps=count['atomic_steps'],
             policy_rows=count['guide'], forced_rows=count['forced'],
-            cutoff_rows=count['cuts'], executed_search_actions=len(rollout_buffer.search_actions))
+            cutoff_rows=count['cuts'], anchor_rows=count['anchors'],
+            terminal_rows=count['terminal']-count['anchors'],
+            executed_search_actions=len(rollout_buffer.search_actions))
         for key, value in model.deck_search_last_stats.items():model.logger.record('deck_search/'+key, value)
         from rl.algorithms.room_returns import apply_room_returns
         apply_room_returns(model, rollout_buffer)
@@ -313,7 +321,9 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
         episode_rollout.exclude_samples(model, env)
         episode_rollout.finish(model, env, session, int(vec.episode_rollout_action_counts.max(initial=0)))
     model._independent_rollout_rng = randoms.state_dict()
-    stats['collection_seconds'] = time.monotonic()-started_collection
+    finished = time.monotonic()
+    stats['finalize_seconds'] = finished-drained
+    stats['collection_seconds'] = finished-started_collection
     model._independent_rollout_diagnostic = dict(random_stream=randoms.version, **stats,
         mode=cfg.mode, note='Fixed real PPO rows.' if fixed else 'Only naturally completed games supply training targets.')
     model._nosl_is_az_rollout_timings = dict(stats)

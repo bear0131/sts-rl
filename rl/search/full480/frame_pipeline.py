@@ -1,7 +1,7 @@
 """Bounded readonly observation-to-score CUDA graph; apply stays outside."""
 from .run_device import artifact_directory
 from pathlib import Path
-import sys,collections
+import sys,collections,time
 P=artifact_directory()
 
 from .graph_runtime import *
@@ -14,7 +14,7 @@ class FramePipeline:
    schema=pool.flat.input_tables.header() if pool.deck_consumer else None)
   self.F=pool.frame_cap;self.requested_ct=triton.next_power_of_2(token_capacity or self.F*32)
   self.requested_cq=triton.next_power_of_2(query_capacity or self.F*8)
-  self.graph=None;self.buffers={};self.key=None;self.bound=();self.capacity=(0,0,self.F)
+  self.graph=None;self.root_graph=None;self.buffers={};self.key=None;self.bound=();self.capacity=(0,0,self.F)
   self.counts=collections.Counter();self.closed=False;self.history=[]
   self.leaf_inference=None;self.owns_leaf_inference=False
  def signature(self):
@@ -31,7 +31,7 @@ class FramePipeline:
   p=self.pool
   result=(p.arena,p.deck,p.state,p.bits,p.actions,p.keys,p.source_rows,p.targets,p.ids,p.zones,p.monsters,p.numbers,p.meta,p.chunks,p.allocator,
    *p.inv,p.inv_slots,p.symbols,p.counts,p.canonical_sources,p.canonical_targets,p.entity_slots,p.extra_slots,p.token_order,p.query_order,p.query_map,p.input_map,p.geometry,p.scores)
-  if p.deck_consumer:result+=(p.selection_prefix,p.flat.input_tables.bindings,p.root_inputs,p.root_relics,p.root_counters,p.chain_inputs,p.value_mode,*p.flat.tensors())
+  if p.deck_consumer:result+=(p.selection_prefix,p.roots,p.root_addresses,p.root_prefix,p.flat.input_tables.bindings,p.root_inputs,p.root_relics,p.root_counters,p.chain_inputs,p.value_mode,*p.flat.tensors())
   return result
  def fingerprint(self):
   p=self.pool
@@ -41,6 +41,8 @@ class FramePipeline:
   self.pool._frame_ready=False
   if self.graph is not None:
    torch.cuda.synchronize();self.graph.reset();self.graph=None;self.counts['evictions']+=1
+  if self.root_graph is not None:
+   torch.cuda.synchronize();self.root_graph.reset();self.root_graph=None;self.counts['evictions']+=1
   self.model.release();self.buffers={};self.bound=();self.key=None;self.capacity=(0,0,self.F)
  def allocate(self,key):
   self.release();p=self.pool;ct=self.requested_ct;cq=self.requested_cq;F=self.F
@@ -62,13 +64,13 @@ class FramePipeline:
   self.model.allocate(key,(w['features'],w['symbols'],w['slots'],w['present'],w['queries'],w['blocks1'],w['blocks2'],
    p.state,p.actions,p.keys,w['owners'],p.canonical_sources,p.canonical_targets,p.meta,p.query_map,p.scores),ct,cq,F,qkv_workspace=token_workspace)
   self.bound=self.external();self.key=key;self.capacity=(ct,cq,F);self.counts['allocations']+=1
- def execute(self):
+ def execute(self,roots=False):
   p=self.pool;w=self.buffers;m=self.model.buffers;F=self.F
   p.allocator.zero_();w['totals'].zero_();w['queue_counts'].zero_()
-  observer_args=[p.arena,w['worlds'],w['live'],p.deck,p.state,p.bits,p.actions,p.keys,p.source_rows,p.targets,
+  observer_args=[p.root_addresses if roots else p.arena,w['worlds'],w['live'],p.deck,p.state,p.bits,p.actions,p.keys,p.source_rows,p.targets,
    p.ids,p.zones,p.monsters,p.numbers,p.meta,p.chunks,p.allocator,w['dispatch']]
   if p.deck_consumer:
-   observer_args+=[p.selection_prefix,p.flat.input_tables.bindings,w['raw'],w['cat'],w['legal'],w['selected'],w['remaining'],p.root_inputs,p.root_relics,p.root_counters,p.chain_inputs,p.value_mode]
+   observer_args+=[p.root_prefix if roots else p.selection_prefix,p.flat.input_tables.bindings,w['raw'],w['cat'],w['legal'],w['selected'],w['remaining'],p.root_inputs,p.root_relics,p.root_counters,p.root_inputs if roots else p.chain_inputs,p.value_mode]
   shape=[0,p.m,p.action_cap,p.entity_cap]
   self.modules.launch('frame_observe_special',observer_args,shape,triton.cdiv(F,32))
   self.modules.launch('normal_prepare',observer_args+[w['normal_rows']],shape,triton.cdiv(F,32))
@@ -83,7 +85,7 @@ class FramePipeline:
   self.modules.launch('packed_finalize',[p.allocator,w['totals'],w['dispatch'],m['counts'],w['summary']],[],1)
   self.model.execute()
  @torch.inference_mode()
- def run(self,base,count,*,selected=None,worlds=None,value_only=False):
+ def run(self,base,count,*,selected=None,worlds=None,value_only=False,roots=False):
   assert not self.closed and 0<count<=self.F
   p=self.pool
   if p.deck_consumer:p.flat.validate();p.flat.input_tables.validate()
@@ -95,15 +97,16 @@ class FramePipeline:
    w['live'][:count].copy_(p.live[base:base+count] if selected is None else selected)
    w['worlds'][:count].copy_(p.logical_ids[base:base+count] if worlds is None else worlds)
    w['dispatch'].fill_(count)
-   if self.graph is None:
-    self.execute();torch.cuda.synchronize()
+   graph_name='root_graph' if roots else 'graph'
+   if getattr(self,graph_name) is None:
+    self.execute(roots);torch.cuda.synchronize()
     g=torch.cuda.CUDAGraph()
     try:
-     with torch.cuda.graph(g):self.execute()
+     with torch.cuda.graph(g):self.execute(roots)
     except BaseException:
      g.reset();raise
-    self.graph=g;self.counts['captures']+=1
-   self.graph.replay();self.counts['replays']+=1
+    setattr(self,graph_name,g);self.counts['captures']+=1
+   getattr(self,graph_name).replay();self.counts['replays']+=1
    values=list(map(int,w['summary'].cpu().tolist()))
    a,e,flags,me,ma,nt,nq,nb1,nb2,real=values
    assert flags>=0 and flags&~127==0 and a>0 and e>=0 and 0<=real<=count,values
@@ -129,8 +132,29 @@ class FramePipeline:
     self.leaf_inference=UpperPolicyInference(self.pool.flat.core,'cuda');self.owns_leaf_inference=True
   return self.leaf_inference
  @torch.inference_mode()
+ def score_roots(self,handles):
+  """Reuse the original readonly frame before each root's first action."""
+  started=time.perf_counter()
+  p=self.pool
+  for offset in range(0,len(handles),self.F):
+   group=handles[offset:offset+self.F]
+   roots=p.upload([h.slot for h in group],np.int32)
+   total=self.run(0,len(group),selected=roots,worlds=roots,value_only=True,roots=True)[0]
+   meta=p.meta[:len(group)].cpu().numpy()
+   bits=p.bits[:total].cpu().numpy().view(np.uint32)
+   scores=p.scores[:total].cpu().numpy()
+   values=self.model.buffers['coef'][:len(group),12].cpu().numpy()
+   for j,h in enumerate(group):
+    n,_,start,_=map(int,meta[j]);row=p.bank[h.slot]
+    if not np.array_equal(bits[start:start+n],row['action_bits']):
+     raise RuntimeError(('GPU root legal actions differ',h.key,bits[start:start+n].tolist(),row['action_bits'].tolist()))
+    row['root_logits']=scores[start:start+n].copy();row['root_value']=float(values[j])
+   self.counts['root_policy_rows']+=len(group)
+  self.counts['root_policy_seconds']+=time.perf_counter()-started
+ @torch.inference_mode()
  def complete_values(self,handles):
   """Score finished original pages before reap releases their leases."""
+  started=time.perf_counter()
   p=self.pool;inference=self.completion_inference()
   slots=[h.slot for h in handles]
   jobs=np.concatenate([s*p.budget_cap+np.arange(p.bank[s]['budget']) for s in slots])
@@ -162,15 +186,22 @@ class FramePipeline:
      projected[dynamic]=inference.search_context(changed).anchor.cpu().numpy()
     inputs=dict(player_scalars=raw[:,:2],potions=raw[:,2:7].astype(np.int64),gold=raw[:,7:8],
       combat_exit_anchor=raw[:,8:10],relic_counters=raw[:,10:],
-      relics=p.root_relics[source.long()].cpu().numpy(),
+      relics=np.asarray(context_data['relics'],np.int32)[root_rows],
       run_keys=np.stack([p.bank[s]['observation']['run_keys'] for s in slots])[root_rows])
-    p.values[chosen.long()]=torch.as_tensor(inference.anchor_values(inputs,projected).reshape(-1),device='cuda',dtype=p.values.dtype)
+    # The completed pages stay leased. Advance only the other live chains
+    # while the existing exact cache packs/looks up this completion batch.
+    finish_step=self.tick(deferred=True) if p.active_count else None
+    try:values=inference.anchor_values(inputs,projected).reshape(-1)
+    finally:
+     if finish_step is not None:finish_step()
+    p.values[chosen.long()]=torch.as_tensor(values,device='cuda',dtype=p.values.dtype)
    if len(cutoffs):
     chosen=ids[torch.as_tensor(cutoffs,device='cuda')];source=root_ids[torch.as_tensor(cutoffs,device='cuda')]
     self.refresh_contexts(chosen)
     self.run(0,len(cutoffs),selected=chosen,worlds=source,value_only=True)
     p.values[chosen.long()]=self.model.buffers['coef'][:len(cutoffs),12].to(p.values.dtype)
    self.counts.update(anchor_rows=len(anchors),cutoff_rows=len(cutoffs),terminal_rows=int((state==2).sum()))
+  self.counts['completion_seconds']+=time.perf_counter()-started
  @torch.inference_mode()
  def refresh_contexts(self,selected=None):
   p=self.pool
@@ -189,7 +220,7 @@ class FramePipeline:
   p.chain_inputs[index,:64]=context.combat;p.context_dirty[index]=0
   self.counts['context_refresh_rows']+=count
  def statistics(self):
-  return dict(self.counts,cached=int(self.graph is not None),capacity=list(self.capacity),closed=self.closed,
+  return dict(self.counts,cached=int(self.graph is not None)+int(self.root_graph is not None),capacity=list(self.capacity),closed=self.closed,
    kernels=self.model.kernel_metadata,workspace_bytes=self.model.workspace_bytes(self.buffers.values()),workspace_alias_version=1,
    aliased_input_bytes=0 if not self.buffers else self.buffers['features'].numel()*self.buffers['features'].element_size(),
    overflow_history=self.history,modules_closed=self.modules.closed,identity=self.modules.identity)

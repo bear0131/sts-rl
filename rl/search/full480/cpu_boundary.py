@@ -14,7 +14,8 @@ def native_result(features,result,turn_limit,seconds):
  s=result['statistics'];n=result['simulations'];hist=np.asarray(result['playout_lengths'],np.int64)
  assert hist.shape==(201,) and hist.sum()==n and np.dot(hist,np.arange(201))==s[7]
  z=dict(features,action=int(result['action_bits'][0]),visits=result['visits'],terminal_visits=result['terminal_visits'],values=result['values'],value_statistic=result.get('value_statistic','terminal-return-lower-bound'))
- if 'combat_context' in result:z['combat_context']=result['combat_context']
+ for key in ('combat_context','root_logits','root_value'):
+  if key in result:z[key]=result[key]
  z['stats']=dict(simulations=n,tree_transitions=0,playout_transitions=result['actual_transitions'],terminal_wins=int(s[3]),terminal_losses=int(s[4]),
   terminal_escapes=int(s[9]),depth_cuts=result['depth_cuts'],tree_cuts=0,chance_replays=0,nodes=0,policy_calls=result['nonforced_decisions'],
   action_scores=int(s[10]),forced_policy_skips=result['forced_actions'],prior_calls=0,draw_edges=0,guard_transitions=0,

@@ -376,7 +376,7 @@ def test_full480_pcg64_matches_numpy_and_owns_each_chain():
 
 @pytest.mark.parametrize('scenario,anchored', [(s, False) for s in
     ('prefix', 'growth', 'escape', 'gamble', 'toolbox', 'armaments')] +
-    [(s, True) for s in ('prefix', 'growth', 'escape')])
+    [(s, True) for s in ('prefix', 'growth', 'escape', 'anchor_duplicates')])
 def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, anchored, tmp_path, monkeypatch):
     from rl.search.full480.combo_runtime import BattleArena, BattlePool
     from rl.search.full480.combo_model import DeckWeights
@@ -395,11 +395,11 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
         'DEFEND_RED', 'BATTLE_TRANCE', 'STRIKE_RED', 'DEFEND_RED', 'BASH', 'EXHUME']])
     latent_env.thick.gc.set_potion_state(['Gamblers Brew', 'Liquid Memories'])
     latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
-    if scenario in ('growth', 'escape'):
+    if scenario in ('growth', 'escape', 'anchor_duplicates'):
         latent_env.thick.gc.set_deck([('RITUAL_DAGGER' if scenario == 'growth' else 'STRIKE_RED', 0)] * 5)
         latent_env.thick.gc.set_potion_state(['Smoke Bomb'] if scenario == 'escape' else [])
         latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
-        if scenario == 'growth':
+        if scenario in ('growth', 'anchor_duplicates'):
             latent_env.thick.bc.set_player_strength(999)
     if scenario in ('gamble', 'toolbox'):
         relics = ['Gambling Chip', 'WarpedTongs']
@@ -519,7 +519,11 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                     temporary.fill_(3)
                     del temporary
                     torch.cuda.empty_cache()
-                pool.tick()
+                if tick % 2:
+                    finish=pool.frame_pipeline.tick(deferred=True)
+                    assert callable(finish)
+                    finish()
+                else:pool.tick()
                 np.testing.assert_array_equal(pool.draws[active].cpu().numpy(), list(expected_draws.values()))
                 compare_states()
             assert not pool.active_count
@@ -538,6 +542,12 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                     gold.append(float(branch._obs()['player_scalars'][0])*encode.HP_SCALE/row['max_hp'])
                 else:
                     gold.append(0.)
+            if scenario == 'anchor_duplicates':
+                pool.frame_pipeline.release()
+                torch.cuda.empty_cache()
+                scratch = torch.empty((1024, 1024), device='cuda').fill_(19.)
+                pool.frame_pipeline.score_roots(list(pool.ledger.pending.values()))
+                del scratch
             result = pool.reap()[0]
             owners=np.arange(budget)%len(mapping)
             expected=np.bincount(owners,weights=gold,minlength=len(mapping))/np.bincount(owners,minlength=len(mapping))
@@ -560,8 +570,11 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 assert widths and widths[0]<len(obs['relics'])
                 assert scored[0][0]['observation'] is obs
                 np.testing.assert_array_equal(scored[0][0]['observation']['relics'],obs['relics'])
-                expected_root,_=core.combat_with_context(data,context)
+                expected_root,expected_value=core.combat_with_context(data,context)
                 np.testing.assert_allclose(scored[0][1],expected_root[0,[a for a,_ in mapping]].cpu().numpy(),atol=3e-5,rtol=1e-5)
+                np.testing.assert_allclose(result['root_logits'],scored[0][1],atol=3e-5,rtol=1e-5)
+                assert result['root_value'] == pytest.approx(float(expected_value.flatten()[0]),abs=3e-5)
+                assert pool.frame_pipeline.counts['root_policy_rows'] == (2 if scenario == 'anchor_duplicates' else 1)
             batch.inference.__exit__(None,None,None)
             assert result['visits'].sum()==budget and result['visits'].max()-result['visits'].min()==1
             if scenario in ('prefix', 'gamble'):
@@ -569,9 +582,12 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
             if anchored:
                 assert result['value_statistic'] == 'pre-reward-anchor'
                 assert sum(pool.frame_pipeline.counts[k] for k in ('anchor_rows','cutoff_rows','terminal_rows')) == budget
+                if scenario == 'anchor_duplicates':
+                    assert pool.frame_pipeline.completion_inference().statistics()['anchor_cache_batch_duplicates'] > 0
             else:
                 assert pool.frame_pipeline.counts['anchor_rows']==0
-            assert pool.graph_scorer.statistics()['step_overflow_retries'] > 0
+            assert (pool.graph_scorer.statistics()['step_overflow_retries']
+                    + pool.frame_pipeline.counts['overflow_retries']) > 0
             assert pool.graph_scorer.statistics()['step_replays'] > 0
             pool.close()
             arena.close()

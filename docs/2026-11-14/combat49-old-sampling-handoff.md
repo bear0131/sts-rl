@@ -180,13 +180,17 @@ rank0/1 的 native fallback 为 0，rank2/3 为41/67根，不能把全部差距�
 | --- | --- | --- |
 | P01 | `rl/algorithms/full480.py:collect`：原 ready/submit/receive 循环增加每槽步数及768行停止条件；自然结束后仍由原 VecEnv 自动开局 | 不新增调度循环；检查每槽恰好768，终局、自重置、末行bootstrap与drain |
 | P02 | 同一 `collect` 的原真实动作推进边界：把已有完整观察、动作、mask、old value/logprob、reward、episode_start直接写原 SearchRolloutBuffer 的(time, env)位置 | 不加中间buffer/add_rows；保留完整PPO观察会增加原自然局省略模式下未做的写入，须实测，不以数据量猜归因 |
-| P03 | `rl/search/paired_token_rollout.py:score_roots/accept_ready`：返回已有根小网计算的value和search_filtered_choice的真实行为logprob；原根记录附position | 不再次推理整模型；结果包只增加标量。不得把搜索动作概率写成原模型动作概率 |
+| P03 | `full480/flex_runtime.py:submit`、`frame_pipeline.py:score_roots`：同一GPU owner用原只读帧读取未随机化的原root，结果经原reap/native_result到PairedTokenBatch.accept_ready；附小网logits/value及真实行为logprob | 不再由父进程运行根模型；原root只增加每槽8字节地址表及一个共享scratch的只读图。原整步图、缓存与CPU回退合同保留；shape/临时显存释放和完整行对照验收 |
 | P04 | `collect`：未搜索战斗行、战斗退出锚点、真实强制动作进入原upper队列，获得真实old value | 真正的PPO行必须估值；内部搜索的强制动作跳过保持。新增外层评分行须单列 |
 | P05 | `collect`收尾：原搜索根visits/Q/logits调用现有improved_prior，写原search_targets；随后调用原apply_room_returns | 新增teacher转换；原稿逐根Tensor计算已改512根合批，记录search_target_seconds。未修改teacher公式、GAE或PPO更新 |
 | P06 | `rl/search/full480/flex_stream.py:reap`、`frame_pipeline.py:complete_values`、`finite_plan.py:aggregate`：原搜索完成边界接pre-reward-anchor/深度截断值 | 新增完成值消费函数；复用已有GPU anchor/misc观察kernel、只读小网图、构筑和锚点结果缓存；永久变化分支重算相应context。不能把此新增工作藏进“只换模型” |
 | P07 | `rl/training/small_playout.py:configure_collection`、`env/search/small_playout.py:prepare`、`full_seeded.py:Stream`：读取原训练64/64/256预算、覆盖率及完整配对world合同 | 训练的完整world可能使实际链数不等于自然局精确预算；两种结果必须分别标实际链数/根数/原子动作 |
 | P08 | `rl/algorithms/accumulating_ppo.py:collect_rollouts`：full480配置直接调用上述原collector；原训练更新继续消费原buffer | 不新增trainer或训练入口，不改变batch/epoch/Adam配置 |
 | P09 | `collect`与`full_seeded.py:record_start/record_end`：原完整局记录允许跨固定片段；保存现有随机流状态、先发布本轮search统计再计算returns | 完整退出、取消和普通保存恢复验证；不能将上一轮chains记到本轮 |
+| P10 | `full_seeded.py:submit`：固定PPO使用原_last_obs已有完整观测的批量拥有副本，删除第二次native root编码 | 数组必须拥有存储，不得随真实环境步被覆写；逐字段与原buffer对应行比较 |
+| P11 | `step_pipeline.py:tick`原图重放允许延后收取完成状态；`frame_pipeline.py:complete_values`在原锚点缓存查键期间推进其他活跃链，使用已有根遗物数组消除重复设备读取 | 在原函数内复用同一整步图/溢出重试；当前完成页保持租约，消费共享帧、释放页前必须收完；尚待完整性能验证。之前GPU排序去重整轮收益不足10%且小预算回退，已撤回 |
+| P12 | 原collector/worker/frame增加setup、循环、drain、finalize与root/step/completion计时，修正anchor计数 | 只增加计时/统计；父进程与owner重叠，不跨进程加总。新字段用于解释总墙钟 |
+| P13 | `accumulating_ppo.py:collect_rollouts`的full480默认配置使用原upper队列10ms收集窗口，原upper_batch=64不变，显式配置继续优先 | 这是调度合批实验，不是假称恢复旧参数（原实际full480为0ms）；不改每环境RNG、预算/目标/更新，须记录窗口及完整行数，并通过每轮10%耗时门槛 |
 
 另行审查的模拟器修改：`Actions.h/Actions.cpp/BattleContext.cpp`将实际开战回调和OnAfterCardUsed改成带类型的小对象，执行仍调用原动作函数；`ActionQueue.h`只增加队列只读访问。原state_codec/CPU桥接增加这类对象的序列化/恢复，并在原ArenaProxy/BattleArena/GameMirror边界允许CARD_SELECT。未知回调仍拒绝导入，不能宣称任意函数均已支持；固定PPO遇到未知回调明确报错，不能静默用旧terminal-HP回退产生错误标签。正式246初态186个战斗快照已全部可导入，完整片段中的覆盖仍需实跑。
 

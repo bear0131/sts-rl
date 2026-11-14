@@ -104,6 +104,9 @@ class BattlePool(CollectionPool):
   assert 'modules' not in kw
   super().__init__(mirror.m,budget_cap,modules=mirror.modules,**kw)
   self.mirror=mirror;self.ordered_semantic=self.arr((self.m,self.action_width),torch.int64);self.root_executed=self.arr((self.n,))
+  if self.deck_consumer:
+   stride=self.roots.numel()*self.roots.element_size()//self.m
+   self.root_addresses=torch.arange(self.m,device='cuda',dtype=torch.int64)*stride+self.roots.data_ptr()
  def submit(self,rows):
   assert not self.closed
   if not rows:return {}
@@ -184,6 +187,9 @@ class BattlePool(CollectionPool):
   self.launch('pool_inventory_slots',self.inv+[self.inv_slots],[self.m,self.I],grid=self.m)
   self.launch('stream_start',[self.roots,self.arena,root_ids,self.job_generation,self.root_generation,self.root_nonce,self.budgets,self.action_counts,self.ordered_bits,
    self.stats,self.constructed,self.alive,self.world_seeds,self.policy_seeds,self.initial_bits],[count,self.budget_cap,self.action_width],grid=count*self.budget_cap)
+  if self.deck_consumer:
+   if not hasattr(self,'step_status'):self.refresh()
+   self.frame_pipeline.score_roots(handles)
   self.launch('stream_begin',[self.arena,root_ids,self.budgets,self.initial_bits,self.stats,self.alive,self.outcomes,self.values,self.root_boss,self.root_maximum,self.root_limits,self.root_done,self.ordered_semantic,self.action_counts,self.root_executed],
    [count,self.budget_cap,self.action_width],grid=count*self.budget_cap)
   self.refresh()

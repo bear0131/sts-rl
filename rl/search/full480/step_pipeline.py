@@ -1,5 +1,5 @@
 """One captured frame includes observation, model, apply, and final compaction."""
-import collections
+import collections,time
 from .frame_pipeline import FramePipeline,torch,triton
 from .step_kernels import compact_local,compact_scatter,compact_finish,frame_prepare,frame_commit
 
@@ -77,30 +77,46 @@ class StepPipeline(FramePipeline):
   if nq>self.requested_cq:self.requested_cq=triton.next_power_of_2(nq)
   p.step_status[3].zero_();s[3]=0
  @torch.inference_mode()
- def tick(self):
+ def tick(self,*,deferred=False):
+  started=time.perf_counter()
   p=self.pool
   if p.deck_consumer:self.refresh_contexts();p.value_mode.zero_()
   assert p.active_count>0 and not p.closed and not p._scored and not p._observed
   before=p.step_last.copy();s=before.copy()
   assert s[1]==0 and s[3]==0 and s[0]==p.active_count
-  for attempt in range(8):
+  def launch():
    self.ensure_step_graph()
    frames=triton.cdiv(s[0]-s[1],self.F);assert frames>0
    for _ in range(frames):
     self.step_graph.replay();self.counts['step_replays']+=1
-   s=list(map(int,p.step_status.cpu().tolist()));p.step_counts['host_reads']+=1
-   if not s[3]:break
-   self.grow_failed_frame(s)
-  else:raise RuntimeError('Step graph overflow retry budget exhausted')
-  assert s[5]==before[5]+1 and s[1]==0 and s[4]==0
-  assert s[6]-before[6]==before[0]
-  delta=[x-y for x,y in zip(s,before)]
-  p.real_neural_rows+=delta[7];p.neural_rows+=delta[7];p.skipped_forced_rows+=delta[8];p.model_calls+=delta[9]
-  if not hasattr(p,'ragged_counts'):p.ragged_counts=collections.Counter()
-  p.ragged_counts.update(frames=delta[9],tokens=delta[10],queries=delta[11],states=delta[7],actions=delta[12],attention_blocks=delta[13])
-  p.step_counts.update(applied=delta[6],nonforced=delta[7],forced=delta[8],frames=delta[14],overflow_frames=delta[15],ticks=1)
-  p.step_last=s;p.active_count=s[0];p.iterations+=1
+  launch();launched=time.perf_counter();finished=False
+  @torch.inference_mode()
+  def finish():
+   nonlocal s,finished
+   assert not finished,'step result already consumed'
+   waiting=time.perf_counter()
+   for attempt in range(8):
+    s=list(map(int,p.step_status.cpu().tolist()));p.step_counts['host_reads']+=1
+    if not s[3]:break
+    self.grow_failed_frame(s)
+    if attempt<7:launch()
+   else:raise RuntimeError('Step graph overflow retry budget exhausted')
+   assert s[5]==before[5]+1 and s[1]==0 and s[4]==0
+   assert s[6]-before[6]==before[0]
+   delta=[x-y for x,y in zip(s,before)]
+   p.real_neural_rows+=delta[7];p.neural_rows+=delta[7];p.skipped_forced_rows+=delta[8];p.model_calls+=delta[9]
+   if not hasattr(p,'ragged_counts'):p.ragged_counts=collections.Counter()
+   p.ragged_counts.update(frames=delta[9],tokens=delta[10],queries=delta[11],states=delta[7],actions=delta[12],attention_blocks=delta[13])
+   p.step_counts.update(applied=delta[6],nonforced=delta[7],forced=delta[8],frames=delta[14],overflow_frames=delta[15],ticks=1)
+   p.step_last=s;p.active_count=s[0];p.iterations+=1;finished=True
+   self.counts['step_seconds']+=time.perf_counter()-started
+   self.counts['step_finish_seconds']+=time.perf_counter()-waiting
+   if deferred:self.counts['deferred_host_interval_seconds']+=waiting-launched
+  if deferred:
+   self.counts['deferred_ticks']+=1
+   return finish
+  return finish()
  def statistics(self):
   s=super().statistics();s.update(chain_step_version=1,step_graph_cached=int(self.step_graph is not None),
-   cached=int(self.graph is not None)+int(self.step_graph is not None),step_counts=dict(self.pool.step_counts))
+   cached=int(self.graph is not None)+int(self.root_graph is not None)+int(self.step_graph is not None),step_counts=dict(self.pool.step_counts))
   return s

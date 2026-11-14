@@ -201,6 +201,7 @@ class StreamingPool(ScoringPool):
    r=self.bank[h.slot];b=r['budget'];na=len(r['action_bits'])
    plan=dict(root=np.zeros(b,np.int32),action_index=np.asarray(r['order'],np.int32)[np.arange(b)%na])
    result=aggregate([r],plan,values[k,:b],outcomes[k,:b],stats[k,:b])[0]
+   if 'root_logits' in r:result.update(root_logits=r['root_logits'],root_value=r['root_value'])
    if contexts is not None:result['combat_context']=contexts[k]
    result['root_generation']=h.generation;result['root_slot']=h.slot
    assert result.get('atomic_decisions',result['actual_transitions'])-b==result['nonforced_decisions']+result['forced_actions']

@@ -60,7 +60,10 @@ class Stream:
  def submit(self,calls):
   if not calls:return
   start=time.monotonic();self.game.ensure(calls);inline,jobs=self.batch.prepare(calls);self.inline.update(inline);rows={}
-  observations=self.batch.observer.encode([self.batch.envs[j[0]] for j in jobs]) if jobs else {}
+  if jobs and self.batch.pair.get('collect_ppo'):
+   indices=[j[0] for j in jobs]
+   observations={key:value[indices] for key,value in self.batch.model._last_obs.items()}
+  else:observations=self.batch.observer.encode([self.batch.envs[j[0]] for j in jobs]) if jobs else {}
   for row,job in enumerate(jobs):
    i,tier,cfg,nonce=job;assert i not in self.meta;e=self.batch.envs[i]
    r=plan_job(job,self.batch.envs,{key:value[row] for key,value in observations.items()});features=dict(action_bits=r['action_bits'],observation=r['observation'],max_hp=r['max_hp'])
@@ -101,7 +104,8 @@ class Stream:
    for job,result in completed:
     i,tier,cfg,nonce=job;s=result['statistics'];assert result['simulations']==cfg.simulations
     count.update(roots=1,simulations=cfg.simulations,guide=result['nonforced_decisions'],steps=result['actual_transitions'],forced=result['forced_actions'],
-     atomic_steps=result['atomic_decisions'],prefixes=result['selection_prefix_decisions'],cuts=result['depth_cuts'],terminal=int(s[3]+s[4]+s[9]),anchors=0)
+     atomic_steps=result['atomic_decisions'],prefixes=result['selection_prefix_decisions'],cuts=result['depth_cuts'],terminal=int(s[3]+s[4]+s[9]),
+     anchors=int(s[3]+s[9]) if result.get('value_statistic')=='pre-reward-anchor' else 0)
     del self.meta[i]
   count['receive_seconds']+=time.monotonic()-start;count['receives']+=1
   if time.monotonic()-last>30:

@@ -914,7 +914,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             from rl.algorithms.full480 import collect
             return collect(self, env, callback, rollout_buffer, n_rollout_steps,
                            use_masking, config=getattr(self, 'independent_rollout_config', None) or
-                           dict(seed=search.get('seed', 20261111), upper_wait_seconds=0.))
+                           dict(seed=search.get('seed', 20261111), upper_wait_seconds=.01))
         independent = getattr(self, 'independent_rollout_config', None)
         if independent is not None:
             from rl.algorithms.independent_rollout import collect

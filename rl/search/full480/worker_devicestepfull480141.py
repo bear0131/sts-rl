@@ -74,7 +74,7 @@ def run_worker(commands,responses,settings):
    pids=[int(x) for x in subprocess.check_output(['nvidia-smi','--query-compute-apps=pid','--format=csv,noheader'],text=True).split()]
    assert set(pids)==({os.getpid(),settings['parent_pid']} if settings['parent_cuda'] else {os.getpid()}),pids
    startup=stats();startup['gpu_pids']=pids;emit('ready',startup)
-   stop=False
+   stop=False;loop_started=time.perf_counter()
    while not stop:
     if not engine.pending:packet=commands.get()
     else:
@@ -173,9 +173,12 @@ def run_worker(commands,responses,settings):
      active_before=engine.active_count;start=time.perf_counter();ready=engine.receive(steps=1)
      elapsed=time.perf_counter()-start;counts['gpu_service_seconds']+=elapsed;counts['active_tick_time_sum']+=active_before*elapsed;counts['active_tick_sum']+=active_before;counts['ticks']+=1
      if ready:emit('roots',ready);counts['roots_published']+=len(ready)
+   counts['loop_wall_seconds']=time.perf_counter()-loop_started
+   shutdown_started=time.perf_counter()
    if scorer is not None:scorer.close()
    if not engine.closed:engine.close()
    arena.close();upper.__exit__(None,None,None);torch.cuda.synchronize()
+   counts['shutdown_seconds']=time.perf_counter()-shutdown_started
    final=stats();assert final['weights_unchanged'];emit('closed',final)
  except BaseException:
   failure=traceback.format_exc()

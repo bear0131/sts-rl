@@ -99,9 +99,19 @@ class PairedTokenBatch(SmallPlayoutBatch):
         by_slot = {}
         for start in range(0, len(ranked), 128):
             group = ranked[start : start + 128]
-            sources = self.score_roots([self.envs[job[0]] for job, z in group],
-                observations=[z['observation'] for _,z in group],
-                contexts=[z.get('combat_context') for _,z in group]) if self.deck else self.score_roots([self.envs[job[0]] for job,z in group])
+            sources = [None] * len(group)
+            missing = []
+            for j, (_, z) in enumerate(group):
+                if 'root_logits' in z:
+                    sources[j] = (dict(observation=z['observation'], action_bits=z['action_bits'],
+                                       value=z['root_value']), z['root_logits'])
+                else:missing.append(j)
+            if missing:
+                pending = [group[j] for j in missing]
+                scored = self.score_roots([self.envs[job[0]] for job, z in pending],
+                    observations=[z['observation'] for _,z in pending],
+                    contexts=[z.get('combat_context') for _,z in pending]) if self.deck else self.score_roots([self.envs[job[0]] for job,z in pending])
+                for j, value in zip(missing, scored, strict=True):sources[j] = value
             for (job, z), (row, logits) in zip(group, sources, strict=True):
                 bits = np.asarray(z["action_bits"], np.uint32)
                 if not np.array_equal(row["action_bits"], bits):
