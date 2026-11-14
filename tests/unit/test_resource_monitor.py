@@ -101,6 +101,30 @@ def test_context_exception_stops_monitor_thread():
         monitor.snapshot()
 
 
+def test_thread_details_do_not_double_count_tree_cpu_or_reused_process_ids(monkeypatch):
+    import rl.training.resource_monitor as monitor_module
+    state = dict(created=1., user=10., worker=4.)
+    process = SimpleNamespace(pid=42, create_time=lambda: state['created'],
+        children=lambda **_: [], memory_info=lambda: SimpleNamespace(rss=1),
+        cpu_times=lambda: SimpleNamespace(user=state['user'], system=0.),
+        threads=lambda: [SimpleNamespace(id=43, user_time=state['worker'], system_time=0.)])
+    monkeypatch.setattr(monitor_module.psutil, 'Process', lambda: process)
+    with ResourceMonitor(interval=60, thread_details=True) as monitor:
+        state.update(user=13., worker=6.)
+        first = monitor.snapshot()
+        assert first['tree_cpu_seconds'] == 3.
+        assert first['process_cpu'][0]['cpu_seconds'] == 3.
+        assert first['thread_cpu'][0]['cpu_seconds'] == 2.
+        state.update(created=2., user=1., worker=.5)
+        monitor.snapshot()
+        state.update(user=3., worker=1.5)
+        second = monitor.snapshot()
+        assert second['tree_cpu_seconds'] == 5.
+        assert [p['cpu_seconds'] for p in second['process_cpu']] == [3., 2.]
+        assert [p['cpu_seconds'] for p in second['thread_cpu']] == [2., 1.]
+        assert first['tree_cpu_seconds'] == 3.
+
+
 def test_snapshot_serializes_with_background_sampling(monkeypatch):
     import rl.training.resource_monitor as monitor_module
     entered = threading.Event()

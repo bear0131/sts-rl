@@ -238,6 +238,9 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
         tick = time.monotonic()
         # Old forced roots bypass model selection. The current learner still
         # consumes their frozen critic, batched once before GAE (never zeroed).
+        # Nearby states of one environment share the frozen run context.
+        # Reordering critic-only rows cannot change actions or PPO coordinates.
+        deferred_values.sort(key=lambda pair: (pair[1], pair[0]))
         for start in range(0, len(deferred_values), 512):
             coords = np.asarray(deferred_values[start:start+512], np.intp)
             t, e = coords.T
@@ -253,7 +256,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             raise FloatingPointError('incomplete frozen critic values')
         stream.finish()
         rollout_buffer.compute_returns_and_advantage(torch.from_numpy(values), model._last_episode_starts)
-        apply_room_returns(model, rollout_buffer)
+        apply_room_returns(model, rollout_buffer, last_values=values)
         model.deck_search_rng = rng.bit_generator.state
         stats['collection_seconds'] = time.monotonic()-started
         stats.update({'vector_'+key+'_seconds': value-vector_start[key]

@@ -3408,7 +3408,8 @@ def main() -> None:
                 from rl.training.resource_monitor import ResourceMonitor
                 monitor = resource_stack.enter_context(ResourceMonitor(
                     interval=args.rollout_resource_interval,
-                    gpu=model.device.type=='cuda', torch_device=model.device))
+                    gpu=model.device.type=='cuda', torch_device=model.device,
+                    thread_details=True))
             # This entry owns its metrics-only callbacks. Keep arbitrary
             # library callbacks' autograd behavior unchanged.
             with th.inference_mode() if pure_ppo else nullcontext():

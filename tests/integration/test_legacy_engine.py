@@ -51,7 +51,7 @@ class ReferenceService:
         return self.scorer(requests)
 
 
-@pytest.mark.parametrize('scenario', ['ordinary','win','loss','draw','multi','multi_prefix','potion_multi'])
+@pytest.mark.parametrize('scenario', ['ordinary','win','loss','draw','multi','multi_prefix','potion_multi','large_piles'])
 def test_native_wave_preserves_paired_actions_observations_and_root(complete_combat_factory, scenario):
     env = complete_combat_factory(['STRIKE_RED']*4+['DEFEND_RED']*4+['BASH'],seed=42101,
         card_language=True,upper_public_context=True,event_option_observation=True,deck_latent_context=True)
@@ -68,6 +68,10 @@ def test_native_wave_preserves_paired_actions_observations_and_root(complete_com
             env.thick.bc.execute(sts.Action(sts.ActionType.POTION,0))
         else:
             env.thick.bc.execute(sts.Action(sts.ActionType.CARD,0,0))
+    elif scenario == 'large_piles':
+        env.thick.bc.apply_custom_state(dict(
+            draw=[('SEARING_BLOW', 13)]*129+[('BASH',1)]*19,
+            discard=[('RITUAL_DAGGER',1),('BASH',0)], exhaust=[('ANGER',1)]*73))
     env._invalidate_backend_cache()
     if scenario == 'multi_prefix':
         from env.core.native_actions import AUTOREGRESSIVE_MULTI
@@ -116,6 +120,41 @@ def test_native_wave_preserves_paired_actions_observations_and_root(complete_com
         assert env.export_training_state()==before
     finally:
         wave.close()
+
+
+def test_native_search_projection_reads_lane_state_without_mutating_root(complete_combat_factory):
+    env = complete_combat_factory(['STRIKE_RED']*4+['DEFEND_RED']*4+['BASH'], seed=42101,
+        card_language=True, upper_public_context=True, event_option_observation=True,
+        deck_latent_context=True)
+    root = env._obs()
+    before = env.export_training_state()
+    policy = DeckLatentPolicy(env.observation_space, env.action_space, lambda _:5e-5,
+        d_model=32, n_layers=1, n_heads=4, room_lambda=1., reward_flow='sequential-v1',
+        combat_value_target='pre-reward-anchor', deck_combat_encoder='transformer64x2').eval()
+    policy.set_training_mode(False)
+    fields = DeckLatentScorer(policy, [root]).observation_keys
+    encoder = NativeRootObservationBatch(env, fields=fields)
+    branch = env.fork_run()
+    try:
+        branch.thick.bc.apply_custom_state(dict(
+            player=dict(hp=23,max_hp=91,gold=432),
+            hand=[('SEARING_BLOW',13),('STRIKE_RED',1)],
+            draw=[('BASH',1)]*131,discard=[('DEFEND_RED',2)],exhaust=[('ANGER',1)]*73))
+        branch._invalidate_backend_cache()
+        reference = branch._obs()
+        actual = encoder.encode_search([env], [branch.thick.bc], [0], [root])
+        for field in fields:
+            assert actual[field][0].tobytes() == reference[field].tobytes(), field
+        np.testing.assert_array_equal(actual['combat_legal'][0], branch.action_masks())
+        saved = {k:v.copy() for k,v in actual.items()}
+        second = encoder.encode_search([env]*3, [branch.thick.bc]*3, [0]*3, [root]*3)
+        for field in fields:
+            second[field].fill(99)
+            np.testing.assert_array_equal(actual[field], saved[field], err_msg=field)
+        assert env.export_training_state() == before
+        assert set(encoder.prototypes) < set(env.observation_space.spaces)
+    finally:
+        branch.close()
 
 
 @pytest.mark.cuda

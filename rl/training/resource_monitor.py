@@ -12,7 +12,8 @@ import psutil
 
 
 class ResourceMonitor:
-    def __init__(self, *, interval: float = 0.5, gpu: bool = False, torch_device=None):
+    def __init__(self, *, interval: float = 0.5, gpu: bool = False, torch_device=None,
+                 thread_details: bool = False):
         if not math.isfinite(interval) or interval <= 0:
             raise ValueError('resource sample interval must be positive')
         self.interval = interval
@@ -27,6 +28,10 @@ class ResourceMonitor:
         self._stop = threading.Event()
         self._sample_lock = threading.RLock()
         self._previous_cpu = {}
+        self.thread_details = thread_details
+        self._process_cpu = {}
+        self._previous_threads = {}
+        self._thread_cpu = {}
         self._thread = None
         self._active = False
         self._smi = shutil.which("nvidia-smi") if gpu else None
@@ -91,9 +96,18 @@ class ResourceMonitor:
                 key = (process.pid, process.create_time())
                 times = process.cpu_times()
                 total = times.user + times.system
-                cpu_delta += max(0.0, total - self._previous_cpu.get(key, total))
+                delta = max(0.0, total - self._previous_cpu.get(key, total))
+                cpu_delta += delta
                 self._previous_cpu[key] = total
+                self._process_cpu[key] = self._process_cpu.get(key, 0.0) + delta
                 rss += process.memory_info().rss
+                if self.thread_details:
+                    for thread in process.threads():
+                        identity = (*key, thread.id)
+                        used = thread.user_time + thread.system_time
+                        increment = max(0., used-self._previous_threads.get(identity, used))
+                        self._thread_cpu[identity] = self._thread_cpu.get(identity, 0.) + increment
+                        self._previous_threads[identity] = used
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 self.errors.add("some process samples unavailable")
         row = {"elapsed_seconds": time.perf_counter() - self.started,
@@ -231,6 +245,13 @@ class ResourceMonitor:
             "elapsed_seconds": elapsed,
             "tree_cpu_seconds": cpu_seconds,
             "tree_cpu_percent_mean": 100 * cpu_seconds / max(elapsed, 1e-9),
+            "process_cpu": [dict(pid=pid, created_at=created, cpu_seconds=seconds,
+                cpu_percent_mean=100*seconds/max(elapsed, 1e-9))
+                for (pid, created), seconds in sorted(self._process_cpu.items())],
+            "thread_cpu": ([dict(pid=pid, created_at=created, tid=tid, cpu_seconds=seconds,
+                cpu_percent_mean=100*seconds/max(elapsed, 1e-9))
+                for (pid, created, tid), seconds in sorted(self._thread_cpu.items())]
+                if self.thread_details else None),
             "tree_rss_peak_sampled_bytes": max(s["tree_rss_bytes"] for s in self.samples),
             "system_available_min_bytes": min(s["system_available_bytes"] for s in self.samples),
             "cgroup_memory_peak_sampled_bytes": max(cgroup_memory) if cgroup_memory else None,
@@ -242,6 +263,7 @@ class ResourceMonitor:
             "errors": sorted(self.errors),
             "notes": [
                 "100% CPU means one logical core; short-lived children can be undersampled.",
+                "Per-process/thread percentages use the whole monitored interval, including idle time; thread totals are not added to process totals.",
                 "RSS sums may double-count shared pages; sampled peaks are lower bounds.",
                 "NVIDIA telemetry is device-wide and can include other processes.",
                 "Torch allocator values cover this process and the selected CUDA device; sampled peaks are lower bounds, not allocator high-water marks.",

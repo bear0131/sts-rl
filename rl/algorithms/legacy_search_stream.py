@@ -30,6 +30,7 @@ class Stream:
             'anchor_rows','cutoff_rows','terminal_rows','max_active','budget_floor_overage',
             'searched_roots','selected_roots','eligible_roots','executed_search_actions',
             'changed_policy_actions','native_fallback_roots','native_fallback_seconds',
+            'native_fallback_simulator_sum_seconds','native_fallback_encode_sum_seconds',
             'context_refreshes','search_seconds','worker_search_seconds',
             'resident_frames','resident_frame_roots_max'), 0.)
         self.stats.update(dict.fromkeys(DECK_SEARCH_CACHE_METRICS, 0.))

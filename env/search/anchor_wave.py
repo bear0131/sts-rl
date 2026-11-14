@@ -24,15 +24,20 @@ class NativeAnchorFrontier:
         self.wave = sts.AnchorWave([e.thick.bc for e in self.sources],
             [sum(1 << j for j in (e._multi or ())) for e in self.sources],
             worlds, uniforms, max_active, min(8, threads), max_depth)
-        self.encoder = NativeRootObservationBatch(self.sources[0])
+        self.encoder = NativeRootObservationBatch(self.sources[0], fields=self.fields)
         self.views = {}
         self.complete = False
+        self.seconds = dict(native_fallback_simulator_sum_seconds=0.,
+                            native_fallback_encode_sum_seconds=0.)
 
     def _frontier(self, rows):
-        views, live, observations = [], [], [None] * len(rows)
+        live, observations = [], [None] * len(rows)
         kinds = ('combat', 'anchor', 'cutoff')
         for j,(slot, root, job, prefix, depth, kind) in enumerate(rows):
             slot, root, kind = int(slot), int(root), int(kind)
+            if kind != 1:
+                live.append(j)
+                continue
             previous = self.views.get(slot)
             if previous is None or previous[0] != root:
                 if previous is not None:
@@ -45,37 +50,45 @@ class NativeAnchorFrontier:
             view._multi = {i for i in range(10) if int(prefix) & (1 << i)} or None
             view.thick.combat_exit_anchor_pending = kind == 1
             view._invalidate_backend_cache()
-            views.append(view)
-            if kind == 1:
-                observations[j] = view._obs()
-            else:
-                live.append(j)
+            observations[j] = view._obs()
         if live:
-            encoded = self.encoder.encode([views[j] for j in live])
+            encoded = self.encoder.encode_search(
+                [self.sources[int(rows[j, 1])] for j in live],
+                [self.wave.state(int(rows[j, 0])) for j in live],
+                [int(rows[j, 3]) for j in live],
+                [self.roots[int(rows[j, 1])] for j in live])
             for row,j in enumerate(live):
                 observations[j] = {k: v[row] for k,v in encoded.items()}
         result = []
-        for row,view,obs in zip(rows, views, observations, strict=True):
+        for row,obs in zip(rows, observations, strict=True):
             _,root,job,_,_,kind = map(int,row)
             # Exact static comparison includes real permanent card/relic changes.
             delta = {k: obs[k] for k in self.fields if k not in self.static
                      or not np.array_equal(obs[k], self.roots[root][k])}
-            result.append((root,job,kinds[kind],view.action_masks(),delta))
+            # Both projections publish the canonical autoregressive mask.
+            # Only anchor rows have a forced continue action.
+            mask = obs['combat_legal'].copy()
+            result.append((root,job,kinds[kind],mask,delta))
         return result
 
     def advance(self, outputs=None):
         if self.complete:
             raise RuntimeError('native fallback already consumed')
+        started = time.perf_counter()
         if outputs is not None:
             logits,values = zip(*outputs)
             width = self.sources[0].action_space.n
             scores = np.stack([np.zeros(width) if v is None else v for v in logits])
             self.wave.advance(scores.astype(np.float64),np.asarray(values,np.float64))
         rows = self.wave.ready()
+        self.seconds['native_fallback_simulator_sum_seconds'] += time.perf_counter()-started
         if not len(rows):
             self.complete = True
-            return dict(done=True, results=self.wave.results(), stats=self.wave.statistics())
-        return dict(done=False, rows=self._frontier(rows))
+            return dict(done=True, results=self.wave.results(), stats=dict(self.wave.statistics(), **self.seconds))
+        started = time.perf_counter()
+        frontier = self._frontier(rows)
+        self.seconds['native_fallback_encode_sum_seconds'] += time.perf_counter()-started
+        return dict(done=False, rows=frontier)
 
     def close(self):
         for _,view in self.views.values():

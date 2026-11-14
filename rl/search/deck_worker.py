@@ -79,8 +79,9 @@ class DeckWorker:
         capacity, budget = self.settings['capacity'], self.settings['budget_cap']
         mirrors = self.settings['environment_capacity']
         lanes = capacity * ((budget + 15)//16)*16
-        frame = min(ResidentStepPipeline.frame_capacity,
-                    1 << (max(1, capacity*self.settings.get('normal_budget', budget))-1).bit_length())
+        # Physical frames must accommodate the live pool, including boss roots.
+        # The ordinary-root budget is not a bound on concurrently live chains.
+        frame = min(ResidentStepPipeline.frame_capacity, lanes)
         self.arena = CudaBattleArena(self.folder/'deck.cubin',
             self.manifest['sha256']['deck.cubin'], capacity+lanes+mirrors,
             card_count=_nosl_compact_lut()['layout']['card_count'], paged=True,

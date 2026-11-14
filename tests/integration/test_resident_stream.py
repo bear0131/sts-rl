@@ -333,8 +333,9 @@ def test_fused_refill_and_completion_counts_keep_live_siblings():
 
 
 @pytest.mark.parametrize('page_limit', [None, 64])
+@pytest.mark.parametrize('frame_capacity', [32, 128])
 def test_stream_accepts_new_roots_before_drain_and_reuses_only_retired_pages(
-        complete_combat_factory,cuda_battle_artifacts,page_limit):
+        complete_combat_factory,cuda_battle_artifacts,page_limit,frame_capacity):
     from env.core.run_env import _nosl_compact_lut
     from env.search.cuda_battle import CudaBattleArena
     from env.search.resident_chains import root_payload
@@ -357,7 +358,7 @@ def test_stream_accepts_new_roots_before_drain_and_reuses_only_retired_pages(
         expected.append(result[0])
     folder,manifest,bridge=cuda_battle_artifacts
     arena=CudaBattleArena(folder/'deck.cubin',manifest['sha256']['deck.cubin'],2+128,
-        card_count=_nosl_compact_lut()['layout']['card_count'],paged=True,observation_capacity=64)
+        card_count=_nosl_compact_lut()['layout']['card_count'],paged=True,observation_capacity=frame_capacity)
     scorer=ResidentDeckScorer(policy,graph_capacity=2,native_host=bridge)
     score_anchor = scorer._score_anchor
     def compare_anchor(*args, **kwargs):
