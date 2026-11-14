@@ -89,7 +89,7 @@ class DeckWorker:
 
     def submit(self, rows):
         from env.search.resident_transport import unpack_actor_roots
-        rows, obs = unpack_actor_roots(rows, row_observations=False)
+        rows, obs = unpack_actor_roots(rows, row_observations=False, packed=True)
         if self.engine is None or (self.estimates.keys() | self.actor_queue.keys()) & rows.keys():
             raise RuntimeError('parked owner or duplicate search')
         if all('context' in row and 'slot' not in row for row in rows.values()):
@@ -111,7 +111,9 @@ class DeckWorker:
             return self.inference.actor(upper) if upper is not None else None
         keys = list(rows)
         batches, self.actor_batches = self.actor_batches, []
-        obs = (batches[0] if len(batches) == 1 else
+        from env.search.resident_transport import PackedObservationBatch
+        obs = (batches[0].concatenate(batches[1:]) if isinstance(batches[0],PackedObservationBatch)
+               else batches[0] if len(batches) == 1 else
                {k: np.concatenate([b[k] for b in batches]) for k in batches[0]})
         masks = np.stack([r['mask'] for r in rows.values()])
         slots = np.asarray([r['slot'] for r in rows.values()], np.intp)
@@ -119,7 +121,8 @@ class DeckWorker:
             upper_obs, upper_masks, upper_slots, capacity = upper
             if capacity != self.settings['environment_capacity']:
                 raise ValueError('actor batch environment capacity changed')
-            obs = {k: np.concatenate((v, upper_obs[k]), axis=0) for k, v in obs.items()}
+            obs = (obs.concatenate([upper_obs]) if isinstance(obs,PackedObservationBatch) else
+                   {k: np.concatenate((v, upper_obs[k]), axis=0) for k, v in obs.items()})
             masks = np.concatenate((masks, upper_masks), axis=0)
             slots = np.concatenate((slots, upper_slots), axis=0)
         actor = self.inference.actor((obs, masks, slots, self.settings['environment_capacity']), context=True)

@@ -38,10 +38,12 @@ class DeckSearchInferenceCache:
 
 
 class DeckLatentScorer:
-    def __init__(self, policy, root_observations, context=None, tables=None, inference_cache=None):
+    def __init__(self, policy, root_observations, context=None, tables=None, inference_cache=None,
+                 *, head_forward=None):
         if policy.training:
             raise ValueError('search scorer requires a frozen inference policy')
         self.core = policy.core
+        self.head_forward = head_forward
         self.device = next(policy.parameters()).device
         self.roots = root_observations
         self.context_refreshes = 0
@@ -130,6 +132,8 @@ class DeckLatentScorer:
 
             def forward(inputs):
                 self.inference_cache.batches[side] += 1
+                if self.head_forward is not None:
+                    return self.head_forward(inputs, anchor=anchor, width=width)
                 tensors = {k: torch.as_tensor(v, device=self.device) for k, v in inputs.items()}
                 projected = tensors.pop('_context')
                 relics = tensors.pop('_relic_summary')

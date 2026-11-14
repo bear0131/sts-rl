@@ -31,6 +31,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     if n_rollout_steps != rollout_buffer.buffer_size:
         raise ValueError('rollout must fill its declared sample count')
     vec = env.venv
+    mask_getters = [e.get_wrapper_attr('action_masks') for e in vec.envs]
     import slaythespire as sts
     if not hasattr(sts, 'ObservationRowCopy'):
         raise RuntimeError('legacy PPO consumer requires the explicit native row-copy build')
@@ -55,7 +56,9 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     upper_waiting, actions, masks, estimates, upper_policy = {}, {}, {}, {}, {}
     deferred_values = []
     upper_pending = None
+    action_deadline = None
     combat = vocab.PHASE_VOCAB_INDEX['combat']
+    runic_dome = vocab.RELIC_VOCAB_INDEX['Runic Dome']
     stats = dict(policy_seconds=0., env_step_seconds=0., search_wait_seconds=0.,
         root_submit_seconds=0., root_prepare_seconds=0.,
         upper_batches=0, upper_rows=0, transition_batches=0, transitions=0,
@@ -100,7 +103,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             tick = time.monotonic()
             calls = {}
             for i in sorted(ready):
-                mask = np.asarray(vec.envs[i].get_wrapper_attr('action_masks')(), bool)
+                mask = np.asarray(mask_getters[i](), bool)
                 masks[i] = mask
                 legal = (int(model._last_obs['phase'][i, 0]) == combat
                          and not model._last_obs['combat_exit_anchor'][i].any())
@@ -112,8 +115,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                     stats['forced_rows'] += 1
                 elif legal and legal_count > 1 and draws[positions[i], i, 1] < config.fraction:
                     # Runic Dome has no public current intent: retain model behavior.
-                    base = vec.envs[i].unwrapped
-                    if 'Runic Dome' not in [r['id'] for r in base.thick.gc.relic_state()]:
+                    if not np.any(model._last_obs['relics'][i] == runic_dome):
                         calls[i] = mask
                     else:
                         upper_waiting[i] = time.monotonic()
@@ -138,7 +140,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 stats['policy_seconds'] += time.monotonic()-tick
             consume_upper()
             tick = time.monotonic()
-            decisions = stream.receive(timeout=.001 if not actions else 0.)
+            decisions = stream.receive(timeout=.001 if len(actions) < 32 and stream.pending else 0.)
             stats['search_wait_seconds'] += time.monotonic()-tick
             for i, result in decisions.items():
                 actions[i] = result['action']
@@ -146,7 +148,19 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 upper_policy[i] = result['reward'], result['campfire']
             consume_upper()
             if not actions:
+                action_deadline = None
                 continue
+            # Ready slots remain exclusively owned here. Coalesce arrivals at
+            # the existing step boundary, without a vector-wide search barrier.
+            # Seeds/draws belong to (position, slot), never completion order.
+            # A bounded wait prevents a slow native fallback from holding up
+            # unrelated games or the last partially completed rollout slots.
+            if action_deadline is None:
+                action_deadline = time.monotonic() + .004
+            if (len(actions) < 32 and (stream.pending or upper_pending is not None)
+                    and time.monotonic() < action_deadline):
+                continue
+            action_deadline = None
             tick = time.monotonic()
             indices = sorted(actions)
             ordered = {i: actions.pop(i) for i in indices}
@@ -224,7 +238,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 (obs, rollout_buffer.action_masks[t,e], np.arange(len(e))))
             rollout_buffer.values[t,e] = answer
         values = stream.service.call('values', (model._last_obs,
-            np.stack([e.get_wrapper_attr('action_masks')() for e in vec.envs]), np.arange(vec.num_envs)))
+            np.stack([get_mask() for get_mask in mask_getters]), np.arange(vec.num_envs)))
         stats['value_rows'] = len(deferred_values)+vec.num_envs
         stats['value_seconds'] = time.monotonic()-tick
         if not np.isfinite(rollout_buffer.values).all():

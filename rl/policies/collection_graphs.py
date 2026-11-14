@@ -200,7 +200,8 @@ class SharedCollectionGraphs:
         capacity = max(256, 1 << (count-1).bit_length())
         schema = tuple((k, tuple(v.shape[1:]), v.dtype) for k,v in packed.items())
         previous = self.packed_bank
-        if previous is None or previous['schema'] != schema or previous['capacity'] < count:
+        if (previous is None or previous['schema'] != schema or previous['capacity'] < count
+                or previous['layout'] != layout):
             with torch.inference_mode(False), torch.no_grad():
                 columns = {k: torch.empty((capacity,*v.shape[1:]),device=self.device,dtype=v.dtype)
                            for k,v in packed.items()}
@@ -210,8 +211,6 @@ class SharedCollectionGraphs:
             self.packed_bank = bank
         else:
             bank = previous
-            if bank['layout'] != layout:
-                raise ValueError('packed observation layout changed without a schema change')
         for k,v in packed.items():
             bank['columns'][k][:count].copy_(v)
         bank['slots'][:count].copy_(torch.as_tensor(slots,device=self.device))

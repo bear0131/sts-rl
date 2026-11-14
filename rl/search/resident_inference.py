@@ -7,9 +7,11 @@ from types import SimpleNamespace
 from collections.abc import Mapping
 import numpy as np
 import torch
+from env.search.resident_transport import PackedObservationBatch
 from env.search.anchored_chains import ChainRequest
 from rl.policies.collection_graphs import SharedCollectionGraphs
 from rl.policies.deck_latent import SearchContext
+from rl.policies.combat_summary import CombatSummary
 from rl.search.deck_latent import DeckLatentScorer, DeckSearchInferenceCache
 from rl.training import reward_monitor, campfire_monitor
 
@@ -37,6 +39,49 @@ class ResidentInference:
         self.cache = DeckSearchInferenceCache(core, cache_bytes)
         self.jobs = {}
         self.geometry = None
+        self.tables = core.combat.summaries.export_inference_tables()
+
+    @torch.no_grad()
+    def _fallback_head(self, inputs, *, anchor, width):
+        """Old fallback frame: one upload, captured heads, one owned reply.
+
+        Native lanes and their exact incremental summaries remain authoritative.
+        The full run encoder is not a consumer of this scoring frontier.
+        """
+        from env.search.cuda_battle import upload_arrays
+        groups = {}
+        for key,value in inputs.items():
+            groups.setdefault(value.dtype.str,[]).append(key)
+        layout, storage = {}, []
+        count = len(next(iter(inputs.values())))
+        for group,names in enumerate(groups.values()):
+            offset=0
+            for key in names:
+                shape=inputs[key].shape[1:]
+                end=offset+int(np.prod(shape))
+                layout[key]=group,offset,end,shape
+                offset=end
+            storage.append(np.concatenate([inputs[k].reshape(count,-1) for k in names],1))
+        uploaded=upload_arrays(self.native_host,'cuda',storage)
+        batch={str(i):v for i,v in enumerate(uploaded)}
+        padded=max(8,1 << (count-1).bit_length())
+        signature=('native-fallback-head',anchor,width,padded,
+                   tuple((k,v) for k,v in layout.items()),
+                   tuple((k,v.dtype) for k,v in batch.items()))
+        def forward(columns):
+            tensors={k:columns[str(g)][:,lo:hi].reshape(padded,*shape)
+                     for k,(g,lo,hi,shape) in layout.items()}
+            context=tensors.pop('_context');relics=tensors.pop('_relic_summary')
+            if anchor:
+                return (self.core.anchor_with_context(tensors,context,relics).reshape(-1,1),)
+            summary=CombatSummary(tensors.pop('_piles'),tensors.pop('_pile_counts'),relics)
+            if width is not None:
+                tensors['_choice_width']=width
+            logits,values=self.core.combat_with_context(tensors,SearchContext(context,None),summary)
+            return (torch.cat((logits,values.reshape(-1,1)),1),)
+        packed=self.graphs._replay(self.graphs.entries,signature,batch,padded,forward,
+                                  self.graphs.capacity)[0][:count].cpu().numpy().copy()
+        return (np.empty((count,0),np.float32) if anchor else packed[:,:-1]),packed[:,-1]
 
     @torch.no_grad()
     def actor(self, payload, *, context=False, values_only=False):
@@ -58,8 +103,13 @@ class ResidentInference:
             self.layout = {k:layout[k] for k in obs}
         # Concatenate in native NumPy before one upload, avoiding one eager
         # Torch copy per field and a second bank assembly on the device.
-        banks = [np.concatenate([obs[k].reshape(len(masks), -1) for k in names], axis=1)
-                 for names in self.groups.values()]
+        if isinstance(obs,PackedObservationBatch):
+            # Transport layout is grouped by dtype in the same field order.
+            # Its owned arrays can go directly to the device upload.
+            banks = [column[2] for column in obs.columns]
+        else:
+            banks = [np.concatenate([obs[k].reshape(len(masks), -1) for k in names], axis=1)
+                     for names in self.groups.values()]
         uploaded = upload_arrays(self.native_host, 'cuda', [*banks, np.asarray(masks,dtype=np.uint8)])
         packed = {'packed'+str(j):v for j,v in enumerate(uploaded[:-1])}
         tensor = _PackedViews(self.layout, packed, len(masks))
@@ -89,7 +139,8 @@ class ResidentInference:
         key, roots, context = payload
         if key in self.jobs: raise ValueError('duplicate native fallback')
         context = SearchContext(*(torch.as_tensor(v, device='cuda') for v in context))
-        scorer = DeckLatentScorer(self.policy, roots, context=context, inference_cache=self.cache)
+        scorer = DeckLatentScorer(self.policy, roots, context=context, tables=self.tables,
+            inference_cache=self.cache, head_forward=self._fallback_head)
         self.jobs[key] = scorer, {}
 
     @torch.no_grad()

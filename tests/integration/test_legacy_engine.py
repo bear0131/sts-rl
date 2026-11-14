@@ -119,9 +119,9 @@ def test_native_wave_preserves_paired_actions_observations_and_root(complete_com
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize('force_fallback', [False, True])
+@pytest.mark.parametrize('force_fallback,environment_count', [(False,4), (True,4), (False,40)])
 def test_legacy_native_real_ppo_two_rounds_and_ordinary_restore(tmp_path,cuda_battle_artifacts,
-                                                            monkeypatch,force_fallback):
+                                                            monkeypatch,force_fallback,environment_count):
     from stable_baselines3.common.vec_env import VecMonitor
     from stable_baselines3.common.callbacks import BaseCallback
     from gymnasium.wrappers import TimeLimit
@@ -146,7 +146,7 @@ def test_legacy_native_real_ppo_two_rounds_and_ordinary_restore(tmp_path,cuda_ba
             card_language=True,global_map_view=True,upper_public_context=True,event_option_observation=True,
             combat_action_contract='autoregressive-v2',combat_exit_anchor=True,reward_flow='sequential-v1',
             deck_latent_context=True)),6000))
-    def vector():return VecMonitor(NativeSearchVecEnv([factory]*4,threads=2))
+    def vector():return VecMonitor(NativeSearchVecEnv([factory]*environment_count,threads=2))
     class Verify(BaseCallback):
         def _on_step(self):return True
         def _on_rollout_end(self):
@@ -171,7 +171,8 @@ def test_legacy_native_real_ppo_two_rounds_and_ordinary_restore(tmp_path,cuda_ba
             cuda_artifacts=str(cuda_battle_artifacts[0]),inference_cache_bytes=64*1024**2,
             action_selection='search-filter-policy-rank-v1'))
         model.deck_search_snapshot_dir=str(tmp_path/'weights')
-        model.learn(256,callback=Verify())
+        samples=environment_count*32*2
+        model.learn(samples,callback=Verify())
         assert (model.deck_search_last_stats['native_fallback_roots'] > 0) == force_fallback
         assert model._resident_search_service.status['generation']==2
         source=save_bundle(model,tmp_path/'first',rank=0,world_size=1,run_id='legacy-test',
@@ -179,15 +180,15 @@ def test_legacy_native_real_ppo_two_rounds_and_ordinary_restore(tmp_path,cuda_ba
         close_collection_service(model)
         target=vector()
         restored=AccumulatingMaskablePPO.load(source/'model.zip',env=target,device='cuda')
-        restored._setup_learn(256,reset_num_timesteps=False)
+        restored._setup_learn(samples,reset_num_timesteps=False)
         restore_learner(restored,source,rank=0,world_size=1)
         assert restored._recovery_environment_restored
         assert restored.deck_search_rng==model.deck_search_rng
         for key, value in restored._last_obs.items():
             np.testing.assert_array_equal(target.venv.buf_obs[key], value, err_msg=key)
             np.testing.assert_array_equal(model._last_obs[key], value, err_msg=key)
-        restored.learn(256,reset_num_timesteps=False,callback=Verify())
-        assert restored.num_timesteps==512
+        restored.learn(samples,reset_num_timesteps=False,callback=Verify())
+        assert restored.num_timesteps==samples*2
         assert restored._resident_search_service.status['generation']==2
         save_bundle(restored,tmp_path/'resumed',rank=0,world_size=1,run_id='legacy-test',
                     wandb_id=None,config={'ascension':0})

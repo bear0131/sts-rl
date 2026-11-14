@@ -827,6 +827,7 @@ class SlayTheSpireEnv(gym.Env):
 
     def _invalidate_thin_cache(self):
         self._cached_action_mask = None
+        self._cached_joint_actions = _UNCACHED
 
     def _invalidate_backend_cache(self):
         self._nosl_current_context = None
@@ -1108,9 +1109,14 @@ class SlayTheSpireEnv(gym.Env):
     def _joint_policy_actions(self):
         if self._autoregressive_actions:
             self._multi_desc()
-            prefix = sum(1 << i for i in (self._multi or ()))
-            return self.thick.bc.autoregressive_policy_actions(prefix)
-        return self.thick.bc.joint_policy_actions()
+        if self._cached_joint_actions is _UNCACHED:
+            if self._autoregressive_actions:
+                prefix = sum(1 << i for i in (self._multi or ()))
+                actions = self.thick.bc.autoregressive_policy_actions(prefix)
+            else:
+                actions = self.thick.bc.joint_policy_actions()
+            self._cached_joint_actions = tuple(actions)
+        return self._cached_joint_actions
 
     def native_combat_actions(self):
         """Complete legal bits for the current live root; no legacy slot mapping."""

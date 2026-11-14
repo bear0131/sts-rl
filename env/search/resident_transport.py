@@ -8,6 +8,55 @@ from .cuda_battle import load_artifacts
 from .resident_chains import root_payload
 import numpy as np
 import math
+from collections.abc import Mapping
+
+
+class PackedObservationBatch(Mapping):
+    """Keep the FIFO's owned dtype columns intact through model admission."""
+    def __init__(self, columns, order):
+        self.columns, self.order, self.views = columns, tuple(order), {}
+        self.layout = {}
+        self.count = len(columns[0][2])
+        for group, (names, shapes, storage) in enumerate(columns):
+            offset = 0
+            if len(storage) != self.count:
+                raise ValueError('inconsistent packed observation row counts')
+            for name, shape in zip(names, shapes, strict=True):
+                end = offset + math.prod(shape)
+                self.layout[name] = group, offset, end, tuple(shape)
+                offset = end
+            if offset != storage.shape[1]:
+                raise ValueError('packed observation column width changed')
+        if len(self.order) != len(self.layout) or set(self.order) != self.layout.keys():
+            raise ValueError('packed observation fields changed')
+
+    def __iter__(self): return iter(self.order)
+    def __len__(self): return len(self.order)
+    def __getitem__(self, name):
+        if name not in self.views:
+            group, start, end, shape = self.layout[name]
+            self.views[name] = self.columns[group][2][:,start:end].reshape(self.count,*shape)
+        return self.views[name]
+
+    def concatenate(self, others):
+        """Copy three dtype matrices, not every field and then those matrices."""
+        if not others:
+            return self
+        result = []
+        for group, (names, shapes, storage) in enumerate(self.columns):
+            pieces = [storage]
+            for other in others:
+                if isinstance(other, PackedObservationBatch) and other.layout == self.layout:
+                    piece = other.columns[group][2]
+                else:
+                    if set(other) != set(self):
+                        raise ValueError('merged observation schema changed')
+                    piece = np.concatenate([other[k].reshape(len(other[k]),-1) for k in names],1)
+                if piece.dtype != storage.dtype or piece.shape[1:] != storage.shape[1:]:
+                    raise ValueError('merged observation column layout changed')
+                pieces.append(piece)
+            result.append((names, shapes, np.concatenate(pieces,0)))
+        return type(self)(result, self.order)
 
 
 class ObservationColumnTransport:
@@ -44,11 +93,16 @@ def pack_actor_roots(rows, host, *, columns=None):
                 field_order=field_order)
 
 
-def unpack_actor_roots(packet, *, row_observations=True):
+def unpack_actor_roots(packet, *, row_observations=True, packed=False):
     if packet.get('contract') != 'legacy-deck-roots-v1':
         observations = {k: np.stack([row['observation'][k] for row in packet.values()])
                         for k in next(iter(packet.values()))['observation']}
         return packet, observations
+    if packed:
+        if row_observations:
+            raise ValueError('packed root consumers do not materialize row dictionaries')
+        return (dict(zip(packet['keys'],packet['metadata'],strict=True)),
+                PackedObservationBatch(packet['columns'],packet['field_order']))
     observations = [{} for _ in packet['keys']]
     batched = {}
     for names, shapes, storage in packet['columns']:

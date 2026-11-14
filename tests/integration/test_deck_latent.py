@@ -796,6 +796,10 @@ def test_packed_owner_actor_matches_masked_policy_through_shapes_weights_and_evi
                 rows=[upper if i%3==0 else combat for i in range(count)]
                 masks=np.stack([upper_mask if i%3==0 else combat_mask for i in range(count)])
                 obs={k:np.stack([row[k] for row in rows]) for k in combat}
+                if iteration % 2:
+                    # PPO buffers and live vector rows can have different key
+                    # orders but identical packed column shapes and dtypes.
+                    obs=dict(reversed(list(obs.items())))
                 if iteration==3:
                     policy.core.context.roles.add_(.1)
                     policy.core.combat.value_head[-1].bias.add_(.11)
@@ -806,16 +810,91 @@ def test_packed_owner_actor_matches_masked_policy_through_shapes_weights_and_evi
                 dist.apply_masking(masks)
                 expected=(dist.distribution.probs.cpu().numpy(),dist.distribution.logits.cpu().numpy(),
                           values.flatten().cpu().numpy())
-                actual=inference.actor((obs,masks,np.arange(count),max(32,count)),context=True)
+                if iteration % 2:
+                    from env.search.resident_transport import ObservationColumnTransport, PackedObservationBatch
+                    columns, order = ObservationColumnTransport(obs).pack(np.arange(count))
+                    payload = PackedObservationBatch(columns, order)
+                else:
+                    payload = obs
+                actual=inference.actor((payload,masks,np.arange(count),max(32,count)),context=True)
                 for key,want in zip(('probabilities','logprobs','values'),expected,strict=True):
                     np.testing.assert_allclose(actual[key],want,rtol=3e-5,atol=2e-5,err_msg=key)
                     retained.append((actual[key],actual[key].copy()))
                 context=policy.core.prepare_search_context(tensors)
                 for x,y in zip(actual['context'],(context.combat,context.anchor),strict=True):
                     torch.testing.assert_close(x,y,rtol=3e-5,atol=3e-6)
+                # The complete rollout's deferred critic consumes float32
+                # SB3 storage, then returns to the live categorical layout.
+                stored={k:v.astype(np.float32) for k,v in reversed(list(obs.items()))}
+                critic=inference.actor((stored,masks,np.arange(count),max(32,count)),values_only=True)
+                np.testing.assert_allclose(critic,expected[2],rtol=3e-5,atol=2e-5)
             assert inference.graphs.stats['evictions']>0
             for actual,saved in retained:np.testing.assert_array_equal(actual,saved)
     finally:inference.close()
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize('context_width', [32, 512])
+def test_native_fallback_heads_match_eager_after_shape_eviction_and_release(
+        latent_env, cuda_battle_artifacts, context_width):
+    import gc
+    from env.search.anchored_chains import ChainRequest
+    from env.search.cuda_battle import load_artifacts
+    from rl.search.deck_latent import DeckLatentScorer, DeckSearchInferenceCache
+    from rl.search.resident_inference import ResidentInference
+    assert torch.cuda.is_available(), 'explicit CUDA fallback acceptance required'
+    enter_combat(latent_env)
+    torch.manual_seed(20261111)
+    policy = DeckLatentPolicy(latent_env.observation_space, latent_env.action_space, lambda _: 5e-5,
+        d_model=context_width, n_layers=2, n_heads=4, room_lambda=1., reward_flow='sequential-v1',
+        combat_value_target='pre-reward-anchor', deck_combat_encoder='transformer64x2').cuda().eval()
+    root, mask = latent_env._obs(), latent_env.action_masks()
+    native = load_artifacts(cuda_battle_artifacts[0])[2]
+    retained = []
+    for generation in range(2):
+        if generation:
+            with torch.no_grad():
+                policy.core.combat.value_head[-1].bias.add_(.11)
+        owner = ResidentInference(policy.core, 0, native)
+        owner.graphs.capacity = 1  # Also retire the last graph pool.
+        plain = DeckLatentScorer(policy, [root], tables=owner.tables,
+            inference_cache=DeckSearchInferenceCache(policy.core, 0))
+        captured = DeckLatentScorer(policy, [root], context=plain.context, tables=owner.tables,
+            inference_cache=DeckSearchInferenceCache(policy.core, 0), head_forward=owner._fallback_head)
+        cpu_rng, cuda_rng = torch.get_rng_state().clone(), torch.cuda.get_rng_state().clone()
+        try:
+            for iteration, count in enumerate((3, 17, 1, 257, 9, 3)):
+                for kind in ('combat', 'anchor'):
+                    observations = []
+                    for row in range(count):
+                        obs = deepcopy(root)
+                        obs['player_scalars'][0] -= .0001 * (row + iteration)
+                        if iteration % 2:
+                            obs['select_native_indices'][20] = 1
+                        if iteration == 4:
+                            obs['outer_deck_misc'][0] += .1
+                        observations.append(obs)
+                    def requests():
+                        return [ChainRequest(0, obs, mask, kind) for obs in observations]
+                    expected, actual = plain(requests()), captured(requests())
+                    for (logits, value), (want, want_value) in zip(actual, expected, strict=True):
+                        if want is None:
+                            assert logits is None
+                        else:
+                            np.testing.assert_allclose(logits, want, rtol=3e-5, atol=3e-6)
+                            retained.append((logits, logits.copy()))
+                        np.testing.assert_allclose(value, want_value, rtol=3e-5, atol=3e-6)
+                    torch.cuda.synchronize()
+                    torch._C._cuda_clearCublasWorkspaces()
+                    gc.collect()
+                    torch.cuda.empty_cache()
+            assert owner.graphs.stats['evictions'] > 0
+            assert torch.equal(cpu_rng, torch.get_rng_state())
+            assert torch.equal(cuda_rng, torch.cuda.get_rng_state())
+        finally:
+            owner.close()
+        for actual, saved in retained:
+            np.testing.assert_array_equal(actual, saved)
 
 
 @pytest.mark.parametrize('encoder', ['pooled-mlp', 'transformer64x2'])

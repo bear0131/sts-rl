@@ -19,6 +19,15 @@ def test_actor_packet_keeps_columnar_rows_without_rebuilding_observations(cuda_b
         assert column.tobytes() == np.stack([r['observation'][field] for r in rows.values()]).tobytes()
         assert column.tobytes() == reference[field].tobytes()
         assert any(np.shares_memory(column,storage) for _,_,storage in packet['columns'])
+    _, packed = unpack_actor_roots(packet,row_observations=False,packed=True)
+    assert packed.concatenate([]) is packed
+    reversed_fields = dict(reversed(list(reference.items())))
+    combined = packed.concatenate([packed,reversed_fields])
+    for field in reference:
+        np.testing.assert_array_equal(combined[field],np.concatenate([reference[field]]*3))
+        assert not np.shares_memory(combined[field],packed[field])
+    with pytest.raises(ValueError,match='schema changed'):
+        packed.concatenate([{'phase':reference['phase']}])
 
 
 def test_native_root_and_page_ownership_matches_reference(cuda_battle_artifacts):
