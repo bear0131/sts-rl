@@ -83,14 +83,26 @@ def test_full480_existing_inference_consumes_cached_deck_heads(latent_env, devic
             torch.testing.assert_close(inference(data), reference(data), rtol=2e-5, atol=2e-5)
             assert inference.statistics()['context_cache_misses'] == before + 2
         torch.testing.assert_close(result, saved, rtol=0, atol=0)
+        # Permanent widths affect the encoded context, not combat-head geometry.
+        # Exercise many widths without rebuilding the identical small head.
+        captures = inference.statistics()['upper_graph_captures']
+        for width in range(1, 9):
+            varying = {k: v[1:2].copy() for k, v in data.items()}
+            varying['deck_ids'][:] = 0
+            varying['deck_ids'][:, :width] = data['deck_ids'][1, 0]
+            varying['relics'][:] = 0
+            varying['relics'][:, :width] = data['relics'][1, 0]
+            torch.testing.assert_close(inference(varying), reference(varying), rtol=2e-5, atol=2e-5)
+        if device == 'cuda':
+            assert inference.statistics()['upper_graph_captures'] - captures <= 1
         if device == 'cuda':
             assert inference.deck.enc_graphs.captures > 0
-            assert inference.deck.head_graphs.captures >= 3
+            assert inference.deck.head_graphs.captures + inference.deck.anchor_graphs.captures >= 3
             assert inference.deck.head_graphs.hits > 0
             assert inference.deck.head_graphs.scratch_only
     assert not inference.deck.cache.entries
     if device == 'cuda':
-        assert not inference.deck.enc_graphs.entries and not inference.deck.head_graphs.entries
+        assert not inference.deck.enc_graphs.entries and not inference.deck.head_graphs.entries and not inference.deck.anchor_graphs.entries
 
 
 def test_full480_deck_context_cache_cannot_be_disabled(latent_env):

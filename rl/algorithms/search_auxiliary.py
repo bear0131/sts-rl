@@ -17,6 +17,7 @@ class SearchTrainingConfig:
     max_depth: int = 200
     max_active: int = 256
     timeout_seconds: float = 120.
+    collection_timeout_seconds: float = 600.
     target_std: float = .25
     seed: int = 20261111
     # Retained for reading saved configurations. Retired GPU execution is
@@ -32,7 +33,7 @@ class SearchTrainingConfig:
             raise ValueError('unknown search action selection contract')
         if self.inference_cache_bytes < 0:
             raise ValueError('search inference cache capacity must be nonnegative')
-        if self.backend not in ('native-cpu', 'cuda-batched-native', 'cuda-resident'):
+        if self.backend not in ('native-cpu', 'cuda-batched-native', 'cuda-resident', 'full480'):
             raise ValueError('unknown shadow search backend')
         if self.backend == 'cuda-resident' and (not self.cuda_artifacts or self.cuda_wave_capacity < 1):
             raise ValueError('resident search requires explicit artifacts and a positive wave capacity')
@@ -42,6 +43,8 @@ class SearchTrainingConfig:
             raise ValueError('shadow search limits must be positive')
         if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
             raise ValueError('shadow search needs a finite positive timeout')
+        if not math.isfinite(self.collection_timeout_seconds) or self.collection_timeout_seconds <= 0:
+            raise ValueError('collection needs a finite positive timeout')
         if not math.isfinite(self.target_std) or self.target_std < 0:
             raise ValueError('invalid frozen search target scale')
 

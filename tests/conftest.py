@@ -48,6 +48,21 @@ def latent_env():
 
 
 @pytest.fixture
+def latent_training_factory():
+    """Recoverable full-game Deck environments for collector lifecycle tests."""
+    from gymnasium.wrappers import TimeLimit
+    from rl.training.environments import TrainingStateWrapper
+    from rl.training.reward import StrategicRewardWrapper
+
+    def make():
+        return TrainingStateWrapper(TimeLimit(StrategicRewardWrapper(SlayTheSpireEnv(
+            card_language=True, global_map_view=True, upper_public_context=True,
+            event_option_observation=True, combat_action_contract='autoregressive-v2',
+            combat_exit_anchor=True, reward_flow='sequential-v1', deck_latent_context=True)), 6000))
+    return make
+
+
+@pytest.fixture
 def combat_factory():
     created = []
 

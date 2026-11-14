@@ -246,12 +246,14 @@ class _DeckConsumers:
         self.anchor_cache = ExactInputCache(context_bytes)
         self.encoder = _DeckForward(core, context=True)
         self.head = _DeckForward(core)
-        self.enc_graphs = self.head_graphs = None
+        self.enc_graphs = self.head_graphs = self.anchor_graphs = None
         self.versions = self.addresses = None
         if torch.device(device).type == 'cuda':
             self.enc_graphs = CombatLeafGraphs(self.encoder, device, amp='off',
-                capacity=8, batch_multiple=8, compile_forward=False)
+                capacity=32, batch_multiple=8, compile_forward=False)
             self.head_graphs = CombatLeafGraphs(self.head, device, amp='off',
+                capacity=32, batch_multiple=8, compile_forward=False, device_outputs=True)
+            self.anchor_graphs = CombatLeafGraphs(self.head, device, amp='off',
                 capacity=32, batch_multiple=8, compile_forward=False, device_outputs=True)
 
     def _check_weights(self):
@@ -261,7 +263,7 @@ class _DeckConsumers:
         addresses = tuple((id(p), p.data_ptr(), str(p.device), p.dtype) for p in tensors)
         versions = tuple(p._version for p in tensors)
         if addresses != self.addresses:
-            for graphs in (self.enc_graphs, self.head_graphs):
+            for graphs in (self.enc_graphs, self.head_graphs, self.anchor_graphs):
                 if graphs is not None:
                     graphs.clear()
         if addresses != self.addresses or versions != self.versions:
@@ -288,6 +290,8 @@ class _DeckConsumers:
 
         def encode(missing):
             widths = (_observed_width(missing['deck_ids']), _observed_width(missing['relics']))
+            missing, widths = _upper_graph_inputs(missing, widths,
+                (missing['deck_ids'].shape[1], missing['relics'].shape[1]))
             return self._forward(self.encoder, self.enc_graphs, missing, widths)
 
         encoded, _ = self.cache.forward(static, encode)
@@ -310,8 +314,17 @@ class _DeckConsumers:
                 pick = C.JOINT_PICK - C.JOINT_END
                 required = ((data['select_native_indices'] > 0)
                             | data['combat_legal'][:, pick:pick+data['select_native_indices'].shape[1]].astype(bool))
-                signature = (int(phase), at_anchor, _observed_width(data['deck_ids']),
-                             _observed_width(data['relics']), _observed_width(required))
+                if phase == V.PHASE_VOCAB_INDEX['combat']:
+                    # These small heads never consume deck/relic encoder widths.
+                    # Including them used to evict an otherwise identical graph.
+                    # The model already pads choices in groups of eight.
+                    width = min(required.shape[1], (_observed_width(required) + 7) // 8 * 8)
+                    signature = (int(phase), at_anchor, 0, 0, width)
+                else:
+                    widths = (_observed_width(data['deck_ids']), _observed_width(data['relics']))
+                    data, widths = _upper_graph_inputs(data, widths,
+                        (data['deck_ids'].shape[1], data['relics'].shape[1]))
+                    signature = (int(phase), False, *widths, 0)
                 index = torch.as_tensor(rows, device=self.device)
                 if at_anchor:
                     value = self.anchor_values(data)
@@ -329,7 +342,7 @@ class _DeckConsumers:
         inputs = {k: np.asarray(data[k]) for k in keys}
         inputs['player_scalars'] = inputs['player_scalars'][:, :2]
         def score_anchor(missing):
-            out, value = self._forward(self.head, self.head_graphs, missing,
+            out, value = self._forward(self.head, self.anchor_graphs, missing,
                                       (V.PHASE_VOCAB_INDEX['combat'], True, 0, 0, 0))
             if isinstance(value, torch.Tensor):
                 out, value = out.cpu().numpy(), value.cpu().numpy()
@@ -340,13 +353,13 @@ class _DeckConsumers:
     def statistics(self):
         stats = {f'context_cache_{key}': value for key, value in self.cache.stats.items()}
         stats.update({f'anchor_cache_{key}': value for key, value in self.anchor_cache.stats.items()})
-        for name, graphs in (('context', self.enc_graphs), ('upper', self.head_graphs)):
+        for name, graphs in (('context', self.enc_graphs), ('upper', self.head_graphs), ('anchor', self.anchor_graphs)):
             values = graphs.statistics() if graphs is not None else dict.fromkeys(GRAPH_METRICS, 0)
             stats.update({f'{name}_graph_{key}': values[key] for key in GRAPH_METRICS})
         return stats
 
     def close(self):
-        for graphs in (self.enc_graphs, self.head_graphs):
+        for graphs in (self.enc_graphs, self.head_graphs, self.anchor_graphs):
             if graphs is not None:
                 graphs.clear()
         self.cache.clear()
@@ -379,11 +392,14 @@ def _upper_graph_inputs(observations, widths, capacities):
     padded = tuple(min(cap, max(minimum, 1 << (width - 1).bit_length()))
                    for width, cap, minimum in zip(widths, capacities, (16, 4), strict=True))
     result = dict(observations)
-    for keys, width, target in zip((('deck_ids', 'deck_upgrades'), ('relics', 'relic_counters')),
+    for keys, width, target in zip((('deck_ids', 'deck_upgrades', 'outer_deck_misc'), ('relics', 'relic_counters')),
                                    widths, padded, strict=True):
         for key in keys:
+            if key not in observations:
+                continue
+            result[key] = observations[key][:, :width]
             if width != target:
-                result[key] = np.pad(observations[key], ((0, 0), (0, target-width)))
+                result[key] = np.pad(result[key], ((0, 0), (0, target-width)))
     return result, padded
 
 

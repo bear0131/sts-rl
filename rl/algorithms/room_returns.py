@@ -87,10 +87,11 @@ def combat_anchor_returns(rewards, values, episode_starts, phases, anchors,
     return result - values, result
 
 
-def apply_room_returns(model, buffer):
+def apply_room_returns(model, buffer, *, last_values=None):
     from stable_baselines3.common.utils import obs_as_tensor
-    with torch.no_grad(), full_precision(model.device):
-        last_values = model.policy.predict_values(obs_as_tensor(model._last_obs, model.device))
+    if last_values is None:
+        with torch.no_grad(), full_precision(model.device):
+            last_values = model.policy.predict_values(obs_as_tensor(model._last_obs, model.device))
     def ids(obs, key, scale):
         return np.rint(obs[key][..., 0] * scale).astype(np.int64)
     advantages, returns, lambdas = room_gae(

@@ -909,6 +909,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
         # keep this guard so an early callback/error cannot leave a compiler
         # thread racing with a later buffer reuse.
         self._wait_for_reasoning_samples()
+        search = getattr(self, 'deck_search_config', None)
+        if search is not None and search.get('backend') == 'full480':
+            from rl.algorithms.full480 import collect
+            return collect(self, env, callback, rollout_buffer, n_rollout_steps,
+                           use_masking, config=search)
         independent = getattr(self, 'independent_rollout_config', None)
         if independent is not None:
             from rl.algorithms.independent_rollout import collect
