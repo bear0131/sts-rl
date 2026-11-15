@@ -18,8 +18,8 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
  digest=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
  assert digest(header)=='b4295d78a2df81e696177d5f97f2d5a1b07de6aa09c5d0570831a6335b727e51'
  assert (original/'generated/include/combat/BattleContext.h').is_file()
- (output/'deck_schema.h').write_text(inputs.header())
- (output/'compact-observation-device.h').write_text(portable_compact_header(canonical_header))
+ (output/'deck_schema.h').write_text(inputs.header(),newline='\n')
+ (output/'compact-observation-device.h').write_text(portable_compact_header(canonical_header),newline='\n')
  compiled={}
  for kind,filename in [('observer','observer_entry.cu'),('rule','rules_entry.cu')]:
   if kind not in kinds:continue

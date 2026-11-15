@@ -32,6 +32,7 @@ def run_worker(commands,responses,settings):
  try:
   torch.set_num_threads(1);torch.set_float32_matmul_precision('highest')
   torch.backends.cuda.matmul.allow_tf32=False;torch.backends.cudnn.allow_tf32=False
+  import env.core  # Spawned Windows processes need the original native DLL bootstrap.
   import importlib
   for module_name in ['root_ledger','state_pages','layout_bindings','frame_kernels','combo_kernels','combo_model','frame_modules','frame_pipeline','step_kernels','step_pipeline','combo_runtime','fallback_ieee_kernels','fallback_ieee_model','fallback_frame','flex_stream','flex_adapter','flex_runtime','flex_ragged']:
    module=importlib.import_module('.'+module_name,__package__)
@@ -72,8 +73,10 @@ def run_worker(commands,responses,settings):
    else:scorer=FallbackFrame(policy.small_playout)
    torch.cuda.synchronize();torch.cuda.reset_peak_memory_stats()
    pids=[int(x) for x in subprocess.check_output(['nvidia-smi','--query-compute-apps=pid','--format=csv,noheader'],text=True).split()]
-   assert set(pids)==({os.getpid(),settings['parent_pid']} if settings['parent_cuda'] else {os.getpid()}),pids
-   startup=stats();startup['gpu_pids']=pids;emit('ready',startup)
+   expected_pids={os.getpid(),settings['parent_pid']} if settings['parent_cuda'] else {os.getpid()}
+   # WDDM includes desktop graphics in compute-apps; it cannot certify exclusive CUDA use.
+   assert (expected_pids<=set(pids) if os.name=='nt' else set(pids)==expected_pids),pids
+   startup=stats();startup['gpu_pids']=pids;startup['gpu_exclusive_verified']=os.name!='nt';emit('ready',startup)
    submissions={};submission_sources=set()
    def flush_submissions():
     if not submissions:return
