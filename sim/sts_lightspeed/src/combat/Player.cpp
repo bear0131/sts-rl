@@ -315,7 +315,7 @@ void Player::hpWasLost(BattleContext &bc, int amount, bool selfDamage) {
 
     if (hasRelic<RelicId::CENTENNIAL_PUZZLE>()) {
         setHasRelic<RelicId::CENTENNIAL_PUZZLE>(false);
-        bc.addToTop( Actions::DrawCards(3) );
+        bc.addToTop( OpeningAction::create(OpeningAction::Draw, 3) );
     }
 
     if (hasRelic<RelicId::EMOTION_CHIP>()) {
@@ -327,7 +327,7 @@ void Player::hpWasLost(BattleContext &bc, int amount, bool selfDamage) {
     }
 
     if (hasRelic<RelicId::RUNIC_CUBE>()) {
-        bc.addToTop( Actions::DrawCards(1) );
+        bc.addToTop( OpeningAction::create(OpeningAction::Draw, 1) );
     }
 
     if (!bloodied && curHp <= maxHp/2) {

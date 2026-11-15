@@ -383,6 +383,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--remote-root", default="/tmp/sts_dist_sb3")
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument('--combat-rules', choices=('heavenly-punishment-v1',), default=None,
+                        help='Enable custom anti-stall damage after restoring the saved episode history.')
     parser.add_argument('--prepare-combat-outer', type=Path,
                         help='Construct a fresh lower actor/critic and frozen upper from this profile, save step zero, then exit')
     parser.add_argument('--material-directory', type=Path)
@@ -3342,6 +3344,11 @@ def main() -> None:
             )
     else:
         recovery_manifest = None
+    if args.combat_rules is not None:
+        model.env.env_method('enable_heavenly_punishment')
+        model.combat_rules = args.combat_rules
+        print('COMBAT_RULES ' + json.dumps({'version': model.combat_rules,
+            'activation_global_step': int(model.num_timesteps)}), flush=True)
     if args.fork_public_lower:
         from rl.training.small_playout import fork_public_lower
         fork_public_lower(model,args.fork_public_lower,args.fork_public_weights)
@@ -3801,6 +3808,7 @@ def main() -> None:
             cumulative_global_steps += global_actions
             record = {
                 "rank": args.rank,
+                "combat_rules": getattr(model, 'combat_rules', 'standard-v1'),
                 "world_size": args.world_size,
                 "gradient_transport": args.gradient_transport,
                 "update": update,

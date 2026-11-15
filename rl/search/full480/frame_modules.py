@@ -4,7 +4,7 @@ import ctypes,hashlib,json
 from .graph_runtime import torch,ptr,lib,check
 P=artifact_directory()
 
-def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory=None,kinds=('observer','rule','builder')):
+def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory=None,kinds=('observer','rule','builder'),architecture='sm_120'):
  """Original NVRTC observer and nvcc builder, with explicit consumer inputs.
 
  The simulator stays in the qualified external snapshot. No generated game
@@ -36,6 +36,7 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
    for relative,marker,anchor in [
     ('include/combat/Actions.h','PORTABLE OPENING ACTION','    class CardQueueItem;'),
     ('include/combat/ActionQueue.h','PENDING ACTION ACCESS','        [[nodiscard]] int getCapacity() const;'),
+    ('include/combat/BattleContext.h','HEAVENLY PUNISHMENT','        std::bitset<32> miscBits;'),
     ('src/combat/Actions.cpp','PORTABLE OPENING ACTION','using namespace sts;')]:
     native=simulator/relative;text=native.read_text();begin='// BEGIN '+marker;end='// END '+marker
     section=text[text.index(begin):text.index(end)+len(end)]
@@ -49,6 +50,16 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
     continuation_sources[relative]=dict(native_sha256=digest(native),generated_sha256=digest(target))
    relative='src/combat/BattleContext.cpp'
    original_text=(generated/relative).read_text()
+   native=(simulator/relative).read_text()
+   old='        ++player.cardsPlayedThisTurn;'
+   new=old+'\n        if (player.cardsPlayedThisTurn > 100 && applyHeavenlyPunishment()) return;'
+   assert original_text.count(old)==1 and new in native
+   original_text=original_text.replace(old,new)
+   start=original_text.index('void BattleContext::afterMonsterTurns()')
+   head,tail=original_text[:start],original_text[start:]
+   new='    if (turn >= 20 && applyHeavenlyPunishment()) return;'
+   assert new in native
+   original_text=head+tail.replace('    ++turn;', '    ++turn;\n'+new, 1)
    old='addToBot(Actions::OnAfterCardUsed());'
    replacement='addToBot(OpeningAction::create(OpeningAction::AfterCardUsed));'
    assert original_text.count(old)==1 and replacement in (simulator/relative).read_text()
@@ -105,7 +116,8 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
      ('void BattleContext::triggerOnOtherCardPlayed(', 'int BattleContext::calculateCardDamage('),
      ('void BattleContext::onShuffle()', 'void BattleContext::triggerAndMoveToExhaustPile(')],
     'src/combat/CardManager.cpp':[('void CardManager::draw(', 'void CardManager::onTookDamage()')],
-    'src/combat/Player.cpp':[('void Player::gainBlock(', 'void Player::gainGold(')],
+    'src/combat/Player.cpp':[('void Player::gainBlock(', 'void Player::gainGold('),
+                            ('void Player::hpWasLost(', 'void Player::wouldDie(')],
     'src/combat/Monster.cpp':[('void Monster::triggerDeathEffects(', 'void Monster::onHpLost(')],
     'include/combat/BattleContext.h':[('void BattleContext::debuffEnemy(', '\n\n\n}')],
     'src/combat/MonsterSpecific.cpp':[],
@@ -147,8 +159,8 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
   entry=(source/filename).read_text()
   old='"/root/autodl-tmp/token-speed-r7-20261105/nine-token-speed/online480/waves/devicebudgetarena141/device_std.h"'
   assert entry.count(old)==1
-  entry=entry.replace(old,'"'+str(header)+'"')
-  options=['--std=c++17','--gpu-architecture=sm_120','--device-as-default-execution-space','--fmad=false',
+  entry=entry.replace(old,'"'+header.as_posix()+'"')
+  options=['--std=c++17','--gpu-architecture='+architecture,'--device-as-default-execution-space','--fmad=false',
    '--generate-line-info','--display-error-number','--diag-suppress=177','-DSTS_FULL480_DECK=1',
    '-I'+str(generated),'-I'+str(generated/'include'),'-I'+str(original),'-I'+str(source),'-I'+str(output)]
   if kind=='rule':options[0:0]=['-I'+str(continuation),'-I'+str(continuation/'include')]
@@ -169,7 +181,8 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
    compiler=dict(version=[major.value,minor.value],sha256=digest(nvrtc)),
    package_sources=sources,dependencies=dependencies,canonical_header_sha256=digest(canonical_header),
    schema_sha256=digest(output/'deck_schema.h'),codec_sha256=digest(output/'compact-observation-device.h'))
-  if kind=='rule':record.update(state_schema=2,continuation_sources=continuation_sources)
+  if kind=='rule':record.update(state_schema=2,continuation_sources=continuation_sources,
+                               combat_rules=['standard-v1','heavenly-punishment-v1'])
   path=output/(kind+'-compile-0-result.json');path.write_text(json.dumps(record,indent=2))
   start=time.monotonic()
   try:
@@ -188,7 +201,7 @@ def build_deck_artifacts(inputs,*,snapshot,canonical_header,nvrtc,nvcc,directory
   finally:compiler.nvrtcDestroyProgram(ctypes.byref(program))
   compiled[kind]=record
  if 'builder' not in kinds:return compiled
- args=[str(nvcc),'-std=c++17','-arch=sm_120','-cubin','--fmad=false','-Xptxas=-v','-DSTS_FULL480_DECK=1',
+ args=[str(nvcc),'-std=c++17','-arch='+architecture,'-cubin','--fmad=false','-Xptxas=-v','-DSTS_FULL480_DECK=1',
   str(source/'token_builder.cu'),'-o',str(output/'token_builder.cubin')]
  start=time.monotonic();result=subprocess.run(args,capture_output=True,text=True,timeout=120)
  (output/'builder-build.log').write_text(result.stdout+result.stderr)

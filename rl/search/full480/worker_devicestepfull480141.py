@@ -1,7 +1,7 @@
 """The only CUDA-owning process. Importing this module is CPU safe."""
 def run_worker(commands,responses,settings):
  from pathlib import Path
- import os,sys,time,queue,pickle,traceback,collections,resource,subprocess,json,hashlib,importlib.util
+ import os,sys,time,queue,pickle,traceback,collections,subprocess,json,hashlib,importlib.util
  import numpy as np
  import torch
  P=Path(__file__).resolve().parent
@@ -28,7 +28,7 @@ def run_worker(commands,responses,settings):
     real_neural_rows=engine.real_neural_rows,forced_skips=engine.skipped_forced_rows,model_calls=engine.model_calls,
     iterations=engine.iterations,state_pages=engine.state_pages.statistics(),modules_closed=engine.modules.closed,identity=engine.modules.identity,capacity=engine.m,frame=engine.frame_cap,tile=engine.tile),
    torch_allocated=torch.cuda.memory_allocated(),torch_reserved=torch.cuda.memory_reserved(),torch_peak=torch.cuda.max_memory_allocated(),
-   cpu_self_seconds=resource.getrusage(resource.RUSAGE_SELF).ru_utime+resource.getrusage(resource.RUSAGE_SELF).ru_stime)
+   cpu_self_seconds=time.process_time())
  try:
   torch.set_num_threads(1);torch.set_float32_matmul_precision('highest')
   torch.backends.cuda.matmul.allow_tf32=False;torch.backends.cudnn.allow_tf32=False

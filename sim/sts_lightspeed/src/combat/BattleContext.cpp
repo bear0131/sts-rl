@@ -978,6 +978,7 @@ void BattleContext::playCardQueueItem(CardQueueItem playItem) {
         // A half-dead Darkling can invalidate a queued copy without rejecting
         // its admission (and without running UseCardAction/onUse callbacks).
         ++player.cardsPlayedThisTurn;
+        if (player.cardsPlayedThisTurn > 100 && applyHeavenlyPunishment()) return;
 
         const bool canUseTarget = !c.requiresTarget() ||
                 (item.target >= 0 && item.target < monsters.monsterCount &&
@@ -2398,6 +2399,8 @@ void BattleContext::afterMonsterTurns() {
     }
 
     ++turn;
+    // Value-only post-enemy leaves exclude next-turn effects; actual turns pay here.
+    if (turn >= 20 && applyHeavenlyPunishment()) return; // native turn 0 is game turn 1
     skipMonsterTurn = false;
     turnHasEnded = false;
 

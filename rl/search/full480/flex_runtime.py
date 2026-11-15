@@ -16,6 +16,7 @@ class BattleModules:
    receipt=directory/('search-observer-compile-0-result.json' if kind=='observer' else 'rule-compile-0-result.json')
    result=json.loads(receipt.read_text());assert result['completed'] and result['exit']==0
    if deck and kind=='rules':
+    assert 'heavenly-punishment-v1' in result.get('combat_rules',[]),'rebuild full480 rules for heavenly punishment'
     for name,digest in result['package_sources'].items():assert hashlib.sha256((Path(__file__).resolve().parent/name).read_bytes()).hexdigest()==digest,('stale full480 rules',name)
    path=directory/('search-observer-0.cubin' if kind=='observer' else 'rule-0.cubin' if deck else 'rules-0.cubin');digest=hashlib.sha256(path.read_bytes()).hexdigest();assert digest==result['cubin_sha256']
    handle=ptr();check(lib.cuModuleLoad(ctypes.byref(handle),str(path).encode()),'load '+kind);self.handles.append(handle)

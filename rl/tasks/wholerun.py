@@ -596,6 +596,7 @@ class WholeRunTask(Task):
                 combat_value_objective=getattr(args, 'combat_value_objective', None),
                 combat_exit_anchor=(args.arch == 'deck-latent' or getattr(args, 'combat_value_target', 'whole-run') == 'pre-reward-anchor'),
                 deck_latent_context=args.arch == 'deck-latent',
+                combat_rules=getattr(args, 'combat_rules', 'standard-v1'),
                 reward_flow=getattr(args, 'reward_flow', 'full'),
                 combat_action_contract=getattr(args, "combat_action_contract", None) or "legacy",
                 nosl_is_az_boss_transition_target=bool(

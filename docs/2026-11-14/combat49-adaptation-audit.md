@@ -150,3 +150,19 @@ P24保留原观测、动作、奖励和队列schema 2；旧248保存由新原生
 | P25 | 原`native/cpu_bridge.cpp::CpuSearchState::snapshot`不再把128元素内联存储大小当成GPU可移植性上限 | 正式253的rank1 slot9已168张消耗牌、空回调；原deviceflex141容器已有heap扩容。只修原入口判定，未知回调拒绝/8192word编码边界保留；三牌堆128/129/168/257与GPU跨128增长回归覆盖。没有改GPU规则/模型/采样/图/缓存/传输，规则SHA51d8f534保持；175项CPU/GPU与原失败状态逐字对照通过，同四learner从253恢复并完成254/255全保存/模型Adam一致，证据见worklog本题。 |
 
 | P26 | 原固定步数采样结束时复用已存在根logits和KL目标统计teacher top1匹配/样本两计数；原ppo_metrics在原跨rank归约后计算加权比例和总样本数 | 只改3个运行时文件：rl/algorithms/full480.py、rl/algorithms/ppo_metrics.py、rl/training/distributed_sb3.py；不新增推理、逐根观察传输或梯度同步轮次，不改动作/目标/损失/缓存/图。现役四机各256×768，full480为旧目录名；监控新增当前搜索监督图和样本数，当前top1与样本数并排，历史独立训练器图仅在所选数据含该指标时显示，旧数据保留。4指标单元与2 CPU/CUDA固定PPO/恢复回归通过，同进程259/260四机全保存与teacher字段一致、本机/云端数据通过；浏览器自动截图不可用。 |
+
+
+### P27 用户指定天罚规则
+
+本阶段主动改变模拟游戏规则：第101张起每张已准许出牌、实际第21回合起每回合各20点真实HP损失。不是等价性能优化。对应规则版本`heavenly-punishment-v1`，旧模型默认为`standard-v1`。
+
+| 修改范围 | 我新增或修改的部分 |
+| --- | --- |
+| 原模拟器 | `sim/sts_lightspeed/include/combat/BattleContext.h`复用原miscBits第1位和原hpWasLost；`src/combat/BattleContext.cpp`在原出牌计数与afterMonsterTurns各加一个阈值调用；native turn从0开始。`bindings/slaythespire.cpp`只暴露启用属性。 |
+| 原GPU规则 | `rl/search/full480/frame_modules.py`沿原冻结源码编译overlay加入同一方法/两处调用；`flex_runtime.py`校验编译回执声明新规则，旧产物拒绝混用。没有另写模拟/采样路径。 |
+| 已有HP损失回调 | `sim/sts_lightspeed/src/combat/Player.cpp`把Centennial Puzzle/Runic Cube原抽牌回调改为已有OpeningAction::Draw的数据项，原抽牌/顺序/死亡/复活逻辑保持；GPU同位置对应。 |
+| 存档与入口 | `env/core/game_env.py`新战斗携带规则位；`run_env.py`保存规则版本和启用动作位置，先按旧规则重放历史再启用。`rl/training/environments.py`、`rl/tasks/wholerun.py`、`rl/evaluation/eval.py`沿原工厂传版本；`distributed_sb3.py`显式CLI、恢复后启用和逐轮版本记录。未改观测/动作维度、奖励公式、PPO损失与数据传输。 |
+| 本机验证所需兼容 | `run_device.py`用当前Python扩展后缀；`native/include/state_codec.h`的4处数组长度模板自动推导类型，编码字段/位宽不变；`worker_devicestepfull480141.py`CPU计时换跨平台process_time；`frame_modules.py`可显式指定编译架构，远端默认仍sm_120。未改worker调度/图/缓存。 |
+| 回归 | 新共享`tests/heavenly_punishment_fixtures.py`与`tests/integration/test_heavenly_punishment.py`；原pipeline增加8种逐状态CPU/GPU对照，原collection增加两种规则下的真实PPO与保存恢复。 |
+
+实时验证/发布进度统一见worklog/2026-11-15.md的COMBAT49-HEAVENLY-PUNISHMENT，不以本机组件通过冒称四机上线完成。

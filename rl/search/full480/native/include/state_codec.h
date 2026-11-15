@@ -29,7 +29,7 @@ inline void require(bool ok){
  }
 }
 template<class T>struct is_array{static constexpr bool value=false;};
-template<class T,unsigned long N>struct is_array<T[N]>{static constexpr bool value=true;};
+template<class T,auto N>struct is_array<T[N]>{static constexpr bool value=true;};
 template<bool Read>struct Archive {
  unsigned long long*words;int capacity;int at=0;unsigned long long max_vector=0;
  static constexpr bool reading=Read;
@@ -38,8 +38,8 @@ template<bool Read>struct Archive {
  template<class T>void field(T&v);
  template<class...T>void fields(T&...v){(field(v),...);}
 };
-template<class A,class T,unsigned long N>void visit(A&a,std::array<T,N>&v){for(auto&x:v)a.field(x);}
-template<class A,class T,unsigned long N>void visit(A&a,T(&v)[N]){for(auto&x:v)a.field(x);}
+template<class A,class T,auto N>void visit(A&a,std::array<T,N>&v){for(auto&x:v)a.field(x);}
+template<class A,class T,auto N>void visit(A&a,T(&v)[N]){for(auto&x:v)a.field(x);}
 template<class A,class T>void visit(A&a,std::vector<T>&v){
  unsigned long long n=v.size();a.word(n);require(n<=8192);a.max_vector=n>a.max_vector?n:a.max_vector;
  if constexpr(A::reading)v.resize(n);
@@ -50,7 +50,7 @@ template<class A,class K,class V>void visit(A&a,std::map<K,V>&v){
  if constexpr(A::reading){v.clear();for(unsigned long long i=0;i<n;++i){K k{};V x{};a.fields(k,x);require(!v.count(k));v[k]=x;}}
  else for(auto&item:v){K k=item.first;V x=item.second;a.fields(k,x);}
 }
-template<class A,unsigned long N>void visit(A&a,std::bitset<N>&v){
+template<class A,auto N>void visit(A&a,std::bitset<N>&v){
  static_assert(N<=64);unsigned long long x=v.to_ullong();a.word(x);
  if constexpr(A::reading)v=std::bitset<N>(x);
 }

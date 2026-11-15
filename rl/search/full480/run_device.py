@@ -1,6 +1,6 @@
 """Original CUDA driver setup, explicitly owned by the sampling worker."""
 from pathlib import Path
-import ctypes, hashlib, importlib.util, os, sys
+import ctypes, hashlib, importlib.util, os, sys, sysconfig
 import torch
 
 def artifact_directory():
@@ -40,7 +40,7 @@ def initialize():
 
 def cpu_bridge():
     """Original bridge with the explicit pending-continuation state schema."""
-    path=P/'cpu-build/gpu_search_bridge.cpython-311-x86_64-linux-gnu.so'
+    path=P/'cpu-build'/('gpu_search_bridge'+sysconfig.get_config_var('EXT_SUFFIX'))
     if not path.is_file():raise RuntimeError('build the full480 state bridge before collection')
     name='gpu_search_bridge'
     existing=sys.modules.get(name)
@@ -58,7 +58,7 @@ def cpu_bridge():
 def cpu_fallback():
     """Load the explicitly built adaptation of the original WaveDiag source."""
     import slaythespire as sts
-    path=P/'cpu-build/_full480_cpu.cpython-311-x86_64-linux-gnu.so'
+    path=P/'cpu-build'/('_full480_cpu'+sysconfig.get_config_var('EXT_SUFFIX'))
     if not path.is_file():raise RuntimeError('build the STS_BUILD_FULL480 target before collection')
     name='_full480_cpu'
     if name in sys.modules:

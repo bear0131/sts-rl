@@ -469,6 +469,7 @@ def test_full480_pending_block_roundtrip(combat_factory, scenario):
     [(s, True) for s in ('prefix', 'growth', 'escape', 'anchor_duplicates',
                        'pile:draw:168', 'pile:discard:168', 'pile:exhaust:168', 'pile:exhaust:128')] +
     [('audit:' + s, False) for s in TRIGGER_CASES] +
+    [('punishment:' + s, True) for s in ('cards', 'turns', 'mitigation', 'draw_hooks', 'autoplay', 'fatal', 'revive', 'fairy')] +
     [('audit:potion:' + s + ':1', False) for s in ('Attack Potion', 'Elixir Potion', 'Gamblers Brew', 'Liquid Memories')])
 def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, anchored, tmp_path, monkeypatch):
     from rl.search.full480.combo_runtime import BattleArena, BattlePool
@@ -534,6 +535,9 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
     if scenario.startswith('pile:'):
         _, zone, count = scenario.split(':')
         large_card_pile(latent_env, zone, int(count))
+    if scenario.startswith('punishment:'):
+        from tests.heavenly_punishment_fixtures import punishment_battle
+        punishment_battle(latent_env, scenario.split(':', 1)[1])
     policy = DeckLatentPolicy(latent_env.observation_space, latent_env.action_space,
         lambda _: 5e-5, d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
         reward_flow='sequential-v1', deck_combat_encoder='transformer64x2').cuda()

@@ -4137,6 +4137,8 @@ PYBIND11_MODULE(slaythespire, m) {
            "return lazy outgoing edge statistics for a root-to-node path");
 
     pybind11::class_<BattleContext>(m, "BattleContext")
+        .def_property("heavenly_punishment", &BattleContext::heavenlyPunishmentEnabled,
+                      &BattleContext::setHeavenlyPunishment)
         .def("nosl_future_key", &search::NoslCombatTrainer::stateKey,
              "NOSL public future fingerprint, ignoring RNG and interchangeable card positions")
         .def("equivalent_play_slots", &search::Action::equivalentPlaySlots,

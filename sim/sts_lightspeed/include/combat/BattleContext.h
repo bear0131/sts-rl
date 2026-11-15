@@ -118,7 +118,18 @@ namespace sts {
         std::function<void(const BattleContext &)> atomicStepObserver;
 #endif
 
-        std::bitset<32> miscBits; // 0 stolen gold check,
+        std::bitset<32> miscBits; // 0 stolen gold check; 1 heavenly-punishment-v1
+
+// BEGIN HEAVENLY PUNISHMENT
+        bool heavenlyPunishmentEnabled() const { return miscBits.test(1); }
+        void setHeavenlyPunishment(bool enabled) { miscBits.set(1, enabled); }
+        bool applyHeavenlyPunishment() {
+            if (!heavenlyPunishmentEnabled()) return false;
+            // Custom rule: bypass all mitigation, retain HP-loss/death/revival hooks.
+            player.hpWasLost(*this, 20, false);
+            return outcome == Outcome::PLAYER_LOSS;
+        }
+// END HEAVENLY PUNISHMENT
 
         BattleContext() = default;
         BattleContext(const BattleContext &rhs) = default;

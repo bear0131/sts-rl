@@ -336,8 +336,11 @@ class SlayTheSpireEnv(gym.Env):
                  interactive_reasoning=False, combat_action_contract='legacy',
                  nosl_is_az_boss_transition_target=False, outer_return_context=False,
                  combat_value_objective=None, combat_exit_anchor=False, reward_flow='full',
-                 deck_latent_context=False):
+                 deck_latent_context=False, combat_rules='standard-v1'):
         super().__init__()
+        if combat_rules not in ('standard-v1', 'heavenly-punishment-v1'):
+            raise ValueError('unsupported combat rules')
+        self.combat_rules = combat_rules
         # Owned only by NativeSearchVecEnv during one synchronous step_wait.
         # Ordinary Gym/evaluation calls always construct their observation here.
         self._defer_combat_observation = False
@@ -501,6 +504,7 @@ class SlayTheSpireEnv(gym.Env):
                 raise ValueError('pre-reward anchor currently requires SimGameEnv')
             self.thick.combat_exit_anchor_enabled = True
         self.thick._finite_curve_objective = self.finite_curve_objective
+        self.thick.heavenly_punishment_enabled = self.combat_rules == 'heavenly-punishment-v1'
         self.thick._actual_run_return = self.outer_return_monte_carlo
         if self._joint_actions and not hasattr(self.thick, 'bc'):
             raise ValueError('joint-v2 requires the native combat backend')
@@ -512,6 +516,7 @@ class SlayTheSpireEnv(gym.Env):
         self._episode_backend_seed = int(backend_seed)
         self._episode_action_journal = []
         self._combat_exit_anchor_start_action = 0
+        self._combat_rules_start_action = 0
         self._pending = None
         self._multi = None
         self._nosl_is_az_session = None
@@ -554,6 +559,18 @@ class SlayTheSpireEnv(gym.Env):
         self._invalidate_backend_cache()
         return self._obs()
 
+    def enable_heavenly_punishment(self):
+        """Activate at this journal boundary; never charge historical actions."""
+        if type(self.thick) is not SimGameEnv:
+            raise ValueError('heavenly punishment requires the native whole-run backend')
+        if self.combat_rules == 'heavenly-punishment-v1':
+            return
+        self.combat_rules = 'heavenly-punishment-v1'
+        self._combat_rules_start_action = len(self._episode_action_journal)
+        self.thick.heavenly_punishment_enabled = True
+        if self.thick.bc is not None:
+            self.thick.bc.heavenly_punishment = True
+
     def export_training_state(self):
         """Return a replayable snapshot of the current live episode.
 
@@ -574,6 +591,8 @@ class SlayTheSpireEnv(gym.Env):
             "schema_version": 2 if self.thick.is_over else 1,
             "terminal": bool(self.thick.is_over),
             "combat_action_contract": self.combat_action_contract,
+            "combat_rules": self.combat_rules,
+            "combat_rules_start_action": self._combat_rules_start_action,
             "combat_exit_anchor": self.combat_exit_anchor,
             "deck_latent_context": self.deck_latent_context,
             "combat_exit_anchor_start_action": self._combat_exit_anchor_start_action,
@@ -610,6 +629,12 @@ class SlayTheSpireEnv(gym.Env):
             raise ValueError('terminal environment schema requires an explicit terminal state')
         if state.get("combat_action_contract") != self.combat_action_contract:
             raise ValueError("environment combat action contract mismatch")
+        if state.get('combat_rules', 'standard-v1') != self.combat_rules:
+            raise ValueError('environment combat rules mismatch')
+        rules_start = state.get('combat_rules_start_action', 0)
+        if (type(rules_start) is not int or not 0 <= rules_start <= len(state['actions'])
+                or (rules_start and self.combat_rules == 'standard-v1')):
+            raise ValueError('invalid combat rules activation journal boundary')
         if state.get('deck_latent_context', False) != self.deck_latent_context:
             raise ValueError('environment deck latent context mismatch')
         if state.get('combat_exit_anchor', False) != self.combat_exit_anchor:
@@ -637,6 +662,9 @@ class SlayTheSpireEnv(gym.Env):
         # environment's backend seed and journal, not fixture/setup actions.
         SlayTheSpireEnv.reset(self, seed=int(state["backend_seed"]))
         self._combat_exit_anchor_start_action = anchor_start
+        self._combat_rules_start_action = rules_start
+        punishment = self.combat_rules == 'heavenly-punishment-v1'
+        self.thick.heavenly_punishment_enabled = punishment and rules_start == 0
         if self.combat_exit_anchor:
             self.thick.combat_exit_anchor_enabled = anchor_start == 0
         identity = (self.thick.training_identity()
@@ -644,6 +672,10 @@ class SlayTheSpireEnv(gym.Env):
         if identity != state.get('backend_identity'):
             raise ValueError('environment backend/dataset identity mismatch')
         for position, record in enumerate(state["actions"]):
+            if punishment and position == rules_start:
+                self.thick.heavenly_punishment_enabled = True
+                if self.thick.bc is not None:
+                    self.thick.bc.heavenly_punishment = True
             if self.combat_exit_anchor and position == anchor_start:
                 self.thick.combat_exit_anchor_enabled = True
             kind = record.get("kind")
@@ -667,6 +699,9 @@ class SlayTheSpireEnv(gym.Env):
             self.thick.combat_exit_anchor_enabled = True
         if bool(self.thick.is_over) != terminal:
             raise ValueError('environment journal terminal status mismatch')
+        self.thick.heavenly_punishment_enabled = punishment
+        if punishment and self.thick.bc is not None:
+            self.thick.bc.heavenly_punishment = True
 
         self.np_random.bit_generator.state = copy.deepcopy(state["np_random_state"])
         pending_native = state.get("nosl_cpp_pending")

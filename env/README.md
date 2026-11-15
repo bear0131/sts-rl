@@ -111,3 +111,8 @@ NOSL inner-only在唯一合法End Turn根旁路前推和搜索，保留同权重
 结果见 `worklog/2026-09-29.md#joint-contract-production-length-validation`；不代表新策略已重训收敛。
 新模型可作为旧战斗规则/规划器的整局上层，只有非战斗阶段适配空combat mask；
 旧CombatTask及Python value search不支持joint-v2，观看中的规划器切换须使用独立评测。
+### 自定义防拖延规则
+
+`SlayTheSpireEnv(combat_rules='heavenly-punishment-v1')` 在单回合第101张起每张已准许出牌（包含自动/复制出牌），以及实际进入第21回合起每回合，直接损失20HP。原生回合计数从0开始，因此对应原生 `turn >= 20`。伤害绕过格挡、无实体、缓冲、钨合金棒，仍执行原HP损失、死亡和妖精药水/蜥蜴尾巴复活；致死时不继续执行触发牌或新回合效果。结束回合、药水、选牌不计为出牌；仅用于估值的敌人回合后边界不执行新回合天罚。
+
+默认 `standard-v1` 保留原游戏规则与旧模型。分布式训练显式传 `--combat-rules heavenly-punishment-v1`，先按存档原规则重放，再在当前动作日志位置启用；每局保存启用位置和版本，新局从头启用，模型保存版本供续训及模拟评测使用。观测、动作和奖励几何不变，但训练的转移规则变了；真实游戏桥不增加此规则。原CPU模拟器与GPU规则共用阈值/HP损失实现，GPU编译回执必须声明规则版本；不能混用旧GPU规则产物。

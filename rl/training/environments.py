@@ -409,6 +409,7 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
 
     env_args = EnvArgs()
     env_args.combat_action_contract = C.policy_contract(model.observation_space)
+    env_args.combat_rules = getattr(model, 'combat_rules', 'standard-v1')
     env_args.ascension = args.ascension
     env_args.outer_return_context = bool(getattr(getattr(model.policy, 'core', None), 'frozen_upper', False)
                                          or getattr(model, '_outer_return', False))

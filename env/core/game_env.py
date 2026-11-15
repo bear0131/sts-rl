@@ -137,6 +137,7 @@ class SimGameEnv:
         self._prev_hp = None
         self._chest_relic_pending = False
         self.combat_exit_anchor_enabled = False
+        self.heavenly_punishment_enabled = False
         self.combat_exit_anchor_pending = False
 
     # ------------------------------------------------------------------ reset
@@ -866,6 +867,8 @@ class SimGameEnv:
                 f"room={self.gc.cur_room}; refusing create_battle."
             )
         self.bc = sts.create_battle(self.gc, name)
+        if self.heavenly_punishment_enabled:
+            self.bc.heavenly_punishment = True
 
     def _encounter_name(self):
         # Title-case the enum tail ("THREE_SENTRIES" -> "Three Sentries"); the
