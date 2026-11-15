@@ -171,7 +171,7 @@ function element() {
   replaceChildren(...values){this.children=[...values];this.options=[...values];this.textContent=''}};
 }
 const document = {
- getElementById(id){if(!nodes.has(id)){const e=element();e.previousElementSibling=element();nodes.set(id,e)}return nodes.get(id)},
+ getElementById(id){if(!nodes.has(id)){const e=element();e.previousElementSibling=element();e.parentElement=element();nodes.set(id,e)}return nodes.get(id)},
  createElement:element,createElementNS:element
 };
 document.getElementById('axis').value='absolute';
@@ -197,6 +197,9 @@ render();
 assert.equal($('win').textContent,'75.00%');
 assert.equal($('floor').textContent,'40');
 assert.equal($('winavg').textContent,'最近2个完整轮次 · 1,200局 · 65.00%');
+assert.equal($('chart0').previousElementSibling.children.length,1);
+assert.equal($('run-count').textContent,'1 / 2 已选');
+$('show-all').onclick();
 assert.equal($('chart0').previousElementSibling.children.length,2);
 assert.equal($('chart0').previousElementSibling.children[0].textContent.includes('legacy'),true);
 assert.equal(displayRow(last)['display/upper_policy_loss'],-.001);
@@ -226,6 +229,7 @@ assert.ok(specs.some(s=>s[1].includes('pure_rl/policy_loss')));
 const reference={...first,global_timesteps:8,rollout_round:1};
 state.comparisons.push({run_id:'lambda-reference',label:'lambda-reference',rollout_mode:'complete_games',branch_step:0,branch_round:0,rows:[reference]});
 render();
+$('show-all').onclick();
 assert.equal($('chart0').previousElementSibling.children.length,3);
 assert.ok($('chart0').previousElementSibling.children.some(n=>n.textContent.includes('lambda-reference')));
 assert.equal(datasets().find(s=>s.label==='lambda-reference').x(reference),1); // Explicit rounds, different action counts.
