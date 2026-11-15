@@ -763,7 +763,7 @@
 - **COMBAT49-LOWER-TEACHER-TOP1** — 已完成：2313c12e在原目标打包复用冻结根logits与实际KL teacher，原跨rank归约后按有效根数计算匹配率和全局样本数，不新增模型推理。4指标单元、2显式CPU/CUDA固定PPO/恢复测试及259/260四机完整生产验收通过；260为90.84378146%/415226根。本机8774隔离monitor-p26快照与云Sites版本6/source 897403b3均已接入当前/历史分别标注的曲线；原258轮历史逐值不变，旧缺失不补零。浏览器自动检查不可用，仅计构建、发布、本机HTTP与实际云MCP数据验收。证据worklog/2026-11-15.md同ID；运行时仅rl/algorithms/full480.py、ppo_metrics.py和rl/training/distributed_sb3.py，界面apps/dashboard_static/training.html及Sites public/training.html。
 
 - **COMBAT49-PHASE-GAP** — 已定位并复现：定位四机第263轮347秒、rank3采样264.873秒和其他卡采样后空档；适用rl/algorithms/full480.py、rl/training/distributed_sb3.py、原GPU worker及真实环境。验收具体状态/调用路径与可复现证据，不以猜测硬件或正常波动结案；不停止健康训练。
-- **COMBAT49-LOCAL-SAMPLING-PERF** — 进行中：用户要求只在本机优化采样GPU利用率；沿原路径，固定小规模同硬件/模型/搜索预算与seed对照，每个接受阶段端到端至少降低10%，先语义测试、再GPU资源生命周期/完整采样；不拿远端现役四卡跑独立实验，不以局部微基准声称生产收益。见worklog/2026-11-15.md同ID。
+- **COMBAT49-LOCAL-SAMPLING-PERF** — 本机短规模通过，长采样资格进行中：c2e9d200完成Windows原路径资格；候选复用原编码器紧凑计算并减少锚点图形状，9项语义/恢复回归通过。同原状态256×64的ABBA端到端均值减少15.56%，保守比较11.51%，实际动作/奖励/观察一致；非逐位搜索等价。正在跑一次256×768图/缓存生命周期，完成后才能关闭本阶段；远端f617685d继续训练、不拿现役四卡跑独立实验或宣称四机收益。见worklog/2026-11-15.md同ID。
 - **COMBAT49-HEAVENLY-PUNISHMENT** — 已完成：四机从277恢复，同进程278/279全保存、模型/Adam一致、两轮各1024环境按新规则普通恢复hash通过。用户明确新增游戏规则：单回合第101张及以后每张牌、实际进入第21及以后每回合，各直接扣20HP；无视防御，沿正常死亡/复活结算。原CPU模拟器与GPU搜索一致、保留旧采样/图/缓存；旧保存先原规则重放再显式启用，规则版本入新保存。验收阈值/持续触发/真实伤害/复活/原生GPU对照、旧状态恢复以及四机完整两轮续训。此为规则变更，不能充当等价性能收益。
 - **COMBAT49-MONITOR-REBOOT** — 完成。用户Windows更新重启后恢复本地监控：8774现役页面、8773原监控/工作日志、60秒云端日志转发均重新隐藏启动。8773旧registry指向退役主机，已保存原配置/状态并改用现役四机，27组历史保留；HTTP200、四rank新鲜alive且无连接错误、真实teacher指标与日志转发成功。未重启远端训练。证据runs/local/full480-reconnect/monitor-reboot-verified.json。
 

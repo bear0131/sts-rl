@@ -81,8 +81,8 @@ class RunContextEncoder(nn.Module):
         return self._pool_tokens(tokens, mask)
 
     def _pool_tokens(self, tokens, mask, *, packed_width=None):
-        if not self.training:
-            # Keep inference shapes and qualified collection graphs unchanged.
+        if not self.training and packed_width is None:
+            # Ordinary checkpoint inference retains its dense reference path.
             return self.norm(self.transformer(tokens, src_key_padding_mask=mask))[:, 0]
         # Only the first (always present) query is consumed. Masked keys cannot
         # affect it at any layer; their unused queries can be dropped. Public

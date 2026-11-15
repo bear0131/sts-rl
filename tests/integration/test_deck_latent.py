@@ -113,6 +113,42 @@ def test_full480_existing_inference_consumes_cached_deck_heads(latent_env, devic
         assert not inference.deck.enc_graphs.entries and not inference.deck.head_graphs.entries and not inference.deck.anchor_graphs.entries
 
 
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_full480_compact_context_preserves_sparse_visible_tokens(latent_env, device):
+    from rl.search.rollout_inference import UpperPolicyInference
+    if device == 'cuda':
+        assert torch.cuda.is_available(), 'compact context qualification requires CUDA'
+    torch.manual_seed(20261111)
+    policy = DeckLatentPolicy(latent_env.observation_space, latent_env.action_space, lambda _: 5e-5,
+        d_model=64, n_layers=2, n_heads=4, room_lambda=1., reward_flow='sequential-v1',
+        deck_combat_encoder='transformer64x2').to(device).eval()
+    enter_combat(latent_env)
+    one = latent_env._obs()
+    card = one['deck_ids'][np.flatnonzero(one['deck_ids'])[0]]
+    batch = {k: np.repeat(v[None], 3, axis=0) for k, v in one.items()}
+    for key in ('deck_ids', 'deck_upgrades', 'outer_deck_misc', 'relics',
+                'map_full_rooms', 'map_full_features'):
+        batch[key][:] = 0
+    # One global-only row; a sparse row with a visible feature-only map token;
+    # and a dense row exercise masks without renumbering physical coordinates.
+    batch['deck_ids'][1, [0, -1]] = card
+    batch['deck_upgrades'][1, -1] = .1
+    batch['map_full_features'][1, [0, -1], 0] = .5
+    batch['deck_ids'][2, :20] = card
+    batch['map_full_features'][2, :, 0] = np.linspace(.1, .9, batch['map_full_rooms'].shape[1])
+    core = policy.core
+    with torch.no_grad(), UpperPolicyInference(core, device) as inference:
+        expected = core.prepare_search_context(obs_as_tensor(batch, device))
+        actual = inference.search_context(batch)
+        torch.testing.assert_close(actual.combat, expected.combat, atol=2e-5, rtol=2e-5)
+        torch.testing.assert_close(actual.anchor, expected.anchor, atol=2e-5, rtol=2e-5)
+        assert inference.statistics()['context_cache_misses'] == 3
+        reordered = {k: v[[2, 0, 1, 2]] for k, v in batch.items()}
+        again = inference.search_context(reordered)
+        torch.testing.assert_close(again.combat, actual.combat[[2, 0, 1, 2]], atol=0, rtol=0)
+        assert inference.statistics()['context_cache_misses'] == 3
+
+
 def test_full480_deck_context_cache_cannot_be_disabled(latent_env):
     from rl.search.rollout_inference import UpperPolicyInference
     core = policy_for(latent_env, 'transformer64x2').core

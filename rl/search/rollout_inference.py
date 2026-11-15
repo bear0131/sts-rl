@@ -213,7 +213,8 @@ class _DeckForward:
     def combat_actor_critic(self, obs, *, active_relic_width):
         core = self.core
         if self.context:
-            z = core.context(obs, active_widths=active_relic_width)
+            z = core.context(obs, active_widths=active_relic_width[:2],
+                packed_width=active_relic_width[2] if len(active_relic_width) == 3 else None)
             return torch.cat((z, core.combat.context_projection(z),
                               core.anchor.context_projection(z)), -1), z.new_zeros(len(z), 1)
         phase, anchor, deck_width, relic_width, choice_width = active_relic_width
@@ -270,7 +271,7 @@ class _DeckConsumers:
                 # retain their graphs in one bounded, shared scratch pool.
                 capacity=256, batch_multiple=8, compile_forward=False, device_outputs=True)
             self.anchor_graphs = CombatLeafGraphs(self.head, device, amp='off',
-                capacity=32, batch_multiple=8, compile_forward=False, device_outputs=True)
+                capacity=32, batch_multiple=64, compile_forward=False, device_outputs=True)
 
     def _check_weights(self):
         if self.core.training or torch.is_grad_enabled():
@@ -320,6 +321,13 @@ class _DeckConsumers:
             widths = (_observed_width(missing['deck_ids']), _observed_width(missing['relics']))
             missing, widths = _upper_graph_inputs(missing, widths,
                 (missing['deck_ids'].shape[1], missing['relics'].shape[1]))
+            keep = (1 + (missing['deck_ids'] != 0).sum(1) + (missing['relics'] != 0).sum(1)
+                + ((missing['map_full_rooms'] != 0) | missing['map_full_features'].any(-1)).sum(1))
+            # Stable compaction keeps every visible token and its original role.
+            # Power-of-two widths bound graph variants without a device readback.
+            packed_width = min(1 + sum(widths) + missing['map_full_rooms'].shape[1],
+                1 << (int(keep.max()) - 1).bit_length())
+            widths = (*widths, packed_width)
             return self._forward(self.encoder, self.enc_graphs, missing, widths)
 
         encoded, _ = self.cache.forward(static, encode)
