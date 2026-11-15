@@ -594,6 +594,26 @@ def test_cpu_native_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_ty
         'autoregressive-v2' if nosl else 'legacy', vector='native')
 
 
+@pytest.mark.parametrize('nosl', [False, True], ids=['ppo', 'nosl'])
+def test_completed_trajectory_checkpoint_lifecycle(tmp_path, monkeypatch, capsys, journaled_combat_env_type, nosl):
+    # The accelerated combat fixture changes Strength outside its journal;
+    # ordinary resets are required for the real save/resume path exercised here.
+    test_training_reaches_wandb_and_checkpoint(
+        tmp_path, monkeypatch, capsys, journaled_combat_env_type,
+        nosl, 'model', 'transformer', 'legacy', vector='native', return_setup=True)
+    bundles = sorted((tmp_path / 'state' / 'rank0').glob('step-*'))
+    assert len(bundles) >= 2
+    for bundle in bundles[-2:]:
+        saved = torch.load(bundle / 'environment.pt',
+                           map_location='cpu', weights_only=False)
+        for wrapped in saved['states']:
+            final = wrapped['last_completed_trajectory']
+            assert final['truncated'] and not final['terminated']
+            assert final['deck'] and final['relics']
+            assert isinstance(final['seed'], str)
+            assert final['seed'] != str(wrapped['base']['backend_seed'])
+
+
 def test_joint_step_schedule_survives_resume_at_boundary(tmp_path, monkeypatch, capsys, short_combat_env_type):
     test_training_reaches_wandb_and_checkpoint(
         tmp_path, monkeypatch, capsys, short_combat_env_type,

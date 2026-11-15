@@ -39,6 +39,52 @@ def _first_action(env):
     return int(np.flatnonzero(mask)[0])
 
 
+def test_completed_trajectory_survives_autoreset_and_checkpoint(latent_training_factory):
+    from stable_baselines3.common.vec_env import DummyVecEnv
+    from apps.training_trajectories import completed_row
+
+    def make():
+        env = latent_training_factory()
+        env.env._max_episode_steps = 1
+        return env
+
+    vector = DummyVecEnv([make])
+    restored = make()
+    try:
+        vector.seed(20261116)
+        vector.reset()
+        env = vector.envs[0]
+        first_seed = str(env.unwrapped._episode_backend_seed)
+        _, _, dones, _ = vector.step([_first_action(env)])
+        assert dones[0]
+        saved = vector.env_method('export_training_state')[0]
+        final = saved['last_completed_trajectory']
+        assert final['seed'] == first_seed
+        assert final['truncated'] and not final['terminated']
+        assert str(saved['base']['backend_seed']) != first_seed
+        assert final['deck'] and final['relics']
+        assert completed_row(final, 0, 0)['result'] == 'truncated'
+
+        # Restoration uses the current episode journal but retains the previous
+        # episode's inventory; a later reset cannot replace it with a starter deck.
+        restored.restore_training_state(saved)
+        assert restored.last_completed_trajectory == final
+        restored.reset(seed=777)
+        assert restored.last_completed_trajectory == final
+        saved['last_completed_trajectory']['deck'].append(['Bash', 99])
+        assert ['Bash', 99] not in restored.last_completed_trajectory['deck']
+        assert ['Bash', 99] not in env.last_completed_trajectory['deck']
+
+        # Pre-feature recovery bundles remain readable without invented history.
+        legacy = env.export_training_state()
+        legacy.pop('last_completed_trajectory')
+        restored.restore_training_state(legacy)
+        assert restored.last_completed_trajectory is None
+    finally:
+        vector.close()
+        restored.close()
+
+
 @pytest.mark.parametrize('json_history', [False, True])
 def test_run_fork_history_isolation_and_replay(json_history):
     import copy

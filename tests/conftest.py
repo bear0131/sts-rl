@@ -87,6 +87,32 @@ def combat_factory():
 
 
 @pytest.fixture
+def journaled_combat_env_type():
+    """Short fights whose deterministic backend rule also applies on replay."""
+    from env.core.game_env import SimGameEnv
+
+    class StrongCombatBackend(SimGameEnv):
+        def _start_battle(self):
+            super()._start_battle()
+            self.bc.set_player_strength(999)
+
+    class JournaledCombatEnv(SlayTheSpireEnv):
+        def __init__(self, **kwargs):
+            super().__init__(backend_factory=lambda: StrongCombatBackend(
+                global_map_view=kwargs.get('global_map_view', False),
+                upper_public_context=kwargs.get('upper_public_context', False)), **kwargs)
+
+        def reset(self, **kwargs):
+            super().reset(**kwargs)
+            for _ in range(64):
+                if self.thick.bc is not None:
+                    return self._obs(), self._info()
+                self.step(int(np.flatnonzero(self.action_masks())[0]))
+            raise AssertionError('journaled fixture failed to reach combat')
+    return JournaledCombatEnv
+
+
+@pytest.fixture
 def short_combat_env_type():
     class ShortCombatEnv(SlayTheSpireEnv):
         def reset(self, **kwargs):

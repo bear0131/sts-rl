@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from apps.training_trajectories import TrajectoryFeed, collect, remote, write_json
+from apps.training_trajectories import TrajectoryFeed, collect, completed_row, remote, trajectory_result, write_json
 
 
 def test_stale_or_failed_refresh_keeps_inventory_and_source_time(tmp_path):
@@ -49,7 +49,7 @@ def test_checkpoint_ssh_uses_rank_hosts_and_verified_keys():
 
 
 def test_unchanged_common_round_does_not_download_or_replay(tmp_path):
-    write_json(tmp_path / 'state.json', dict(run_id='run', global_step=10, rows=['kept']))
+    write_json(tmp_path / 'state.json', dict(schema_version=2, run_id='run', global_step=10, rows=['kept']))
     config = dict(run_id='run', ports=[11, 22], trajectories=dict(directory=str(tmp_path)))
     def answer(config, rank, code):
         # rank 0 has finished the next round; only round 10 is complete on both.
@@ -87,3 +87,28 @@ def test_asset_names_use_unique_canonical_alias_and_do_not_guess_unknown_ids(tmp
     assert result['cards']['Panic Button']['name'] == '应急按钮'
     assert result['cards']['Blood For Blood']['name'] == '以血还血'
     assert result['cards']['Unknown'] == {'name': 'Unknown', 'image': None}
+
+
+@pytest.mark.parametrize('terminated,truncated,stats,result', [
+    (False, False, {'act': 3, 'floor': 50, 'outcome': 'UNDECIDED'}, 'running'),
+    (True, False, {'act': 3, 'floor': 50, 'outcome': 'PLAYER_VICTORY'}, 'won'),
+    (True, False, {'act': 4, 'floor': 51, 'outcome': 'UNDECIDED'}, 'won'),
+    (True, False, {'act': 3, 'floor': 50, 'outcome': 'PLAYER_LOSS'}, 'lost'),
+    (False, True, {'act': 3, 'floor': 50, 'outcome': 'UNDECIDED'}, 'truncated'),
+])
+def test_results_follow_real_terminal_outcomes_not_floor(terminated, truncated, stats, result):
+    assert trajectory_result(terminated, truncated, stats) == result
+
+
+def test_completed_row_preserves_terminal_inventory_and_large_seed():
+    saved = dict(schema_version=1, terminated=True, truncated=False,
+        run_stats=dict(act=3, outcome='PLAYER_VICTORY'), seed='9223372036854775807',
+        act=3, floor=50, hp=4, max_hp=90, gold=12, deck=[['Bash', 1], ['Bash', 1]],
+        relics=['Calling Bell', 'Matryoshka'], phase='game_over', actions=1024, finished_at=100)
+    row = completed_row(saved, 2, 3)
+    assert row['result'] == 'won' and row['terminal']
+    assert row['deck'] == saved['deck'] and row['relics'] == saved['relics']
+    assert row['seed'] == '9223372036854775807' and row['rank'] == 2 and row['slot'] == 3
+    assert completed_row(None, 0, 0) is None
+    with pytest.raises(ValueError, match='invalid completed'):
+        completed_row(dict(saved, terminated=False), 0, 0)

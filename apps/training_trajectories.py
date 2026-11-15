@@ -121,6 +121,33 @@ def remote(config, rank, code):
     return result.stdout
 
 
+def trajectory_result(terminated, truncated, stats):
+    """Use the training run outcome; floor alone is never evidence of victory."""
+    if truncated and not terminated:
+        return 'truncated'
+    if not terminated:
+        return 'running'
+    if stats.get('act', 0) > 3 or stats.get('outcome') == 'PLAYER_VICTORY':
+        return 'won'
+    if stats.get('outcome') == 'PLAYER_LOSS':
+        return 'lost'
+    return 'ended'
+
+
+def completed_row(snapshot, rank, slot):
+    if snapshot is None:
+        return None
+    if snapshot.get('schema_version') != 1 or not (snapshot.get('terminated') or snapshot.get('truncated')):
+        raise ValueError('invalid completed trajectory snapshot')
+    row = {key: snapshot[key] for key in
+           ('seed', 'act', 'floor', 'hp', 'max_hp', 'gold', 'deck', 'relics', 'phase', 'actions', 'finished_at')}
+    if not isinstance(row['seed'], str) or row['deck'] is None or row['relics'] is None:
+        raise ValueError('completed trajectory inventory or seed missing')
+    row.update(rank=rank, slot=slot, terminal=True, source='last_completed',
+               result=trajectory_result(snapshot['terminated'], snapshot['truncated'], snapshot['run_stats']))
+    return row
+
+
 def replay_bundle(environment_path, manifest, observation_flags):
     """Use the original restore path, including its observation/mask hashes."""
     import torch
@@ -154,10 +181,14 @@ def replay_bundle(environment_path, manifest, observation_flags):
             row = {key: state.get(key) for key in ('act', 'floor', 'hp', 'max_hp', 'gold', 'deck', 'relics')}
             row.update(rank=manifest['rank'], slot=index,
                 seed=str(saved['backend_seed']), phase=canonical.get('phase'),
-                terminal=bool(saved.get('terminal')), actions=len(saved['actions']))
+                terminal=bool(saved.get('terminal')), actions=len(saved['actions']),
+                source='current', result=trajectory_result(bool(saved.get('terminal')), False, env.thick.run_stats()))
             if row['deck'] is None or row['relics'] is None:
                 raise ValueError('canonical inventory missing')
             rows.append(row)
+            completed = completed_row(wrapped.get('last_completed_trajectory'), manifest['rank'], index)
+            if completed is not None and not (row['terminal'] and completed['seed'] == row['seed']):
+                rows.append(completed)
         finally:
             env.close()
     return rows
@@ -184,7 +215,7 @@ def collect(config):
     old = directory / 'state.json'
     if old.exists():
         saved = json.loads(old.read_text(encoding='utf-8'))
-        if saved['run_id'] == config['run_id'] and saved['global_step'] == step:
+        if saved.get('schema_version') == 2 and saved['run_id'] == config['run_id'] and saved['global_step'] == step:
             return
     def download(rank):
         manifest = available[rank][step]
@@ -200,8 +231,8 @@ def collect(config):
         rows.extend(replay_bundle(path, manifest, settings['observation_flags']))
     from apps.trajectory_assets import build_catalog
     catalog = build_catalog(settings['game_jar'], directory / 'assets', rows)
-    write_json(old, dict(schema_version=1, run_id=config['run_id'],
-        label=config.get('label', config['run_id']), kind='checkpoint_live',
+    write_json(old, dict(schema_version=2, run_id=config['run_id'],
+        label=config.get('label', config['run_id']), kind='checkpoint_live_and_latest_completed',
         global_step=step, rollout_round=bundles[0][1]['rollout_round'],
         captured_at=min(m['captured_at'] for _, m in bundles), updated_at=time.time(),
         extraction_seconds=time.monotonic()-started, rows=rows, catalog=catalog))
