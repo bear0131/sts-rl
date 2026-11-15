@@ -773,6 +773,8 @@
 - **COMBAT49-HOURLY-RECOVERY** — 已验收：2026-11-15 21:21:49实际定时投递到当前聊天并完成四机及监控检查；旧heartbeat绑定已归档聊天，已通过应用改绑当前聊天并设每小时20分；不能把ACTIVE代替实际执行。原四机从326完整恢复，同进程327/328全保存/跨rank模型Adam一致，原配置和优化保留；停滞至21:01累计24.45080机时。8774/8773原watch补异常记录/重试，失败不更新成功时间，保留28组选择；监控真实时间连续推进、云端新鲜。后续按小时继续核实际PID/进度/退出回执和数据年龄；首个实际执行证据runs/local/full480-reconnect/hourly-2121-check.json，恢复证据runs/local/full480-reconnect/hourly-recovery-acceptance.json，worklog/2026-11-15.md同ID。原性能候选不部署。
 - **COMBAT49-ROUND327-STALL** — 原因待定位：f617685d原进程在327轮rank0的78329行停止推进，其他三机近196608行等待，7200秒超时124；完整326原状态恢复后同进程327/328成功，未复现。适用原full480采样/分布式监督；已有保护现场和恢复预检，iteration超时降900秒、进程组退出清理、PYTHONFAULTHANDLER开启。验收须获得实际阻塞栈/进度证据、定位后沿原路径修复和验证；不得把重启成功写成根因修复。
 
-- **COMBAT49-LOCAL-GPU-UTIL** — 进行中：用户要求本机仅小规模、利用GPU和大收益优化。基线cb0fc458（含P30），原267/rank3/256环境/固定seed/100%覆盖64-64-256，16–64步、单次300秒上限；仅原采样路径，先确认主要等待和GPU工作量，接受至少10%端到端稳定收益及语义/小规模资源校验，不部署四机、不做768长测。见worklog/2026-11-15.md同ID。
+- **COMBAT49-LOCAL-GPU-UTIL** — 继续研究，本轮候选已否决并恢复原实现：独立队列/放大frame/缩小工作组/整tick合批均无稳定≥10%端到端证据；组合版32步快8.07%，64步无收益，未合入或部署。下一轮先用固定热态的设备/CPU时间线核对原队列收发与设备执行空档，不继续枚举工作组大小；测试退出问题独立跟踪。用户要求本机仅小规模、利用GPU和大收益优化。基线cb0fc458（含P30），原267/rank3/256环境/固定seed/100%覆盖64-64-256，16–64步、单次300秒上限；仅原采样路径，先确认主要等待和GPU工作量，接受至少10%端到端稳定收益及语义/小规模资源校验，不部署四机、不做768长测。见worklog/2026-11-15.md同ID。
 
 - **MONITOR-EV-RANGE** — 已完成；apps/dashboard_static/training.html及本机8773/8774显示，固定解释方差纵轴0–1，验收真实页面刻度、裁剪和原数值悬停，不改训练。
+
+- **COMBAT49-LOCAL-PYTEST-EXIT** — 待定位；Windows本机venv/RTX4060、tests/integration/test_full480_pipeline.py。原源码/原cubin与合批候选均四oracle断言通过后在解释器退出卡住，原基线90秒exit124，不能冒称正常测试通过；复现和选中四参数见worklog/2026-11-15.md及runs/local/full480-reconnect/local-gpu-wave-baseline-oracle-bounded.json。验收同四例原生GPU断言并自然退出0，不用os._exit掩盖；不影响远端原训练，不混入本机性能候选。
