@@ -149,6 +149,64 @@ def test_unbounded_polling_keeps_running_until_stopped(tmp_path):
     assert monitor.state['polling_ended']
 
 
+def test_polling_recovers_after_snapshot_memory_error_without_losing_rows(tmp_path, caplog):
+    monitor = Monitor(dict(run_id='continuous', iteration_steps=1, ports=[2200]),
+                      tmp_path/'state.json', 30)
+    monitor.state['updated_at'] = 100
+    dumps = json.dumps
+    attempts = []
+    failed_updates = []
+
+    def read_rank(rank):
+        attempts.append(rank)
+        if len(attempts) == 2:
+            monitor.stop.set()
+        return dict(rank=rank, checked_at=len(attempts), alive=True,
+                    rows=[dict(global_timesteps=len(attempts), value=len(attempts))])
+
+    def serialize(*args, **kwargs):
+        if len(attempts) == 1:
+            raise MemoryError('temporary snapshot allocation failure')
+        return dumps(*args, **kwargs)
+
+    def after_poll(_interval):
+        if len(attempts) == 1:
+            failed_updates.append(monitor.state['updated_at'])
+
+    with patch.object(monitor, 'read_rank', side_effect=read_rank), \
+            patch('apps.training_monitor.json.dumps', side_effect=serialize), \
+            patch.object(monitor.stop, 'wait', side_effect=after_poll):
+        monitor.watch(0)
+
+    saved = json.loads(monitor.output.read_text())
+    assert attempts == [0, 0]
+    assert failed_updates == [100]
+    assert [row['global_timesteps'] for row in saved['rows']] == [1, 2]
+    assert saved['ranks'][0]['checked_at'] == 2
+    assert saved['poll_error'] is None and not saved['polling']
+    assert saved['poll_failed_at'] > 0
+    assert 'MemoryError: temporary snapshot allocation failure' in caplog.text
+
+
+def test_poll_failure_is_visible_and_does_not_refresh_saved_data(tmp_path):
+    monitor = Monitor(dict(run_id='continuous', iteration_steps=1, ports=[2200]),
+                      tmp_path/'state.json', 30)
+    monitor.state.update(updated_at=100, rows=[dict(global_timesteps=1)])
+
+    def poll():
+        monitor.state['polling'] = True
+        monitor.stop.set()
+        raise OSError('disk temporarily unavailable')
+
+    with patch.object(monitor, 'poll', side_effect=poll):
+        monitor.watch(0)
+
+    assert monitor.state['updated_at'] == 100
+    assert monitor.state['rows'] == [dict(global_timesteps=1)]
+    assert monitor.state['poll_error'] == 'OSError: disk temporarily unavailable'
+    assert not monitor.state['polling']
+
+
 def test_dashboard_uses_complete_cohorts_and_epoch_summaries(tmp_path):
     """Render conflicting legacy/complete metrics without a browser dependency."""
     from pathlib import Path

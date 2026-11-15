@@ -5,6 +5,7 @@ import argparse
 import concurrent.futures
 import json
 import ipaddress
+import logging
 import math
 import os
 from pathlib import Path
@@ -164,7 +165,8 @@ class Monitor:
                 self.state.get('search_budget_records', []), records)
             self.state['search_budget_rows'] = budget_rows(
                 self.state['search_budget_records'], len(self.config['ports']))
-            self.state.update(ranks=ranks, updated_at=time.time(), polling=False)
+            self.state.update(ranks=ranks, updated_at=time.time(), polling=False,
+                              poll_error=None, polling_ended=False)
             payload = json.dumps(clean(self.state), ensure_ascii=False, allow_nan=False)
             self.output.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.output.with_suffix('.tmp')
@@ -174,7 +176,16 @@ class Monitor:
     def watch(self, max_hours):
         deadline = time.monotonic() + max_hours * 3600 if max_hours else math.inf
         while not self.stop.is_set() and time.monotonic() < deadline:
-            self.poll()
+            with self.lock:
+                previous_update = self.state.get('updated_at')
+            try:
+                self.poll()
+            except Exception as exc:
+                with self.lock:
+                    self.state.update(polling=False, updated_at=previous_update,
+                                      poll_error=f'{type(exc).__name__}: {exc}',
+                                      poll_failed_at=time.time())
+                logging.getLogger(__name__).exception('Training monitor poll failed; retrying next interval')
             self.stop.wait(self.interval)
         with self.lock:
             self.state['polling_ended'] = True
