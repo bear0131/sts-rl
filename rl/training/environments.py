@@ -5,6 +5,7 @@ from env.core import native_actions as C
 import copy
 import hashlib
 import multiprocessing
+import time
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
@@ -221,6 +222,27 @@ class TrainingStateWrapper(gym.Wrapper):
 
     training_state_checkpointable = True
 
+    def __init__(self, env):
+        super().__init__(env)
+        self.last_completed_trajectory = None
+
+    def step(self, action):
+        result = self.env.step(action)
+        if (result[2] or result[3]) and not result[4].get('startup_stagger_hold'):
+            # Capture only once at episode end, before the vector owner's
+            # auto-reset. This diagnostic never enters policy/PPO observations.
+            base = self.unwrapped
+            canonical = base.thick.obs_canonical()
+            current = canonical.get('global', canonical)
+            self.last_completed_trajectory = copy.deepcopy(dict(
+                schema_version=1, seed=str(base._episode_backend_seed), finished_at=time.time(),
+                terminated=bool(result[2]), truncated=bool(result[3]),
+                run_stats=result[4]['run_stats'], phase=canonical.get('phase'),
+                actions=len(base._episode_action_journal),
+                **{key: current.get(key) for key in
+                   ('act', 'floor', 'hp', 'max_hp', 'gold', 'deck', 'relics')}))
+        return result
+
     @staticmethod
     def _kind(wrapper):
         if isinstance(wrapper, StartupOccupancyWrapper):
@@ -307,6 +329,7 @@ class TrainingStateWrapper(gym.Wrapper):
                 for wrapper, kind in zip(wrappers, kinds, strict=True)
             ],
             "visible_observation_sha256": base._array_mapping_digest(observation),
+            "last_completed_trajectory": copy.deepcopy(self.last_completed_trajectory),
         }
 
     def restore_training_state(self, state):
@@ -375,6 +398,7 @@ class TrainingStateWrapper(gym.Wrapper):
             "visible_observation_sha256"
         ]:
             raise ValueError("visible environment observation diverged during replay")
+        self.last_completed_trajectory = copy.deepcopy(state.get('last_completed_trajectory'))
         return observation, info
 
 def observation_flags(model: AccumulatingMaskablePPO) -> dict[str, bool]:
