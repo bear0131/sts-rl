@@ -226,6 +226,7 @@ assert.equal(displayRow(pure)['pure_rl/value_pre/all/mse'],.25);
 assert.equal(displayRow(old)['pure_rl/value_pre/all/mse'],undefined);
 assert.ok(specs.some(s=>s[1].includes('pure_rl/value_pre/combat/mse')));
 assert.ok(specs.some(s=>s[1].includes('pure_rl/policy_loss')));
+assert.ok(specs.some(s=>s[1].includes('pure_rl/entropy_upper')&&s[1].includes('pure_rl/entropy_lower')));
 const reference={...first,global_timesteps:8,rollout_round:1};
 state.comparisons.push({run_id:'lambda-reference',label:'lambda-reference',rollout_mode:'complete_games',branch_step:0,branch_round:0,rows:[reference]});
 render();

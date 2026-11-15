@@ -474,6 +474,12 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         model.deck_search_snapshot_dir = str(tmp_path / 'weights')
     model.learn(128)
     assert model.num_timesteps == 128
+    from rl.algorithms.ppo_metrics import update_moments, finalize_metrics
+    entropy_metrics = finalize_metrics(update_moments(model))
+    assert entropy_metrics['pure_rl/entropy_lower_samples_global'] > 0
+    assert entropy_metrics['pure_rl/entropy_lower'] > 0
+    assert sum(entropy_metrics[f'pure_rl/entropy_{layer}_samples_global']
+               for layer in ('upper', 'lower')) <= 64  # Value-only anchors have no policy.
     if search:
         assert model.deck_search_last_stats['searched_roots'] > 0
         assert len(model.rollout_buffer.search_targets) > 0
@@ -518,6 +524,9 @@ def test_two_real_ppo_rounds_checkpoint_and_packed_resume(tmp_path, search, tran
         assert restored.policy.combat_value_target == 'pre-reward-anchor'
     restored.learn(128, reset_num_timesteps=False)
     assert restored.num_timesteps == 256
+    resumed_entropy = finalize_metrics(update_moments(restored))
+    assert resumed_entropy['pure_rl/entropy_lower_samples_global'] > 0
+    assert resumed_entropy['pure_rl/entropy_lower'] > 0
     resumed = save_bundle(restored, tmp_path/'resumed', rank=0, world_size=1,
         run_id='deck-latent-test', wandb_id=None, config={'ascension': 0})
     assert resumed.is_dir()

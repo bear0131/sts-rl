@@ -215,6 +215,10 @@ def test_packed_batches_keep_original_normalization_and_adam(monkeypatch, normal
     result = packed_ppo.packed_ppo_epoch(model, .2, None)
     assert result['optimizer_steps'] == 2 and result['overflow_retries'] == 0
     assert model._ppo_update_metric_count == 16
+    measured = finalize_metrics(update_moments(model))
+    assert measured['pure_rl/entropy_upper_samples_global'] == 8
+    assert measured['pure_rl/entropy_lower_samples_global'] == 8
+    assert measured['pure_rl/entropy_upper'] > 0 and measured['pure_rl/entropy_lower'] > 0
     assert model._ppo_microbatch_stats['max_rows'] <= (4 if scoped_oom else 3)
     if scoped_oom:
         assert model._ppo_microbatch_stats['oom_retries'] == 1

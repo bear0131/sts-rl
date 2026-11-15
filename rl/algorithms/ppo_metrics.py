@@ -6,6 +6,28 @@ from env.core import vocab
 
 
 UPDATE_METRICS = ('policy_loss', 'value_loss', 'entropy', 'approx_kl', 'clip_fraction')
+ENTROPY_LAYERS = ('upper', 'lower')
+
+
+def policy_entropy_moments(entropy, observations):
+    """Actual masked policy entropy, including searched rows, excluding value anchors.
+
+    These are update-time diagnostics, separate from the entropy regularizer.
+    Forced actions remain real decisions with zero entropy. No policy forward,
+    RNG operation or device-to-host synchronization is needed here.
+    """
+    if entropy is None or 'phase' not in observations:
+        return None
+    entropy = entropy.detach().reshape(-1).double()
+    combat = observations['phase'].reshape(-1) == vocab.PHASE_VOCAB_INDEX['combat']
+    anchor = observations.get('combat_exit_anchor')
+    valid = (torch.ones_like(combat) if anchor is None else
+             ~anchor.bool().reshape(len(entropy), -1).any(1))
+    moments = []
+    for layer in (~combat, combat):
+        mask = valid & layer
+        moments.extend((torch.where(mask, entropy, 0.).sum(), mask.sum()))
+    return torch.stack(moments)
 
 
 def value_moments(values, returns, phase, *, anchors=None):
@@ -43,6 +65,8 @@ def accumulate_update_metrics(model, components, count):
     metrics = torch.stack([components.policy_loss, components.value_loss,
         -components.entropy_loss, components.approx_kl, components.clip_fraction]).detach().double()
     weighted = metrics * count
+    entropy = getattr(components, 'policy_entropy_moments', None)
+    weighted = torch.cat((weighted, weighted.new_zeros(4) if entropy is None else entropy))
     if getattr(model, '_ppo_update_metric_sums', None) is None:
         model._ppo_update_metric_sums = weighted
         model._ppo_update_metric_count = count
@@ -53,10 +77,14 @@ def accumulate_update_metrics(model, components, count):
 
 def update_moments(model):
     sums = getattr(model, '_ppo_update_metric_sums', None)
-    values = np.zeros(len(UPDATE_METRICS)) if sums is None else sums.cpu().numpy()
+    values = np.zeros(len(UPDATE_METRICS) + 4) if sums is None else sums.cpu().numpy()
     result = {'pure_rl/update/' + key + '_sum': float(value)
-              for key, value in zip(UPDATE_METRICS, values, strict=True)}
+              for key, value in zip(UPDATE_METRICS, values[:len(UPDATE_METRICS)], strict=True)}
     result['pure_rl/update/count'] = float(getattr(model, '_ppo_update_metric_count', 0))
+    for i, layer in enumerate(ENTROPY_LAYERS):
+        prefix = 'pure_rl/update/entropy_' + layer
+        result[prefix + '_sum'] = float(values[len(UPDATE_METRICS) + 2*i])
+        result[prefix + '_count'] = float(values[len(UPDATE_METRICS) + 2*i + 1])
     return result
 
 
@@ -79,6 +107,14 @@ def finalize_metrics(moments, *, world_size=1):
     if count > 0:
         for key in UPDATE_METRICS:
             result['pure_rl/' + key] = moments['pure_rl/update/' + key + '_sum'] / count
+    for layer in ENTROPY_LAYERS:
+        prefix = 'pure_rl/update/entropy_' + layer
+        if prefix + '_count' not in moments:
+            continue
+        count = moments[prefix + '_count']
+        result['pure_rl/entropy_' + layer + '_samples_global'] = int(round(count * world_size))
+        if count > 0:
+            result['pure_rl/entropy_' + layer] = moments[prefix + '_sum'] / count
     prefix = 'deck_search/teacher_top1'
     if prefix + '_count' in moments:
         count = moments[prefix + '_count']

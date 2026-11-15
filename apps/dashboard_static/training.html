@@ -39,7 +39,7 @@ const specs=[
  ['纯 PPO · 更新中 value loss',['pure_rl/value_loss'],['实际训练目标 MSE · 按样本加权'],false],
  ['纯 PPO · 更新中 policy loss',['pure_rl/policy_loss'],['PPO 裁剪目标 · 按样本加权'],false],
  ['纯 PPO · 更新中 KL',['pure_rl/approx_kl'],['行为策略到更新策略 · 近似 KL'],false],
- ['纯 PPO · 策略熵',['pure_rl/entropy'],['合法动作分布熵'],false],
+ ['策略熵 · 上下层',['pure_rl/entropy_upper','pure_rl/entropy_lower'],['上层 · 战斗外决策','下层 · 战斗内决策'],false],
  ['纯 PPO · 裁剪比例',['pure_rl/clip_fraction'],['超出 PPO 裁剪区间的样本比例'],true],
  ['纯 PPO · 更新前 value 解释方差',['pure_rl/value_pre/all/explained_variance','pure_rl/value_pre/combat/explained_variance','pure_rl/value_pre/upper/explained_variance'],['整体','战斗内','战斗外'],false,[0,1]],
  ['纯 PPO · 更新配置',['optimizer_steps','pure_rl/epochs'],['实际 Adam 次数','更新遍数'],false],
@@ -67,6 +67,7 @@ const specs=[
   ['火堆 · '+label,['upper/campfire_'+key+'_choice_rate','upper/campfire_'+key+'_policy_probability'],['可选时实际选择率','可选时模型概率'],true])
 ];
 let state=null;
+document.getElementById('notice').append(' 上下层策略熵复用更新时模型的合法动作分布，单位为nats；上层统计战斗外决策，下层统计战斗内决策（包括搜索接管的行），按四机各层实际更新样本数加权。强制动作熵为0；战斗退出价值锚点没有策略，不计入。它不是搜索目标熵，也不是乘过熵系数的损失项；旧日志没有分层记录时留空。');
 document.getElementById('notice').append(' 纯 PPO 的更新前 value loss 使用本轮采样旧 V 与冻结的房间 λ-return，整体/战斗内/战斗外分别按样本数汇总；不是旧训练的 MC 标签。更新中损失、KL、熵、裁剪比例汇总实际成功反向的样本，不包含 OOM 失败尝试，也不代表全部更新完成后的重测。解释方差可能为负；该图纵轴固定0～1，范围外的真实值仍可悬停查看。目标无方差时不显示；历史缺失轮次不补零。');
 document.getElementById('notice').append(' 当前搜索监督的 teacher top1 比较采样时冻结策略与本轮实际 KL 监督目标的首选合法动作；并列时取编码顺序首个动作，按四机实际有监督的搜索根数加权。强制动作、无搜索行和战斗退出锚点不计入。它不是搜索实际执行动作的匹配率，也不是更新后准确率；新增记录前的历史和无有效样本轮次留空。');
 

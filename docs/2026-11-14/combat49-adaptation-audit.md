@@ -166,3 +166,9 @@ P24保留原观测、动作、奖励和队列schema 2；旧248保存由新原生
 | 回归 | 新共享`tests/heavenly_punishment_fixtures.py`与`tests/integration/test_heavenly_punishment.py`；原pipeline增加8种逐状态CPU/GPU对照，原collection增加两种规则下的真实PPO与保存恢复。 |
 
 实时验证/发布进度统一见worklog/2026-11-15.md的COMBAT49-HEAVENLY-PUNISHMENT，不以本机组件通过冒称四机上线完成。
+
+### P28 上下层策略熵
+
+原PPO熵项把搜索执行行排除后再按全批平均，不能代表当前下层策略的真实分布熵。仅在`rl/algorithms/updates.py::ppo_forward`复用已经算出的masked entropy；`ppo.py::PPOLossComponents`带四个脱离梯度的和/计数，`ppo_metrics.py`随原成功反向计数累加并在原跨rank归约后求比例；`packed_ppo.py`保留原五项loss返回合同。原OOM/非有限重试会一起回滚这四个计数。没有额外前向、逐根传输、同步轮次、动作/损失或梯度改动。
+
+字段`pure_rl/entropy_upper`和`pure_rl/entropy_lower`分别统计战斗外与战斗内模型分布（nats），下层包括搜索接管行；两者排除价值锚点、包含强制动作的0熵，各自输出`_samples_global`。旧整体熵字段保留为旧损失统计，界面不再用它冒充两层策略熵；历史缺少分层数据时不补数。

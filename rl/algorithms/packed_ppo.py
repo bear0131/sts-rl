@@ -309,6 +309,8 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
             result['optimizer_step_sec'] += time.perf_counter() - started
             sums = model._ppo_update_metric_sums
             delta = sums if previous is None else sums - previous
+            from rl.algorithms.ppo_metrics import UPDATE_METRICS
+            delta = delta[:len(UPDATE_METRICS)]
             result['metrics'].append((delta / (model._ppo_update_metric_count - count)).cpu().tolist())
             result['losses'].append(loss)
             result['optimizer_steps'] += 1
