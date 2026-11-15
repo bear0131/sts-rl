@@ -4019,7 +4019,7 @@ def main() -> None:
             )
             if pure_ppo:
                 from rl.algorithms.ppo_metrics import finalize_metrics
-                aggregate_scalars.update(finalize_metrics(aggregate_scalars))
+                aggregate_scalars.update(finalize_metrics(aggregate_scalars, world_size=args.world_size))
             # Both counters underwent the same mean reduction, so their ratio
             # is sum(matches)/sum(count), even with unequal rank populations.
             # Keep the historical zero/count=0 logging convention for W&B.

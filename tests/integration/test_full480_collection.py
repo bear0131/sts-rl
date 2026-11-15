@@ -185,9 +185,18 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
                 for key, value in observation.items():
                     np.testing.assert_array_equal(b.observations[key][position, i], value, err_msg=key)
             assert b.search_targets and b.search_actions
+            teacher_matches = 0
             for sample in self.model._small_playout_samples:
                 for key,value in sample['observation'].items():
                     np.testing.assert_array_equal(value,b.observations[key][sample['position'],sample['env']],err_msg=key)
+                choices = np.flatnonzero(sample['observation']['combat_legal'])
+                prior_best = choices[np.argmax(sample['prior_logits'])]
+                target_best = np.argmax(b.search_targets[sample['position'], sample['env']])
+                teacher_matches += int(prior_best == target_best)
+            stats = self.model.deck_search_last_stats
+            assert stats['teacher_top1_count'] == len(b.search_targets)
+            assert stats['teacher_top1_matches'] == teacher_matches
+            assert self.model.logger.name_to_value['deck_search/teacher_top1_count'] == len(b.search_targets)
             for (position, i), (action, logp) in b.search_actions.items():
                 assert b.actions[position, i, 0] == action
                 assert b.log_probs[position, i] == pytest.approx(logp, abs=1e-6)

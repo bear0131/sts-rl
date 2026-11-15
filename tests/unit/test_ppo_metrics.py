@@ -53,3 +53,14 @@ def test_update_losses_are_weighted_by_samples_not_rank_or_microbatch():
     assert result['pure_rl/value_loss'] == result['pure_rl/policy_loss'] == result['pure_rl/entropy'] == 4
     assert result['pure_rl/approx_kl'] == pytest.approx(.04)
     assert result['pure_rl/clip_fraction'] == pytest.approx(.08)
+
+
+def test_teacher_top1_uses_global_searched_root_counts_and_keeps_missing_missing():
+    p = 'deck_search/teacher_top1'
+    # One perfect rank, one larger rank with no matches, and two empty ranks.
+    result = finalize_metrics({p + '_matches': .25, p + '_count': 1.}, world_size=4)
+    assert result[p] == .25  # 1 / (1 + 3), not the mean of rank accuracies.
+    assert result[p + '_samples_global'] == 4
+    empty = finalize_metrics({p + '_matches': 0., p + '_count': 0.}, world_size=4)
+    assert p not in empty and empty[p + '_samples_global'] == 0
+    assert not any(key.startswith(p) for key in finalize_metrics({}))

@@ -148,3 +148,5 @@ P18在原64命令循环合并根提交，来源镜像推进、非submit/step命�
 P24保留原观测、动作、奖励和队列schema 2；旧248保存由新原生扩展正常恢复已验。新保存若含本次追加的待执行动作枚举，须配套P24原生扩展与规则51d8f534，不保证旧扩展能够降级读取。模型结构和权重格式不变。
 
 | P25 | 原`native/cpu_bridge.cpp::CpuSearchState::snapshot`不再把128元素内联存储大小当成GPU可移植性上限 | 正式253的rank1 slot9已168张消耗牌、空回调；原deviceflex141容器已有heap扩容。只修原入口判定，未知回调拒绝/8192word编码边界保留；三牌堆128/129/168/257与GPU跨128增长回归覆盖。没有改GPU规则/模型/采样/图/缓存/传输，规则SHA51d8f534保持；175项CPU/GPU与原失败状态逐字对照通过，同四learner从253恢复并完成254/255全保存/模型Adam一致，证据见worklog本题。 |
+
+| P26 | 原固定步数采样结束时复用已存在根logits和KL目标统计teacher top1匹配/样本两计数；原ppo_metrics在原跨rank归约后计算加权比例和总样本数 | 只改3个运行时文件：rl/algorithms/full480.py、rl/algorithms/ppo_metrics.py、rl/training/distributed_sb3.py；不新增推理、逐根观察传输或梯度同步轮次，不改动作/目标/损失/缓存/图。现役四机各256×768，full480为旧目录名；监控新增当前搜索监督图和样本数，保留历史独立训练器图。4指标单元与2 CPU/CUDA固定PPO/恢复回归通过，正式数据验收随后完成。 |

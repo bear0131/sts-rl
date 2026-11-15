@@ -60,7 +60,7 @@ def update_moments(model):
     return result
 
 
-def finalize_metrics(moments):
+def finalize_metrics(moments, *, world_size=1):
     """Derive ratios after cross-rank reduction. Missing data stays missing."""
     result = {}
     for name in ('all', 'combat', 'upper', 'anchor'):
@@ -79,4 +79,10 @@ def finalize_metrics(moments):
     if count > 0:
         for key in UPDATE_METRICS:
             result['pure_rl/' + key] = moments['pure_rl/update/' + key + '_sum'] / count
+    prefix = 'deck_search/teacher_top1'
+    if prefix + '_count' in moments:
+        count = moments[prefix + '_count']
+        result[prefix + '_samples_global'] = int(round(count * world_size))
+        if count > 0:
+            result[prefix] = moments[prefix + '_matches'] / count
     return result
