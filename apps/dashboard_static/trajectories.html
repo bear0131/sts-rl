@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>训练轨迹 · 卡组与遗物</title>
+<style>
+:root{color-scheme:light;font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;color:#23334a;background:#f4f2ed}*{box-sizing:border-box}body{margin:0}button,input,select{font:inherit}button,a,input,select{touch-action:manipulation}:focus-visible{outline:3px solid #237baf;outline-offset:3px}header{background:#14263c;color:#f8fafc;padding:24px 30px 22px;display:flex;justify-content:space-between;align-items:center;gap:20px}h1{font-size:27px;letter-spacing:.04em;margin:5px 0 9px}header p{margin:0;color:#b8c8dc;font-size:13px;line-height:1.7}header a{color:#d4e7fa;text-decoration:none;white-space:nowrap;font-size:14px}.eyebrow{font-size:11px;color:#9db5ce;letter-spacing:.15em}.toolbar{position:sticky;top:0;z-index:3;display:flex;align-items:end;gap:12px;flex-wrap:wrap;padding:14px 30px;background:#faf9f6f5;border-bottom:1px solid #d6d8db;backdrop-filter:blur(12px)}label{display:flex;flex-direction:column;gap:5px;color:#697487;font-size:11px}input,select,button{border:1px solid #cbd1d8;background:white;color:#23334a;border-radius:6px;padding:9px 11px;font-size:13px;min-height:38px}button{cursor:pointer}button:hover{background:#e9f0f6}.search{flex:1;min-width:230px;max-width:450px}.search input{width:100%}#count{margin-left:auto;font-size:13px;color:#66758a;align-self:center}#refresh{border-color:#99adc2;color:#245271}#notice{margin:16px 30px 0;padding:12px 15px;border-radius:7px;background:#e7edf2;color:#51687e;font-size:13px;line-height:1.7}#notice.warning{background:#fff0d9;color:#865516}#meta{padding:16px 30px 10px;display:flex;justify-content:space-between;gap:15px;color:#65758a;font-size:12px;flex-wrap:wrap}main{padding:0 30px 28px}.trajectory{display:grid;grid-template-columns:190px minmax(0,1fr);background:white;border:1px solid #dbdcd9;border-radius:9px;margin-bottom:12px;overflow:hidden;content-visibility:auto;contain-intrinsic-size:auto 350px}.identity{padding:18px 16px;border-left:5px solid #2a7c59;background:#fafbf9;border-right:1px solid #e2e6e3}.number{font-size:15px;font-weight:700;letter-spacing:.03em}.floor{font-size:32px;font-weight:750;color:#267a53;margin:9px 0 3px}.phase{font-size:12px;color:#718575;display:inline-block;margin-left:7px;font-weight:400}.stats{font-size:12px;line-height:1.9;color:#65758a}.seed{font:11px ui-monospace,Consolas,monospace;margin-top:12px;color:#81909b;overflow-wrap:anywhere}.inventory{min-width:0;padding:14px 16px 16px}.section-label{font-size:11px;color:#748094;margin-bottom:8px;letter-spacing:.06em}.relic-label{margin-top:15px;color:#92744d}.tiles{display:flex;flex-wrap:wrap;gap:6px}.tile{position:relative;flex:0 0 82px;width:82px;min-height:90px;border:1px solid #d7d0c1;border-radius:4px;background:#fffcf7;overflow:hidden}.tile.upgraded{border:2px solid #2a8855}.tile img{display:block;width:100%;height:59px;object-fit:cover;background:#e7e3d9}.tile .name{display:flex;align-items:center;justify-content:center;min-height:29px;padding:4px 3px;font-size:11px;font-weight:650;line-height:1.3;text-align:center;overflow-wrap:anywhere}.tile.upgraded .name{color:#22583d}.upgrade,.copies{position:absolute;padding:1px 4px;font-size:11px;font-weight:700;color:white;line-height:17px}.upgrade{top:0;left:0;background:#247c4d;border-radius:0 0 4px 0}.copies{top:40px;right:0;background:#182b43e8;border-radius:4px 0 0 0}.relic{flex-basis:66px;width:66px;min-height:77px;background:#fffaf0;border-color:#e6d5b9}.relic img{height:48px;object-fit:contain;padding:3px;background:transparent}.relic .name{color:#6f5430;font-size:10px;min-height:27px}.placeholder{height:59px;display:grid;place-items:center;color:#b4b1a8;font-size:25px}.relic .placeholder{height:48px}.empty{padding:70px 15px;text-align:center;color:#7e8994}#sentinel{text-align:center;padding:20px;font-size:12px;color:#8b9296}#new-data{background:#dcebdc;border-color:#94bba1;color:#255a3d}[hidden]{display:none!important}@media(min-width:1800px){.tile{flex-basis:94px;width:94px}.tile img{height:68px}.copies{top:49px}.relic{flex-basis:72px;width:72px}.relic img{height:52px}}@media(max-width:700px){header{padding:18px;align-items:start}header a{font-size:12px}h1{font-size:23px}.toolbar{padding:10px 14px;gap:8px}.search{flex-basis:100%;max-width:none}.toolbar label:not(.search){flex:1;min-width:75px}#count{margin-left:0;font-size:11px}#meta{padding:12px 14px}#notice{margin:12px 14px 0}main{padding:0 12px 20px}.trajectory{grid-template-columns:1fr}.identity{display:grid;grid-template-columns:1fr 1fr;padding:10px 12px;border-right:0;border-bottom:1px solid #e2e6e3}.floor{grid-column:2;grid-row:1/3;justify-self:end;margin:0;font-size:29px}.stats{grid-column:1/3;font-size:11px}.seed{grid-column:1/3;margin-top:4px;font-size:10px}.inventory{padding:12px 10px}.tile{flex-basis:70px;width:70px;min-height:82px}.tile img{height:51px}.copies{top:32px}.tile .name{font-size:10px}.relic{flex-basis:57px;width:57px;min-height:72px}.relic img{height:43px}.relic .name{font-size:9px}}
+</style>
+<header><div><div class="eyebrow">TRAINING · TRAJECTORIES</div><h1>训练轨迹</h1><p id="run">正在读取最近的训练…</p></div><a href="/">← 训练曲线</a></header>
+<div class="toolbar">
+<label class="search">查找轨迹<input id="search" type="search" placeholder="卡牌、遗物、种子或环境编号" aria-label="查找卡牌、遗物或轨迹"></label>
+<label>机器<select id="rank"><option value="">全部机器</option></select></label>
+<label>楼层<select id="floor"><option value="">全部楼层</option><option value="1">第 1 幕</option><option value="2">第 2 幕</option><option value="3">第 3 幕</option><option value="4">第 4 幕</option></select></label>
+<label>排序<select id="sort"><option value="floor">楼层从高到低</option><option value="slot">机器 / 环境编号</option><option value="deck">卡组从多到少</option></select></label>
+<button id="refresh" type="button">刷新</button><button id="new-data" type="button" hidden>有新快照 · 更新列表</button><span id="count" aria-live="polite"></span>
+</div>
+<div id="notice" role="status">正在连接轨迹数据…</div>
+<div id="meta"><span id="round"></span><span id="time"></span></div>
+<main><div id="list"></div><div id="empty" class="empty" hidden>没有匹配的轨迹，试试其他筛选条件。</div><div id="sentinel">向下滚动查看后续轨迹</div></main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let data=null,pending=null,visible=[],rendered=0,busy=false;
+const phaseNames={combat:'战斗中',combat_reward:'战斗奖励',map:'地图',event:'事件',shop:'商店',rest:'营火',treasure:'宝箱',card_reward:'选牌',game_over:'已结束',over:'已结束',boss_reward:'首领奖励',boss_relic:'首领遗物',card_select:'选牌',chest:'宝箱',neow:'涅奥'};
+const escapeHTML=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtTime=value=>value?new Date(value*1000).toLocaleString('zh-CN',{hour12:false}):'等待同步';
+function item(kind,id){return data.catalog?.[kind]?.[id]||{name:id,image:null};}
+function tile(kind,id,upgrade=0,copies=1){
+ const asset=item(kind,id),relic=kind==='relics',name=escapeHTML(asset.name);
+ const image=asset.image&&/^\/trajectory-assets\/[a-f0-9]{64}\.png$/.test(asset.image)?`<img src="${asset.image}" alt="${name}" loading="lazy" decoding="async" width="${relic?66:82}" height="${relic?48:59}">`:'<div class="placeholder" aria-label="暂无原画">◇</div>';
+ return `<div class="tile ${relic?'relic':''} ${upgrade?'upgraded':''}" title="${name}${upgrade?' +'+upgrade:''} · ${escapeHTML(id)}${copies>1?' ×'+copies:''}">${image}${upgrade?`<span class="upgrade">+${upgrade}</span>`:''}${copies>1?`<span class="copies">×${copies}</span>`:''}<span class="name">${name}</span></div>`;
+}
+function rowHTML(row){
+ const groups=new Map();for(const [id,upgrade] of row.deck){const key=JSON.stringify([id,upgrade]);if(groups.has(key))groups.get(key).count++;else groups.set(key,{id,upgrade,count:1});}
+ const upgrades=row.deck.filter(c=>c[1]>0).length;
+ return `<article class="trajectory" data-rank="${row.rank}" data-slot="${row.slot}"><aside class="identity"><div class="number">机器 ${row.rank+1} · 环境 ${String(row.slot+1).padStart(3,'0')}</div><div class="floor">F${row.floor??'—'}<span class="phase">${escapeHTML(phaseNames[row.phase]||row.phase||'在途中')}</span></div><div class="stats">${row.deck.length} 张牌 · 升级 ${upgrades}<br>${row.relics.length} 件遗物 · 生命 ${row.hp??'—'}/${row.max_hp??'—'}</div><div class="seed">Seed ${escapeHTML(row.seed)}</div></aside><div class="inventory"><div class="section-label">卡组 · ${row.deck.length} 张</div><div class="tiles cards">${[...groups.values()].map(c=>tile('cards',c.id,c.upgrade,c.count)).join('')}</div><div class="section-label relic-label">遗物 · ${row.relics.length} 件</div><div class="tiles relics">${row.relics.map(id=>tile('relics',id)).join('')||'<span class="stats">暂无遗物</span>'}</div></div></article>`;
+}
+function appendRows(){
+ const next=visible.slice(rendered,rendered+20);$('list').insertAdjacentHTML('beforeend',next.map(rowHTML).join(''));rendered+=next.length;
+ $('sentinel').textContent=rendered<visible.length?`已展开 ${rendered} / ${visible.length} 条 · 向下滚动继续查看`:`已显示全部 ${visible.length} 条轨迹`;
+}
+function filter(){
+ if(!data)return;const query=$('search').value.trim().toLowerCase(),rank=$('rank').value,act=$('floor').value;
+ visible=data.rows.filter(r=>(rank===''||r.rank===Number(rank))&&(act===''||r.act===Number(act))&&(!query||r.searchText.includes(query)));
+ visible.sort($('sort').value==='floor'?(a,b)=>(b.floor-a.floor)||(a.rank-b.rank)||(a.slot-b.slot):$('sort').value==='deck'?(a,b)=>b.deck.length-a.deck.length:(a,b)=>(a.rank-b.rank)||(a.slot-b.slot));
+ $('list').replaceChildren();rendered=0;appendRows();$('empty').hidden=visible.length!==0;$('count').textContent=`${visible.length.toLocaleString()} / ${data.rows.length.toLocaleString()} 条轨迹`;
+}
+function apply(value){
+ data=value;pending=null;$('new-data').hidden=true;$('run').textContent=value.label||value.run_id;
+ const selected=$('rank').value;$('rank').innerHTML='<option value="">全部机器</option>'+[...new Set(value.rows.map(r=>r.rank))].sort().map(r=>`<option value="${r}">机器 ${r+1}</option>`).join('');$('rank').value=selected;
+ for(const row of data.rows)row.searchText=[row.seed,`机器 ${row.rank+1}`,`环境 ${row.slot+1}`,...row.deck.flatMap(c=>[c[0],item('cards',c[0]).name]),...row.relics.flatMap(id=>[id,item('relics',id).name])].join(' ').toLowerCase();
+ $('round').textContent=value.rollout_round?`第 ${value.rollout_round} 轮 · ${value.global_step.toLocaleString()} 个累计环境步`:'等待完整保存点';
+ $('time').textContent=`保存于 ${fmtTime(value.captured_at)}`;filter();notice(value);
+}
+function notice(value){
+ const stale=value.stale||((Date.now()/1000-(value.captured_at||0))>900);
+ $('notice').className=value.error||stale?'warning':'';
+ $('notice').textContent=value.error?(value.rows.length?'同步异常，保留上次轨迹。':'')+value.error:stale?'轨迹快照已超过 15 分钟未更新，当前显示上次保存的状态。':'当前训练在保存时的在途轨迹 · 卡组与遗物随最新完整轮次更新；同名同升级卡合并显示数量。';
+}
+async function refresh(force=false){
+ if(busy)return;busy=true;$('refresh').disabled=true;
+ try{const response=await fetch('/api/trajectories',{cache:'no-store'});if(!response.ok)throw Error('HTTP '+response.status);const value=await response.json();
+  if(!data||force||(!data.rows.length&&value.rows.length)||data.run_id!==value.run_id)apply(value);
+  else if(value.global_step!==data.global_step){pending=value;$('new-data').hidden=false;notice({...data,error:value.error});}
+  else notice(value);
+ }catch(error){$('notice').className='warning';$('notice').textContent='监控连接中断，保留当前列表；正在自动重连。';}
+ finally{busy=false;$('refresh').disabled=false;}
+}
+for(const id of ['rank','floor','sort'])$(id).addEventListener('change',filter);
+$('search').addEventListener('input',filter);$('refresh').onclick=()=>refresh(true);$('new-data').onclick=()=>{if(pending)apply(pending);};
+new IntersectionObserver(entries=>{if(entries[0].isIntersecting&&rendered<visible.length)appendRows();},{rootMargin:'800px'}).observe($('sentinel'));
+refresh();setInterval(()=>refresh(),30000);
+</script>
+</html>

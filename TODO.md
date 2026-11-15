@@ -778,3 +778,8 @@
 - **MONITOR-EV-RANGE** — 已完成；apps/dashboard_static/training.html及本机8773/8774显示，固定解释方差纵轴0–1，验收真实页面刻度、裁剪和原数值悬停，不改训练。
 
 - **COMBAT49-LOCAL-PYTEST-EXIT** — 待定位；Windows本机venv/RTX4060、tests/integration/test_full480_pipeline.py。原源码/原cubin与合批候选均四oracle断言通过后在解释器退出卡住，原基线90秒exit124，不能冒称正常测试通过；复现和选中四参数见worklog/2026-11-15.md及runs/local/full480-reconnect/local-gpu-wave-baseline-oracle-bounded.json。验收同四例原生GPU断言并自然退出0，不用os._exit掩盖；不影响远端原训练，不混入本机性能候选。
+
+### COMBAT49-TRAJECTORY-MONITOR
+- 状态：已完成；范围：apps/training_monitor.py 与监控静态页面、只读轨迹提取。
+- 用户意图：为最近一个训练增加滚动轨迹列表，逐条显示卡组和遗物，沿用整体评测汇总图片样式。
+- 验收：当前四机训练真实轨迹/保存轮次明确；原画、中文名、升级与重复数量准确；列表可滚动，断线保留并标记缓存；原监控入口可达，不改变训练/采样；浏览器实测后 commit/push。

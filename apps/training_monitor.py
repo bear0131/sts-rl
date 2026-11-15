@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 from apps.training_budget import budget_rows, merge_budget_records
+from apps.training_trajectories import TrajectoryFeed
 
 
 REMOTE = r'''
@@ -102,6 +103,8 @@ def allowed_client(address, networks):
 
 class Monitor:
     def __init__(self, config, output, interval):
+        if 'hosts' in config and len(config['hosts']) != len(config['ports']):
+            raise ValueError('one SSH destination per rank required')
         self.config, self.output, self.interval = config, output, interval
         self.lock = threading.Lock()
         self.stop = threading.Event()
@@ -138,7 +141,8 @@ class Monitor:
         script = f"cd {shlex.quote(c['root'])}\n.venv/bin/python - <<'PY_MONITOR'\n{header}\n{REMOTE}\nPY_MONITOR\n"
         args = ['ssh', '-i', c['ssh_key'], '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
                 '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=10',
-                '-p', str(c['ports'][rank]), c['host'], 'bash -se']
+                *(['-o', 'UserKnownHostsFile=' + c['ssh_known_hosts']] if c.get('ssh_known_hosts') else []),
+                '-p', str(c['ports'][rank]), c['hosts'][rank] if 'hosts' in c else c['host'], 'bash -se']
         try:
             # Text-mode stdin adds CRLF on Windows; bash must receive literal LF.
             result = subprocess.run(args, input=script.replace('\r\n', '\n').encode('utf-8'),
@@ -221,6 +225,7 @@ def main():
     if (config.get('rollout_mode') != 'complete_games' and (config.get('iteration_steps') or 0) <= 0) or not config['ports']:
         parser.error('positive iteration_steps and at least one rank required')
     monitor = Monitor(config, args.output, args.poll_seconds)
+    trajectories = TrajectoryFeed(config.get('trajectories'))
     html = Path(__file__).with_name('dashboard_static') / 'training.html'
 
     class Handler(BaseHTTPRequestHandler):
@@ -230,6 +235,15 @@ def main():
                 return
             if self.path == '/api/state':
                 body, content = monitor.snapshot(), 'application/json; charset=utf-8'
+            elif self.path == '/api/trajectories':
+                body, content = trajectories.snapshot(monitor.config['run_id']), 'application/json; charset=utf-8'
+            elif self.path in ('/trajectories', '/trajectories.html'):
+                body, content = html.with_name('trajectories.html').read_bytes(), 'text/html; charset=utf-8'
+            elif self.path.startswith('/trajectory-assets/'):
+                body, content = trajectories.asset(self.path.removeprefix('/trajectory-assets/')), 'image/png'
+                if body is None:
+                    self.send_error(404)
+                    return
             elif self.path in ('/', '/training.html'):
                 body, content = html.read_bytes(), 'text/html; charset=utf-8'
             else:
@@ -238,7 +252,7 @@ def main():
             self.send_response(200)
             self.send_header('Content-Type', content)
             self.send_header('Content-Length', str(len(body)))
-            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Cache-Control', 'public, max-age=86400' if content == 'image/png' else 'no-store')
             self.end_headers()
             self.wfile.write(body)
 
@@ -249,6 +263,7 @@ def main():
     server = ThreadingHTTPServer((str(listen), args.port), Handler)
     thread = threading.Thread(target=monitor.watch, args=(args.max_hours,), daemon=True)
     thread.start()
+    threading.Thread(target=trajectories.watch, args=(monitor,), daemon=True).start()
     print(f'Training monitor listening on {listen}:{args.port}', flush=True)
     try:
         server.serve_forever()
