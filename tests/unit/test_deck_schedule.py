@@ -117,3 +117,8 @@ def test_filtered_objective_can_explicitly_continue_old_search_state_without_res
     apply_stage(resumed, configure(resumed), 456)
     assert resumed.deck_search_config == again.deck_search_config
     assert resumed.deck_training_state == before
+    apply_stage(resumed, configure(resumed, dict(old, search_objective='terminal-logit-v1')), 455)
+    assert resumed.deck_search_config['value_mix'] == 0.
+    assert resumed.deck_search_config['objective'] == 'terminal-logit-v1'
+    assert resumed.deck_training_state == before
+    assert resumed.training_objective_contract == 'deck-latent-terminal-logit-v1'

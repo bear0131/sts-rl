@@ -35,6 +35,8 @@ def plan_job(job,envs,obs):
  if (getattr(model_owner,'deck_search_config',None) or {}).get('objective') in ('turn-consensus-v1','turn-consensus-reverse-v1', 'turn-consensus-logit-v1'):
   r['search_teacher']='turn-consensus-v1'
   if r['budget']//len(mapping)>=4:r['stop_turn']=int(e.thick.bc.turn)+1
+ if (getattr(model_owner,'deck_search_config',None) or {}).get('objective')=='terminal-logit-v1':
+  r['search_teacher']='terminal-logit-v1'
  return r
 class Stream:
  def __init__(self,batch,*,threads):

@@ -16,7 +16,7 @@ def test_paired_lucky_win_gap_without_turn_evidence_does_not_veto():
     np.testing.assert_array_equal(turn_consensus_support(full.ravel(), short.ravel(), [0, 1]), [True, True])
 
 
-@pytest.mark.parametrize('objective', ['turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1'])
+@pytest.mark.parametrize('objective', ['turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1', 'terminal-logit-v1'])
 def test_clear_inferiority_overrides_prior_and_preserves_remaining_ratios(objective):
     full = np.tile([0., 1., 1.], (16, 1))
     keep = turn_consensus_support(full.ravel(), np.ones_like(full).ravel(), [0, 1, 2])
@@ -33,7 +33,7 @@ def test_clear_inferiority_overrides_prior_and_preserves_remaining_ratios(object
     torch.testing.assert_close(current.grad, prior.float()-q.exp(), atol=2e-7, rtol=1e-6)
 
 
-@pytest.mark.parametrize('objective', ['turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1'])
+@pytest.mark.parametrize('objective', ['turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1', 'terminal-logit-v1'])
 def test_undecided_support_keeps_original_distribution_and_illegal_gradient_zero(objective):
     logits = torch.tensor([[3., -1., 999., 2.]], requires_grad=True)
     legal = torch.tensor([[True, True, False, True]])
@@ -142,3 +142,32 @@ def test_logit_conditional_single_survivor_has_finite_hard_correction():
     loss.backward()
     torch.testing.assert_close(loss, torch.tensor(2000.))
     torch.testing.assert_close(logits.grad, torch.tensor([[1., -1., 0.]]))
+
+
+def test_terminal_only_removes_turn_agreement_but_keeps_clear_full_evidence():
+    difference = np.array([.1]*7+[-.1])
+    full = np.column_stack((np.full(8, .3), .3+difference))
+    short = np.tile([.3, .5], (8, 1))
+    np.testing.assert_array_equal(turn_consensus_support(full.ravel(), short.ravel(), [0, 1]), [False, True])
+    np.testing.assert_array_equal(turn_consensus_support(full.ravel(), None, [0, 1], terminal_only=True), [True, True])
+    np.testing.assert_array_equal(turn_consensus_support(np.tile([1., 0., 1.], 8), None,
+        [2, 0, 1], terminal_only=True), [False, True, True])
+    with pytest.raises(ValueError, match='must not contain turn'):
+        turn_consensus_support(full.ravel(), short.ravel(), [0, 1], terminal_only=True)
+
+
+def test_terminal_logit_ablation_preserves_exact_loss_geometry_and_has_no_mix():
+    logits = torch.tensor([[.2, -.7, .4]], requires_grad=True)
+    target = torch.tensor([[.6, 0., .4]]).log()
+    legal = torch.ones_like(logits, dtype=torch.bool)
+    previous = search_kl(logits, target, legal, objective='turn-consensus-logit-v1').sum()
+    actual = search_kl(logits, target, legal, objective='terminal-logit-v1').sum()
+    torch.testing.assert_close(actual, previous, atol=0, rtol=0)
+    torch.testing.assert_close(torch.autograd.grad(actual, logits, retain_graph=True)[0],
+                               torch.autograd.grad(previous, logits)[0], atol=0, rtol=0)
+    config = dict(backend='full480', objective='terminal-logit-v1', action_selection='search-filter-policy-rank-v1')
+    assert SearchTrainingConfig(**config).value_mix == 0.
+    with pytest.raises(ValueError, match='original full480'):
+        SearchTrainingConfig(**config, value_mix=.25)
+    with pytest.raises(ValueError, match='matching teacher evidence'):
+        SearchTrainingConfig(**dict(config, action_selection='turn-consensus-policy-rank-v1'))

@@ -133,6 +133,7 @@ def test_full480_natural_rows_cached_dome_and_cancel(
     ('turn-consensus-reverse-v1', 'search-filter-policy-rank-v1', 0.),
     ('turn-consensus-reverse-v1', 'turn-consensus-policy-rank-v1', 0.),
     ('turn-consensus-logit-v1', 'search-filter-policy-rank-v1', 0.),
+    ('terminal-logit-v1', 'search-filter-policy-rank-v1', 0.),
 ])
 def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, latent_training_factory, device, combat_rules, objective, action_selection, value_mix):
     from dataclasses import asdict
@@ -225,7 +226,7 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
                 assert b.log_probs[position, i] == pytest.approx(logp, abs=1e-6)
             for key, target in b.search_targets.items():
                 legal = b.action_masks[key].astype(bool)
-                if objective.startswith('turn-consensus'):
+                if objective.startswith('turn-consensus') or objective == 'terminal-logit-v1':
                     assert np.isfinite(target[legal]).any() and not np.isnan(target).any()
                 else:
                     assert np.isfinite(target[legal]).all()
@@ -251,9 +252,9 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
         configure_packed_updates(model, dict(token_budget=1024, max_rows=8, precision='fp32'))
         model.combat_rules = combat_rules
         model.deck_search_config = asdict(SearchTrainingConfig(backend='full480', fraction=1.,
-            normal_budget=64 if objective.startswith('turn-consensus') else 2,
-            boss_budget=64 if objective.startswith('turn-consensus') else 2,
-            max_depth=24 if objective.startswith('turn-consensus') else 8, timeout_seconds=120.,
+            normal_budget=64 if objective.startswith('turn-consensus') or objective == 'terminal-logit-v1' else 2,
+            boss_budget=64 if objective.startswith('turn-consensus') or objective == 'terminal-logit-v1' else 2,
+            max_depth=24 if objective.startswith('turn-consensus') or objective == 'terminal-logit-v1' else 8, timeout_seconds=120.,
             action_selection=action_selection, objective=objective, value_mix=value_mix))
         before = state_digest(model.policy.state_dict())
         updates = []
@@ -275,7 +276,7 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
         assert model.num_timesteps == 64 and state_digest(model.policy.state_dict()) != before
         steps = {int(s['step']) for s in model.policy.optimizer.state.values()}
         check_parameter_steps(model)
-        if not objective.startswith('turn-consensus'):assert steps == {2}
+        if not objective.startswith('turn-consensus') and objective != 'terminal-logit-v1':assert steps == {2}
         source = save_bundle(model, tmp_path/'first', rank=0, world_size=1,
             run_id='full480-fixed-test', wandb_id=None, config={'ascension': 0})
         target = vector()
@@ -307,7 +308,7 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
         assert restored.num_timesteps == 128
         # Phase-specific parameters can be absent from a physical batch.
         check_parameter_steps(restored)
-        if objective != 'turn-consensus-v1' and not value_mix:
+        if objective not in ('turn-consensus-v1', 'terminal-logit-v1') and not value_mix:
             assert {int(s['step']) for s in restored.policy.optimizer.state.values()} <= {3, 4}
         save_bundle(restored, tmp_path/'resumed', rank=0, world_size=1,
             run_id='full480-fixed-test', wandb_id=None, config={'ascension': 0})

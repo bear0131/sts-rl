@@ -4,13 +4,16 @@ import numpy as np
 SEARCH_FILTER_VALUE_TOLERANCE = .005
 
 
-def turn_consensus_support(terminal_values, turn_values, action_order):
+def turn_consensus_support(terminal_values, turn_values, action_order, *, terminal_only=False):
     """Veto only supported inferiority, keeping unresolved action proportions.
 
     Matched-world standard errors are noise heuristics, not simultaneous
     confidence bounds. Two standard errors need agreement at the natural turn
     boundary; three suffice from full returns alone. Acting still uses full Q.
+    The terminal-only ablation removes the two-error/turn agreement branch.
     """
+    if terminal_only and turn_values is not None:
+        raise ValueError('terminal-only evidence must not contain turn values')
     order = np.asarray(action_order)
     n = len(order)
     if n < 1 or not np.array_equal(np.sort(order), np.arange(n)):
@@ -21,18 +24,19 @@ def turn_consensus_support(terminal_values, turn_values, action_order):
     worlds = len(full) // n
     if worlds < 4:
         return np.ones(n, dtype=bool)
-    short = np.asarray(turn_values, dtype=np.float64)
-    if short.shape != full.shape or not np.isfinite(short).all():
-        raise ValueError('consensus requires matching natural-turn returns')
     # Incomplete final worlds do not supply paired comparisons.
-    full = full[:worlds*n].reshape(worlds, n)
-    short = short[:worlds*n].reshape(worlds, n)
-    diff = full[:, :, None] - full[:, None, :]
-    early = short[:, :, None] - short[:, None, :]
+    complete = full[:worlds*n].reshape(worlds, n)
+    diff = complete[:, :, None] - complete[:, None, :]
     mean, se = diff.mean(0), diff.std(0, ddof=1) / np.sqrt(worlds)
-    emean, ese = early.mean(0), early.std(0, ddof=1) / np.sqrt(worlds)
-    veto = (((mean-2*se > SEARCH_FILTER_VALUE_TOLERANCE) & (emean-2*ese > 0))
-            | (mean-3*se > SEARCH_FILTER_VALUE_TOLERANCE))
+    veto = mean-3*se > SEARCH_FILTER_VALUE_TOLERANCE
+    if not terminal_only:
+        short = np.asarray(turn_values, dtype=np.float64)
+        if short.shape != full.shape or not np.isfinite(short).all():
+            raise ValueError('consensus requires matching natural-turn returns')
+        short = short[:worlds*n].reshape(worlds, n)
+        early = short[:, :, None] - short[:, None, :]
+        emean, ese = early.mean(0), early.std(0, ddof=1) / np.sqrt(worlds)
+        veto |= (mean-2*se > SEARCH_FILTER_VALUE_TOLERANCE) & (emean-2*ese > 0)
     keep = ~veto.any(0)
     if not keep.any():
         raise AssertionError('strict positive full-return differences must leave an action')

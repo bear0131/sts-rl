@@ -224,9 +224,10 @@ class StreamingPool(ScoringPool):
    result=aggregate([r],plan,values[k,:b],outcomes[k,:b],stats[k,:b],
     chain_value_sums=None if chain_sums is None else chain_sums[k,:b],
     chain_value_counts=None if chain_counts is None else chain_counts[k,:b])[0]
-   if r.get('search_teacher')=='turn-consensus-v1':
+   if r.get('search_teacher') in ('turn-consensus-v1','terminal-logit-v1'):
     from env.search.action_selection import turn_consensus_support
-    result['teacher_keep']=turn_consensus_support(values[k,:b],r.get('_turn_values'),r['order'])
+    result['teacher_keep']=turn_consensus_support(values[k,:b],r.get('_turn_values'),r['order'],
+     terminal_only=r['search_teacher']=='terminal-logit-v1')
    if 'root_logits' in r:result.update(root_logits=r['root_logits'],root_value=r['root_value'])
    if contexts is not None:result['combat_context']=contexts[k]
    result['root_generation']=h.generation;result['root_slot']=h.slot

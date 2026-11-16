@@ -472,7 +472,8 @@ def test_full480_pending_block_roundtrip(combat_factory, scenario):
     [('punishment:' + s, True) for s in ('cards', 'turns', 'mitigation', 'draw_hooks', 'autoplay', 'fatal', 'revive', 'fairy')] +
     [('audit:potion:' + s + ':1', False) for s in ('Attack Potion', 'Elixir Potion', 'Gamblers Brew', 'Liquid Memories')] +
     [('turn:' + s, True) for s in ('prefix', 'gamble', 'growth', 'punishment:fatal', 'timewarp', 'two')] +
-    [('mixture:' + s, True) for s in ('prefix', 'growth', 'anchor_duplicates', 'punishment:fatal')])
+    [('mixture:' + s, True) for s in ('prefix', 'growth', 'anchor_duplicates', 'punishment:fatal')] +
+    [('terminal:' + s, True) for s in ('prefix', 'growth')])
 def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, anchored, tmp_path, monkeypatch):
     from rl.search.full480.combo_runtime import BattleArena, BattlePool
     from rl.search.full480.combo_model import DeckWeights
@@ -482,6 +483,8 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
     from rl.policies.deck_latent import DeckLatentPolicy
     value_mix = .25 if scenario.startswith('mixture:') else 0.
     if value_mix:scenario = scenario[len('mixture:'):]
+    terminal_only = scenario.startswith('terminal:')
+    if terminal_only:scenario = scenario[len('terminal:'):]
     turn_horizon = (2 if scenario == 'turn:two' else 1) if scenario.startswith('turn:') else 0
     if turn_horizon:
         scenario = scenario[len('turn:'):]
@@ -565,7 +568,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
         flat = DeckWeights(core)
         flat.input_tables = DeckInputTables(core, obs)
         mapping = sorted(latent_env._joint_policy_actions())
-        worlds = paired_worlds(20261111, len(mapping), 2 * len(mapping))
+        worlds = paired_worlds(20261111, len(mapping), (6 if terminal_only else 2) * len(mapping))
         budget = len(mapping) * len(worlds) - 1
         row = cpu.State(latent_env.thick.bc).root_plan(20261111, budget, 1., depth_limit, False)
         if scenario.startswith('pile:'):
@@ -590,6 +593,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
             anchor_context=context.anchor[0].cpu().numpy(),observation={k:v.copy() for k,v in obs.items()})
         if anchored:row['value_target'] = 'pre-reward-anchor'
         if value_mix:row['value_mix'] = value_mix
+        if terminal_only:row['search_teacher'] = 'terminal-logit-v1'
         if turn_horizon:row['stop_turn'] = latent_env.thick.bc.turn + turn_horizon
         arena = BattleArena(1, deck=True)
         pool = None
@@ -703,6 +707,11 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 pool.frame_pipeline.score_roots(list(pool.ledger.pending.values()))
                 del scratch
             result = pool.reap()[0]
+            if terminal_only:
+                assert pool.completed_counts['turn_probe_roots'] == 0
+                assert pool.chain_value_count is None
+                assert '_turn_values' not in row and not row.get('stop_turn')
+                assert result['teacher_keep'].dtype == bool and result['teacher_keep'].any()
             if value_mix:
                 np.testing.assert_allclose(pool.values[:budget].cpu().numpy(), gold, atol=3e-5, rtol=1e-5)
                 np.testing.assert_array_equal(pool.chain_value_count[:budget].cpu().numpy(),

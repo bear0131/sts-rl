@@ -7,7 +7,7 @@ import torch
 from env.search.action_selection import SEARCH_FILTER_VALUE_TOLERANCE
 from rl.algorithms.shared_buffer import SharedRolloutBuffer
 
-SEARCH_OBJECTIVES = ('prior-advantage-kl-v1', 'filtered-distillation-v1', 'turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1')
+SEARCH_OBJECTIVES = ('prior-advantage-kl-v1', 'filtered-distillation-v1', 'turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1', 'terminal-logit-v1')
 
 
 @dataclass(frozen=True)
@@ -41,7 +41,7 @@ class SearchTrainingConfig:
             raise ValueError('chain value mixture requires original full480 search-filter supervision')
         if self.objective not in SEARCH_OBJECTIVES:
             raise ValueError('unknown search supervision objective')
-        if self.objective in ('filtered-distillation-v1', 'turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1') and (
+        if self.objective in ('filtered-distillation-v1', 'turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1', 'terminal-logit-v1') and (
                 self.backend != 'full480' or self.action_selection not in ('search-filter-policy-rank-v1', 'turn-consensus-policy-rank-v1')):
             raise ValueError('filtered distillation requires full480 search-filter acting')
         if self.action_selection not in ('shadow', 'search-filter-policy-rank-v1', 'turn-consensus-policy-rank-v1'):
@@ -160,7 +160,7 @@ def improved_prior(logits, values, legal, worlds, target_std, *, objective='prio
         q = values.float().masked_fill(~legal, 0)
         if not torch.isfinite(q).all() or not torch.isfinite(old[legal]).all():
             raise FloatingPointError('nonfinite search target')
-        if objective in ('turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1'):
+        if objective in ('turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1', 'terminal-logit-v1'):
             if (teacher_keep is None or teacher_keep.dtype != torch.bool or teacher_keep.shape != legal.shape
                     or (teacher_keep & ~legal).any() or not teacher_keep.any(-1).all()):
                 raise ValueError('turn consensus requires aligned nonempty legal support')
@@ -188,18 +188,18 @@ def search_kl(logits, log_target, legal, *, objective='prior-advantage-kl-v1'):
     if objective not in SEARCH_OBJECTIVES:
         raise ValueError('unknown search supervision objective')
     current = logits.float().masked_fill(~legal, -torch.inf).log_softmax(-1)
-    if objective in ('turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1'):
+    if objective in ('turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1', 'terminal-logit-v1'):
         support = legal & torch.isfinite(log_target)
         if not support.any(-1).all():
             raise ValueError('turn consensus target must have nonempty support')
-        if objective in ('turn-consensus-reverse-v1', 'turn-consensus-logit-v1'):
+        if objective in ('turn-consensus-reverse-v1', 'turn-consensus-logit-v1', 'terminal-logit-v1'):
             # Enforce total probability on supported actions, then retain the
             # legacy reverse-KL geometry within the unresolved group. A hard
             # rejected action never creates an infinite reverse-KL target.
             log_mass = current.masked_fill(~support, -torch.inf).logsumexp(-1, keepdim=True)
             conditional = current - log_mass
             difference = conditional.masked_fill(~support, 0) - log_target.detach().masked_fill(~support, 0)
-            if objective == 'turn-consensus-logit-v1':
+            if objective in ('turn-consensus-logit-v1', 'terminal-logit-v1'):
                 # Equal weight per unresolved relative logit resists a global
                 # temperature change even when the old probabilities are tiny.
                 count = support.sum(-1, keepdim=True)
