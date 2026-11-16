@@ -27,9 +27,12 @@ class DeckTrainingSchedule:
     search_inference_cache_bytes: int = 0
     search_action_selection: str = 'shadow'
     anchor_start_round: int | None = None
+    search_normal_budget: int = 64
+    search_boss_budget: int = 256
 
     def __post_init__(self):
         SearchTrainingConfig(backend=self.search_backend, cuda_artifacts=self.search_cuda_artifacts,
+            normal_budget=self.search_normal_budget, boss_budget=self.search_boss_budget,
             action_selection=self.search_action_selection,
             cuda_wave_capacity=self.search_cuda_wave_capacity, inference_cache_bytes=self.search_inference_cache_bytes)
         if min(self.check_interval, self.consecutive_checks, self.anchor_rounds, self.ramp_rounds,
@@ -111,6 +114,7 @@ def apply_stage(model, schedule, completed_rounds, *, rank=0):
         # Search covers every eligible root from the first search-stage startup;
         # only its auxiliary loss weight continues the checkpointed ramp.
         model.deck_search_config = asdict(SearchTrainingConfig(fraction=1., coefficient=.1 * progress,
+            normal_budget=schedule.search_normal_budget, boss_budget=schedule.search_boss_budget,
             target_std=state['validation']['target_std'], seed=20261111 + 1_000_003 * rank,
             backend=schedule.search_backend, cuda_artifacts=schedule.search_cuda_artifacts,
             cuda_wave_capacity=schedule.search_cuda_wave_capacity,
