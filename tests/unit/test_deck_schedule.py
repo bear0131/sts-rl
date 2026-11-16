@@ -33,6 +33,10 @@ def test_filtered_objective_can_explicitly_continue_old_search_state_without_res
     apply_stage(restored, configure(restored), 456)
     assert restored.deck_search_config == model.deck_search_config
     assert restored.deck_training_state == before
+    apply_stage(restored, configure(restored, dict(old, search_objective='turn-consensus-v1')), 455)
+    assert restored.deck_training_state == before
+    assert restored.deck_search_config['objective'] == 'turn-consensus-v1'
+    assert restored.training_objective_contract == 'deck-latent-turn-consensus-v1'
 
 
 def test_qualified_search_covers_all_roots_while_only_loss_weight_ramps():

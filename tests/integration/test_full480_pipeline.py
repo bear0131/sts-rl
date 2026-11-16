@@ -794,6 +794,41 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 assert (pool.graph_scorer.statistics()['step_overflow_retries']
                         + pool.frame_pipeline.counts['overflow_retries']) > 0
                 assert pool.graph_scorer.statistics()['step_replays'] > 0
+            if turn_horizon:
+                from copy import deepcopy
+                # Observing a natural boundary for the teacher must not change
+                # the complete search, its random draws or the acting Q target.
+                reference_row = deepcopy(row)
+                reference_row['stop_turn'] = 0
+                pool.submit({0: reference_row})
+                complete = {}
+                for _ in range(depth_limit+8):
+                    complete.update(pool.receive(steps=4))
+                    if complete:break
+                assert set(complete) == {0}
+                final_rng = pool.pcg[:budget].cpu().numpy().copy()
+                pool.frame_pipeline.release()
+                torch.cuda.empty_cache()
+                temporary = torch.empty((1024, 1024), device='cuda').fill_(17.)
+                del temporary
+                observed_row = deepcopy(row)
+                observed_row['search_teacher'] = 'turn-consensus-v1'
+                pool.submit({0: observed_row})
+                observed = {}
+                for _ in range(depth_limit+8):
+                    observed.update(pool.receive(steps=4))
+                    if observed:break
+                assert set(observed) == {0}
+                for key in ('action_bits', 'visits', 'terminal_visits', 'statistics', 'playout_lengths'):
+                    np.testing.assert_array_equal(observed[0][key], complete[0][key], err_msg=key)
+                np.testing.assert_array_equal(pool.pcg[:budget].cpu().numpy(), final_rng)
+                np.testing.assert_allclose(observed[0]['values'], complete[0]['values'], atol=3e-5, rtol=1e-5)
+                np.testing.assert_allclose(observed[0]['root_logits'], complete[0]['root_logits'], atol=3e-5, rtol=1e-5)
+                assert observed[0]['root_value'] == pytest.approx(complete[0]['root_value'], abs=3e-5)
+                assert observed[0]['value_statistic'] == 'pre-reward-anchor'
+                assert observed[0]['turn_boundaries'] == 0
+                assert observed[0]['teacher_keep'].dtype == bool and observed[0]['teacher_keep'].any()
+                assert pool.completed_counts['turn_probe_roots'] == 1
             pool.close()
             arena.close()
             # The audited callbacks belong on the production GPU state path.

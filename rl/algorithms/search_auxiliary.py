@@ -7,7 +7,7 @@ import torch
 from env.search.action_selection import SEARCH_FILTER_VALUE_TOLERANCE
 from rl.algorithms.shared_buffer import SharedRolloutBuffer
 
-SEARCH_OBJECTIVES = ('prior-advantage-kl-v1', 'filtered-distillation-v1')
+SEARCH_OBJECTIVES = ('prior-advantage-kl-v1', 'filtered-distillation-v1', 'turn-consensus-v1')
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ class SearchTrainingConfig:
     def __post_init__(self):
         if self.objective not in SEARCH_OBJECTIVES:
             raise ValueError('unknown search supervision objective')
-        if self.objective == 'filtered-distillation-v1' and (
+        if self.objective in ('filtered-distillation-v1', 'turn-consensus-v1') and (
                 self.backend != 'full480' or self.action_selection != 'search-filter-policy-rank-v1'):
             raise ValueError('filtered distillation requires full480 search-filter acting')
         if self.action_selection not in ('shadow', 'search-filter-policy-rank-v1'):
@@ -140,7 +140,7 @@ def auxiliary_loss(model, observations, logits, legal):
             * loss.sum() / len(valid))
 
 
-def improved_prior(logits, values, legal, worlds, target_std, *, objective='prior-advantage-kl-v1'):
+def improved_prior(logits, values, legal, worlds, target_std, *, objective='prior-advantage-kl-v1', teacher_keep=None):
     """Frozen legal-action target; the legacy objective remains the default."""
     if objective not in SEARCH_OBJECTIVES:
         raise ValueError('unknown search supervision objective')
@@ -153,6 +153,11 @@ def improved_prior(logits, values, legal, worlds, target_std, *, objective='prio
         q = values.float().masked_fill(~legal, 0)
         if not torch.isfinite(q).all() or not torch.isfinite(old[legal]).all():
             raise FloatingPointError('nonfinite search target')
+        if objective == 'turn-consensus-v1':
+            if (teacher_keep is None or teacher_keep.dtype != torch.bool or teacher_keep.shape != legal.shape
+                    or (teacher_keep & ~legal).any() or not teacher_keep.any(-1).all()):
+                raise ValueError('turn consensus requires aligned nonempty legal support')
+            return old.masked_fill(~teacher_keep, -torch.inf).log_softmax(-1)
         baseline = (old.exp() * q).sum(-1, keepdim=True)
         shrink = worlds.float().reshape(-1, 1) / (worlds.float().reshape(-1, 1) + 4)
         if objective == 'filtered-distillation-v1':
@@ -176,6 +181,12 @@ def search_kl(logits, log_target, legal, *, objective='prior-advantage-kl-v1'):
     if objective not in SEARCH_OBJECTIVES:
         raise ValueError('unknown search supervision objective')
     current = logits.float().masked_fill(~legal, -torch.inf).log_softmax(-1)
+    if objective == 'turn-consensus-v1':
+        support = legal & torch.isfinite(log_target)
+        if not support.any(-1).all():
+            raise ValueError('turn consensus target must have nonempty support')
+        difference = log_target.detach().masked_fill(~support, 0) - current.masked_fill(~support, 0)
+        return (log_target.detach().exp() * difference).sum(-1)
     # Mask before subtraction: -inf - -inf must not poison gradients.
     difference = current.masked_fill(~legal, 0) - log_target.detach().masked_fill(~legal, 0)
     if objective == 'filtered-distillation-v1':

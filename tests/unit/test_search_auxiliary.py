@@ -33,7 +33,7 @@ def test_more_worlds_strengthen_bounded_improvement_and_constant_shift_cancels()
     assert 0 < odds_change <= 4 * 20 / 24 + 1e-6  # FP32 log-softmax rounding
 
 
-@pytest.mark.parametrize('objective', ['prior-advantage-kl-v1', 'filtered-distillation-v1'])
+@pytest.mark.parametrize('objective', ['prior-advantage-kl-v1', 'filtered-distillation-v1', 'turn-consensus-v1'])
 def test_auxiliary_normalizes_global_searched_rows_before_physical_chunks(objective):
     from rl.algorithms.search_auxiliary import SearchTrainingConfig, prepare_search_batch, auxiliary_loss
     logits = torch.tensor([[.5, -.2], [.1, .4], [.2, .9], [.8, -.2]], requires_grad=True)

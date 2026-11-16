@@ -118,6 +118,11 @@ class BattlePool(CollectionPool):
     raise ValueError('search turn horizon requires a nonnegative native turn')
    if stop_turn and (not self.deck_consumer or r.get('value_target')!='pre-reward-anchor'):
     raise ValueError('search turn horizon requires the current value consumer')
+   if r.get('search_teacher') not in (None,'turn-consensus-v1'):
+    raise ValueError('unknown full480 teacher observation contract')
+   if r.get('search_teacher') and (not self.deck_consumer or r.get('value_target')!='pre-reward-anchor'
+       or (r['budget']//len(r['action_bits'])>=4 and not stop_turn)):
+    raise ValueError('turn consensus requires a natural-turn probe and full anchor returns')
    if self.deck_consumer:
     from .finite_plan import PAIRED_TERMINAL
     assert self.modules.deck_consumer and r['contract']==PAIRED_TERMINAL

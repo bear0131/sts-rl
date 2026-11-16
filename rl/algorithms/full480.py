@@ -20,7 +20,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     from rl.training.native_vec_env import NativeSearchVecEnv
     cfg = IndependentRolloutConfig(**config)
     fixed = not getattr(model, 'episode_rollout_config', None)
-    if not fixed and (getattr(model, 'deck_search_config', None) or {}).get('objective') == 'filtered-distillation-v1':
+    if not fixed and (getattr(model, 'deck_search_config', None) or {}).get('objective') in ('filtered-distillation-v1', 'turn-consensus-v1'):
         raise ValueError('filtered distillation requires fixed-length PPO collection')
     if fixed:
         from rl.algorithms.search_auxiliary import SearchRolloutBuffer, SearchTrainingConfig
@@ -294,6 +294,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             logits = np.zeros(legal.shape, np.float32)
             values = np.zeros_like(logits)
             worlds = np.empty(len(rows), np.float32)
+            support = np.zeros(legal.shape, bool) if search_config.objective == 'turn-consensus-v1' else None
             for j, sample in enumerate(rows):
                 # Original public ordering: sorted legal codec IDs, with all
                 # actions evaluated in the same complete set of worlds.
@@ -304,9 +305,15 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 logits[j, choices] = sample['prior_logits']
                 values[j, choices] = sample['values']
                 worlds[j] = sample['visits'][0]
+                if support is not None:
+                    keep = np.asarray(sample['teacher_keep'])
+                    if keep.dtype != bool or keep.shape != choices.shape or not keep.any():
+                        raise ValueError('search teacher support changed action order/shape')
+                    support[j, choices] = keep
             target = improved_prior(torch.from_numpy(logits), torch.from_numpy(values),
                 torch.from_numpy(legal), torch.from_numpy(worlds), search_config.target_std,
-                objective=search_config.objective).numpy()
+                objective=search_config.objective,
+                teacher_keep=None if support is None else torch.from_numpy(support)).numpy()
             # Reuse frozen root scores and the actual KL target, without a forward pass.
             teacher_matches += int((np.where(legal, logits, -np.inf).argmax(1)
                                     == target.argmax(1)).sum())
