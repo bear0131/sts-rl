@@ -9,6 +9,16 @@ UPDATE_METRICS = ('policy_loss', 'value_loss', 'entropy', 'approx_kl', 'clip_fra
 ENTROPY_LAYERS = ('upper', 'lower')
 
 
+def count_search_action_overrides(logits, legal, executed):
+    """Count real search actions outside the frozen policy's tied best set."""
+    executed = np.asarray(executed, dtype=np.int64).reshape(-1)
+    rows = np.arange(len(executed))
+    if not np.asarray(legal)[rows, executed].all():
+        raise ValueError('search execution diagnostic requires legal recorded actions')
+    scores = np.where(legal, logits, -np.inf)
+    return int((scores[rows, executed] < scores.max(axis=1)).sum())
+
+
 def policy_entropy_moments(entropy, observations):
     """Actual masked policy entropy, including searched rows, excluding value anchors.
 
@@ -121,4 +131,12 @@ def finalize_metrics(moments, *, world_size=1):
         result[prefix + '_samples_global'] = int(round(count * world_size))
         if count > 0:
             result[prefix] = moments[prefix + '_matches'] / count
+    prefix = 'deck_search/action_override'
+    if prefix + '_roots' in moments:
+        count = moments[prefix + '_count']
+        roots = moments[prefix + '_roots']
+        result[prefix + '_count_global'] = int(round(count * world_size))
+        result[prefix + '_roots_global'] = int(round(roots * world_size))
+        if roots > 0:
+            result[prefix + '_rate'] = count / roots
     return result

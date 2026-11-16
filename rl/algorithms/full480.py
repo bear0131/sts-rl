@@ -278,11 +278,12 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     if fixed:
         import torch
         from rl.algorithms.search_auxiliary import improved_prior
+        from rl.algorithms.ppo_metrics import count_search_action_overrides
         assert (slot_steps == n_rollout_steps).all()
         rollout_buffer.pos, rollout_buffer.full = n_rollout_steps, True
         started = time.perf_counter()
         samples = model._small_playout_samples
-        teacher_matches = 0
+        teacher_matches = action_overrides = 0
         for offset in range(0, len(samples), 512):
             rows = samples[offset:offset+512]
             positions = [r['position'] for r in rows]
@@ -306,6 +307,8 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             # Reuse frozen root scores and the actual KL target, without a forward pass.
             teacher_matches += int((np.where(legal, logits, -np.inf).argmax(1)
                                     == target.argmax(1)).sum())
+            action_overrides += count_search_action_overrides(
+                logits, legal, rollout_buffer.actions[positions, indices])
             for j, sample in enumerate(rows):
                 rollout_buffer.add_search_target(sample['env'], target[j], position=sample['position'])
         stats['search_target_seconds'] = time.perf_counter()-started
@@ -317,7 +320,8 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             cutoff_rows=count['cuts'], anchor_rows=count['anchors'],
             terminal_rows=count['terminal']-count['anchors'],
             executed_search_actions=len(rollout_buffer.search_actions),
-            teacher_top1_matches=teacher_matches, teacher_top1_count=len(samples))
+            teacher_top1_matches=teacher_matches, teacher_top1_count=len(samples),
+            action_override_count=action_overrides, action_override_roots=len(samples))
         for key, value in model.deck_search_last_stats.items():model.logger.record('deck_search/'+key, value)
         from rl.algorithms.room_returns import apply_room_returns
         apply_room_returns(model, rollout_buffer)
