@@ -394,11 +394,18 @@ class _DeckConsumers:
         inputs = {k: np.asarray(data[k]) for k in keys}
         inputs['player_scalars'] = inputs['player_scalars'][:, :2]
         def score_anchor(missing):
-            out, value = self._forward(self.head, self.anchor_graphs, missing,
-                                      (V.PHASE_VOCAB_INDEX['combat'], True, 0, 0, 0))
-            if isinstance(value, torch.Tensor):
-                out, value = out.cpu().numpy(), value.cpu().numpy()
-            return out, value
+            # Full-budget completions can contain tens of thousands of unique
+            # anchors. Bound only physical head batches, after exact-cache
+            # deduplication; every search result still gets its original value.
+            values = np.empty(len(missing['player_scalars']), dtype=np.float32)
+            for start in range(0, len(values), 1024):
+                batch = {key: value[start:start+1024] for key, value in missing.items()}
+                _, value = self._forward(self.head, self.anchor_graphs, batch,
+                                        (V.PHASE_VOCAB_INDEX['combat'], True, 0, 0, 0))
+                if isinstance(value, torch.Tensor):
+                    value = value.cpu().numpy()
+                values[start:start+1024] = value
+            return np.empty((len(values), 0), dtype=np.float32), values
         if self.native_anchor_cache:
             value = self.anchor_cache.forward_arrays(inputs, lambda missing: score_anchor(missing)[1])
         else:

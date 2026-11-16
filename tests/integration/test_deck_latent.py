@@ -158,6 +158,59 @@ def test_full480_phase_heads_reuse_their_batch_buckets(latent_env):
         torch.testing.assert_close(actual, saved, atol=0, rtol=0)
 
 
+@pytest.mark.cuda
+@pytest.mark.parametrize('native_cache', [True, False])
+def test_full_budget_anchor_batches_keep_values_cache_and_graph_lifetime(latent_env, native_cache):
+    import gc
+    from rl.search.rollout_inference import ExactInputCache, UpperPolicyInference
+    assert torch.cuda.is_available(), 'full-budget anchor qualification requires CUDA'
+    policy = policy_for(latent_env, 'transformer64x2').cuda().eval()
+    enter_combat(latent_env)
+    core = policy.core
+    one = {k: v[None].copy() for k, v in latent_env._obs().items()}
+    keys = ('player_scalars', 'potions', 'relics', 'relic_counters', *core.anchor.dynamic_keys)
+    with torch.no_grad(), UpperPolicyInference(core, 'cuda') as inference:
+        assert inference.deck.native_anchor_cache
+        if not native_cache:
+            inference.deck.native_anchor_cache = False
+            inference.deck.anchor_cache = ExactInputCache(128*1024**2)
+        projected = inference.search_context(one).anchor.cpu().numpy()
+        # Force eviction as well as a partial last batch. Dense relic slots
+        # exercise the allocation that exhausted memory in full-budget runs.
+        inference.deck.anchor_graphs.capacity = 2
+        saved = None
+        for count in (2057, 1127, 3279, 2057):
+            data = {k: np.repeat(one[k], count, axis=0) for k in keys}
+            data['player_scalars'][:, 0] = np.linspace(.05, .95, count)
+            data['relics'][:] = 1
+            data['relic_counters'][:] = .123
+            context = np.repeat(projected, count, axis=0)
+            expected = core.anchor_with_context(obs_as_tensor(data, 'cuda'),
+                torch.as_tensor(context, device='cuda')).flatten().cpu().numpy()
+            inference.deck.anchor_cache.clear()
+            actual = inference.anchor_values(data, context)
+            np.testing.assert_allclose(actual, expected, atol=2e-5, rtol=2e-5)
+            before = inference.statistics()['anchor_cache_misses']
+            reordered = np.arange(count-1, -1, -1)
+            again = inference.anchor_values({k: v[reordered] for k, v in data.items()}, context)
+            np.testing.assert_array_equal(again, actual[reordered])
+            assert inference.statistics()['anchor_cache_misses'] == before
+            if saved is None:
+                first, saved = actual, actual.copy()
+            temporary = torch.empty(16*1024*1024, device='cuda').fill_(.375)
+            del temporary
+            torch.cuda.synchronize()
+            torch._C._cuda_clearCublasWorkspaces()
+            gc.collect()
+            torch.cuda.empty_cache()
+        assert max(inference.deck.anchor_graphs.batch_counts) <= 1024
+        assert inference.deck.anchor_graphs.evictions > 0
+        assert inference.deck.anchor_graphs.hits > 0
+        np.testing.assert_array_equal(first, saved)
+    assert not inference.deck.anchor_graphs.entries
+    assert inference.deck.anchor_graphs._scratch_pool is None
+
+
 def test_full480_anchor_cache_keys_only_consumed_continuation_fields(latent_env):
     from rl.search.rollout_inference import UpperPolicyInference
     policy = policy_for(latent_env, 'transformer64x2')
