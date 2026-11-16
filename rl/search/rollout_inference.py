@@ -110,7 +110,17 @@ class UpperPolicyInference:
         if self.closed or self.deck is None:
             raise RuntimeError('anchor values require an open deck consumer')
         self.deck._check_weights()
-        return self.deck.anchor_values(dict(observations, _anchor_context=projected_context))
+        inputs = dict(observations, _anchor_context=projected_context)
+        # A completion wave can contain thousands of leaves. Bound the
+        # relic-counter workspace for each graph while preserving row order.
+        batch_rows = 256
+        count = len(projected_context)
+        if count <= batch_rows:
+            return self.deck.anchor_values(inputs)
+        return np.concatenate([
+            self.deck.anchor_values({k: v[i:i + batch_rows] for k, v in inputs.items()})
+            for i in range(0, count, batch_rows)
+        ])
 
 
 class ExactInputCache:

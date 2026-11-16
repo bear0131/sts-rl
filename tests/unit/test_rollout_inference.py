@@ -163,3 +163,18 @@ def test_upper_preparation_overlaps_lower_and_always_drains(failure, monkeypatch
         with pytest.raises(RuntimeError, match=failure + ' failed'):
             native.forward_outer_leaves(model, batch)
     assert not pending and events.count('finish') == 1
+
+
+@pytest.mark.parametrize('count', [1, 256, 257, 1000])
+def test_search_completion_batches_keep_every_leaf_with_its_projected_context(count):
+    from rl.search.rollout_inference import UpperPolicyInference
+
+    def score(inputs):
+        assert len(inputs['gold']) <= 256
+        return inputs['gold'] - inputs['_anchor_context']
+
+    inference = UpperPolicyInference(SimpleNamespace(), 'cpu')
+    inference.deck = SimpleNamespace(_check_weights=lambda: None, anchor_values=score)
+    gold = np.arange(count, dtype=np.float32).reshape(-1, 1)
+    projected = gold[::-1].copy()
+    np.testing.assert_array_equal(inference.anchor_values({'gold': gold}, projected), gold - projected)

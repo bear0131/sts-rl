@@ -39,6 +39,7 @@ class Stream:
   digest=state_digest(model.policy.state_dict());torch.save(model.policy,path)
   self.service=GpuService(len(batch.envs),path,expected_digest=digest,
    prototypes=batch.observer.prototypes,frozen_policy=model.policy,
+   frame=batch.pair.get('cuda_wave_capacity',65536),
    budget_cap=max(198 if batch.pair.get('collect_ppo') else 1,
     *(batch.pair[t+'_simulations'] for t in ('common','elite','boss'))))
   self.game=GameMirror(batch.envs,self.service.arena,verify=os.environ.get('BATTLE_VERIFY','off')=='all')
