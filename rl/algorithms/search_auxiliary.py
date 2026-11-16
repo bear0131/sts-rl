@@ -132,19 +132,21 @@ def prepare_search_batch(model, batch, average):
     model._deck_search_loss_normalization = moments['rows'] / (moments['search_count'] or 1.)
 
 
-def auxiliary_loss(model, observations, logits, legal):
+def auxiliary_loss(model, observations, logits, legal, *, return_moments=False):
     target = observations.get('_search_target')
     valid = observations.get('_search_valid')
     if target is None or valid is None:
-        return logits.sum() * 0
+        zero = logits.sum() * 0
+        return (zero, None) if return_moments else zero
     config = SearchTrainingConfig(**model.deck_search_config)
     selected = valid.bool()
     # An unsearched row's zero target is not a probability distribution.
     if not selected.any():
-        return logits.sum() * 0
-    loss = search_kl(logits[selected], target[selected], legal[selected], objective=config.objective)
-    return (config.coefficient * model._deck_search_loss_normalization
-            * loss.sum() / len(valid))
+        zero = logits.sum() * 0
+        return (zero, None) if return_moments else zero
+    parts = search_loss_terms(logits[selected], target[selected], legal[selected], objective=config.objective)
+    loss = config.coefficient * model._deck_search_loss_normalization * parts[0].sum() / len(valid)
+    return (loss, search_loss_moments(parts)) if return_moments else loss
 
 
 def improved_prior(logits, values, legal, worlds, target_std, *, objective='prior-advantage-kl-v1', teacher_keep=None):
@@ -185,6 +187,11 @@ def improved_prior(logits, values, legal, worlds, target_std, *, objective='prio
 
 
 def search_kl(logits, log_target, legal, *, objective='prior-advantage-kl-v1'):
+    return search_loss_terms(logits, log_target, legal, objective=objective)[0]
+
+
+def search_loss_terms(logits, log_target, legal, *, objective='prior-advantage-kl-v1'):
+    """Existing objective and optional relative-logit terms, before coefficient."""
     if objective not in SEARCH_OBJECTIVES:
         raise ValueError('unknown search supervision objective')
     current = logits.float().masked_fill(~legal, -torch.inf).log_softmax(-1)
@@ -204,13 +211,63 @@ def search_kl(logits, log_target, legal, *, objective='prior-advantage-kl-v1'):
                 # temperature change even when the old probabilities are tiny.
                 count = support.sum(-1, keepdim=True)
                 centered = (difference - difference.sum(-1, keepdim=True) / count).masked_fill(~support, 0)
-                return -log_mass.squeeze(-1) + (centered.square().sum(-1, keepdim=True) / count).squeeze(-1)
+                mass = -log_mass.squeeze(-1)
+                relative = (centered.square().sum(-1, keepdim=True) / count).squeeze(-1)
+                return mass + relative, mass, relative
             probability = conditional.masked_fill(~support, -torch.inf).exp()
-            return -log_mass.squeeze(-1) + (probability * difference).sum(-1)
+            return -log_mass.squeeze(-1) + (probability * difference).sum(-1), None, None
         difference = log_target.detach().masked_fill(~support, 0) - current.masked_fill(~support, 0)
-        return (log_target.detach().exp() * difference).sum(-1)
+        return (log_target.detach().exp() * difference).sum(-1), None, None
     # Mask before subtraction: -inf - -inf must not poison gradients.
     difference = current.masked_fill(~legal, 0) - log_target.detach().masked_fill(~legal, 0)
     if objective == 'filtered-distillation-v1':
-        return (-log_target.detach().exp() * difference).sum(-1)
-    return (current.exp() * difference).sum(-1)
+        return (-log_target.detach().exp() * difference).sum(-1), None, None
+    return (current.exp() * difference).sum(-1), None, None
+
+
+def search_loss_moments(parts):
+    """Additive detached moments; commit only after a successful backward."""
+    loss, mass, relative = parts
+    loss = loss.detach().double()
+    zero = loss.new_zeros(())
+    count = loss.new_tensor(loss.numel())
+    return torch.stack((loss.sum(), count,
+        zero if mass is None else mass.detach().double().sum(),
+        zero if relative is None else relative.detach().double().sum(),
+        zero if relative is None else count))
+
+
+def probe_search_supervision(model, *, maximum_rows=256):
+    """Same deterministic real rows/teacher before and after the optimizer epoch.
+
+    This bounded diagnostic never resamples search or consumes an RNG draw.
+    It is separate from the actual successful-backward population metrics.
+    """
+    config = getattr(model, 'deck_search_config', None)
+    buffer = model.rollout_buffer
+    targets = getattr(buffer, 'search_targets', {})
+    if config is None or not targets:
+        return {}
+    keys = sorted(targets)
+    keys = [keys[i] for i in np.linspace(0, len(keys)-1, min(maximum_rows, len(keys)), dtype=np.int64)]
+    indices = np.asarray([position+env*buffer.buffer_size for position, env in keys])
+    previous = model.policy.training
+    model.policy.set_training_mode(False)
+    moments = None
+    try:
+        with torch.no_grad():
+            for start in range(0, len(indices), 32):
+                batch = buffer._get_samples(indices[start:start+32])
+                observations = {k:v for k,v in batch.observations.items() if not k.startswith('_search_')}
+                with model.autocast_context():
+                    model.policy.evaluate_actions(observations, batch.actions.long().flatten(),
+                                                  action_masks=batch.action_masks)
+                    logits = model.policy.action_dist.distribution.logits
+                    parts = search_loss_terms(logits, batch.observations['_search_target'],
+                        batch.action_masks.bool(), objective=config.get('objective', 'prior-advantage-kl-v1'))
+                current = search_loss_moments(parts)
+                moments = current if moments is None else moments+current
+    finally:
+        model.policy.set_training_mode(previous)
+    from rl.algorithms.ppo_metrics import SEARCH_LOSS_FIELDS
+    return dict(zip(SEARCH_LOSS_FIELDS, moments.cpu().tolist(), strict=True))

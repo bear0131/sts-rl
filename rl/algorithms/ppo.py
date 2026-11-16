@@ -35,6 +35,7 @@ class PPOLossComponents:
     combat_value_loss: th.Tensor | None
     overworld_value_loss: th.Tensor | None
     policy_entropy_moments: th.Tensor | None = None
+    search_loss_moments: th.Tensor | None = None
 
 
 def _phase_balanced_mean(

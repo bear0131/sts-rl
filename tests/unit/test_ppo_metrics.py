@@ -144,6 +144,28 @@ def test_policy_entropy_uses_each_layer_count_after_unequal_rank_reduction():
     assert not any('entropy_lower' in k for k in finalize_metrics({}))
 
 
+def test_search_supervision_uses_actual_search_counts_not_batch_or_rank_means():
+    from types import SimpleNamespace
+    import torch
+    from rl.algorithms.ppo_metrics import accumulate_update_metrics, update_moments
+    reports = []
+    for values in ([10., 1., 8., 2., 1.], [6., 3., 3., 3., 3.], [0.]*5):
+        model = SimpleNamespace()
+        zero = torch.tensor(0.)
+        components = SimpleNamespace(policy_loss=zero, value_loss=zero, entropy_loss=zero,
+            approx_kl=zero, clip_fraction=zero, search_loss_moments=torch.tensor(values).double())
+        accumulate_update_metrics(model, components, 256)
+        reports.append(update_moments(model))
+    reduced = {k:sum(r[k] for r in reports)/3 for k in reports[0]}
+    result = finalize_metrics(reduced, world_size=3)
+    p = 'deck_search/supervision/'
+    assert result[p+'samples_global'] == 4 and result[p+'loss'] == 4.
+    assert result[p+'mass_loss'] == pytest.approx(2.75) and result[p+'relative_logit_mse'] == pytest.approx(1.25)
+    old = update_moments(SimpleNamespace(_ppo_update_metric_sums=torch.zeros(9), _ppo_update_metric_count=1))
+    assert p+'loss' not in finalize_metrics(old)
+    assert not any(k.startswith(p) for k in finalize_metrics({}))
+
+
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 def test_layer_diagnostics_preserve_actual_ppo_loss_and_gradients(monkeypatch, device):
     from contextlib import nullcontext

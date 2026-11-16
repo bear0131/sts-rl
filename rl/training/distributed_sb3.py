@@ -1297,6 +1297,8 @@ def ppo_microbatch_backward(
                 components.overworld_value_loss.detach().cpu()
             )
         loss.backward()
+        from rl.algorithms.ppo_metrics import accumulate_update_metrics
+        accumulate_update_metrics(model, components, len(rollout_data.advantages) if indices is None else len(indices))
 
     if cuda_profile is not None:
         cuda_profile.update({
@@ -3540,6 +3542,8 @@ def main() -> None:
                     packed = distributed_packed_epoch(model, clip_range, clip_range_vf,
                         ring=ring_transport, synchronize=sync_packed,
                         average=lambda values: average_scalar_dict(values, ring_transport))
+                    for key, value in packed['search_probe'].items():model.logger.record(key, value)
+                    model.logger.record('deck_search/probe_seconds', packed['search_probe_seconds'])
                     for name, value in packed.items():
                         if name.startswith(('planned_', 'graph_')):
                             planned_update_stats[name] = planned_update_stats.get(name, 0) + value

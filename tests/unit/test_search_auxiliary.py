@@ -33,7 +33,7 @@ def test_more_worlds_strengthen_bounded_improvement_and_constant_shift_cancels()
     assert 0 < odds_change <= 4 * 20 / 24 + 1e-6  # FP32 log-softmax rounding
 
 
-@pytest.mark.parametrize('objective', ['prior-advantage-kl-v1', 'filtered-distillation-v1', 'turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1'])
+@pytest.mark.parametrize('objective', ['prior-advantage-kl-v1', 'filtered-distillation-v1', 'turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1', 'terminal-logit-v1'])
 def test_auxiliary_normalizes_global_searched_rows_before_physical_chunks(objective):
     from rl.algorithms.search_auxiliary import SearchTrainingConfig, prepare_search_batch, auxiliary_loss
     logits = torch.tensor([[.5, -.2], [.1, .4], [.2, .9], [.8, -.2]], requires_grad=True)
@@ -47,6 +47,15 @@ def test_auxiliary_normalizes_global_searched_rows_before_physical_chunks(object
     # is .25, and must not be rounded/clamped up to one.
     prepare_search_batch(model, batch, lambda x: dict(rows=4., search_count=.25))
     whole = auxiliary_loss(model, obs, logits, torch.ones_like(logits, dtype=torch.bool))
+    observed, moments = auxiliary_loss(model, obs, logits, torch.ones_like(logits, dtype=torch.bool), return_moments=True)
+    torch.testing.assert_close(observed, whole, atol=0, rtol=0)
+    torch.testing.assert_close(torch.autograd.grad(observed, logits, retain_graph=True)[0],
+                               torch.autograd.grad(whole, logits, retain_graph=True)[0], atol=0, rtol=0)
+    assert not moments.requires_grad and moments[1] == 1
+    if objective.endswith('logit-v1'):
+        assert moments[4] == 1
+        assert float(moments[0]) == pytest.approx(float(moments[2]+moments[3]), abs=1e-7)
+    else:assert moments[4] == 0
     chunks = sum(auxiliary_loss(model, {k: v[i:i+1] for k, v in obs.items()}, logits[i:i+1],
         torch.ones_like(logits[i:i+1], dtype=torch.bool)) / 4 for i in range(4))
     expected = .1 * search_kl(logits[1:2], target[1:2], torch.ones(1, 2, dtype=torch.bool), objective=objective).sum()
@@ -137,3 +146,42 @@ def test_chain_mixture_only_accepts_original_full480_anchor_supervision():
                     dict(objective='turn-consensus-logit-v1')):
         with pytest.raises(ValueError, match='original full480'):
             SearchTrainingConfig(**dict(config, **changes))
+
+
+def test_same_teacher_probe_is_bounded_repeatable_and_does_not_touch_rng_or_gradients():
+    from contextlib import nullcontext
+    import numpy as np
+    from rl.algorithms.search_auxiliary import probe_search_supervision
+    class Policy(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.scores = torch.nn.Parameter(torch.tensor([[1., 0., -1.]]*4))
+            self.rows_seen = []
+            self.action_dist = SimpleNamespace()
+        def set_training_mode(self, mode):self.train(mode)
+        def evaluate_actions(self, obs, actions, action_masks):
+            assert set(obs) == {'row'}
+            self.rows_seen.extend(obs['row'].tolist())
+            self.action_dist.distribution = torch.distributions.Categorical(logits=self.scores[obs['row']])
+    target = torch.tensor([[-torch.inf, 0., -torch.inf]]*4)
+    def samples(indices):
+        return SimpleNamespace(observations={'row':torch.tensor(indices), '_search_target':target[indices]},
+            actions=torch.zeros(len(indices), 1), action_masks=torch.ones(len(indices), 3, dtype=torch.bool))
+    policy = Policy()
+    policy.scores.grad = torch.ones_like(policy.scores)
+    model = SimpleNamespace(policy=policy, autocast_context=nullcontext,
+        deck_search_config={'objective':'terminal-logit-v1'},
+        rollout_buffer=SimpleNamespace(buffer_size=4, search_targets={(i, 0):target[i] for i in range(4)}, _get_samples=samples))
+    rng = torch.get_rng_state().clone()
+    numpy_rng = np.random.get_state()
+    before = probe_search_supervision(model, maximum_rows=2)
+    again = probe_search_supervision(model, maximum_rows=2)
+    assert before == again and policy.rows_seen == [0, 3, 0, 3]
+    assert before['count'] == 2 and before['relative_logit_mse_sum'] == 0.
+    torch.testing.assert_close(policy.scores.grad, torch.ones_like(policy.scores), atol=0, rtol=0)
+    torch.testing.assert_close(torch.get_rng_state(), rng, atol=0, rtol=0)
+    for a, b in zip(np.random.get_state(), numpy_rng):np.testing.assert_array_equal(a, b)
+    assert policy.training
+    with torch.no_grad():policy.scores[:, 1].add_(1.)
+    after = probe_search_supervision(model, maximum_rows=2)
+    assert after['count'] == before['count'] and after['loss_sum'] < before['loss_sum']

@@ -95,7 +95,9 @@ def test_oom_retry_preserves_prior_and_partial_backward_gradients(monkeypatch):
         x = data.advantages[:, None] * model.policy.weight[None, :]
         loss = x.square().mean()
         return SimpleNamespace(policy_loss=loss, value_loss=loss,
-            entropy_loss=-loss, approx_kl=loss * 0, clip_fraction=loss * 0), loss
+            entropy_loss=-loss, approx_kl=loss * 0, clip_fraction=loss * 0,
+            search_loss_moments=torch.stack((x.square().mean(1).sum().detach(),
+                loss.new_tensor(len(x)), loss.new_zeros(()), loss.new_zeros(()), loss.new_zeros(())))), loss
     monkeypatch.setattr(updates, 'ppo_forward', forward)
     for model in (original, retry):
         model.policy.weight.grad = torch.tensor([2., 3.], dtype=torch.float64)

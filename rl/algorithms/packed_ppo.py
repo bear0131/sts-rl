@@ -222,6 +222,11 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
     result = dict(losses=[],metrics=[],optimizer_steps=0,backward_sec=0.,optimizer_step_sec=0.,
                   sync_sec=0.,gradient_pack_sec=0.,sync_mbps=[],grad_bytes=0,overflow_retries=0,
                   context_input_rows=0,context_unique_rows=0,context_oom_retries=0)
+    from rl.algorithms.search_auxiliary import probe_search_supervision
+    probe_started = time.perf_counter()
+    result['search_probe'] = {'deck_search/probe_pre/' + k:v
+                             for k,v in probe_search_supervision(model).items()}
+    result['search_probe_seconds'] = time.perf_counter()-probe_started
     chunk_options = {} if after_physical_chunk is None else dict(after_physical_chunk=after_physical_chunk)
     if config.direct_masked_categorical:
         chunk_options['direct_masked_categorical'] = True
@@ -318,4 +323,8 @@ def packed_ppo_epoch(model, clip_range, clip_range_vf, *, synchronize=None, aver
     finally:
         if config.prefetch_groups:
             batches.close()
+    probe_started = time.perf_counter()
+    result['search_probe'].update({'deck_search/probe_post/' + k:v
+                                  for k,v in probe_search_supervision(model).items()})
+    result['search_probe_seconds'] += time.perf_counter()-probe_started
     return result

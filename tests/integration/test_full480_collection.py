@@ -274,6 +274,21 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
         assert len(updates) == 2
         assert model.device.type == device and model.policy.device.type == device
         assert model.num_timesteps == 64 and state_digest(model.policy.state_dict()) != before
+        from rl.algorithms.ppo_metrics import update_moments, finalize_metrics
+        from rl.algorithms.search_auxiliary import probe_search_supervision
+        metrics = finalize_metrics(update_moments(model))
+        assert metrics['deck_search/supervision/samples_global'] == len(model.rollout_buffer.search_targets)
+        assert np.isfinite(metrics['deck_search/supervision/loss'])
+        logged = model.logger.name_to_value
+        assert logged['deck_search/probe_pre/count'] == logged['deck_search/probe_post/count'] == min(256, len(model.rollout_buffer.search_targets))
+        import copy
+        torch_rng, numpy_rng = torch.get_rng_state().clone(), copy.deepcopy(np.random.get_state())
+        policy_digest, training_mode = state_digest(model.policy.state_dict()), model.policy.training
+        probed = probe_search_supervision(model)
+        assert state_digest(model.policy.state_dict()) == policy_digest and model.policy.training == training_mode
+        torch.testing.assert_close(torch.get_rng_state(), torch_rng, atol=0, rtol=0)
+        for a, b in zip(np.random.get_state(), numpy_rng):np.testing.assert_array_equal(a, b)
+        for key, value in probed.items():assert value == pytest.approx(logged['deck_search/probe_post/'+key], abs=1e-7)
         steps = {int(s['step']) for s in model.policy.optimizer.state.values()}
         check_parameter_steps(model)
         if not objective.startswith('turn-consensus') and objective != 'terminal-logit-v1':assert steps == {2}
@@ -306,12 +321,94 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
         assert len(updates) == 2
         assert restored.device.type == device and restored.policy.device.type == device
         assert restored.num_timesteps == 128
+        resumed_metrics = finalize_metrics(update_moments(restored))
+        assert resumed_metrics['deck_search/supervision/samples_global'] == len(restored.rollout_buffer.search_targets)
+        assert np.isfinite(resumed_metrics['deck_search/supervision/loss'])
         # Phase-specific parameters can be absent from a physical batch.
         check_parameter_steps(restored)
         if objective not in ('turn-consensus-v1', 'terminal-logit-v1') and not value_mix:
             assert {int(s['step']) for s in restored.policy.optimizer.state.values()} <= {3, 4}
         save_bundle(restored, tmp_path/'resumed', rank=0, world_size=1,
             run_id='full480-fixed-test', wandb_id=None, config={'ascension': 0})
+    finally:
+        for env in envs:env.close()
+        check(lib.cuCtxSetLimit(0, stack.value), 'restore oracle stack')
+
+
+def test_terminal_logit_real_two_rounds_reach_production_loss_payload(tmp_path, monkeypatch, latent_training_factory):
+    """Use the actual distributed entry and payload, replacing only W&B."""
+    from dataclasses import asdict
+    from functools import partial
+    from types import SimpleNamespace
+    import ctypes
+    import json
+    import sys
+    from stable_baselines3.common.vec_env import VecMonitor
+    from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+    from rl.algorithms.packed_ppo import configure_packed_updates
+    from rl.algorithms.search_auxiliary import SearchTrainingConfig
+    from rl.policies.deck_latent import DeckLatentPolicy
+    from rl.training.native_vec_env import NativeSearchVecEnv
+    from rl.training import distributed_sb3
+    from rl.search.full480 import full_seeded
+    from rl.search.full480.run_device import lib, check
+
+    assert torch.cuda.is_available(), 'explicit full480 CUDA build required'
+    torch.empty(1, device='cuda')
+    stack = ctypes.c_size_t()
+    lib.cuCtxGetLimit.argtypes = [ctypes.POINTER(ctypes.c_size_t), ctypes.c_int]
+    lib.cuCtxSetLimit.argtypes = [ctypes.c_int, ctypes.c_size_t]
+    check(lib.cuCtxGetLimit(ctypes.byref(stack), 0), 'read oracle stack')
+    check(lib.cuCtxSetLimit(0, 1024), 'release idle oracle stack')
+    monkeypatch.setattr(full_seeded, 'P', tmp_path/'runtime')
+    envs, payloads = [], []
+    def vector(*args, **kwargs):
+        env = VecMonitor(NativeSearchVecEnv([partial(latent_training_factory,
+            combat_rules='heavenly-punishment-v1')]*2, threads=2))
+        envs.append(env)
+        return env
+    monkeypatch.setattr(distributed_sb3, 'make_env', vector)
+    monkeypatch.setitem(sys.modules, 'wandb', SimpleNamespace(
+        init=lambda **kw:SimpleNamespace(finish=lambda **kw:None),
+        config=SimpleNamespace(update=lambda *a, **kw:None),
+        define_metric=lambda *a, **kw:None,
+        log=lambda payload:payloads.append(json.loads(json.dumps(payload, allow_nan=False)))))
+    try:
+        model = AccumulatingMaskablePPO(DeckLatentPolicy, vector(), seed=20261111,
+            n_steps=32, batch_size=32, n_epochs=1, device='cpu', gamma=1., gae_lambda=1.,
+            reasoning_coef=0, reasoning_updates=0, nosl_is_az=False,
+            policy_kwargs=dict(d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
+                reward_flow='sequential-v1', deck_combat_encoder='transformer64x2',
+                combat_value_target='pre-reward-anchor'))
+        configure_packed_updates(model, dict(token_budget=1024, max_rows=8, precision='fp32'))
+        model.deck_search_config = asdict(SearchTrainingConfig(backend='full480', fraction=1.,
+            normal_budget=64, boss_budget=64, max_depth=24, timeout_seconds=120.,
+            action_selection='search-filter-policy-rank-v1', objective='terminal-logit-v1'))
+        model.combat_rules = 'heavenly-punishment-v1'
+        initial, final = tmp_path/'initial.zip', tmp_path/'final.zip'
+        model.save(initial)
+        monkeypatch.setattr(sys, 'argv', ['distributed_sb3', '--rank', '0', '--world-size', '1',
+            '--checkpoint', str(initial), '--output', str(final), '--updates', '2',
+            '--n-envs', '2', '--n-steps', '32', '--batch-size', '32', '--n-epochs', '1',
+            '--gradient-accumulation-steps', '1', '--device', 'cpu', '--amp', 'off', '--vec', 'native',
+            '--reasoning-updates', '0', '--reasoning-coef', '0', '--no-interactive-reasoning',
+            '--combat-rules', 'heavenly-punishment-v1', '--run-id', 'lower-loss-lifecycle',
+            '--remote-root', str(tmp_path/'transport'), '--ssh-control-dir', str(tmp_path/'ssh'),
+            '--training-state-dir', str(tmp_path/'recovery'), '--save-every-updates', '1',
+            '--max-checkpoints', '2', '--stop-file', str(tmp_path/'STOP'),
+            '--wandb', '--wandb-id', 'lower-loss-lifecycle'])
+        distributed_sb3.main()
+        assert [row['global_step'] for row in payloads] == [64, 128]
+        for row in payloads:
+            p = 'deck_search/supervision/'
+            assert row[p+'samples_global'] == row['deck_search/teacher_top1_samples_global'] > 0
+            assert row[p+'loss'] == pytest.approx(row[p+'mass_loss']+row[p+'relative_logit_mse'], abs=2e-7)
+            assert row['deck_search/probe_pre/samples_global'] == row['deck_search/probe_post/samples_global'] > 0
+            assert abs(row['deck_search/probe_pre/relative_logit_mse']) < 1e-6
+            assert row['deck_search/probe_seconds'] > 0
+        restored = AccumulatingMaskablePPO.load(final, device='cpu')
+        assert restored.num_timesteps == 128 and restored.deck_search_config['value_mix'] == 0.
+        assert restored.deck_search_config['objective'] == 'terminal-logit-v1'
     finally:
         for env in envs:env.close()
         check(lib.cuCtxSetLimit(0, stack.value), 'restore oracle stack')

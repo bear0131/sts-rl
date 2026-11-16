@@ -7,6 +7,7 @@ from env.core import vocab
 
 UPDATE_METRICS = ('policy_loss', 'value_loss', 'entropy', 'approx_kl', 'clip_fraction')
 ENTROPY_LAYERS = ('upper', 'lower')
+SEARCH_LOSS_FIELDS = ('loss_sum', 'count', 'mass_loss_sum', 'relative_logit_mse_sum', 'relative_count')
 
 
 def count_search_action_overrides(logits, legal, executed):
@@ -77,6 +78,8 @@ def accumulate_update_metrics(model, components, count):
     weighted = metrics * count
     entropy = getattr(components, 'policy_entropy_moments', None)
     weighted = torch.cat((weighted, weighted.new_zeros(4) if entropy is None else entropy))
+    search = getattr(components, 'search_loss_moments', None)
+    weighted = torch.cat((weighted, weighted.new_zeros(len(SEARCH_LOSS_FIELDS)) if search is None else search))
     if getattr(model, '_ppo_update_metric_sums', None) is None:
         model._ppo_update_metric_sums = weighted
         model._ppo_update_metric_count = count
@@ -87,7 +90,9 @@ def accumulate_update_metrics(model, components, count):
 
 def update_moments(model):
     sums = getattr(model, '_ppo_update_metric_sums', None)
-    values = np.zeros(len(UPDATE_METRICS) + 4) if sums is None else sums.cpu().numpy()
+    size = len(UPDATE_METRICS) + 4 + len(SEARCH_LOSS_FIELDS)
+    values = np.zeros(size) if sums is None else sums.cpu().numpy()
+    if values.size < size:values = np.pad(values, (0, size-values.size))  # Pre-metric checkpoints.
     result = {'pure_rl/update/' + key + '_sum': float(value)
               for key, value in zip(UPDATE_METRICS, values[:len(UPDATE_METRICS)], strict=True)}
     result['pure_rl/update/count'] = float(getattr(model, '_ppo_update_metric_count', 0))
@@ -95,12 +100,23 @@ def update_moments(model):
         prefix = 'pure_rl/update/entropy_' + layer
         result[prefix + '_sum'] = float(values[len(UPDATE_METRICS) + 2*i])
         result[prefix + '_count'] = float(values[len(UPDATE_METRICS) + 2*i + 1])
+    result.update({'deck_search/supervision/' + key: float(value)
+                   for key, value in zip(SEARCH_LOSS_FIELDS, values[len(UPDATE_METRICS)+4:], strict=True)})
     return result
 
 
 def finalize_metrics(moments, *, world_size=1):
     """Derive ratios after cross-rank reduction. Missing data stays missing."""
     result = {}
+    for prefix in ('deck_search/supervision/', 'deck_search/probe_pre/', 'deck_search/probe_post/'):
+        if prefix + 'count' not in moments:continue
+        count = moments[prefix + 'count']
+        result[prefix + 'samples_global'] = int(round(count * world_size))
+        if count > 0:result[prefix + 'loss'] = moments[prefix + 'loss_sum'] / count
+        relative_count = moments.get(prefix + 'relative_count', 0.)
+        if relative_count > 0:
+            for key in ('mass_loss', 'relative_logit_mse'):
+                result[prefix + key] = moments[prefix + key + '_sum'] / relative_count
     for name in ('all', 'combat', 'upper', 'anchor'):
         p = f'pure_rl/value_pre/{name}/'
         count = moments.get(p + 'count', 0)

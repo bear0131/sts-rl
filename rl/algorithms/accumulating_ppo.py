@@ -3037,14 +3037,16 @@ class AccumulatingMaskablePPO(MaskablePPO):
         inner_only = bool(getattr(self, "nosl_is_az_inner_only", False))
         from rl.algorithms.packed_ppo import configure_packed_updates, packed_ppo_epoch
         packed = configure_packed_updates(self)
+        self._ppo_update_metric_sums = None
+        self._ppo_update_metric_count = 0
         if packed is not None:
-            self._ppo_update_metric_sums = None
-            self._ppo_update_metric_count = 0
             self._ppo_microbatch_stats = dict(chunks=0, rows=0, oom_retries=0,
                                               min_rows=self.batch_size, max_rows=0)
             for epoch in range(self.n_epochs):
                 result = packed_ppo_epoch(self, clip_range,
                     clip_range_vf if self.clip_range_vf is not None else None)
+                for key, value in result['search_probe'].items():self.logger.record(key, value)
+                self.logger.record('deck_search/probe_seconds', result['search_probe_seconds'])
                 for field in ('context_input_rows', 'context_unique_rows', 'context_oom_retries'):
                     self.logger.record('pure_rl/' + field, result[field])
                 for policy, value, entropy, kl, clipped in result['metrics']:
@@ -3102,6 +3104,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
                 loss.backward()
                 accumulated += 1
+                from rl.algorithms.ppo_metrics import accumulate_update_metrics
+                accumulate_update_metrics(self, components, len(rollout_data.advantages))
                 if accumulated == self.gradient_accumulation_steps:
                     self._optimizer_step(accumulated)
                     optimizer_steps += 1

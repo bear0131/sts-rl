@@ -36,12 +36,12 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
             values, log_prob, entropy = model.policy.evaluate_actions(policy_obs, actions, action_masks=masks)
             if search:
                 search_logits = model.policy.action_dist.distribution.logits
-        search_loss = None
+        search_loss = search_moments = None
         if search:
             from rl.algorithms.search_auxiliary import auxiliary_loss
             # Both paths expose SB3's exact twice-normalized masked logits.
             # Reuse this forward and the ORIGINAL batch's searched-row scale.
-            search_loss = auxiliary_loss(model, observations, search_logits, masks.bool())
+            search_loss, search_moments = auxiliary_loss(model, observations, search_logits, masks.bool(), return_moments=True)
     if after_forward is not None:
         after_forward(observations)
     components = ppo_loss_components(
@@ -61,7 +61,8 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
     if categorical_valid is not None:
         loss = loss.masked_fill(~categorical_valid, float('nan'))
     from rl.algorithms.ppo_metrics import policy_entropy_moments
-    components = replace(components, policy_entropy_moments=policy_entropy_moments(entropy, observations))
+    components = replace(components, policy_entropy_moments=policy_entropy_moments(entropy, observations),
+                         search_loss_moments=search_moments)
     return components, loss
 
 

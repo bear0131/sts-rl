@@ -1,5 +1,21 @@
 # 学习运行时
 
+### 搜索监督诊断
+
+`deck_search/supervision/loss` 是当轮实际成功反传的每个有效搜索样本损失，未乘搜索系数，
+不含PPO/value/entropy项。分子和样本数先跨rank归约，再计算均值；物理分块、OOM重试
+不能重复计数。相对logit目标另报`mass_loss`与`relative_logit_mse`，两者之和为该目标总损失；
+旧目标没有此分解时保留缺失。`samples_global`是有效样本访问次数，多epoch时并非唯一根数。
+
+`deck_search/probe_pre/*`和`probe_post/*`是在本轮同一teacher、同一批真实场景上的
+更新前后对照，每rank至多256行、32行一批，不重跑搜索、不抽取随机数。该对照额外前向的
+耗时单列`deck_search/probe_seconds`；它与全部成功反传样本的训练均值分开显示。
+在线场景及teacher会随轮次改变，因此历史均值不是对固定455 teacher的累计偏离。
+
+`terminal-logit-v1`是`turn-consensus-logit-v1`的无回合证据消融：只保留原终局配对差
+超过三倍标准误及.005阈值的排除条件，不观测回合节点、不混合链V；相对logit损失和原
+search-filter执行方式不变。仅支持full480固定PPO锚点路径，完整旧checkpoint可显式切换目标。
+
 数据流：`env` 产生观测/合法动作 → `policies` 前推 → `search` 可选搜索 → `algorithms` 收集与更新 → `training` 编排；`evaluation` 消费 checkpoint，`apps` 负责展示。
 
 | 包 | 职责 |
