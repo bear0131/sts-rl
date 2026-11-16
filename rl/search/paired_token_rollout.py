@@ -121,7 +121,8 @@ class PairedTokenBatch(SmallPlayoutBatch):
                 visits = np.asarray(z["visits"])
                 q = np.asarray(z["values"], np.float64)
                 from env.search.action_selection import search_filtered_choice
-                chosen, log_prob = search_filtered_choice(logits, q, visits, job[3])
+                support = (z['teacher_keep'] if self.pair.get('action_selection') == 'turn-consensus-policy-rank-v1' else None)
+                chosen, log_prob = search_filtered_choice(logits, q, visits, job[3], support=support)
                 z["action"] = int(bits[chosen])
                 if ppo:estimates[job[0]] = (row['value'], log_prob)
                 units = (100.0 if job[2].boss else float(z['max_hp'])) if self.deck else (

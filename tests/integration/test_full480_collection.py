@@ -124,8 +124,13 @@ def test_full480_natural_rows_cached_dome_and_cancel(
 
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 @pytest.mark.parametrize('combat_rules', ['standard-v1', 'heavenly-punishment-v1'])
-@pytest.mark.parametrize('objective', ['prior-advantage-kl-v1', 'filtered-distillation-v1', 'turn-consensus-v1'])
-def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, latent_training_factory, device, combat_rules, objective):
+@pytest.mark.parametrize('objective,action_selection', [
+    ('prior-advantage-kl-v1', 'search-filter-policy-rank-v1'),
+    ('filtered-distillation-v1', 'search-filter-policy-rank-v1'),
+    ('turn-consensus-v1', 'search-filter-policy-rank-v1'),
+    ('turn-consensus-v1', 'turn-consensus-policy-rank-v1'),
+])
+def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, latent_training_factory, device, combat_rules, objective, action_selection):
     from dataclasses import asdict
     import ctypes
     from stable_baselines3.common.vec_env import VecMonitor
@@ -198,6 +203,10 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
                 target_best = np.argmax(b.search_targets[sample['position'], sample['env']])
                 teacher_matches += int(prior_best == target_best)
                 actual = b.actions[sample['position'], sample['env'], 0]
+                if action_selection == 'turn-consensus-policy-rank-v1':
+                    keep = sample['teacher_keep']
+                    allowed = choices[keep & (sample['prior_logits'] == max(sample['prior_logits'][keep]))]
+                    assert actual in allowed
                 preferred = set(choices[sample['prior_logits'] == max(sample['prior_logits'])])
                 action_overrides += int(actual not in preferred)
             stats = self.model.deck_search_last_stats
@@ -241,7 +250,7 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
             normal_budget=64 if objective == 'turn-consensus-v1' else 2,
             boss_budget=64 if objective == 'turn-consensus-v1' else 2,
             max_depth=24 if objective == 'turn-consensus-v1' else 8, timeout_seconds=120.,
-            action_selection='search-filter-policy-rank-v1', objective=objective))
+            action_selection=action_selection, objective=objective))
         before = state_digest(model.policy.state_dict())
         updates = []
         from collections import Counter

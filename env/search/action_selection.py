@@ -41,18 +41,26 @@ def turn_consensus_support(terminal_values, turn_values, action_order):
     return result
 
 
-def search_filtered_choice(logits, values, visits, nonce):
+def search_filtered_choice(logits, values, visits, nonce, *, support=None):
     """Q within .005 of best, then largest model score, seeded uniform ties.
 
     Inputs retain their public legal-action order. Return an index into that
     order and the actual tie probability, never the model sampling probability.
+    Explicit evidence support replaces the raw Q cutoff for the named
+    turn-consensus acting experiment; preference and tie handling stay shared.
     """
     logits, values, visits = map(np.asarray, (logits, values, visits))
     if (logits.ndim != 1 or logits.shape != values.shape or values.shape != visits.shape
             or not np.isfinite(logits).all() or not np.isfinite(values).all()
             or not (visits > 0).any()):
         raise ValueError('search choice requires finite aligned scores and visited actions')
-    eligible = np.flatnonzero((visits > 0) & (values >= values[visits > 0].max() - SEARCH_FILTER_VALUE_TOLERANCE))
+    if support is None:
+        eligible = np.flatnonzero((visits > 0) & (values >= values[visits > 0].max() - SEARCH_FILTER_VALUE_TOLERANCE))
+    else:
+        support = np.asarray(support)
+        if support.dtype != bool or support.shape != logits.shape or not (support & (visits > 0)).any():
+            raise ValueError('search support must retain a visited legal action')
+        eligible = np.flatnonzero(support & (visits > 0))
     tied = eligible[logits[eligible] == logits[eligible].max()]
     if len(tied) == 1:
         return int(tied[0]), -0.

@@ -39,7 +39,7 @@ def test_search_schedule_versions_actual_behavior():
         search_action_selection='search-filter-policy-rank-v1'),246)
     assert model.training_objective_contract=='deck-latent-search-acting-v1'
     assert model.deck_search_config['action_selection']=='search-filter-policy-rank-v1'
-    assert model.deck_search_config['fraction']==pytest.approx(.4)
+    assert model.deck_search_config['fraction']==pytest.approx(1.)
 
 
 @pytest.mark.parametrize('backend', ['cuda-batched-native', 'cuda-resident'])

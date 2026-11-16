@@ -68,10 +68,11 @@ def configure_collection(model, env):
         if not getattr(model, 'episode_rollout_config', None):
             from rl.algorithms.search_auxiliary import SearchTrainingConfig
             config = SearchTrainingConfig(**model.deck_search_config)
-            if config.backend != 'full480' or config.action_selection != 'search-filter-policy-rank-v1':
+            if config.backend != 'full480' or config.action_selection not in ('search-filter-policy-rank-v1', 'turn-consensus-policy-rank-v1'):
                 raise ValueError('fixed full480 collection requires the actual search-action contract')
             pair.update(common_simulations=config.normal_budget, elite_simulations=config.normal_budget,
-                        boss_simulations=config.boss_budget, playout_depth=config.max_depth, collect_ppo=True)
+                        boss_simulations=config.boss_budget, playout_depth=config.max_depth, collect_ppo=True,
+                        action_selection=config.action_selection)
         env.configure_small_playout(pair, batch_factory=lambda envs, pool, snapshot:
             PairedTokenBatch(envs, pool, snapshot, model.policy.core))
         batch = env.venv.small_playout_batch

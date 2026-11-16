@@ -3,6 +3,7 @@ import pytest
 import torch
 
 from env.search.action_selection import turn_consensus_support
+from env.search.action_selection import search_filtered_choice
 from rl.algorithms.search_auxiliary import improved_prior, search_kl, SearchTrainingConfig
 
 
@@ -71,3 +72,25 @@ def test_consensus_configuration_and_support_fail_closed():
     with pytest.raises(ValueError, match='aligned nonempty legal support'):
         improved_prior(torch.zeros(1, 2), torch.zeros(1, 2), torch.ones(1, 2, dtype=torch.bool),
             torch.tensor([4]), .3, objective='turn-consensus-v1', teacher_keep=torch.zeros(1, 2, dtype=torch.bool))
+
+
+def test_consensus_acting_separates_uncertain_order_from_clear_inferiority():
+    logits = np.log([.99, .006, .004])
+    values, visits = np.array([.75, .95, .95]), np.full(3, 32)
+    assert search_filtered_choice(logits, values, visits, 23)[0] == 1
+    assert search_filtered_choice(logits, values, visits, 23, support=np.ones(3, bool)) == (0, 0.)
+    assert search_filtered_choice(logits, values, visits, 23, support=np.array([False, True, True])) == (1, 0.)
+    with pytest.raises(ValueError, match='visited legal action'):
+        search_filtered_choice(logits, values, visits, 23, support=np.zeros(3, bool))
+
+
+def test_consensus_acting_requires_evidence_and_retains_seeded_ties():
+    with pytest.raises(ValueError, match='matching teacher evidence'):
+        SearchTrainingConfig(backend='full480', action_selection='turn-consensus-policy-rank-v1')
+    config = SearchTrainingConfig(backend='full480', objective='turn-consensus-v1',
+        action_selection='turn-consensus-policy-rank-v1')
+    assert config.action_selection == 'turn-consensus-policy-rank-v1'
+    choices = [search_filtered_choice(np.zeros(3), np.ones(3), np.ones(3), nonce,
+        support=np.array([False, True, True])) for nonce in range(32)]
+    assert {action for action, _ in choices} == {1, 2}
+    assert all(logp == -np.log(2) for _, logp in choices)

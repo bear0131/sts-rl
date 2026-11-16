@@ -35,10 +35,12 @@ class SearchTrainingConfig:
         if self.objective not in SEARCH_OBJECTIVES:
             raise ValueError('unknown search supervision objective')
         if self.objective in ('filtered-distillation-v1', 'turn-consensus-v1') and (
-                self.backend != 'full480' or self.action_selection != 'search-filter-policy-rank-v1'):
+                self.backend != 'full480' or self.action_selection not in ('search-filter-policy-rank-v1', 'turn-consensus-policy-rank-v1')):
             raise ValueError('filtered distillation requires full480 search-filter acting')
-        if self.action_selection not in ('shadow', 'search-filter-policy-rank-v1'):
+        if self.action_selection not in ('shadow', 'search-filter-policy-rank-v1', 'turn-consensus-policy-rank-v1'):
             raise ValueError('unknown search action selection contract')
+        if self.action_selection == 'turn-consensus-policy-rank-v1' and self.objective != 'turn-consensus-v1':
+            raise ValueError('turn consensus acting requires the matching teacher evidence')
         if self.inference_cache_bytes < 0:
             raise ValueError('search inference cache capacity must be nonnegative')
         if self.backend not in ('native-cpu', 'cuda-batched-native', 'cuda-resident', 'full480'):
