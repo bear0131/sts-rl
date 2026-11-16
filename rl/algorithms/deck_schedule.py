@@ -26,11 +26,13 @@ class DeckTrainingSchedule:
     search_cuda_wave_capacity: int = 4096
     search_inference_cache_bytes: int = 0
     search_action_selection: str = 'shadow'
+    search_objective: str = 'prior-advantage-kl-v1'
     anchor_start_round: int | None = None
 
     def __post_init__(self):
         SearchTrainingConfig(backend=self.search_backend, cuda_artifacts=self.search_cuda_artifacts,
             action_selection=self.search_action_selection,
+            objective=self.search_objective,
             cuda_wave_capacity=self.search_cuda_wave_capacity, inference_cache_bytes=self.search_inference_cache_bytes)
         if min(self.check_interval, self.consecutive_checks, self.anchor_rounds, self.ramp_rounds,
                self.validation_games, self.validation_max_steps, self.minimum_natural, self.minimum_anchors) < 1:
@@ -115,8 +117,11 @@ def apply_stage(model, schedule, completed_rounds, *, rank=0):
             backend=schedule.search_backend, cuda_artifacts=schedule.search_cuda_artifacts,
             cuda_wave_capacity=schedule.search_cuda_wave_capacity,
             action_selection=schedule.search_action_selection,
+            objective=schedule.search_objective,
             inference_cache_bytes=schedule.search_inference_cache_bytes))
     model.training_objective_contract = ('deck-latent-ppo-search-v1' if state['stage'] == 'search'
                                          else 'deck-latent-ppo-' + state['stage'] + '-v1')
     if state['stage'] == 'search' and schedule.search_action_selection != 'shadow':
         model.training_objective_contract = 'deck-latent-search-acting-v1'
+        if schedule.search_objective == 'filtered-distillation-v1':
+            model.training_objective_contract = 'deck-latent-search-filter-distillation-v1'

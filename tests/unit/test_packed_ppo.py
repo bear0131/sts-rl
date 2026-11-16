@@ -53,7 +53,8 @@ def test_direct_masked_categorical_matches_sb3_values_and_gradients():
 
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 @pytest.mark.parametrize('coefficient', [0., .1])
-def test_direct_search_update_reuses_planned_forward_and_exact_masked_loss(device, coefficient):
+@pytest.mark.parametrize('objective', ['prior-advantage-kl-v1', 'filtered-distillation-v1'])
+def test_direct_search_update_reuses_planned_forward_and_exact_masked_loss(device, coefficient, objective):
     from dataclasses import asdict
     from sb3_contrib.common.maskable.distributions import MaskableCategorical
     from rl.algorithms.search_auxiliary import SearchTrainingConfig, prepare_search_batch
@@ -84,7 +85,8 @@ def test_direct_search_update_reuses_planned_forward_and_exact_masked_loss(devic
         policy = SimpleNamespace(evaluate_actions=evaluate)
         model = SimpleNamespace(policy=policy, action_space=spaces.Discrete(5), autocast_context=nullcontext,
             normalize_advantage=False, hierarchical_combat_hp=False, ent_coef=.02, vf_coef=.5,
-            deck_search_config=asdict(SearchTrainingConfig(coefficient=coefficient)))
+            deck_search_config=asdict(SearchTrainingConfig(coefficient=coefficient, objective=objective,
+                backend='full480', action_selection='search-filter-policy-rank-v1')))
         prepare_search_batch(model, batch, None)
         components, loss = ppo_forward(model, batch, .2, None, direct_masked_categorical=direct,
                                       update_plan=SimpleNamespace(actor_critic=forward) if direct else None)
@@ -94,7 +96,11 @@ def test_direct_search_update_reuses_planned_forward_and_exact_masked_loss(devic
     # The toy value head aliases the logits leaf. CPU autograd can accumulate
     # the value/PPO/KL branches in a different order (observed <= 3.8e-9).
     # Keep the CUDA target bitwise and bound CPU error below 1e-8 absolute.
-    torch.testing.assert_close(outcomes[1][1], outcomes[0][1], atol=1e-8 if device == 'cpu' else 0, rtol=0)
+    # The new target-direction KL compares two FP32 reduction graphs. Allow
+    # one float32 unit roundoff; do not change the legacy strict threshold.
+    tolerance = (torch.finfo(torch.float32).eps if objective == 'filtered-distillation-v1'
+                 else 1e-8 if device == 'cpu' else 0)
+    torch.testing.assert_close(outcomes[1][1], outcomes[0][1], atol=tolerance, rtol=0)
 
 
 def test_compacted_combat_preserves_pad_queries_slots_and_gradients(combat_factory):

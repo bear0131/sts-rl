@@ -1,6 +1,8 @@
 """Legacy paired-search root choice, shared by rollout consumers."""
 import numpy as np
 
+SEARCH_FILTER_VALUE_TOLERANCE = .005
+
 
 def search_filtered_choice(logits, values, visits, nonce):
     """Q within .005 of best, then largest model score, seeded uniform ties.
@@ -13,7 +15,7 @@ def search_filtered_choice(logits, values, visits, nonce):
             or not np.isfinite(logits).all() or not np.isfinite(values).all()
             or not (visits > 0).any()):
         raise ValueError('search choice requires finite aligned scores and visited actions')
-    eligible = np.flatnonzero((visits > 0) & (values >= values[visits > 0].max() - .005))
+    eligible = np.flatnonzero((visits > 0) & (values >= values[visits > 0].max() - SEARCH_FILTER_VALUE_TOLERANCE))
     tied = eligible[logits[eligible] == logits[eligible].max()]
     if len(tied) == 1:
         return int(tied[0]), -0.

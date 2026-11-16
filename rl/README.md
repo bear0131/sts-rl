@@ -1023,3 +1023,28 @@ Combat49 采样重接待办见 [交接文档](../docs/2026-11-14/combat49-old-sa
 接口尚未验收，不允许从正式训练配置直接启动该诊断目标。
 原扩展/编译产物由 `STS_FULL480_ARTIFACT_DIR` 显式指定，来源与构建身份见
 [来源清单](../docs/2026-11-14/combat49-full480-runtime-sources.json)。
+
+## 搜索监督目标
+
+Deck schedule 的 `search_objective` 默认为 `prior-advantage-kl-v1`，保持旧保存
+的 `oldπ × exp(缩放估值优势)` 标签与 `KL(current || target)`。新实验可显式选择
+`filtered-distillation-v1`；仅支持 `full480` 固定长度 PPO 加
+`search-filter-policy-rank-v1` 实际执行。目标版本随 schedule/model/manifest 保存，
+`training_objective_contract` 为 `deck-latent-search-filter-distillation-v1`。
+已有完整包可在保留模型、Adam、环境和 RNG 时显式覆盖 schedule 切换目标；
+这是改变统计目标的实验，不是旧训练的等价恢复。观察/动作/价值目标合同保持。
+
+新标签复用同一根冻结 prior、配对世界均值 Q 与世界数 n。A 为 Q 距最大值
+不超过执行规则共享阈值 δ=0.005 的合法集合，π_A 保留集合内原概率比例。
+d 为原 prior 在 A 外的条件平均超额差距 `max(Qmax−Q−δ,0)`；
+w=`n/(n+4) × d/(d+δ)`，目标为 `(1−w)π + wπ_A`。
+全部动作相近时保留 prior；阈值附近平滑渐变，不学习同分动作的随机决胜。
+该权重使用分数差距/世界数，并非估值置信区间；没有隐含新增方差估计。
+辅助损失为原系数/全局搜索根归一化下的 `KL(target || current)`，
+搜索执行行仍不伪造 PPO actor ratio，其价值学习保持原目标。
+现有根数据即可构造标签，不增加推理或搜索链传输。
+
+`deck_search/action_override_rate` 比较真实执行动作与该根原 prior 最高分合法
+集合，跨 rank 按有效根数加权；并列、强制行、未搜索行、价值锚点不计改选。
+它与 `teacher_top1` 的 prior/软目标首选匹配不同；更换目标后的 top1 不能直接
+当作质量提升。训练质量需在同预算下比较胜率、实际改选及价值误差。

@@ -4,7 +4,10 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
+from env.search.action_selection import SEARCH_FILTER_VALUE_TOLERANCE
 from rl.algorithms.shared_buffer import SharedRolloutBuffer
+
+SEARCH_OBJECTIVES = ('prior-advantage-kl-v1', 'filtered-distillation-v1')
 
 
 @dataclass(frozen=True)
@@ -26,8 +29,14 @@ class SearchTrainingConfig:
     cuda_artifacts: str = ''
     cuda_wave_capacity: int = 4096
     action_selection: str = 'shadow'
+    objective: str = 'prior-advantage-kl-v1'
 
     def __post_init__(self):
+        if self.objective not in SEARCH_OBJECTIVES:
+            raise ValueError('unknown search supervision objective')
+        if self.objective == 'filtered-distillation-v1' and (
+                self.backend != 'full480' or self.action_selection != 'search-filter-policy-rank-v1'):
+            raise ValueError('filtered distillation requires full480 search-filter acting')
         if self.action_selection not in ('shadow', 'search-filter-policy-rank-v1'):
             raise ValueError('unknown search action selection contract')
         if self.inference_cache_bytes < 0:
@@ -124,16 +133,18 @@ def auxiliary_loss(model, observations, logits, legal):
     # An unsearched row's zero target is not a probability distribution.
     if not selected.any():
         return logits.sum() * 0
-    loss = search_kl(logits[selected], target[selected], legal[selected])
+    loss = search_kl(logits[selected], target[selected], legal[selected], objective=config.objective)
     return (config.coefficient * model._deck_search_loss_normalization
             * loss.sum() / len(valid))
 
 
-def improved_prior(logits, values, legal, worlds, target_std):
-    """Frozen q ∝ old_pi exp(shrunk clipped advantage), on legal atoms only."""
+def improved_prior(logits, values, legal, worlds, target_std, *, objective='prior-advantage-kl-v1'):
+    """Frozen legal-action target; the legacy objective remains the default."""
+    if objective not in SEARCH_OBJECTIVES:
+        raise ValueError('unknown search supervision objective')
     if not math.isfinite(target_std) or target_std < 0:
         raise ValueError('target scale must be a finite nonnegative standard deviation')
-    if not legal.any(-1).all() or (worlds <= 0).any():
+    if not legal.any(-1).all() or not torch.isfinite(worlds).all() or (worlds <= 0).any():
         raise ValueError('teacher requires legal actions and complete positive world counts')
     with torch.no_grad():
         old = logits.float().masked_fill(~legal, -torch.inf).log_softmax(-1)
@@ -142,12 +153,29 @@ def improved_prior(logits, values, legal, worlds, target_std):
             raise FloatingPointError('nonfinite search target')
         baseline = (old.exp() * q).sum(-1, keepdim=True)
         shrink = worlds.float().reshape(-1, 1) / (worlds.float().reshape(-1, 1) + 4)
+        if objective == 'filtered-distillation-v1':
+            tolerance = SEARCH_FILTER_VALUE_TOLERANCE
+            best = q.masked_fill(~legal, -torch.inf).max(-1, keepdim=True).values
+            eligible = legal & (q >= best - tolerance)
+            # Preserve preference within the same set used by real acting.
+            filtered = old.masked_fill(~eligible, -torch.inf).log_softmax(-1)
+            rejected_mass = old.exp().masked_fill(eligible | ~legal, 0)
+            excess = (best - q - tolerance).clamp_min(0)
+            gap = (rejected_mass * excess).sum(-1, keepdim=True) / rejected_mass.sum(
+                -1, keepdim=True).clamp_min(torch.finfo(torch.float32).tiny)
+            # Smooth evidence weight, not a statistical confidence interval.
+            weight = (shrink * gap / (gap + tolerance)).clamp_max(1 - torch.finfo(torch.float32).eps)
+            return torch.logaddexp(old + torch.log1p(-weight), filtered + weight.log())
         delta = shrink * ((q - baseline) / max(.02, .25 * target_std)).clamp(-2, 2)
         return (old + delta).log_softmax(-1)
 
 
-def search_kl(logits, log_target, legal):
+def search_kl(logits, log_target, legal, *, objective='prior-advantage-kl-v1'):
+    if objective not in SEARCH_OBJECTIVES:
+        raise ValueError('unknown search supervision objective')
     current = logits.float().masked_fill(~legal, -torch.inf).log_softmax(-1)
     # Mask before subtraction: -inf - -inf must not poison gradients.
     difference = current.masked_fill(~legal, 0) - log_target.detach().masked_fill(~legal, 0)
+    if objective == 'filtered-distillation-v1':
+        return (-log_target.detach().exp() * difference).sum(-1)
     return (current.exp() * difference).sum(-1)
