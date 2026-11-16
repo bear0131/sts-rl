@@ -136,6 +136,8 @@ class PairedTokenBatch(SmallPlayoutBatch):
                     prior_logits=logits,
                     return_units=units,
                 )
+                if 'teacher_keep' in z:
+                    by_slot[job[0]]['teacher_keep'] = z['teacher_keep']
         for job, z in completed:
             result = self.accept(job, z)
             if job[0] in by_slot and len(z['action_bits']) > 1:

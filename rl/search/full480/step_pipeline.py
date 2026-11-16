@@ -37,7 +37,7 @@ class StepPipeline(FramePipeline):
   p=self.pool
   extra=(p.live,p.logical_ids,p.alive,p.step_status,p.step_prefix,p.step_totals,p.job_roots,p.policy_seeds,p.temperatures,
    p.stats,p.outcomes,p.values,p.chosen,p.draws,p.root_boss,p.root_maximum,p.root_limits,p.job_generation,p.root_generation,p.root_done)
-  if p.deck_consumer:extra+=(p.pcg,p.selection_prefix,p.context_hash,p.context_dirty,p.context_roots)
+  if p.deck_consumer:extra+=(p.pcg,p.selection_prefix,p.context_hash,p.context_dirty,p.context_roots,p.root_stop_turn)
   return super().fingerprint()+(tuple(x.data_ptr() for x in extra),)
  def execute_step(self):
   p=self.pool;w=self.buffers

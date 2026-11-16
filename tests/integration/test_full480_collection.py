@@ -124,7 +124,7 @@ def test_full480_natural_rows_cached_dome_and_cancel(
 
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 @pytest.mark.parametrize('combat_rules', ['standard-v1', 'heavenly-punishment-v1'])
-@pytest.mark.parametrize('objective', ['prior-advantage-kl-v1', 'filtered-distillation-v1'])
+@pytest.mark.parametrize('objective', ['prior-advantage-kl-v1', 'filtered-distillation-v1', 'turn-consensus-v1'])
 def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, latent_training_factory, device, combat_rules, objective):
     from dataclasses import asdict
     import ctypes
@@ -212,7 +212,11 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
                 assert b.log_probs[position, i] == pytest.approx(logp, abs=1e-6)
             for key, target in b.search_targets.items():
                 legal = b.action_masks[key].astype(bool)
-                assert np.isfinite(target[legal]).all() and np.isneginf(target[~legal]).all()
+                if objective == 'turn-consensus-v1':
+                    assert np.isfinite(target[legal]).any() and not np.isnan(target).any()
+                else:
+                    assert np.isfinite(target[legal]).all()
+                assert np.isneginf(target[~legal]).all()
                 assert np.exp(target).sum() == pytest.approx(1., abs=1e-6)
             for position, i, _, observation, _ in self.records[::8]:
                 tensors = {k: torch.as_tensor(v[None], device=self.model.device) for k, v in observation.items()}
@@ -234,18 +238,31 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
         configure_packed_updates(model, dict(token_budget=1024, max_rows=8, precision='fp32'))
         model.combat_rules = combat_rules
         model.deck_search_config = asdict(SearchTrainingConfig(backend='full480', fraction=1.,
-            normal_budget=2, boss_budget=2, max_depth=8, timeout_seconds=120.,
+            normal_budget=64 if objective == 'turn-consensus-v1' else 2,
+            boss_budget=64 if objective == 'turn-consensus-v1' else 2,
+            max_depth=24 if objective == 'turn-consensus-v1' else 8, timeout_seconds=120.,
             action_selection='search-filter-policy-rank-v1', objective=objective))
         before = state_digest(model.policy.state_dict())
         updates = []
-        hook = model.policy.optimizer.register_step_post_hook(lambda *args: updates.append(1))
+        from collections import Counter
+        parameter_steps = Counter()
+        def record_update(owner):
+            updates.append(1)
+            for name, parameter in owner.policy.named_parameters():
+                if parameter.grad is not None:parameter_steps[name] += 1
+        def check_parameter_steps(owner):
+            for name, parameter in owner.policy.named_parameters():
+                state = owner.policy.optimizer.state.get(parameter)
+                assert (0 if state is None else int(state['step'])) == parameter_steps[name], name
+        hook = model.policy.optimizer.register_step_post_hook(lambda *args: record_update(model))
         model.learn(64, callback=Rows())
         hook.remove()
         assert len(updates) == 2
         assert model.device.type == device and model.policy.device.type == device
         assert model.num_timesteps == 64 and state_digest(model.policy.state_dict()) != before
         steps = {int(s['step']) for s in model.policy.optimizer.state.values()}
-        assert steps == {2}
+        check_parameter_steps(model)
+        if objective != 'turn-consensus-v1':assert steps == {2}
         source = save_bundle(model, tmp_path/'first', rank=0, world_size=1,
             run_id='full480-fixed-test', wandb_id=None, config={'ascension': 0})
         target = vector()
@@ -257,8 +274,9 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
         assert restored._recovery_environment_restored
         assert restored._independent_rollout_rng == model._independent_rollout_rng
         assert state_digest(restored.policy.state_dict()) == state_digest(model.policy.state_dict())
+        check_parameter_steps(restored)
         updates.clear()
-        hook = restored.policy.optimizer.register_step_post_hook(lambda *args: updates.append(1))
+        hook = restored.policy.optimizer.register_step_post_hook(lambda *args: record_update(restored))
         if device == 'cuda':
             # A production PPO update leaves a large, unused allocator cache.
             # The spawned search owner cannot reuse its parent's reserved VRAM.
@@ -274,7 +292,9 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
         assert restored.device.type == device and restored.policy.device.type == device
         assert restored.num_timesteps == 128
         # Phase-specific parameters can be absent from a physical batch.
-        assert {int(s['step']) for s in restored.policy.optimizer.state.values()} <= {3, 4}
+        check_parameter_steps(restored)
+        if objective != 'turn-consensus-v1':
+            assert {int(s['step']) for s in restored.policy.optimizer.state.values()} <= {3, 4}
         save_bundle(restored, tmp_path/'resumed', rank=0, world_size=1,
             run_id='full480-fixed-test', wandb_id=None, config={'ascension': 0})
     finally:

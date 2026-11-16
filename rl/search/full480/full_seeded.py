@@ -28,6 +28,9 @@ def plan_job(job,envs,obs):
   semantic=np.asarray([semantic.get(bits,0) for _,bits in mapping],np.uint64),order=np.arange(len(mapping)),
   observation=obs,relics=obs['relics'],relic_counters=obs['relic_counters'])
  if current_stream.batch.pair.get('collect_ppo'):r['value_target']='pre-reward-anchor'
+ if (getattr(model_owner,'deck_search_config',None) or {}).get('objective')=='turn-consensus-v1':
+  r['search_teacher']='turn-consensus-v1'
+  if r['budget']//len(mapping)>=4:r['stop_turn']=int(e.thick.bc.turn)+1
  return r
 class Stream:
  def __init__(self,batch,*,threads):
@@ -104,8 +107,8 @@ class Stream:
    for job,result in completed:
     i,tier,cfg,nonce=job;s=result['statistics'];assert result['simulations']==cfg.simulations
     count.update(roots=1,simulations=cfg.simulations,guide=result['nonforced_decisions'],steps=result['actual_transitions'],forced=result['forced_actions'],
-     atomic_steps=result['atomic_decisions'],prefixes=result['selection_prefix_decisions'],cuts=result['depth_cuts'],terminal=int(s[3]+s[4]+s[9]),
-     anchors=int(s[3]+s[9]) if result.get('value_statistic')=='pre-reward-anchor' else 0)
+     atomic_steps=result['atomic_decisions'],prefixes=result['selection_prefix_decisions'],cuts=result['depth_cuts'],turn_boundaries=result.get('turn_boundaries',0),terminal=int(s[3]+s[4]+s[9]),
+     anchors=int(s[3]+s[9]) if result.get('value_statistic') in ('pre-reward-anchor','turn-bootstrap-v1') else 0)
     del self.meta[i]
   count['receive_seconds']+=time.monotonic()-start;count['receives']+=1
   if time.monotonic()-last>30:

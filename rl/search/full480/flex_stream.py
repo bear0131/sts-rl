@@ -53,6 +53,7 @@ class StreamingPool(ScoringPool):
    self.chain_inputs=arr((self.n,68),torch.float32)
    self.root_misc=arr((self.m,inputs.prototypes['outer_deck_misc'].shape[0]),torch.float32)
    self.value_mode=arr((1,)).zero_()
+   self.root_stop_turn=arr((self.m,)).zero_()
    self.dynamic_context_roots=set()
    self.root_inputs=arr((self.m,68),torch.float32)
    self.root_relics=arr((self.m,R));self.root_counters=arr((self.m,R),torch.float32)
@@ -85,7 +86,7 @@ class StreamingPool(ScoringPool):
    if tensors[arena_index] is self.arena:name='packed_'+name[len('stream_'):]
   if self.deck_consumer:
    if name=='packed_start':tensors=tensors+[self.paired_words,self.pcg,self.selection_prefix,self.root_prefix,self.context_hash,self.context_dirty,self.context_roots]
-   elif name in ('packed_begin','packed_apply','packed_apply_dynamic'):tensors=tensors+[self.pcg,self.selection_prefix,self.context_hash,self.context_dirty,self.context_roots]
+   elif name in ('packed_begin','packed_apply','packed_apply_dynamic'):tensors=tensors+[self.pcg,self.selection_prefix,self.context_hash,self.context_dirty,self.context_roots,self.root_stop_turn]
   return ScoringPool.launch(self,name,tensors,ints,wide,grid)
  def prepare_pages(self,handles,rows):
   assert all(h.slot not in self.page_leases for h in handles)
@@ -191,6 +192,23 @@ class StreamingPool(ScoringPool):
   if not handles:return {}
   anchored=[h for h in handles if self.bank[h.slot].get('value_target')=='pre-reward-anchor']
   if anchored:self.frame_pipeline.complete_values(anchored)
+  resumed=set()
+  for h in handles:
+   r=self.bank[h.slot]
+   if r.get('search_teacher')!='turn-consensus-v1' or not r.get('stop_turn'):continue
+   b=r['budget'];start=h.slot*self.budget_cap;ids=torch.arange(start,start+b,device='cuda')
+   r['_turn_values']=self.values[ids].cpu().numpy().copy()
+   boundary=(self.stats[ids,6]>0)&(self.outcomes[ids]==0)
+   exhausted=boundary&(self.stats[ids,7]>=r['depth_limit'])
+   live=ids[boundary&~exhausted]
+   self.stats[ids,6]=0;self.stats[ids[exhausted],5]=1
+   r['stop_turn']=0;self.root_stop_turn[h.slot]=0
+   if len(live):
+    self.alive[live]=1;self.root_done[h.slot]=b-len(live);resumed.add(h.slot)
+   self.completed_counts['turn_probe_roots']+=1
+  if resumed:
+   self.refresh();handles=[h for h in handles if h.slot not in resumed]
+   if not handles:return {}
   indices=self.upload([h.slot for h in handles],np.int64)
   stats=self.stats.view(self.m,self.budget_cap,STAT)[indices].cpu().numpy().view(np.uint64)
   values=self.values.view(self.m,self.budget_cap)[indices].cpu().numpy()
@@ -201,6 +219,9 @@ class StreamingPool(ScoringPool):
    r=self.bank[h.slot];b=r['budget'];na=len(r['action_bits'])
    plan=dict(root=np.zeros(b,np.int32),action_index=np.asarray(r['order'],np.int32)[np.arange(b)%na])
    result=aggregate([r],plan,values[k,:b],outcomes[k,:b],stats[k,:b])[0]
+   if r.get('search_teacher')=='turn-consensus-v1':
+    from env.search.action_selection import turn_consensus_support
+    result['teacher_keep']=turn_consensus_support(values[k,:b],r.get('_turn_values'),r['order'])
    if 'root_logits' in r:result.update(root_logits=r['root_logits'],root_value=r['root_value'])
    if contexts is not None:result['combat_context']=contexts[k]
    result['root_generation']=h.generation;result['root_slot']=h.slot
