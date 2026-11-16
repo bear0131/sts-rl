@@ -239,7 +239,7 @@ def test_full_budget_anchor_batches_keep_values_cache_and_graph_lifetime(latent_
             torch._C._cuda_clearCublasWorkspaces()
             gc.collect()
             torch.cuda.empty_cache()
-        assert max(inference.deck.anchor_graphs.batch_counts) <= 1024
+        assert max(inference.deck.anchor_graphs.batch_counts) <= 256
         assert inference.deck.anchor_graphs.evictions > 0
         assert inference.deck.anchor_graphs.hits > 0
         np.testing.assert_array_equal(first, saved)

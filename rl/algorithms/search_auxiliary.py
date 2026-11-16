@@ -36,6 +36,8 @@ class SearchTrainingConfig:
             raise ValueError('unknown shadow search backend')
         if self.backend == 'cuda-resident' and (not self.cuda_artifacts or self.cuda_wave_capacity < 1):
             raise ValueError('resident search requires explicit artifacts and a positive wave capacity')
+        if self.backend == 'full480' and self.cuda_wave_capacity < 1:
+            raise ValueError('full480 needs a positive CUDA wave capacity')
         if not (0 < self.fraction <= 1 and 0 <= self.coefficient <= 1):
             raise ValueError('invalid shadow search fraction/coefficient')
         if min(self.normal_budget, self.boss_budget, self.max_depth, self.max_active) < 1:
