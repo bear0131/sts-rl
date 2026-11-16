@@ -71,7 +71,8 @@ def configure_collection(model, env):
             if config.backend != 'full480' or config.action_selection != 'search-filter-policy-rank-v1':
                 raise ValueError('fixed full480 collection requires the actual search-action contract')
             pair.update(common_simulations=config.normal_budget, elite_simulations=config.normal_budget,
-                        boss_simulations=config.boss_budget, playout_depth=config.max_depth, collect_ppo=True)
+                        boss_simulations=config.boss_budget, playout_depth=config.max_depth, collect_ppo=True,
+                        cuda_wave_capacity=config.cuda_wave_capacity)
         env.configure_small_playout(pair, batch_factory=lambda envs, pool, snapshot:
             PairedTokenBatch(envs, pool, snapshot, model.policy.core))
         batch = env.venv.small_playout_batch
