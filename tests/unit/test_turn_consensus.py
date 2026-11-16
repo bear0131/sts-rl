@@ -16,29 +16,31 @@ def test_paired_lucky_win_gap_without_turn_evidence_does_not_veto():
     np.testing.assert_array_equal(turn_consensus_support(full.ravel(), short.ravel(), [0, 1]), [True, True])
 
 
-def test_clear_inferiority_overrides_prior_and_preserves_remaining_ratios():
+@pytest.mark.parametrize('objective', ['turn-consensus-v1', 'turn-consensus-reverse-v1'])
+def test_clear_inferiority_overrides_prior_and_preserves_remaining_ratios(objective):
     full = np.tile([0., 1., 1.], (16, 1))
     keep = turn_consensus_support(full.ravel(), np.ones_like(full).ravel(), [0, 1, 2])
     np.testing.assert_array_equal(keep, [False, True, True])
     prior = torch.tensor([[.99, .006, .004]], dtype=torch.float64)
     legal = torch.ones_like(prior, dtype=torch.bool)
     q = improved_prior(prior.log(), torch.tensor([[0., 1., 1.]]), legal,
-        torch.tensor([16]), .3, objective='turn-consensus-v1', teacher_keep=torch.tensor(keep[None]))
+        torch.tensor([16]), .3, objective=objective, teacher_keep=torch.tensor(keep[None]))
     torch.testing.assert_close(q.exp(), torch.tensor([[0., .6, .4]]))
     current = prior.log().float().requires_grad_()
-    value = search_kl(current, q, legal, objective='turn-consensus-v1').sum()
+    value = search_kl(current, q, legal, objective=objective).sum()
     assert torch.isfinite(value)
     value.backward()
     torch.testing.assert_close(current.grad, prior.float()-q.exp(), atol=2e-7, rtol=1e-6)
 
 
-def test_undecided_support_keeps_original_distribution_and_illegal_gradient_zero():
+@pytest.mark.parametrize('objective', ['turn-consensus-v1', 'turn-consensus-reverse-v1'])
+def test_undecided_support_keeps_original_distribution_and_illegal_gradient_zero(objective):
     logits = torch.tensor([[3., -1., 999., 2.]], requires_grad=True)
     legal = torch.tensor([[True, True, False, True]])
     q = improved_prior(logits, torch.zeros_like(logits), legal, torch.tensor([8]), .3,
-        objective='turn-consensus-v1', teacher_keep=legal)
+        objective=objective, teacher_keep=legal)
     torch.testing.assert_close(q, logits.detach().masked_fill(~legal, -torch.inf).log_softmax(-1))
-    loss = search_kl(logits, q, legal, objective='turn-consensus-v1').sum()
+    loss = search_kl(logits, q, legal, objective=objective).sum()
     loss.backward()
     torch.testing.assert_close(logits.grad, torch.zeros_like(logits), atol=2e-7, rtol=0)
     assert not q.requires_grad and logits.grad[0, 2] == 0
@@ -94,3 +96,26 @@ def test_consensus_acting_requires_evidence_and_retains_seeded_ties():
         support=np.array([False, True, True])) for nonce in range(32)]
     assert {action for action, _ in choices} == {1, 2}
     assert all(logp == -np.log(2) for _, logp in choices)
+
+
+def test_reverse_conditional_penalizes_spreading_into_previously_rare_actions():
+    logits = torch.zeros(1, 2, requires_grad=True)
+    target = torch.tensor([[.99, .01]]).log()
+    legal = torch.ones(1, 2, dtype=torch.bool)
+    value = search_kl(logits, target, legal, objective='turn-consensus-reverse-v1').sum()
+    value.backward()
+    expected = .25*np.log(99.)
+    torch.testing.assert_close(logits.grad, torch.tensor([[-expected, expected]], dtype=torch.float32))
+    # Original reverse KL is exactly recovered when no action is vetoed.
+    torch.testing.assert_close(value, search_kl(logits, target, legal).sum())
+
+
+def test_reverse_conditional_handles_extreme_rejected_logits_without_infinity():
+    logits = torch.tensor([[1000., -1000., -1001., 999.]], requires_grad=True)
+    legal = torch.tensor([[True, True, True, False]])
+    target = torch.tensor([[-torch.inf, np.log(.6), np.log(.4), -torch.inf]])
+    loss = search_kl(logits, target, legal, objective='turn-consensus-reverse-v1').sum()
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert torch.isfinite(logits.grad).all() and logits.grad[0, 3] == 0
+    assert logits.grad[0, 0] > 0 and logits.grad[0, 1] < 0

@@ -97,3 +97,10 @@ def test_filtered_objective_can_explicitly_continue_old_search_state_without_res
     assert restored.deck_training_state == before
     assert restored.deck_search_config['objective'] == 'turn-consensus-v1'
     assert restored.training_objective_contract == 'deck-latent-turn-consensus-v1'
+    apply_stage(restored, configure(restored, dict(old, search_objective='turn-consensus-reverse-v1')), 455)
+    assert restored.deck_training_state == before
+    assert restored.deck_search_config['objective'] == 'turn-consensus-reverse-v1'
+    assert restored.training_objective_contract == 'deck-latent-turn-consensus-reverse-v1'
+    again = deepcopy(restored)
+    apply_stage(again, configure(again), 456)
+    assert again.deck_search_config == restored.deck_search_config
