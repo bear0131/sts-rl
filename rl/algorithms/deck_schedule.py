@@ -125,5 +125,5 @@ def apply_stage(model, schedule, completed_rounds, *, rank=0):
         model.training_objective_contract = 'deck-latent-search-acting-v1'
         if schedule.search_objective == 'filtered-distillation-v1':
             model.training_objective_contract = 'deck-latent-search-filter-distillation-v1'
-        elif schedule.search_objective in ('turn-consensus-v1', 'turn-consensus-reverse-v1'):
+        elif schedule.search_objective in ('turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1'):
             model.training_objective_contract = 'deck-latent-' + schedule.search_objective

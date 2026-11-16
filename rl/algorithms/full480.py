@@ -20,7 +20,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     from rl.training.native_vec_env import NativeSearchVecEnv
     cfg = IndependentRolloutConfig(**config)
     fixed = not getattr(model, 'episode_rollout_config', None)
-    if not fixed and (getattr(model, 'deck_search_config', None) or {}).get('objective') in ('filtered-distillation-v1', 'turn-consensus-v1', 'turn-consensus-reverse-v1'):
+    if not fixed and (getattr(model, 'deck_search_config', None) or {}).get('objective') in ('filtered-distillation-v1', 'turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1'):
         raise ValueError('filtered distillation requires fixed-length PPO collection')
     if fixed:
         from rl.algorithms.search_auxiliary import SearchRolloutBuffer, SearchTrainingConfig
@@ -294,7 +294,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             logits = np.zeros(legal.shape, np.float32)
             values = np.zeros_like(logits)
             worlds = np.empty(len(rows), np.float32)
-            support = np.zeros(legal.shape, bool) if search_config.objective in ('turn-consensus-v1', 'turn-consensus-reverse-v1') else None
+            support = np.zeros(legal.shape, bool) if search_config.objective in ('turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1') else None
             for j, sample in enumerate(rows):
                 # Original public ordering: sorted legal codec IDs, with all
                 # actions evaluated in the same complete set of worlds.

@@ -131,6 +131,7 @@ def test_full480_natural_rows_cached_dome_and_cancel(
     ('turn-consensus-v1', 'turn-consensus-policy-rank-v1'),
     ('turn-consensus-reverse-v1', 'search-filter-policy-rank-v1'),
     ('turn-consensus-reverse-v1', 'turn-consensus-policy-rank-v1'),
+    ('turn-consensus-logit-v1', 'search-filter-policy-rank-v1'),
 ])
 def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, latent_training_factory, device, combat_rules, objective, action_selection):
     from dataclasses import asdict

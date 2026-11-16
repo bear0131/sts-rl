@@ -16,7 +16,7 @@ def test_paired_lucky_win_gap_without_turn_evidence_does_not_veto():
     np.testing.assert_array_equal(turn_consensus_support(full.ravel(), short.ravel(), [0, 1]), [True, True])
 
 
-@pytest.mark.parametrize('objective', ['turn-consensus-v1', 'turn-consensus-reverse-v1'])
+@pytest.mark.parametrize('objective', ['turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1'])
 def test_clear_inferiority_overrides_prior_and_preserves_remaining_ratios(objective):
     full = np.tile([0., 1., 1.], (16, 1))
     keep = turn_consensus_support(full.ravel(), np.ones_like(full).ravel(), [0, 1, 2])
@@ -33,7 +33,7 @@ def test_clear_inferiority_overrides_prior_and_preserves_remaining_ratios(object
     torch.testing.assert_close(current.grad, prior.float()-q.exp(), atol=2e-7, rtol=1e-6)
 
 
-@pytest.mark.parametrize('objective', ['turn-consensus-v1', 'turn-consensus-reverse-v1'])
+@pytest.mark.parametrize('objective', ['turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1'])
 def test_undecided_support_keeps_original_distribution_and_illegal_gradient_zero(objective):
     logits = torch.tensor([[3., -1., 999., 2.]], requires_grad=True)
     legal = torch.tensor([[True, True, False, True]])
@@ -119,3 +119,26 @@ def test_reverse_conditional_handles_extreme_rejected_logits_without_infinity():
     loss.backward()
     assert torch.isfinite(logits.grad).all() and logits.grad[0, 3] == 0
     assert logits.grad[0, 0] > 0 and logits.grad[0, 1] < 0
+
+
+def test_logit_conditional_restores_relative_scores_and_ignores_constant_shift():
+    target = torch.tensor([[.99, .01, 0.]]).log()
+    legal = torch.tensor([[True, True, False]])
+    logits = torch.tensor([[0., 0., 999.]], requires_grad=True)
+    value = search_kl(logits, target, legal, objective='turn-consensus-logit-v1').sum()
+    value.backward()
+    d = .5*np.log(99.)
+    torch.testing.assert_close(value, torch.tensor(d*d, dtype=torch.float32))
+    torch.testing.assert_close(logits.grad, torch.tensor([[-d, d, 0.]], dtype=torch.float32))
+    shifted = search_kl(logits.detach()+13., target, legal, objective='turn-consensus-logit-v1')
+    torch.testing.assert_close(shifted.sum(), value)
+
+
+def test_logit_conditional_single_survivor_has_finite_hard_correction():
+    logits = torch.tensor([[1000., -1000., 999.]], requires_grad=True)
+    legal = torch.tensor([[True, True, False]])
+    target = torch.tensor([[-torch.inf, 0., -torch.inf]])
+    loss = search_kl(logits, target, legal, objective='turn-consensus-logit-v1').sum()
+    loss.backward()
+    torch.testing.assert_close(loss, torch.tensor(2000.))
+    torch.testing.assert_close(logits.grad, torch.tensor([[1., -1., 0.]]))

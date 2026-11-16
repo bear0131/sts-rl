@@ -28,7 +28,7 @@ def plan_job(job,envs,obs):
   semantic=np.asarray([semantic.get(bits,0) for _,bits in mapping],np.uint64),order=np.arange(len(mapping)),
   observation=obs,relics=obs['relics'],relic_counters=obs['relic_counters'])
  if current_stream.batch.pair.get('collect_ppo'):r['value_target']='pre-reward-anchor'
- if (getattr(model_owner,'deck_search_config',None) or {}).get('objective') in ('turn-consensus-v1','turn-consensus-reverse-v1'):
+ if (getattr(model_owner,'deck_search_config',None) or {}).get('objective') in ('turn-consensus-v1','turn-consensus-reverse-v1', 'turn-consensus-logit-v1'):
   r['search_teacher']='turn-consensus-v1'
   if r['budget']//len(mapping)>=4:r['stop_turn']=int(e.thick.bc.turn)+1
  return r

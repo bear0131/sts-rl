@@ -104,3 +104,7 @@ def test_filtered_objective_can_explicitly_continue_old_search_state_without_res
     again = deepcopy(restored)
     apply_stage(again, configure(again), 456)
     assert again.deck_search_config == restored.deck_search_config
+    apply_stage(again, configure(again, dict(old, search_objective='turn-consensus-logit-v1')), 455)
+    assert again.deck_training_state == before
+    assert again.deck_search_config['objective'] == 'turn-consensus-logit-v1'
+    assert again.training_objective_contract == 'deck-latent-turn-consensus-logit-v1'
