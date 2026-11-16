@@ -124,7 +124,8 @@ def test_full480_natural_rows_cached_dome_and_cancel(
 
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 @pytest.mark.parametrize('combat_rules', ['standard-v1', 'heavenly-punishment-v1'])
-def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, latent_training_factory, device, combat_rules):
+@pytest.mark.parametrize('objective', ['prior-advantage-kl-v1', 'filtered-distillation-v1'])
+def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, latent_training_factory, device, combat_rules, objective):
     from dataclasses import asdict
     import ctypes
     from stable_baselines3.common.vec_env import VecMonitor
@@ -234,7 +235,7 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
         model.combat_rules = combat_rules
         model.deck_search_config = asdict(SearchTrainingConfig(backend='full480', fraction=1.,
             normal_budget=2, boss_budget=2, max_depth=8, timeout_seconds=120.,
-            action_selection='search-filter-policy-rank-v1'))
+            action_selection='search-filter-policy-rank-v1', objective=objective))
         before = state_digest(model.policy.state_dict())
         updates = []
         hook = model.policy.optimizer.register_step_post_hook(lambda *args: updates.append(1))
@@ -249,6 +250,7 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
             run_id='full480-fixed-test', wandb_id=None, config={'ascension': 0})
         target = vector()
         restored = AccumulatingMaskablePPO.load(source/'model.zip', env=target, device=device)
+        assert restored.deck_search_config['objective'] == objective
         assert restored.combat_rules == combat_rules
         restored._setup_learn(64, reset_num_timesteps=False)
         restore_learner(restored, source, rank=0, world_size=1)

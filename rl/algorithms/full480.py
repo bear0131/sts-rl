@@ -20,6 +20,8 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
     from rl.training.native_vec_env import NativeSearchVecEnv
     cfg = IndependentRolloutConfig(**config)
     fixed = not getattr(model, 'episode_rollout_config', None)
+    if not fixed and (getattr(model, 'deck_search_config', None) or {}).get('objective') == 'filtered-distillation-v1':
+        raise ValueError('filtered distillation requires fixed-length PPO collection')
     if fixed:
         from rl.algorithms.search_auxiliary import SearchRolloutBuffer, SearchTrainingConfig
         search_config = SearchTrainingConfig(**model.deck_search_config)
@@ -303,7 +305,8 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 values[j, choices] = sample['values']
                 worlds[j] = sample['visits'][0]
             target = improved_prior(torch.from_numpy(logits), torch.from_numpy(values),
-                torch.from_numpy(legal), torch.from_numpy(worlds), search_config.target_std).numpy()
+                torch.from_numpy(legal), torch.from_numpy(worlds), search_config.target_std,
+                objective=search_config.objective).numpy()
             # Reuse frozen root scores and the actual KL target, without a forward pass.
             teacher_matches += int((np.where(legal, logits, -np.inf).argmax(1)
                                     == target.argmax(1)).sum())

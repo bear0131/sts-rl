@@ -13,6 +13,28 @@ def healthy_moments():
                 wins=2., timeout=0., failed=0.)
 
 
+def test_filtered_objective_can_explicitly_continue_old_search_state_without_reset():
+    model = SimpleNamespace(policy=SimpleNamespace(core=SimpleNamespace(model_contract='deck-latent-combat-v1'),
+        combat_value_target='pre-reward-anchor'), policy_kwargs={},
+        deck_training_state=dict(contract='deck-latent-stages-v1', stage='search', stage_start=200,
+            good_checks=3, last_check=200, validation={'target_std': .328817}))
+    before = deepcopy(model.deck_training_state)
+    old = dict(search_qualified=True, search_backend='full480',
+        search_action_selection='search-filter-policy-rank-v1', search_cuda_wave_capacity=65536)
+    apply_stage(model, configure(model, old), 455)
+    assert model.deck_search_config['objective'] == 'prior-advantage-kl-v1'
+    apply_stage(model, configure(model, dict(old, search_objective='filtered-distillation-v1')), 455)
+    assert model.deck_training_state == before
+    assert model.deck_search_config['objective'] == 'filtered-distillation-v1'
+    assert model.deck_search_config['normal_budget'] == 64 and model.deck_search_config['boss_budget'] == 256
+    assert model.deck_search_config['coefficient'] == .1 and model.deck_search_config['fraction'] == 1.
+    assert model.training_objective_contract == 'deck-latent-search-filter-distillation-v1'
+    restored = deepcopy(model)
+    apply_stage(restored, configure(restored), 456)
+    assert restored.deck_search_config == model.deck_search_config
+    assert restored.deck_training_state == before
+
+
 def test_qualified_search_covers_all_roots_while_only_loss_weight_ramps():
     model = SimpleNamespace(policy=SimpleNamespace(core=SimpleNamespace(model_contract='deck-latent-combat-v1'),
         combat_value_target='whole-run'), policy_kwargs={})
