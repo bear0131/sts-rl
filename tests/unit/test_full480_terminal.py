@@ -1,5 +1,6 @@
 """The historical terminal lower bound keeps the exact allocated budget."""
 import numpy as np
+import pytest
 from rl.search.full480.finite_plan import PAIRED_TERMINAL, aggregate, paired_worlds
 
 
@@ -48,3 +49,42 @@ def test_default_anchor_completion_keeps_legacy_cutoff_statistics():
     np.testing.assert_allclose(result['values'], [.5])
     assert result['turn_boundaries'] == 0 and result['depth_cuts'] == 1
     assert result['value_statistic'] == 'pre-reward-anchor'
+
+
+def test_chain_value_mixture_weights_chains_not_neural_nodes_and_preserves_returns():
+    root = dict(contract=PAIRED_TERMINAL, value_target='pre-reward-anchor',
+                budget=4, action_bits=np.array([12, 7], np.uint32), value_mix=.25)
+    plan = dict(root=np.zeros(4, np.int32), action_index=np.array([1, 0, 1, 0]))
+    returns = np.array([.2, .4, 0., 1.])
+    saved = returns.copy()
+    stats = np.zeros((4, 12), np.uint64)
+    stats[:, 1] = [1, 9, 0, 2]
+    kwargs = dict(chain_value_sums=np.array([.8, 1.8, 0., 1.6]),
+                  chain_value_counts=np.array([1, 9, 0, 2]))
+    result = aggregate([root], plan, returns, [1, 0, 2, 1], stats, **kwargs)[0]
+    np.testing.assert_allclose(result['values'], [.65, .175])
+    np.testing.assert_array_equal(returns, saved)
+    np.testing.assert_array_equal(result['terminal_visits'], [1, 2])
+    assert result['chain_value_nodes'] == 12 and result['chain_value_empty'] == 1
+    assert result['value_statistic'] == 'chain-value-mix-v1' and result['depth_cuts'] == 1
+    ordinary = aggregate([dict(root, value_mix=0.)], plan, returns, [1, 0, 2, 1], stats)[0]
+    np.testing.assert_allclose(ordinary['values'], [.7, .1])
+    assert ordinary['value_statistic'] == 'pre-reward-anchor'
+    with pytest.raises(ValueError, match='recorded'):
+        aggregate([root], plan, returns, [1, 0, 2, 1], stats)
+    kwargs['chain_value_counts'][1] += 1
+    with pytest.raises(ValueError, match='successful neural'):
+        aggregate([root], plan, returns, [1, 0, 2, 1], stats, **kwargs)
+
+
+def test_chain_mixture_keeps_partial_world_action_slots_and_empty_chain_anchor():
+    root = dict(contract=PAIRED_TERMINAL, value_target='pre-reward-anchor',
+                budget=5, action_bits=np.array([11, 22, 33], np.uint32), value_mix=.25)
+    plan = dict(root=np.zeros(5, np.int32), action_index=np.array([2, 0, 1, 2, 0]))
+    stats = np.zeros((5, 12), np.uint64)
+    stats[:, 1] = [0, 1, 0, 1, 2]
+    result = aggregate([root], plan, [.8, .4, 0., .2, 1.], [1, 1, 2, 0, 1], stats,
+        chain_value_sums=[0., .8, 0., .6, 1.2], chain_value_counts=[0, 1, 0, 1, 2])[0]
+    np.testing.assert_allclose(result['values'], [.7, 0., .55])
+    np.testing.assert_array_equal(result['visits'], [2, 1, 2])
+    assert result['simulations'] == 5 and result['chain_value_empty'] == 2

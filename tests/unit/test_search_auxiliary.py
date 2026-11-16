@@ -123,3 +123,17 @@ def test_filtered_teacher_is_finite_with_extreme_priors_and_rejects_invalid_cont
     with pytest.raises(ValueError, match='positive world'):
         improved_prior(old, torch.zeros_like(old), legal, torch.tensor([float('nan')]), .3,
             objective='filtered-distillation-v1')
+
+
+def test_chain_mixture_only_accepts_original_full480_anchor_supervision():
+    from rl.algorithms.search_auxiliary import SearchTrainingConfig
+    config = dict(backend='full480', action_selection='search-filter-policy-rank-v1', value_mix=.25)
+    assert SearchTrainingConfig(**config).value_mix == .25
+    assert SearchTrainingConfig().value_mix == 0.
+    for value in (-.1, 1.1, float('nan'), float('inf')):
+        with pytest.raises(ValueError, match='weight'):
+            SearchTrainingConfig(**dict(config, value_mix=value))
+    for changes in (dict(backend='native-cpu'), dict(action_selection='shadow'),
+                    dict(objective='turn-consensus-logit-v1')):
+        with pytest.raises(ValueError, match='original full480'):
+            SearchTrainingConfig(**dict(config, **changes))

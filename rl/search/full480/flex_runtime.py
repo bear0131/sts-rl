@@ -105,6 +105,7 @@ class BattlePool(CollectionPool):
   assert 'modules' not in kw
   super().__init__(mirror.m,budget_cap,modules=mirror.modules,**kw)
   self.mirror=mirror;self.ordered_semantic=self.arr((self.m,self.action_width),torch.int64);self.root_executed=self.arr((self.n,))
+  self.chain_value_sum=self.chain_value_count=None
   if self.deck_consumer:
    stride=self.roots.numel()*self.roots.element_size()//self.m
    self.root_addresses=torch.arange(self.m,device='cuda',dtype=torch.int64)*stride+self.roots.data_ptr()
@@ -113,6 +114,11 @@ class BattlePool(CollectionPool):
   if not rows:return {}
   # Validate every root before claiming or modifying any owned slot.
   for r in rows.values():
+   mix=r.get('value_mix',0.)
+   if not np.isfinite(mix) or not 0<=mix<=1:raise ValueError('invalid chain value mixture weight')
+   if mix and (not self.deck_consumer or r.get('value_target')!='pre-reward-anchor'
+       or r.get('search_teacher') or r.get('stop_turn')):
+    raise ValueError('chain value mixture requires unmodified full anchor rollouts')
    stop_turn=r.get('stop_turn',0)
    if type(stop_turn) is not int or not 0<=stop_turn<2**31:
     raise ValueError('search turn horizon requires a nonnegative native turn')
@@ -143,6 +149,12 @@ class BattlePool(CollectionPool):
    for h in handles:self.ledger.release(h)
    raise
   root_ids=self.upload([h.slot for h in handles],np.int32);indices=root_ids.long();count=len(handles)
+  if any(r.get('value_mix',0.) for r in rows.values()) and self.chain_value_sum is None:
+   self.chain_value_sum=self.arr((self.n,),torch.float64).zero_()
+   self.chain_value_count=self.arr((self.n,),torch.int32).zero_()
+  if self.chain_value_sum is not None:
+   self.chain_value_sum.view(self.m,self.budget_cap).index_fill_(0,indices,0.)
+   self.chain_value_count.view(self.m,self.budget_cap).index_fill_(0,indices,0)
   if self.deck_consumer:
    from env.core import encode
    values=list(rows.values())

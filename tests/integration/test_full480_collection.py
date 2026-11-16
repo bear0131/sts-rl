@@ -124,16 +124,17 @@ def test_full480_natural_rows_cached_dome_and_cancel(
 
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 @pytest.mark.parametrize('combat_rules', ['standard-v1', 'heavenly-punishment-v1'])
-@pytest.mark.parametrize('objective,action_selection', [
-    ('prior-advantage-kl-v1', 'search-filter-policy-rank-v1'),
-    ('filtered-distillation-v1', 'search-filter-policy-rank-v1'),
-    ('turn-consensus-v1', 'search-filter-policy-rank-v1'),
-    ('turn-consensus-v1', 'turn-consensus-policy-rank-v1'),
-    ('turn-consensus-reverse-v1', 'search-filter-policy-rank-v1'),
-    ('turn-consensus-reverse-v1', 'turn-consensus-policy-rank-v1'),
-    ('turn-consensus-logit-v1', 'search-filter-policy-rank-v1'),
+@pytest.mark.parametrize('objective,action_selection,value_mix', [
+    ('prior-advantage-kl-v1', 'search-filter-policy-rank-v1', 0.),
+    ('prior-advantage-kl-v1', 'search-filter-policy-rank-v1', .25),
+    ('filtered-distillation-v1', 'search-filter-policy-rank-v1', 0.),
+    ('turn-consensus-v1', 'search-filter-policy-rank-v1', 0.),
+    ('turn-consensus-v1', 'turn-consensus-policy-rank-v1', 0.),
+    ('turn-consensus-reverse-v1', 'search-filter-policy-rank-v1', 0.),
+    ('turn-consensus-reverse-v1', 'turn-consensus-policy-rank-v1', 0.),
+    ('turn-consensus-logit-v1', 'search-filter-policy-rank-v1', 0.),
 ])
-def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, latent_training_factory, device, combat_rules, objective, action_selection):
+def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, latent_training_factory, device, combat_rules, objective, action_selection, value_mix):
     from dataclasses import asdict
     import ctypes
     from stable_baselines3.common.vec_env import VecMonitor
@@ -253,7 +254,7 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
             normal_budget=64 if objective.startswith('turn-consensus') else 2,
             boss_budget=64 if objective.startswith('turn-consensus') else 2,
             max_depth=24 if objective.startswith('turn-consensus') else 8, timeout_seconds=120.,
-            action_selection=action_selection, objective=objective))
+            action_selection=action_selection, objective=objective, value_mix=value_mix))
         before = state_digest(model.policy.state_dict())
         updates = []
         from collections import Counter
@@ -280,6 +281,7 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
         target = vector()
         restored = AccumulatingMaskablePPO.load(source/'model.zip', env=target, device=device)
         assert restored.deck_search_config['objective'] == objective
+        assert restored.deck_search_config['value_mix'] == value_mix
         assert restored.combat_rules == combat_rules
         restored._setup_learn(64, reset_num_timesteps=False)
         restore_learner(restored, source, rank=0, world_size=1)
@@ -305,7 +307,7 @@ def test_full480_fixed_real_rows_ppo_and_ordinary_resume(tmp_path, monkeypatch, 
         assert restored.num_timesteps == 128
         # Phase-specific parameters can be absent from a physical batch.
         check_parameter_steps(restored)
-        if objective != 'turn-consensus-v1':
+        if objective != 'turn-consensus-v1' and not value_mix:
             assert {int(s['step']) for s in restored.policy.optimizer.state.values()} <= {3, 4}
         save_bundle(restored, tmp_path/'resumed', rank=0, world_size=1,
             run_id='full480-fixed-test', wandb_id=None, config={'ascension': 0})

@@ -108,3 +108,12 @@ def test_filtered_objective_can_explicitly_continue_old_search_state_without_res
     assert again.deck_training_state == before
     assert again.deck_search_config['objective'] == 'turn-consensus-logit-v1'
     assert again.training_objective_contract == 'deck-latent-turn-consensus-logit-v1'
+    apply_stage(again, configure(again, dict(old, search_value_mix=.25)), 455)
+    assert again.deck_training_state == before
+    assert again.deck_search_config['objective'] == 'prior-advantage-kl-v1'
+    assert again.deck_search_config['value_mix'] == .25
+    assert again.training_objective_contract == 'deck-latent-chain-value-mix-v1'
+    resumed = deepcopy(again)
+    apply_stage(resumed, configure(resumed), 456)
+    assert resumed.deck_search_config == again.deck_search_config
+    assert resumed.deck_training_state == before

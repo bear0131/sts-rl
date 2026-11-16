@@ -214,11 +214,16 @@ class StreamingPool(ScoringPool):
   values=self.values.view(self.m,self.budget_cap)[indices].cpu().numpy()
   outcomes=self.outcomes.view(self.m,self.budget_cap)[indices].cpu().numpy()
   contexts=self.root_inputs[indices,:64].cpu().numpy() if self.deck_consumer else None
+  mixture=any(self.bank[h.slot].get('value_mix',0.) for h in handles)
+  chain_sums=self.chain_value_sum.view(self.m,self.budget_cap)[indices].cpu().numpy() if mixture else None
+  chain_counts=self.chain_value_count.view(self.m,self.budget_cap)[indices].cpu().numpy() if mixture else None
   output={}
   for k,h in enumerate(handles):
    r=self.bank[h.slot];b=r['budget'];na=len(r['action_bits'])
    plan=dict(root=np.zeros(b,np.int32),action_index=np.asarray(r['order'],np.int32)[np.arange(b)%na])
-   result=aggregate([r],plan,values[k,:b],outcomes[k,:b],stats[k,:b])[0]
+   result=aggregate([r],plan,values[k,:b],outcomes[k,:b],stats[k,:b],
+    chain_value_sums=None if chain_sums is None else chain_sums[k,:b],
+    chain_value_counts=None if chain_counts is None else chain_counts[k,:b])[0]
    if r.get('search_teacher')=='turn-consensus-v1':
     from env.search.action_selection import turn_consensus_support
     result['teacher_keep']=turn_consensus_support(values[k,:b],r.get('_turn_values'),r['order'])

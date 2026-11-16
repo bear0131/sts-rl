@@ -27,12 +27,14 @@ class DeckTrainingSchedule:
     search_inference_cache_bytes: int = 0
     search_action_selection: str = 'shadow'
     search_objective: str = 'prior-advantage-kl-v1'
+    search_value_mix: float = 0.
     anchor_start_round: int | None = None
 
     def __post_init__(self):
         SearchTrainingConfig(backend=self.search_backend, cuda_artifacts=self.search_cuda_artifacts,
             action_selection=self.search_action_selection,
             objective=self.search_objective,
+            value_mix=self.search_value_mix,
             cuda_wave_capacity=self.search_cuda_wave_capacity, inference_cache_bytes=self.search_inference_cache_bytes)
         if min(self.check_interval, self.consecutive_checks, self.anchor_rounds, self.ramp_rounds,
                self.validation_games, self.validation_max_steps, self.minimum_natural, self.minimum_anchors) < 1:
@@ -118,6 +120,7 @@ def apply_stage(model, schedule, completed_rounds, *, rank=0):
             cuda_wave_capacity=schedule.search_cuda_wave_capacity,
             action_selection=schedule.search_action_selection,
             objective=schedule.search_objective,
+            value_mix=schedule.search_value_mix,
             inference_cache_bytes=schedule.search_inference_cache_bytes))
     model.training_objective_contract = ('deck-latent-ppo-search-v1' if state['stage'] == 'search'
                                          else 'deck-latent-ppo-' + state['stage'] + '-v1')
@@ -127,3 +130,5 @@ def apply_stage(model, schedule, completed_rounds, *, rank=0):
             model.training_objective_contract = 'deck-latent-search-filter-distillation-v1'
         elif schedule.search_objective in ('turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1'):
             model.training_objective_contract = 'deck-latent-' + schedule.search_objective
+        if schedule.search_value_mix:
+            model.training_objective_contract = 'deck-latent-chain-value-mix-v1'

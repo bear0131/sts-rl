@@ -2,6 +2,18 @@
 import triton
 import triton.language as tl
 
+
+@triton.jit
+def accumulate_chain_values(LIVE,META,COEF,DISPATCH,SUMMARY,C,COUNT,SUM,F:tl.constexpr,B:tl.constexpr):
+ # Same successful-frame guard as packed_apply_dynamic. No root, forced,
+ # completion-only, capture warmup, or failed-overflow observation is counted.
+ if (tl.load(C+2)!=0)&(tl.load(C+3)==0)&(tl.load(SUMMARY+2)==0):
+  i=tl.program_id(0)*B+tl.arange(0,B);valid=(i<F)&(i<tl.load(DISPATCH))
+  valid=valid&(tl.load(META+4*i,valid,0)>1)
+  job=tl.load(LIVE+i,valid,0);value=tl.load(COEF+24*i+12,valid,0).to(tl.float64)
+  tl.store(COUNT+job,tl.load(COUNT+job,valid,0)+1,valid)
+  tl.store(SUM+job,tl.load(SUM+job,valid,0)+value,valid)
+
 # Control: active, cursor, enabled, error, compact, ticks, applied, choices,
 # forced, model_frames, tokens, queries, actions, attention_blocks, frames,
 # overflows, first_failed_summary[10], failed_count, context_pause, tick_limit.

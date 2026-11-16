@@ -2,6 +2,7 @@
 import collections,time
 from .frame_pipeline import FramePipeline,torch,triton
 from .step_kernels import compact_local,compact_scatter,compact_finish,frame_prepare,frame_commit
+from .step_kernels import accumulate_chain_values
 
 def compact(pool):
  n=pool.n;b=1024;nb=triton.cdiv(n,b);cb=triton.next_power_of_2(nb)
@@ -38,11 +39,15 @@ class StepPipeline(FramePipeline):
   extra=(p.live,p.logical_ids,p.alive,p.step_status,p.step_prefix,p.step_totals,p.job_roots,p.policy_seeds,p.temperatures,
    p.stats,p.outcomes,p.values,p.chosen,p.draws,p.root_boss,p.root_maximum,p.root_limits,p.job_generation,p.root_generation,p.root_done)
   if p.deck_consumer:extra+=(p.pcg,p.selection_prefix,p.context_hash,p.context_dirty,p.context_roots,p.root_stop_turn)
+  if getattr(p,'chain_value_sum',None) is not None:extra+=(p.chain_value_sum,p.chain_value_count)
   return super().fingerprint()+(tuple(x.data_ptr() for x in extra),)
  def execute_step(self):
   p=self.pool;w=self.buffers
   frame_prepare[(triton.cdiv(self.F,256),)](p.live,p.logical_ids,w['live'],w['worlds'],w['dispatch'],p.step_status,self.F,256)
   FramePipeline.execute(self)
+  if getattr(p,'chain_value_sum',None) is not None:
+   accumulate_chain_values[(triton.cdiv(self.F,256),)](w['live'],p.meta,self.model.buffers['coef'],
+    w['dispatch'],w['summary'],p.step_status,p.chain_value_count,p.chain_value_sum,self.F,256)
   p.launch('packed_apply_dynamic',[p.arena,w['live'],p.job_roots,p.scores,p.bits,p.meta,p.policy_seeds,p.temperatures,p.stats,
    p.alive,p.outcomes,p.values,p.chosen,p.draws,p.root_boss,p.root_maximum,p.root_limits,p.job_generation,p.root_generation,p.root_done,
    w['dispatch'],w['summary'],p.step_status],grid=self.F)

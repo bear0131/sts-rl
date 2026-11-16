@@ -471,7 +471,8 @@ def test_full480_pending_block_roundtrip(combat_factory, scenario):
     [('audit:' + s, False) for s in TRIGGER_CASES] +
     [('punishment:' + s, True) for s in ('cards', 'turns', 'mitigation', 'draw_hooks', 'autoplay', 'fatal', 'revive', 'fairy')] +
     [('audit:potion:' + s + ':1', False) for s in ('Attack Potion', 'Elixir Potion', 'Gamblers Brew', 'Liquid Memories')] +
-    [('turn:' + s, True) for s in ('prefix', 'gamble', 'growth', 'punishment:fatal', 'timewarp', 'two')])
+    [('turn:' + s, True) for s in ('prefix', 'gamble', 'growth', 'punishment:fatal', 'timewarp', 'two')] +
+    [('mixture:' + s, True) for s in ('prefix', 'growth', 'anchor_duplicates', 'punishment:fatal')])
 def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, anchored, tmp_path, monkeypatch):
     from rl.search.full480.combo_runtime import BattleArena, BattlePool
     from rl.search.full480.combo_model import DeckWeights
@@ -479,6 +480,8 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
     from rl.search.full480.finite_plan import PAIRED_TERMINAL, paired_worlds
     from rl.search.full480.run_device import cpu_bridge
     from rl.policies.deck_latent import DeckLatentPolicy
+    value_mix = .25 if scenario.startswith('mixture:') else 0.
+    if value_mix:scenario = scenario[len('mixture:'):]
     turn_horizon = (2 if scenario == 'turn:two' else 1) if scenario.startswith('turn:') else 0
     if turn_horizon:
         scenario = scenario[len('turn:'):]
@@ -586,13 +589,14 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
             relics=obs['relics'], relic_counters=obs['relic_counters'],
             anchor_context=context.anchor[0].cpu().numpy(),observation={k:v.copy() for k,v in obs.items()})
         if anchored:row['value_target'] = 'pre-reward-anchor'
+        if value_mix:row['value_mix'] = value_mix
         if turn_horizon:row['stop_turn'] = latent_env.thick.bc.turn + turn_horizon
         arena = BattleArena(1, deck=True)
         pool = None
         try:
             versions = arena.load({0: row['snapshot']})
             row['mirror'] = (0, *versions[0])
-            frame = max(1, budget // 3 + 1) if scenario == 'prefix' and not anchored else budget
+            frame = max(1, budget // 3 + 1) if scenario == 'prefix' and (not anchored or value_mix) else budget
             pool = BattlePool(arena, budget, net=flat.net, flat=flat, frame=frame, tile=32,
                              frame_tokens=4, frame_queries=4)
             for world, low, high, inc_low, inc_high in worlds:
@@ -608,6 +612,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                     generator.state = state
                     branches.append([branch, np.random.Generator(generator), 1])
             branches = branches[:budget]
+            chain_values = [[] for _ in branches]
             pool.submit({0: row})
             def compare_states():
                 ids = [i for i, (e, _, _) in enumerate(branches) if e.thick.bc is not None]
@@ -634,7 +639,8 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                         oracle_action_scores += len(legal)
                         ob = {k: torch.as_tensor(v[None], device='cuda') for k, v in env._obs().items()}
                         branch_context = core.prepare_search_context(ob) if scenario == 'growth' else context
-                        logits, _ = core.combat_with_context(ob, branch_context)
+                        logits, node_value = core.combat_with_context(ob, branch_context)
+                        chain_values[i].append(float(node_value.flatten()[0]))
                         scores = logits[0, legal].cpu().double().numpy()
                         probabilities = np.exp(scores-scores.max())
                         probabilities /= probabilities.sum()
@@ -697,13 +703,21 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 pool.frame_pipeline.score_roots(list(pool.ledger.pending.values()))
                 del scratch
             result = pool.reap()[0]
+            if value_mix:
+                np.testing.assert_allclose(pool.values[:budget].cpu().numpy(), gold, atol=3e-5, rtol=1e-5)
+                np.testing.assert_array_equal(pool.chain_value_count[:budget].cpu().numpy(),
+                                              [len(nodes) for nodes in chain_values])
+                np.testing.assert_allclose(pool.chain_value_sum[:budget].cpu().numpy(),
+                                           [sum(nodes) for nodes in chain_values], atol=1e-4, rtol=1e-5)
+                gold = [(1-value_mix)*v+value_mix*np.mean(nodes) if nodes else v
+                        for v, nodes in zip(gold, chain_values)]
             assert int(result['statistics'][10]) == oracle_action_scores
             owners=np.arange(budget)%len(mapping)
             expected=np.bincount(owners,weights=gold,minlength=len(mapping))/np.bincount(owners,minlength=len(mapping))
             np.testing.assert_allclose(result['values'],expected,atol=3e-5,rtol=1e-5)
             assert result['simulations'] == budget
             np.testing.assert_allclose(result['combat_context'],context.combat[0].cpu().numpy(),atol=0,rtol=0)
-            if scenario in ('prefix','growth') and not anchored:
+            if scenario in ('prefix','growth') and (not anchored or value_mix):
                 # Repeat the independent per-action oracle above using grouped
                 # graph replays. An undersized frame must stop all later
                 # replays before retry, without advancing RNG or state twice.
@@ -773,14 +787,14 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 np.testing.assert_allclose(result['root_logits'],scored[0][1],atol=3e-5,rtol=1e-5)
                 assert result['root_value'] == pytest.approx(float(expected_value.flatten()[0]),abs=3e-5)
             assert pool.frame_pipeline.counts['root_policy_rows'] == 1 + int(
-                scenario == 'anchor_duplicates' or (scenario in ('prefix','growth') and not anchored))
+                scenario == 'anchor_duplicates' or (scenario in ('prefix','growth') and (not anchored or bool(value_mix))))
             batch.inference.__exit__(None,None,None)
             assert result['visits'].sum()==budget and result['visits'].max()-result['visits'].min()==1
             if scenario in ('prefix', 'gamble'):
                 assert pool.stats[:, 11].sum().item() > 0, 'AR prefix path was not exercised'
             if anchored:
-                assert result['value_statistic'] == ('turn-bootstrap-v1' if turn_horizon else 'pre-reward-anchor')
-                assert sum(pool.frame_pipeline.counts[k] for k in ('anchor_rows','cutoff_rows','terminal_rows')) == budget
+                assert result['value_statistic'] == ('chain-value-mix-v1' if value_mix else 'turn-bootstrap-v1' if turn_horizon else 'pre-reward-anchor')
+                assert sum(pool.frame_pipeline.counts[k] for k in ('anchor_rows','cutoff_rows','terminal_rows')) == budget * (2 if value_mix and scenario in ('prefix','growth') else 1)
                 if scenario == 'anchor_duplicates':
                     assert pool.frame_pipeline.completion_inference().statistics()['anchor_cache_batch_duplicates'] > 0
             else:

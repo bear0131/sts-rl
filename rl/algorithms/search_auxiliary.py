@@ -30,8 +30,15 @@ class SearchTrainingConfig:
     cuda_wave_capacity: int = 4096
     action_selection: str = 'shadow'
     objective: str = 'prior-advantage-kl-v1'
+    value_mix: float = 0.
 
     def __post_init__(self):
+        if not math.isfinite(self.value_mix) or not 0 <= self.value_mix <= 1:
+            raise ValueError('chain value mixture weight must be in [0, 1]')
+        if self.value_mix and (self.backend != 'full480'
+                or self.objective != 'prior-advantage-kl-v1'
+                or self.action_selection != 'search-filter-policy-rank-v1'):
+            raise ValueError('chain value mixture requires original full480 search-filter supervision')
         if self.objective not in SEARCH_OBJECTIVES:
             raise ValueError('unknown search supervision objective')
         if self.objective in ('filtered-distillation-v1', 'turn-consensus-v1', 'turn-consensus-reverse-v1', 'turn-consensus-logit-v1') and (

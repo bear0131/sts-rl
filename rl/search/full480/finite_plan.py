@@ -39,7 +39,7 @@ def build_plan(roots):
    for k,v in vals.items():columns[k].append(v)
  types={'root':np.int32,'local':np.int32,'action_index':np.int32,'action_bits':np.uint32,'world_index':np.int32,'world_seed':np.uint64,'policy_seed':np.uint64}
  return {k:np.asarray(v,dtype=types[k]) for k,v in columns.items()}
-def aggregate(roots,plan,values,outcomes,statistics):
+def aggregate(roots,plan,values,outcomes,statistics,*,chain_value_sums=None,chain_value_counts=None):
  """Preserve original binding: finite terminal sums / all visits, plus terminalVisits."""
  rows=[]
  assert len(values)==sum(int(r['budget']) for r in roots)==len(plan['root'])
@@ -50,6 +50,20 @@ def aggregate(roots,plan,values,outcomes,statistics):
   paired=root.get('contract')==PAIRED_TERMINAL
   anchored=root.get('value_target')=='pre-reward-anchor'
   assert np.isfinite(v).all() if anchored else np.array_equal(np.isfinite(v),terminal)
+  mix=root.get('value_mix',0.)
+  if mix:
+   if not anchored or not paired or not np.isfinite(mix) or not 0<mix<=1:
+    raise ValueError('chain value mixture requires finite paired anchor returns')
+   if chain_value_sums is None or chain_value_counts is None:
+    raise ValueError('chain value mixture needs recorded neural values')
+   counts=np.asarray(chain_value_counts)[select];totals=np.asarray(chain_value_sums)[select]
+   if (counts.shape!=v.shape or totals.shape!=v.shape or not np.isfinite(totals).all()
+       or not np.array_equal(counts,np.asarray(statistics)[select,1])):
+    raise ValueError('chain value counts must match successful neural decisions')
+   # Average within each chain first: a long chain is still one simulation.
+   # Empty chains keep their original result; physical terminal values stay intact.
+   mean=np.divide(totals,counts,out=v.copy(),where=counts>0)
+   v=(1-mix)*v+mix*mean
   visits=np.bincount(idx,minlength=n);terminal_visits=np.bincount(idx[terminal],minlength=n)
   sums=np.bincount(idx if anchored else idx[terminal],weights=v if anchored else v[terminal],minlength=n)
   means=np.divide(sums,visits,out=np.zeros(n),where=visits>0)
@@ -62,4 +76,7 @@ def aggregate(roots,plan,values,outcomes,statistics):
   if paired:
    rows[-1].update(atomic_decisions=int(stats[7]),actual_transitions=int(stats[7])-int(stats[11]),
     selection_prefix_decisions=int(stats[11]),value_statistic=('turn-bootstrap-v1' if root.get('stop_turn',0) else 'pre-reward-anchor') if anchored else PAIRED_TERMINAL)
+  if mix:
+   rows[-1].update(value_statistic='chain-value-mix-v1',chain_value_nodes=int(counts.sum()),
+    chain_value_empty=int((counts==0).sum()),value_mix=mix)
  return rows
