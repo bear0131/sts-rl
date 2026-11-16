@@ -66,6 +66,45 @@ def test_teacher_top1_uses_global_searched_root_counts_and_keeps_missing_missing
     assert not any(key.startswith(p) for key in finalize_metrics({}))
 
 
+def test_search_override_uses_executed_action_and_tied_legal_policy_maximum():
+    from rl.algorithms.ppo_metrics import count_search_action_overrides
+    logits = np.array([[9., 3., 100.], [7., 7., 100.], [5., 4., 100.]])
+    legal = np.array([[1, 1, 0]] * 3, dtype=bool)
+    # One actual override, a tied highest-scoring action, and an unchanged choice.
+    assert count_search_action_overrides(logits, legal, [[1], [1], [0]]) == 1
+    with pytest.raises(ValueError, match='legal recorded'):
+        count_search_action_overrides(logits, legal, [2, 1, 0])
+
+
+def test_search_override_reduces_counts_before_rate_and_preserves_missing():
+    p = 'deck_search/action_override'
+    # Four ranks contribute (changed, searched): (1,1), (0,3), (0,0), (0,0).
+    result = finalize_metrics({p + '_count': .25, p + '_roots': 1.}, world_size=4)
+    assert result[p + '_rate'] == .25
+    assert result[p + '_count_global'] == 1 and result[p + '_roots_global'] == 4
+    empty = finalize_metrics({p + '_count': 0., p + '_roots': 0.}, world_size=4)
+    assert p + '_rate' not in empty and empty[p + '_roots_global'] == 0
+    assert not any(key.startswith(p) for key in finalize_metrics({}))
+
+
+def test_soft_teacher_top1_can_stay_unchanged_while_search_changes_execution():
+    import torch
+    from env.search.action_selection import search_filtered_choice
+    from rl.algorithms.search_auxiliary import improved_prior
+    from rl.algorithms.ppo_metrics import count_search_action_overrides
+    logits = np.log([[.8, .2]]).astype(np.float32)
+    legal = np.ones((1, 2), dtype=bool)
+    results = []
+    for values, worlds in (([.420, .418], 32), ([.410, .418], 125)):
+        q = np.array([values], dtype=np.float32)
+        target = improved_prior(torch.from_numpy(logits), torch.from_numpy(q),
+            torch.from_numpy(legal), torch.tensor([worlds]), .3288170048076942)
+        assert target.argmax().item() == logits.argmax() == 0
+        selected, _ = search_filtered_choice(logits[0], q[0], [worlds]*2, 20261111)
+        results.append(count_search_action_overrides(logits, legal, [selected]))
+    assert results == [0, 1]
+
+
 def test_policy_entropy_keeps_searched_rows_but_excludes_value_only_anchors():
     import torch
     from rl.algorithms.ppo import masked_categorical_statistics
