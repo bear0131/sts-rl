@@ -113,6 +113,11 @@ class BattlePool(CollectionPool):
   if not rows:return {}
   # Validate every root before claiming or modifying any owned slot.
   for r in rows.values():
+   stop_turn=r.get('stop_turn',0)
+   if type(stop_turn) is not int or not 0<=stop_turn<2**31:
+    raise ValueError('search turn horizon requires a nonnegative native turn')
+   if stop_turn and (not self.deck_consumer or r.get('value_target')!='pre-reward-anchor'):
+    raise ValueError('search turn horizon requires the current value consumer')
    if self.deck_consumer:
     from .finite_plan import PAIRED_TERMINAL
     assert self.modules.deck_consumer and r['contract']==PAIRED_TERMINAL
@@ -136,6 +141,7 @@ class BattlePool(CollectionPool):
   if self.deck_consumer:
    from env.core import encode
    values=list(rows.values())
+   self.root_stop_turn.index_copy_(0,indices,self.upload([r.get('stop_turn',0) for r in values],np.int32))
    if 'context_inputs' in values[0]:
     context=self.upload([r['context_inputs'] for r in values],np.float32)
    else:

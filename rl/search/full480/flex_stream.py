@@ -53,6 +53,7 @@ class StreamingPool(ScoringPool):
    self.chain_inputs=arr((self.n,68),torch.float32)
    self.root_misc=arr((self.m,inputs.prototypes['outer_deck_misc'].shape[0]),torch.float32)
    self.value_mode=arr((1,)).zero_()
+   self.root_stop_turn=arr((self.m,)).zero_()
    self.dynamic_context_roots=set()
    self.root_inputs=arr((self.m,68),torch.float32)
    self.root_relics=arr((self.m,R));self.root_counters=arr((self.m,R),torch.float32)
@@ -85,7 +86,7 @@ class StreamingPool(ScoringPool):
    if tensors[arena_index] is self.arena:name='packed_'+name[len('stream_'):]
   if self.deck_consumer:
    if name=='packed_start':tensors=tensors+[self.paired_words,self.pcg,self.selection_prefix,self.root_prefix,self.context_hash,self.context_dirty,self.context_roots]
-   elif name in ('packed_begin','packed_apply','packed_apply_dynamic'):tensors=tensors+[self.pcg,self.selection_prefix,self.context_hash,self.context_dirty,self.context_roots]
+   elif name in ('packed_begin','packed_apply','packed_apply_dynamic'):tensors=tensors+[self.pcg,self.selection_prefix,self.context_hash,self.context_dirty,self.context_roots,self.root_stop_turn]
   return ScoringPool.launch(self,name,tensors,ints,wide,grid)
  def prepare_pages(self,handles,rows):
   assert all(h.slot not in self.page_leases for h in handles)

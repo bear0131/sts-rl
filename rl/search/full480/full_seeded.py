@@ -105,8 +105,8 @@ class Stream:
    for job,result in completed:
     i,tier,cfg,nonce=job;s=result['statistics'];assert result['simulations']==cfg.simulations
     count.update(roots=1,simulations=cfg.simulations,guide=result['nonforced_decisions'],steps=result['actual_transitions'],forced=result['forced_actions'],
-     atomic_steps=result['atomic_decisions'],prefixes=result['selection_prefix_decisions'],cuts=result['depth_cuts'],terminal=int(s[3]+s[4]+s[9]),
-     anchors=int(s[3]+s[9]) if result.get('value_statistic')=='pre-reward-anchor' else 0)
+     atomic_steps=result['atomic_decisions'],prefixes=result['selection_prefix_decisions'],cuts=result['depth_cuts'],turn_boundaries=result.get('turn_boundaries',0),terminal=int(s[3]+s[4]+s[9]),
+     anchors=int(s[3]+s[9]) if result.get('value_statistic') in ('pre-reward-anchor','turn-bootstrap-v1') else 0)
     del self.meta[i]
   count['receive_seconds']+=time.monotonic()-start;count['receives']+=1
   if time.monotonic()-last>30:

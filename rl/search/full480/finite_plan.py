@@ -54,10 +54,12 @@ def aggregate(roots,plan,values,outcomes,statistics):
   sums=np.bincount(idx if anchored else idx[terminal],weights=v if anchored else v[terminal],minlength=n)
   means=np.divide(sums,visits,out=np.zeros(n),where=visits>0)
   stats=np.asarray(statistics)[select].sum(0)
+  turn_boundaries=int(stats[6]) if anchored and root.get('stop_turn',0) else 0
+  assert 0<=turn_boundaries<=int((~terminal).sum())
   rows.append(dict(action_bits=np.asarray(root['action_bits'],np.uint32),visits=visits,terminal_visits=terminal_visits,values=means,
    simulations=len(select),actual_transitions=int(stats[0])+len(select),nonforced_decisions=int(stats[1]),forced_actions=int(stats[2]),
-   depth_cuts=int((~terminal).sum()),statistics=stats))
+   depth_cuts=int((~terminal).sum())-turn_boundaries,turn_boundaries=turn_boundaries,statistics=stats))
   if paired:
    rows[-1].update(atomic_decisions=int(stats[7]),actual_transitions=int(stats[7])-int(stats[11]),
-    selection_prefix_decisions=int(stats[11]),value_statistic='pre-reward-anchor' if anchored else PAIRED_TERMINAL)
+    selection_prefix_decisions=int(stats[11]),value_statistic=('turn-bootstrap-v1' if root.get('stop_turn',0) else 'pre-reward-anchor') if anchored else PAIRED_TERMINAL)
  return rows

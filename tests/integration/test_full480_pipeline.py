@@ -470,7 +470,8 @@ def test_full480_pending_block_roundtrip(combat_factory, scenario):
                        'pile:draw:168', 'pile:discard:168', 'pile:exhaust:168', 'pile:exhaust:128')] +
     [('audit:' + s, False) for s in TRIGGER_CASES] +
     [('punishment:' + s, True) for s in ('cards', 'turns', 'mitigation', 'draw_hooks', 'autoplay', 'fatal', 'revive', 'fairy')] +
-    [('audit:potion:' + s + ':1', False) for s in ('Attack Potion', 'Elixir Potion', 'Gamblers Brew', 'Liquid Memories')])
+    [('audit:potion:' + s + ':1', False) for s in ('Attack Potion', 'Elixir Potion', 'Gamblers Brew', 'Liquid Memories')] +
+    [('turn:' + s, True) for s in ('prefix', 'gamble', 'growth', 'punishment:fatal', 'timewarp', 'two')])
 def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scenario, anchored, tmp_path, monkeypatch):
     from rl.search.full480.combo_runtime import BattleArena, BattlePool
     from rl.search.full480.combo_model import DeckWeights
@@ -478,6 +479,11 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
     from rl.search.full480.finite_plan import PAIRED_TERMINAL, paired_worlds
     from rl.search.full480.run_device import cpu_bridge
     from rl.policies.deck_latent import DeckLatentPolicy
+    turn_horizon = (2 if scenario == 'turn:two' else 1) if scenario.startswith('turn:') else 0
+    if turn_horizon:
+        scenario = scenario[len('turn:'):]
+    # Opening selections and two complete turns need more than eight atoms.
+    depth_limit = 24 if turn_horizon else 8
     assert torch.cuda.is_available()
     torch.manual_seed(20261111)
     for _ in range(128):
@@ -538,6 +544,10 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
     if scenario.startswith('punishment:'):
         from tests.heavenly_punishment_fixtures import punishment_battle
         punishment_battle(latent_env, scenario.split(':', 1)[1])
+    if scenario == 'timewarp':
+        latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Time Eater')
+        latent_env.thick.bc.set_monster_status(0, 'TIME_WARP', 10)
+        latent_env._invalidate_backend_cache()
     policy = DeckLatentPolicy(latent_env.observation_space, latent_env.action_space,
         lambda _: 5e-5, d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
         reward_flow='sequential-v1', deck_combat_encoder='transformer64x2').cuda()
@@ -554,7 +564,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
         mapping = sorted(latent_env._joint_policy_actions())
         worlds = paired_worlds(20261111, len(mapping), 2 * len(mapping))
         budget = len(mapping) * len(worlds) - 1
-        row = cpu.State(latent_env.thick.bc).root_plan(20261111, budget, 1., 8, False)
+        row = cpu.State(latent_env.thick.bc).root_plan(20261111, budget, 1., depth_limit, False)
         if scenario.startswith('pile:'):
             assert row['snapshot']['max_vector'] == int(scenario.rsplit(':', 1)[1])
             assert row['snapshot']['portable'] and row['eligible']
@@ -576,6 +586,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
             relics=obs['relics'], relic_counters=obs['relic_counters'],
             anchor_context=context.anchor[0].cpu().numpy(),observation={k:v.copy() for k,v in obs.items()})
         if anchored:row['value_target'] = 'pre-reward-anchor'
+        if turn_horizon:row['stop_turn'] = latent_env.thick.bc.turn + turn_horizon
         arena = BattleArena(1, deck=True)
         pool = None
         try:
@@ -607,7 +618,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                     assert int(pool.selection_prefix[i]) == sum(1 << j for j in (branches[i][0]._multi or ()))
             compare_states()
             oracle_action_scores = 0
-            for tick in range(8):
+            for tick in range(depth_limit):
                 active = torch.nonzero(pool.alive).flatten().cpu().tolist()
                 if not active:
                     break
@@ -647,6 +658,20 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 np.testing.assert_array_equal(pool.draws[active].cpu().numpy(), list(expected_draws.values()))
                 compare_states()
             assert not pool.active_count
+            if turn_horizon:
+                expected_turn = [int(branch.thick.bc is not None
+                    and branch.thick.bc.to_dict()['outcome'] == 0
+                    and branch.thick.bc.turn >= row['stop_turn']) for branch, _, _ in branches]
+                np.testing.assert_array_equal(pool.stats[:budget, 6].cpu().numpy(), expected_turn)
+                assert sum(expected_turn) > 0
+                # A reached horizon must not replace a real victory or death.
+                for j, (branch, _, depth) in enumerate(branches):
+                    if expected_turn[j]:
+                        assert pool.outcomes[j].item() == 0 and pool.stats[j, 5].item() == 0
+                    elif branch.thick.bc is None or branch.thick.bc.to_dict()['outcome'] != 0:
+                        assert pool.stats[j, 6].item() == 0
+                    else:
+                        assert depth == depth_limit and pool.stats[j, 5].item() == 1
             if scenario == 'pile:exhaust:128':
                 assert max(len(branch.thick.bc.card_state()['exhaust'])
                            for branch, _, _ in branches) > 128
@@ -754,7 +779,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
             if scenario in ('prefix', 'gamble'):
                 assert pool.stats[:, 11].sum().item() > 0, 'AR prefix path was not exercised'
             if anchored:
-                assert result['value_statistic'] == 'pre-reward-anchor'
+                assert result['value_statistic'] == ('turn-bootstrap-v1' if turn_horizon else 'pre-reward-anchor')
                 assert sum(pool.frame_pipeline.counts[k] for k in ('anchor_rows','cutoff_rows','terminal_rows')) == budget
                 if scenario == 'anchor_duplicates':
                     assert pool.frame_pipeline.completion_inference().statistics()['anchor_cache_batch_duplicates'] > 0

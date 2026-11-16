@@ -67,12 +67,14 @@ extern "C" __global__ void paired_pcg_probe(unsigned long long*state,unsigned lo
  for(int j=0;j<draws;++j)out[i*draws+j]=paired_pcg::next(state+i*4);
 }
 #define DECK_START const unsigned long long*paired_words,unsigned long long*pcg,int*prefix,const int*root_prefix,unsigned long long*context_hash,int*context_dirty,const int*context_roots,
-#define DECK_STEP unsigned long long*pcg,int*prefix,unsigned long long*context_hash,int*context_dirty,const int*context_roots,
-#define DECK_DYNAMIC ,unsigned long long*pcg,int*prefix,unsigned long long*context_hash,int*context_dirty,const int*context_roots
+#define DECK_STEP unsigned long long*pcg,int*prefix,unsigned long long*context_hash,int*context_dirty,const int*context_roots,const int*root_stop_turn,
+#define DECK_DYNAMIC ,unsigned long long*pcg,int*prefix,unsigned long long*context_hash,int*context_dirty,const int*context_roots,const int*root_stop_turn
+#define DECK_HORIZON(root) ,root_stop_turn[root]
 #else
 #define DECK_START
 #define DECK_STEP
 #define DECK_DYNAMIC
+#define DECK_HORIZON(root)
 #endif
 namespace mirror_semantics {
 using namespace sts;using namespace sts::search;
@@ -292,7 +294,7 @@ __noinline__ unsigned resolve(const sts::BattleContext &state,unsigned bits,unsi
 // Finite root-action-world jobs. All states and queued callbacks belong to this module.
 namespace finite_search {
 inline double quiet_nan(){union{unsigned long long bits;double value;}v;v.bits=0x7ff8000000000000ull;return v.value;}
-inline void finish(const sts::BattleContext&s,unsigned long long*st,int&alive,int&outcome,double&value,int boss,int maximum,int limit){
+inline void finish(const sts::BattleContext&s,unsigned long long*st,int&alive,int&outcome,double&value,int boss,int maximum,int limit,int stop_turn=0){
  outcome=int(s.outcome);
 
  if(s.outcome!=sts::Outcome::UNDECIDED){
@@ -301,14 +303,15 @@ inline void finish(const sts::BattleContext&s,unsigned long long*st,int&alive,in
   else if(s.outcome==sts::Outcome::PLAYER_LOSS)st[4]=1;
   else if(s.outcome==sts::Outcome::PLAYER_ESCAPE)st[9]=1;
   else device_state::require(false);
- }else if(st[7]>=static_cast<unsigned long long>(limit)){alive=0;value=quiet_nan();st[5]=1;}
+ }else if(stop_turn>0&&s.turn>=stop_turn){alive=0;value=quiet_nan();st[6]=1;}
+ else if(st[7]>=static_cast<unsigned long long>(limit)){alive=0;value=quiet_nan();st[5]=1;}
  else {alive=1;value=quiet_nan();}
 }
 }
 // Persistent root segments. Root and chain objects share one owning module.
 namespace stream_search {
-__device__ void finish(const sts::BattleContext&s,unsigned long long*st,int&alive,int&outcome,double&value,int boss,int maximum,int limit,int*done){
- finite_search::finish(s,st,alive,outcome,value,boss,maximum,limit);
+__device__ void finish(const sts::BattleContext&s,unsigned long long*st,int&alive,int&outcome,double&value,int boss,int maximum,int limit,int*done,int stop_turn=0){
+ finite_search::finish(s,st,alive,outcome,value,boss,maximum,limit,stop_turn);
  if(!alive)atomicAdd(done,1);
 }
 }
@@ -482,7 +485,7 @@ extern "C" __global__ void packed_begin(unsigned char*arena,int*root_ids,int*bud
 #else
  sts::search::Action(bits).execute(s);
 #endif
- stream_search::finish(s,st,alive[i],outcomes[i],values[i],root_boss[r],root_maximum[r],root_limits[r],root_done+r);
+ stream_search::finish(s,st,alive[i],outcomes[i],values[i],root_boss[r],root_maximum[r],root_limits[r],root_done+r DECK_HORIZON(r));
 }
 
 extern "C" __global__ void packed_snapshot(unsigned char*arena,int*constructed,int*selected,unsigned long long*words,int*meta,unsigned*actions,int count){
@@ -529,7 +532,7 @@ extern "C" __global__ void packed_apply(unsigned char*arena,int*live,int*job_roo
  sts::search::Action(chosen[i]).execute(s);
 #endif
  ++st[0];++st[na>1?1:2];++st[7];st[8]=st[8]>static_cast<unsigned long long>(na)?st[8]:na;
- stream_search::finish(s,st,alive[i],outcomes[i],values[i],root_boss[root],root_maximum[root],root_limits[root],root_done+root);
+ stream_search::finish(s,st,alive[i],outcomes[i],values[i],root_boss[root],root_maximum[root],root_limits[root],root_done+root DECK_HORIZON(root));
 }
 
 
@@ -566,6 +569,6 @@ extern "C" __global__ void packed_apply_dynamic(unsigned char*arena,int*live,int
  sts::search::Action(chosen[i]).execute(s);
 #endif
  ++st[0];++st[na>1?1:2];++st[7];st[8]=st[8]>static_cast<unsigned long long>(na)?st[8]:na;
- stream_search::finish(s,st,alive[i],outcomes[i],values[i],root_boss[root],root_maximum[root],root_limits[root],root_done+root);
+ stream_search::finish(s,st,alive[i],outcomes[i],values[i],root_boss[root],root_maximum[root],root_limits[root],root_done+root DECK_HORIZON(root));
 }
 extern "C" __global__ void chain_step_layout(unsigned long long*x){if(!blockIdx.x&&!threadIdx.x){x[0]=1;x[1]=sizeof(sts::BattleContext);x[2]=sizeof(long long);}}
