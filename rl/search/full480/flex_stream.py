@@ -39,6 +39,7 @@ class StreamingPool(ScoringPool):
   assert not self.modules.closed;self.modules.references+=1;self.funcs=self.modules.funcs
   self.net=load_net() if net is None else net;self.flat=Fused(self.net,precision) if flat is None else flat
   self.deck_consumer=getattr(self.flat,'consumer',None)=='deck-latent-combat-v1'
+  self.rule_apply_threads=8 if self.deck_consumer and torch.cuda.get_device_name()=='NVIDIA GeForce RTX 5090' else 32
   self.layout=self.modules.identity['rules']['abi_layout'][0];self.I=inventory_cap;self.action_width=2048
   def arr(shape,dtype=torch.int32):return torch.empty(shape,dtype=dtype,device='cuda')
   self.arr=arr
@@ -87,7 +88,8 @@ class StreamingPool(ScoringPool):
   if self.deck_consumer:
    if name=='packed_start':tensors=tensors+[self.paired_words,self.pcg,self.selection_prefix,self.root_prefix,self.context_hash,self.context_dirty,self.context_roots]
    elif name in ('packed_begin','packed_apply','packed_apply_dynamic'):tensors=tensors+[self.pcg,self.selection_prefix,self.context_hash,self.context_dirty,self.context_roots,self.root_stop_turn]
-  return ScoringPool.launch(self,name,tensors,ints,wide,grid)
+  threads=self.rule_apply_threads if name=='packed_apply_dynamic' else 32
+  return ScoringPool.launch(self,name,tensors,ints,wide,grid,threads=threads)
  def prepare_pages(self,handles,rows):
   assert all(h.slot not in self.page_leases for h in handles)
   specs=[((h.slot,h.generation),int(rows[h.key]['budget'])) for h in handles]

@@ -58,10 +58,11 @@ class ResidentPool:
   self.retry_history=[];self.neural_rows=0;self.real_neural_rows=0;self.model_calls=0;self.frame_history=[]
   self.allocate_actions(initial_actions or F*8);self.allocate_entities(initial_entities or F*128)
   self.prepare(1)
- def launch(self,name,tensors,ints=(),wide=(),grid=None):
+ def launch(self,name,tensors,ints=(),wide=(),grid=None,*,threads=32):
   params=[ptr(x.data_ptr()) for x in tensors]+[ctypes.c_int(x) for x in ints]+[ctypes.c_ulonglong(x) for x in wide]
   args=(ptr*len(params))(*(ctypes.cast(ctypes.byref(x),ptr) for x in params));n=self.n if grid is None else grid
-  check(lib.cuLaunchKernel(self.funcs[name],(n+31)//32,1,1,32,1,1,0,ptr(torch.cuda.current_stream().cuda_stream),args,None),name)
+  blocks=(n+threads-1)//threads
+  check(lib.cuLaunchKernel(self.funcs[name],blocks,1,1,threads,1,1,0,ptr(torch.cuda.current_stream().cuda_stream),args,None),name)
  def allocate_actions(self,cap):
   self.action_cap=int(cap);a=self.arr
   self.bits=a((cap,));self.actions=a((cap,24),torch.float32);self.keys=a((cap,10))
