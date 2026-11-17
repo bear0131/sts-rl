@@ -824,4 +824,4 @@
 
 - **MONITOR-WORKLOG-MARKDOWN** — 已完成并部署8773：工作日志使用本地内嵌Markdown解析器，表格、列表、标题、引用、链接和代码正常显示，宽表可横向滚动。3项Node回归通过，Edge实读11.17的8张表格，390像素窄屏、日期切换和搜索通过；没有外部资源请求或留言发送。原同步与训练不变。适用apps/dashboard_static/training_worklog.html；见worklog/2026-11-17.md同ID及runs/local/full480-reconnect/monitor-markdown-20261117。
 
-- **COMBAT49-REMOTE-DISK-MAINTENANCE** — 进行中，最高优先。接收 USER-9a4ecf4f-393f-433d-919f-868e66702850（前端 77767f2f）。四台系统盘仅余 46–315 MiB，数据盘 79 MiB–2.2 GiB；盘点并归档已结束实验，Mac 副本逐文件 SHA 验证后释放远端空间。保留原 501/protected501、当前基线和恢复入口，记录每份恢复位置；验收四台系统盘和数据盘各至少 5 GiB 可用、501 摘要及 STOP 状态不变。
+- **COMBAT49-REMOTE-DISK-MAINTENANCE** — 已完成。四台 136 个旧实验文件已归档并逐文件验证，系统盘和数据盘分别至少有 5.74、5.25 GiB 可用，原 501 和最佳 502/503 校验通过。见 worklog/2026-11-18.md#combat49-disk-maintenance。
