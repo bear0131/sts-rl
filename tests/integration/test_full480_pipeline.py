@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import torch
 
-from tests.full480_continuation_fixtures import TRIGGER_CASES, pending_continuation, large_card_pile
+from tests.full480_continuation_fixtures import TRIGGER_CASES, pending_continuation, large_card_pile, large_selection
 
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(180)]
 
@@ -497,6 +497,7 @@ def test_full480_pending_block_roundtrip(combat_factory, scenario):
      'warcry_hex', 'headbutt_plated', 'headbutt_plated_last')] +
     [(s, True) for s in ('prefix', 'growth', 'escape', 'anchor_duplicates', 'worker:growth', 'worker:anchor_duplicates',
                        'pile:draw:168', 'pile:discard:168', 'pile:exhaust:168', 'pile:exhaust:128')] +
+    [(f'choices:{zone}:{count}', True) for zone in ('draw', 'discard', 'exhaust') for count in (96, 101)] +
     [('audit:' + s, False) for s in TRIGGER_CASES] +
     [('punishment:' + s, True) for s in ('cards', 'turns', 'mitigation', 'draw_hooks', 'autoplay', 'fatal', 'revive', 'fairy')] +
     [('audit:potion:' + s + ':1', False) for s in ('Attack Potion', 'Elixir Potion', 'Gamblers Brew', 'Liquid Memories')] +
@@ -572,6 +573,9 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
     if scenario.startswith('pile:'):
         _, zone, count = scenario.split(':')
         large_card_pile(latent_env, zone, int(count))
+    if scenario.startswith('choices:'):
+        _, zone, count = scenario.split(':')
+        large_selection(latent_env, zone, int(count))
     if scenario.startswith('punishment:'):
         from tests.heavenly_punishment_fixtures import punishment_battle
         punishment_battle(latent_env, scenario.split(':', 1)[1])
@@ -834,7 +838,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 np.testing.assert_array_equal(result['terminal_visits'], result['visits'])
                 assert int(result['statistics'][0]) == oracle_action_scores == 0
             else:
-                assert (pool.graph_scorer.statistics()['step_overflow_retries']
+                assert (pool.graph_scorer.statistics().get('step_overflow_retries', 0)
                         + pool.frame_pipeline.counts['overflow_retries']) > 0
                 assert pool.graph_scorer.statistics()['step_replays'] > 0
             if turn_horizon:

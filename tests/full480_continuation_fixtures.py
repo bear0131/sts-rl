@@ -42,6 +42,25 @@ def large_card_pile(env, zone, count):
     return bc
 
 
+def large_selection(env, zone, count):
+    """Real selection handles at and beyond the 96-slot policy boundary."""
+    import slaythespire as sts
+    card = {'draw': 'SECRET_TECHNIQUE', 'discard': 'HEADBUTT', 'exhaust': 'EXHUME'}[zone]
+    env.thick.gc.set_deck([(card, 0)] + [('DEFEND_RED', 0)] * 9)
+    env.thick.gc.set_relics([])
+    env.thick.gc.set_potion_state([])
+    env.thick.bc = bc = sts.create_battle(env.thick.gc, 'Jaw Worm')
+    env.thick.combat_exit_anchor_pending = False
+    cards = ['DEFEND_RED'] * count if count == 96 else ['DEFEND_RED'] * 100 + [('DEFEND_RED', 1)]
+    assert count in (96, 101)
+    bc.apply_custom_state({'hand': [card], zone: cards})
+    bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    env._invalidate_backend_cache()
+    handles = [c['native_index'] for c in bc.select_info()['candidates']]
+    assert handles == (list(range(96)) if count == 96 else [0, 100])
+    return bc
+
+
 def pending_continuation(env, case):
     """Use the original native action to reach a choice; never inject a queue."""
     import slaythespire as sts

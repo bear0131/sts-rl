@@ -22,8 +22,16 @@ template<class Actions> inline void prepare(const BattleContext&b,const Actions&
  float*raw,int*cat,int*legal,float*selected,int*remaining,bool value_only){
  const int na=actions.size();device_state::require(na>0&&na<=198);
  unsigned by_id[198]{};bool mask[198]{};
+ // A selection's native handles are identical for every action in this row.
+ sts::search::CombatChoices choices;bool choices_ready=false;
  for(int k=0;k<na;++k){const auto a=actions[k];
-  int id=sts::search::jointActionId(a,b)-sts::search::kJointEnd;
+  int id=-1;
+  if(a.getActionType()==sts::search::ActionType::SINGLE_CARD_SELECT){
+   if(!choices_ready){choices=sts::search::combatChoices(b);choices_ready=true;}
+   for(int j=0;j<int(choices.cards.size());++j)if(choices.cards[j].nativeIndex==a.getSelectIdx()){
+    id=sts::search::kJointPick+j-sts::search::kJointEnd;break;
+   }
+  }else id=sts::search::jointActionId(a,b)-sts::search::kJointEnd;
   device_state::require(id>=0&&id<198&&!mask[id]);mask[id]=true;by_id[id]=a.bits;
  }
  int start=atomicAdd(allocator,na);meta[i*4]=na;meta[i*4+1]=0;meta[i*4+2]=start;meta[i*4+3]=0;
