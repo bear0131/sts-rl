@@ -130,3 +130,5 @@
 | TRAIN07 | 进行中 | 新建 `SplitStSPointerPolicy` fresh step0 checkpoint，保持 `n_layers=8`，用 `d_model=100/n_heads=4` 将 combat 参数缩小至725,864（约5.13x）；四机启动 `u40x4-ruleupper-v1-transformer-reduced-20260921`，规则上层、原搜索/replay/batch/graph/occupancy 配置不变，目标30M steps。首轮 fresh 恢复标志 bug 已修复；待 occupancy 完成后验收首个40-update generation。 |
 
 后续大重构验收：先建立固定 game fixtures 和版本化契约，再改接口。旧 checkpoint 的原环境复现与新环境迁移评测分开；跨平台/多 GPU/多机准确性不得从单机 CPU 结果推断。
+
+- **COMBAT49-REMOTE-DISK-MAINTENANCE** — 进行中，最高优先。接收 USER-9a4ecf4f-393f-433d-919f-868e66702850（前端 77767f2f）。四台系统盘仅余 46–315 MiB，数据盘 79 MiB–2.2 GiB；盘点并归档已结束实验，Mac 副本逐文件 SHA 验证后释放远端空间。保留原 501/protected501、当前基线和恢复入口，记录每份恢复位置；验收四台系统盘和数据盘各至少 5 GiB 可用、501 摘要及 STOP 状态不变。
