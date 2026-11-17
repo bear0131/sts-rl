@@ -43,7 +43,7 @@ class StepPipeline(FramePipeline):
  def execute_step(self):
   p=self.pool;w=self.buffers
   frame_prepare[(triton.cdiv(self.F,256),)](p.live,p.logical_ids,w['live'],w['worlds'],w['dispatch'],p.step_status,self.F,256)
-  FramePipeline.execute(self)
+  FramePipeline.execute(self,share=p.deck_consumer)
   p.launch('packed_apply_dynamic',[p.arena,w['live'],p.job_roots,p.scores,p.bits,p.meta,p.policy_seeds,p.temperatures,p.stats,
    p.alive,p.outcomes,p.values,p.chosen,p.draws,p.root_boss,p.root_maximum,p.root_limits,p.job_generation,p.root_generation,p.root_done,
    w['dispatch'],w['summary'],p.step_status],grid=self.F)

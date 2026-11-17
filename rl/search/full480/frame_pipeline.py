@@ -38,6 +38,8 @@ class FramePipeline:
   return (p.I,p.action_cap,p.entity_cap,self.requested_ct,self.requested_cq,tuple(t.data_ptr() for t in self.external()),
    p.flat.lookup.data_ptr(),p.flat.head_weight.data_ptr(),tuple(t.data_ptr() for t in p.net.parameters()))
  def release(self):
+  if 'shared_total' in self.buffers:
+   self.counts['shared_policy_rows']+=int(self.buffers['shared_total'].item())
   self.pool._frame_ready=False
   if self.graph is not None:
    torch.cuda.synchronize();self.graph.reset();self.graph=None;self.counts['evictions']+=1
@@ -60,11 +62,14 @@ class FramePipeline:
    layout=_nosl_compact_lut()['layout']
    w.update(raw=arr((F,layout['scalar_width'])),cat=arr((F,layout['categorical_width']),torch.int32),
     legal=arr((F,198),torch.int32),selected=arr((F,10)),remaining=arr((F,),torch.int32))
+   w.update(shared_table=arr((triton.next_power_of_2(F)*4,),torch.int32),shared_hash=arr((F,),torch.int32),
+    shared_rep=arr((F,),torch.int32),shared_saved=arr((F,),torch.int32),shared_total=arr((1,),torch.int64).zero_())
    self.model.bind_deck(w['legal'],w['selected'],w['remaining'])
   self.model.allocate(key,(w['features'],w['symbols'],w['slots'],w['present'],w['queries'],w['blocks1'],w['blocks2'],
    p.state,p.actions,p.keys,w['owners'],p.canonical_sources,p.canonical_targets,p.meta,p.query_map,p.scores),ct,cq,F,qkv_workspace=token_workspace)
   self.bound=self.external();self.key=key;self.capacity=(ct,cq,F);self.counts['allocations']+=1
- def execute(self,roots=False):
+ def execute(self,roots=False,share=False):
+  assert not share or (self.pool.deck_consumer and not roots)
   p=self.pool;w=self.buffers;m=self.model.buffers;F=self.F
   p.allocator.zero_();w['totals'].zero_();w['queue_counts'].zero_()
   observer_args=[p.root_addresses if roots else p.arena,w['worlds'],w['live'],p.deck,p.state,p.bits,p.actions,p.keys,p.source_rows,p.targets,
@@ -75,6 +80,9 @@ class FramePipeline:
   self.modules.launch('frame_observe_special',observer_args,shape,triton.cdiv(F,32))
   self.modules.launch('normal_prepare',observer_args+[w['normal_rows']],shape,triton.cdiv(F,32))
   self.modules.launch('normal_features',observer_args+[w['normal_rows']],shape,min(F,self.model.sms*16),threads=128 if p.deck_consumer else 64)
+  if share:
+   from . import shared_policy
+   shared_policy.prepare(p,w,min(F,self.model.sms*12))
   tensors=[w['worlds'],p.ids,p.zones,p.monsters,p.numbers,p.meta,p.chunks]+p.inv+[p.inv_slots,
    p.source_rows,p.targets,p.canonical_sources,p.canonical_targets,p.query_map,
    w['features'],w['symbols'],w['slots'],w['present'],w['queries'],w['blocks1'],w['blocks2'],w['owners'],
@@ -84,6 +92,7 @@ class FramePipeline:
     min(F,self.model.sms*8),threads=256,shared=cap*128*4)
   self.modules.launch('packed_finalize',[p.allocator,w['totals'],w['dispatch'],m['counts'],w['summary']],[],1)
   self.model.execute()
+  if share:shared_policy.finish(p,w,min(F,self.model.sms*12))
  @torch.inference_mode()
  def run(self,base,count,*,selected=None,worlds=None,value_only=False,roots=False):
   assert not self.closed and 0<count<=self.F
@@ -237,6 +246,7 @@ class FramePipeline:
   self.counts['context_refresh_rows']+=count
  def statistics(self):
   return dict(self.counts,cached=int(self.graph is not None)+int(self.root_graph is not None),capacity=list(self.capacity),closed=self.closed,
+   shared_policy_rows=self.counts['shared_policy_rows']+(int(self.buffers['shared_total'].item()) if 'shared_total' in self.buffers else 0),
    kernels=self.model.kernel_metadata,workspace_bytes=self.model.workspace_bytes(self.buffers.values()),workspace_alias_version=1,
    aliased_input_bytes=0 if not self.buffers else self.buffers['features'].numel()*self.buffers['features'].element_size(),
    overflow_history=self.history,modules_closed=self.modules.closed,identity=self.modules.identity)
