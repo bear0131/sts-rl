@@ -820,4 +820,4 @@
 
 - **DISK-D-REPOSITORY-CLEANUP** — 已完成：D盘可用412377088→24194342912字节，实增23.782GB（22.15GiB）。14份旧测速模型及308份历史模型副本按SHA去重为只读硬链接，所有路径/内容保留；100个旧测速观测文件无损NTFS压缩6.714→.726GB、逐文件SHA不变。33组保留模型hash/322别名验收、26工作区状态一致、本机8773/8774 HTTP200；未删独有checkpoint/结果/源码或停止进程。证据runs/local/full480-reconnect/disk-cleanup-20261117/acceptance.json；详细明细及硬链接改写注意见worklog/2026-11-17.md同ID。
 
-- **COMBAT49-REMOTE-DISK-MAINTENANCE** — 进行中，最高优先。接收 USER-9a4ecf4f-393f-433d-919f-868e66702850（前端 77767f2f）。四台系统盘仅余 46–315 MiB，数据盘 79 MiB–2.2 GiB；盘点并归档已结束实验，Mac 副本逐文件 SHA 验证后释放远端空间。保留原 501/protected501、当前基线和恢复入口，记录每份恢复位置；验收四台系统盘和数据盘各至少 5 GiB 可用、501 摘要及 STOP 状态不变。
+- **COMBAT49-REMOTE-DISK-MAINTENANCE** — 已完成。四台 136 个旧实验文件已归档并逐文件验证，系统盘和数据盘分别至少有 5.74、5.25 GiB 可用，原 501 和最佳 502/503 校验通过。见 worklog/2026-11-18.md#combat49-disk-maintenance。
