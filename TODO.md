@@ -817,3 +817,5 @@
 - **COMBAT49-RESUME128-FULL005** — 用户取消本会话续训，改为交接：不启动训练，不恢复小时任务；128环境/满预算/.05目标并入COMBAT49-FOURFOLD-FOURGPU-EFFICIENCY。准备阶段的环境投影未通过，未产生已验收128环境包，不宣称完成恢复；原501/各256环境完整包保留。未验收代码草稿退出工作区、单独归档，后续须沿原协议正确裁减并验证模型/Adam、保留环境及观察一致性后再运行。证据runs/local/full480-reconnect/resume128-full005；最终范围见worklog/2026-11-17.md#combat49-handoff128-only。
 
 - **DISK-D-REPOSITORY-CLEANUP** — 已完成：D盘可用412377088→24194342912字节，实增23.782GB（22.15GiB）。14份旧测速模型及308份历史模型副本按SHA去重为只读硬链接，所有路径/内容保留；100个旧测速观测文件无损NTFS压缩6.714→.726GB、逐文件SHA不变。33组保留模型hash/322别名验收、26工作区状态一致、本机8773/8774 HTTP200；未删独有checkpoint/结果/源码或停止进程。证据runs/local/full480-reconnect/disk-cleanup-20261117/acceptance.json；详细明细及硬链接改写注意见worklog/2026-11-17.md同ID。
+
+- **MONITOR-WORKLOG-CURRENT** — 已完成：8773跟随codex/combat49-legacy-engine，每分钟自动同步最近三个日志日期，已显示11.17及随后新增的提交；恢复原工作日志页面，8773和8774曲线页均可进入。HTTP与Edge浏览器验证通过，两个监控各32组历史和训练数据均保留。未改变训练任务；配置与部署证据见runs/local/full480-reconnect/monitor-worklog-20261117，详细记录见worklog/2026-11-17.md同ID。
