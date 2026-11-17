@@ -825,3 +825,5 @@
 - **MONITOR-WORKLOG-MARKDOWN** — 已完成并部署8773：工作日志使用本地内嵌Markdown解析器，表格、列表、标题、引用、链接和代码正常显示，宽表可横向滚动。3项Node回归通过，Edge实读11.17的8张表格，390像素窄屏、日期切换和搜索通过；没有外部资源请求或留言发送。原同步与训练不变。适用apps/dashboard_static/training_worklog.html；见worklog/2026-11-17.md同ID及runs/local/full480-reconnect/monitor-markdown-20261117。
 
 - **COMBAT49-REMOTE-DISK-MAINTENANCE** — 已完成。四台 136 个旧实验文件已归档并逐文件验证，系统盘和数据盘分别至少有 5.74、5.25 GiB 可用，原 501 和最佳 502/503 校验通过。见 worklog/2026-11-18.md#combat49-disk-maintenance。
+
+- **FULL480-TERMINAL-GAME-ID** — 已用固定步数模式的记录函数复现，待修。rl/search/full480/full_seeded.py 的 record_end 从采样开始时的环境种子表读 game_id，同一环境自动重置后的第二局会被标为首局。修复以终局 run_stats.seed 为准，验收覆盖一个槽两次不同种子的终局、跨轮未结束游戏及自然整局模式，区分实际游戏种子与用于创建环境的种子。范围是诊断报告，证据见 worklog/2026-11-18.md#whole-project-refactor-review。
