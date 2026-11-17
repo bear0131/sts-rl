@@ -132,13 +132,24 @@ inline float pile_value(const PackedPiles&b,const unsigned long long*w,int slot,
  }
  return ((base+upgrade)+magnitude*pile_magnitude(w)[dim])/float(max(1,count))+log1pf(float(count))*pile_count(w)[dim]+pile_bias(w)[dim];
 }
-template<class Piles> inline float token(const Piles&b,const unsigned long long*w,const float*s,const int*c,
+// warp_features requires every lane in a full warp to own the same token,
+// with dim % 32 equal to the lane index. Scalar callers retain the default.
+template<bool warp_features=false,class Piles> inline float token(const Piles&b,const unsigned long long*w,const float*s,const int*c,
  const float*root,const int*relic_ids,const float*relic_counts,int prefix,int slot,int dim){
  int role=slot==0?0:slot<=10?1:slot<=15?2:slot<=20?3:slot==21?4:slot<=24?slot-17:8;
  float value=roles(w)[role*64+dim];
  if(slot==0){
   float p=player_bias(w)[dim];
-  for(int k=0;k<SCALAR_WIDTH;++k)p+=player_weight(w)[dim*SCALAR_WIDTH+k]*player_feature(w,s,root,prefix,k);
+  if constexpr(warp_features){
+   for(int base=0;base<SCALAR_WIDTH;base+=32){
+    int lane=dim%32,k=base+lane;
+    float feature=k<SCALAR_WIDTH?player_feature(w,s,root,prefix,k):0.f;
+    for(int j=0;j<32 && base+j<SCALAR_WIDTH;++j){
+     float x=__shfl_sync(0xffffffffu,feature,j);
+     p+=player_weight(w)[dim*SCALAR_WIDTH+base+j]*x;
+    }
+   }
+  }else for(int k=0;k<SCALAR_WIDTH;++k)p+=player_weight(w)[dim*SCALAR_WIDTH+k]*player_feature(w,s,root,prefix,k);
   int turn=std::clamp(int(s[4]+1.f),0,31),reason_id=select_context(w)[c[30]];
   return value+((p+turn_bucket(w)[turn*64+dim])+reason(w)[reason_id*64+dim])+root[dim];
  }
@@ -169,7 +180,34 @@ template<class Piles> inline float token(const Piles&b,const unsigned long long*
  if(slot<=20)return value+potion_token(w)[potion(w)[c[25+slot-16]]*64+dim];
  if(slot==21){
   float total=0.f;
-  for(int j=0;j<RELIC_WIDTH;++j){int id=relic_ids[j];if(!id)continue;
+  if constexpr(warp_features){
+   const int lane=dim%32;
+   for(int start=0;start<RELIC_WIDTH;start+=32){
+    const int index=start+lane;
+    const int own_id=index<RELIC_WIDTH?relic_ids[index]:0;
+    unsigned occupied=__ballot_sync(0xffffffffu,own_id!=0);
+    if(!occupied)continue;
+    float own_value=0.f,own_count=0.f,own_log=0.f;
+    if(own_id){
+     own_value=relic_value(w,own_id,relic_counts[index],s);
+     own_count=rintf(own_value*COUNTER_SCALE);
+     own_log=copysignf(log1pf(fabsf(own_value)),own_value);
+    }
+    // Visit occupied indices in ascending order to preserve accumulation order.
+    while(occupied){
+     const int next=__ffs(occupied)-1;
+     const int id=__shfl_sync(0xffffffffu,own_id,next);
+     float x=__shfl_sync(0xffffffffu,own_value,next);
+     float count=__shfl_sync(0xffffffffu,own_count,next);
+     const float*g=relic_counter(w)+id*640+dim;
+     float term=g[0]*x+g[64]*__shfl_sync(0xffffffffu,own_log,next);
+     constexpr int periods[8]={2,3,4,5,6,7,8,10};
+     for(int k=0;k<8;++k){float period=float(periods[k]);float rem=count-floorf(count/period)*period;term+=g[(k+2)*64]*rem/period;}
+     total+=relic_identity(w)[id*64+dim]+term;
+     occupied&=occupied-1;
+    }
+   }
+  }else for(int j=0;j<RELIC_WIDTH;++j){int id=relic_ids[j];if(!id)continue;
    float x=relic_value(w,id,relic_counts[j],s),count=rintf(x*COUNTER_SCALE);
    const float*g=relic_counter(w)+id*640+dim;float term=g[0]*x+g[64]*copysignf(log1pf(fabsf(x)),x);
    constexpr int periods[8]={2,3,4,5,6,7,8,10};

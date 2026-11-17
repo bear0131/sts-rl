@@ -475,7 +475,7 @@ extern "C" __global__ void normal_features(unsigned char*arena,int*worlds,int*li
   const int dim=threadIdx.x%channels;
   for(int row=threadIdx.x/channels;row<meta[i*4+1];row+=blockDim.x/channels){
    int at=deck_input::physical(chunks,i,row),slot=ids[at];
-   numbers[at*channels+dim]=deck_input::token(b,weights,raw+i*deck_input::RAW,cat+i*deck_input::CAT,chain_inputs+live[base+i]*68,root_relics+root*deck_input::RELIC_WIDTH,root_counters+root*deck_input::RELIC_WIDTH,prefixes[live[base+i]],slot,dim);
+   numbers[at*channels+dim]=deck_input::token<true>(b,weights,raw+i*deck_input::RAW,cat+i*deck_input::CAT,chain_inputs+live[base+i]*68,root_relics+root*deck_input::RELIC_WIDTH,root_counters+root*deck_input::RELIC_WIDTH,prefixes[live[base+i]],slot,dim);
   }
   continue;
 #endif

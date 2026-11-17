@@ -206,7 +206,8 @@ def test_full480_current_deck_fused_heads_and_owned_graphs(latent_env, monkeypat
         assert scorer.graph is None and not scorer.buffers and not scorer.weights
 
 
-def test_full480_current_native_observer_and_packed_model(latent_env):
+@pytest.mark.parametrize('relic_layout', ['native', 'empty', 'warp_edges'])
+def test_full480_current_native_observer_and_packed_model(latent_env, monkeypatch, relic_layout):
     """The original frame reads real native states, against the Gym consumer."""
     import slaythespire as sts
     from rl.policies.deck_latent import DeckLatentPolicy
@@ -225,8 +226,28 @@ def test_full480_current_native_observer_and_packed_model(latent_env):
     deck = ['WARCRY', 'BURNING_PACT', 'HEADBUTT', 'TRUE_GRIT', 'DEFEND_RED',
             'BATTLE_TRANCE', 'STRIKE_RED', 'DEFEND_RED', 'BASH', 'EXHUME']
     latent_env.thick.gc.set_deck([(name, 0) for name in deck])
+    if relic_layout == 'empty':
+        latent_env.thick.gc.set_relics([])
+    elif relic_layout == 'warp_edges':
+        latent_env.thick.gc.set_relics(['InkBottle', 'Kunai', 'Ornamental Fan',
+            'Shuriken', 'Pen Nib', 'Letter Opener', 'Happy Flower',
+            'Incense Burner', 'Mercury Hourglass', 'TheAbacus'])
+        original_obs = latent_env._obs
+        def spread_relics():
+            observation = original_obs().copy()
+            ids, counters = observation['relics'], observation['relic_counters']
+            occupied = np.flatnonzero(ids)
+            assert len(occupied) == 10 and len(ids) == 208
+            slots = [0, 31, 32, 63, 64, 95, 96, 127, 128, 207]
+            observation['relics'] = np.zeros_like(ids)
+            observation['relic_counters'] = np.zeros_like(counters)
+            observation['relics'][slots] = ids[occupied]
+            observation['relic_counters'][slots] = counters[occupied]
+            return observation
+        monkeypatch.setattr(latent_env, '_obs', spread_relics)
     latent_env.thick.gc.set_potion_state(['Gamblers Brew', 'Liquid Memories'])
     latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
+    latent_env.thick.combat_exit_anchor_pending = False
     latent_env._invalidate_backend_cache()
     policy = DeckLatentPolicy(latent_env.observation_space, latent_env.action_space,
         lambda _: 5e-5, d_model=32, n_layers=1, n_heads=4, room_lambda=1.,
@@ -289,15 +310,19 @@ def test_full480_current_native_observer_and_packed_model(latent_env):
             assert pool.frame_pipeline.counts['replays'] >= checked
             # Searing Blow's upgrade count is unbounded by the initial LUT.
             # Grow through the same graph overflow path; never clamp the input.
-            for level in (129, 257):
+            for _ in range(2):
+                level = flat.input_tables.upgrade_capacity + 1
                 latent_env.thick.gc.set_deck([('SEARING_BLOW', level)] * 5)
                 latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
+                latent_env.thick.combat_exit_anchor_pending = False
                 latent_env._invalidate_backend_cache()
                 arena.drop([0]); arena.load({0: cpu.State(latent_env.thick.bc).snapshot()})
                 observation = latent_env._obs()
                 data = {k: torch.as_tensor(v[None], device='cuda') for k, v in observation.items()}
                 context = policy.core.prepare_search_context(data)
                 pool.chain_inputs[0] = torch.cat((context.combat[0], data['run_keys'][0], data['ascension'][0]))
+                pool.root_relics[0] = data['relics'][0].int()
+                pool.root_counters[0] = data['relic_counters'][0]
                 pool.selection_prefix.zero_()
                 temporary = torch.empty(64 * 1024 * 1024, dtype=torch.uint8, device='cuda')
                 temporary.fill_(7); del temporary
@@ -314,6 +339,7 @@ def test_full480_current_native_observer_and_packed_model(latent_env):
             latent_env.thick.gc.set_deck([('STRIKE_RED', 0)] * 5)
             latent_env.thick.gc.set_potion_state([])
             latent_env.thick.bc = sts.create_battle(latent_env.thick.gc, 'Jaw Worm')
+            latent_env.thick.combat_exit_anchor_pending = False
             latent_env.thick.bc.set_player_energy(0)
             latent_env._invalidate_backend_cache()
             assert np.flatnonzero(latent_env.action_masks()).tolist() == [0]
@@ -321,6 +347,8 @@ def test_full480_current_native_observer_and_packed_model(latent_env):
             data = {k: torch.as_tensor(v[None], device='cuda') for k, v in latent_env._obs().items()}
             context = policy.core.prepare_search_context(data)
             pool.chain_inputs[0] = torch.cat((context.combat[0], data['run_keys'][0], data['ascension'][0]))
+            pool.root_relics[0] = data['relics'][0].int()
+            pool.root_counters[0] = data['relic_counters'][0]
             pool.selection_prefix.zero_()
             summary = pool.frame_pipeline.run(0, 1)
             assert summary[5:7] == [0, 0] and summary[9] == 0
