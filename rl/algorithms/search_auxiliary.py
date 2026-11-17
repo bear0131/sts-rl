@@ -30,8 +30,11 @@ class SearchTrainingConfig:
     cuda_wave_capacity: int = 4096
     action_selection: str = 'shadow'
     objective: str = 'prior-advantage-kl-v1'
+    action_value_tolerance: float = SEARCH_FILTER_VALUE_TOLERANCE
 
     def __post_init__(self):
+        if not math.isfinite(self.action_value_tolerance) or self.action_value_tolerance < 0:
+            raise ValueError('search value tolerance must be finite and nonnegative')
         if self.objective not in SEARCH_OBJECTIVES:
             raise ValueError('unknown search supervision objective')
         if self.objective in ('filtered-distillation-v1', 'turn-consensus-v1') and (

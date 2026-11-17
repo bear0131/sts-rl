@@ -144,7 +144,8 @@ class ShadowSearchCollection:
         from env.search.action_selection import search_filtered_choice
         choices = np.asarray(row['actions'])
         chosen, log_prob = search_filtered_choice(logits[choices], np.asarray(row['values'],np.float64),
-                                                  row['visits'], nonce)
+                                                  row['visits'], nonce,
+                                                  value_tolerance=self.config.action_value_tolerance)
         self.buffer.search_actions[(position,index)] = int(choices[chosen]), log_prob
 
 

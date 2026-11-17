@@ -103,6 +103,8 @@ def test_explicit_anchor_start_preserves_evidence_and_resume_adaptation():
 @pytest.mark.parametrize('overrides,expected', [
     ({}, (64, 256)),
     ({'search_normal_budget': 250, 'search_boss_budget': 1000}, (250, 1000)),
+    ({'search_normal_budget': 256, 'search_boss_budget': 1024,
+      'search_action_value_tolerance': .05}, (256, 1024)),
 ])
 def test_search_budgets_survive_collection_boundaries_and_saved_schedule(overrides, expected):
     model = SimpleNamespace(policy=SimpleNamespace(
@@ -119,6 +121,7 @@ def test_search_budgets_survive_collection_boundaries_and_saved_schedule(overrid
     for candidate in (model, restored):
         search = candidate.deck_search_config
         assert (search['normal_budget'], search['boss_budget']) == expected
+        assert search['action_value_tolerance'] == overrides.get('search_action_value_tolerance', .005)
         assert search['fraction'] == 1. and search['coefficient'] == .1
         assert search['target_std'] == .3
         assert search['action_selection'] == 'search-filter-policy-rank-v1'

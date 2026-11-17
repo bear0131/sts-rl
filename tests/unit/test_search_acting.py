@@ -16,6 +16,20 @@ def test_search_filters_then_model_ranks_and_keeps_legacy_ties():
     assert search_filtered_choice(scores,q,visits,123)==(picked,logp)
 
 
+def test_configured_tolerance_changes_eligibility_without_changing_default():
+    scores, values, visits = [3., 1.], [.4, .43], [32, 32]
+    assert search_filtered_choice(scores, values, visits, 123) == (1, 0.)
+    assert search_filtered_choice(scores, values, visits, 123, value_tolerance=.05) == (0, 0.)
+    assert search_filtered_choice(scores, values, [0, 32], 123, value_tolerance=.05) == (1, 0.)
+    assert search_filtered_choice(scores, values, visits, 123) == (1, 0.)
+
+
+@pytest.mark.parametrize('tolerance', [-.1, float('nan'), float('inf')])
+def test_configured_tolerance_rejects_invalid_values(tolerance):
+    with pytest.raises(ValueError, match='finite and nonnegative'):
+        search_filtered_choice([3., 1.], [.4, .43], [32, 32], 123, value_tolerance=tolerance)
+
+
 def test_search_actions_have_value_and_teacher_but_no_fictitious_ppo_ratio():
     from rl.algorithms.ppo import ppo_loss_components
     logits=torch.tensor([-.3,-.4],requires_grad=True)
@@ -39,7 +53,8 @@ def test_search_schedule_versions_actual_behavior():
         search_action_selection='search-filter-policy-rank-v1'),246)
     assert model.training_objective_contract=='deck-latent-search-acting-v1'
     assert model.deck_search_config['action_selection']=='search-filter-policy-rank-v1'
-    assert model.deck_search_config['fraction']==pytest.approx(.4)
+    assert model.deck_search_config['fraction']==1.
+    assert model.deck_search_config['coefficient']==pytest.approx(.03)
 
 
 @pytest.mark.parametrize('backend', ['cuda-batched-native', 'cuda-resident'])

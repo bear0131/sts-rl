@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import slaythespire as sts
 
+from env.search.action_selection import SEARCH_FILTER_VALUE_TOLERANCE, search_filtered_choice
 from env.search.small_playout import SmallPlayoutBatch, PairedWorldPlayoutStream
 from rl.policies.token_regret import encode_public_roots, pack_rows
 
@@ -120,8 +121,8 @@ class PairedTokenBatch(SmallPlayoutBatch):
                     )
                 visits = np.asarray(z["visits"])
                 q = np.asarray(z["values"], np.float64)
-                from env.search.action_selection import search_filtered_choice
-                chosen, log_prob = search_filtered_choice(logits, q, visits, job[3])
+                chosen, log_prob = search_filtered_choice(logits, q, visits, job[3],
+                    value_tolerance=self.pair.get('action_value_tolerance', SEARCH_FILTER_VALUE_TOLERANCE))
                 z["action"] = int(bits[chosen])
                 if ppo:estimates[job[0]] = (row['value'], log_prob)
                 units = (100.0 if job[2].boss else float(z['max_hp'])) if self.deck else (

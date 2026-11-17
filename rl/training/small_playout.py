@@ -72,6 +72,7 @@ def configure_collection(model, env):
                 raise ValueError('fixed full480 collection requires the actual search-action contract')
             pair.update(common_simulations=config.normal_budget, elite_simulations=config.normal_budget,
                         boss_simulations=config.boss_budget, playout_depth=config.max_depth, collect_ppo=True,
+                        action_value_tolerance=config.action_value_tolerance,
                         cuda_wave_capacity=config.cuda_wave_capacity)
         env.configure_small_playout(pair, batch_factory=lambda envs, pool, snapshot:
             PairedTokenBatch(envs, pool, snapshot, model.policy.core))
