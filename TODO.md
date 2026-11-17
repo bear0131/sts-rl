@@ -819,3 +819,5 @@
 - **DISK-D-REPOSITORY-CLEANUP** — 已完成：D盘可用412377088→24194342912字节，实增23.782GB（22.15GiB）。14份旧测速模型及308份历史模型副本按SHA去重为只读硬链接，所有路径/内容保留；100个旧测速观测文件无损NTFS压缩6.714→.726GB、逐文件SHA不变。33组保留模型hash/322别名验收、26工作区状态一致、本机8773/8774 HTTP200；未删独有checkpoint/结果/源码或停止进程。证据runs/local/full480-reconnect/disk-cleanup-20261117/acceptance.json；详细明细及硬链接改写注意见worklog/2026-11-17.md同ID。
 
 - **MONITOR-WORKLOG-CURRENT** — 已完成：8773跟随codex/combat49-legacy-engine，每分钟自动同步最近三个日志日期，已显示11.17及随后新增的提交；恢复原工作日志页面，8773和8774曲线页均可进入。HTTP与Edge浏览器验证通过，两个监控各32组历史和训练数据均保留。未改变训练任务；配置与部署证据见runs/local/full480-reconnect/monitor-worklog-20261117，详细记录见worklog/2026-11-17.md同ID。
+
+- **MONITOR-WORKLOG-MARKDOWN** — 已完成并部署8773：工作日志使用本地内嵌Markdown解析器，表格、列表、标题、引用、链接和代码正常显示，宽表可横向滚动。3项Node回归通过，Edge实读11.17的8张表格，390像素窄屏、日期切换和搜索通过；没有外部资源请求或留言发送。原同步与训练不变。适用apps/dashboard_static/training_worklog.html；见worklog/2026-11-17.md同ID及runs/local/full480-reconnect/monitor-markdown-20261117。
