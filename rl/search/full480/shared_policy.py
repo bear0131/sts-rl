@@ -77,4 +77,3 @@ def prepare(p,w,n):
  compare[(n,)](p.meta,p.chunks,p.numbers,p.ids,p.zones,p.monsters,p.keys,p.bits,w['legal'],w['selected'],w['remaining'],w['dispatch'],p.allocator,w['shared_table'],w['shared_hash'],w['shared_rep'],w['shared_saved'],w['owners'],num_warps=4)
 def finish(p,w,n):
  scatter[(n,)](p.meta,p.scores,w['dispatch'],w['summary'],w['shared_rep'],w['shared_saved'],w['shared_total'],num_warps=4)
-
