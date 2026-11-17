@@ -162,8 +162,16 @@ class FramePipeline:
   outcomes=p.outcomes[selected.long()].cpu().numpy()
   p.values[selected.long()]=0.
   roots={s:i for i,s in enumerate(slots)}
-  context_data={key:np.stack([p.bank[s]['observation'][key] for s in slots]) for key in p.flat.core.context.keys}
-  root_context=inference.search_context(context_data).anchor.cpu().numpy()
+  grouped=(inference.deck.worker_snapshot and inference.deck.native_anchor_cache
+           and getattr(p,'anchor_projections',None) is not None
+           and not p.dynamic_context_roots.intersection(slots)
+           and all(p.anchor_projections[s] is not None for s in slots))
+  keys=('relics',) if grouped else p.flat.core.context.keys
+  context_data={key:np.stack([p.bank[s]['observation'][key] for s in slots]) for key in keys}
+  root_context=(np.stack([p.anchor_projections[s] for s in slots]) if grouped
+                else inference.search_context(context_data).anchor.cpu().numpy())
+  relics=np.asarray(context_data['relics'],np.int32)
+  run_keys=np.stack([p.bank[s]['observation']['run_keys'] for s in slots])
   for offset in range(0,len(jobs),self.F):
    ids=selected[offset:offset+self.F];root_ids=owners[offset:offset+self.F]
    state=outcomes[offset:offset+self.F];host_roots=root_ids.cpu().numpy()
@@ -174,26 +182,32 @@ class FramePipeline:
     width=p.root_relics.shape[1];packed=torch.empty((len(anchors),10+width),device='cuda')
     self.modules.launch('deck_anchor_inputs',[p.arena,chosen,source,p.flat.input_tables.bindings,
       p.root_relics,p.root_counters,packed],[len(anchors)],triton.cdiv(len(anchors),32))
-    raw=packed.cpu().numpy();root_rows=np.array([roots[int(s)] for s in host_roots[anchors]])
-    projected=root_context[root_rows].copy()
-    dynamic=np.flatnonzero(np.isin(host_roots[anchors],list(p.dynamic_context_roots)))
-    if len(dynamic):
-     dynamic_rows=torch.as_tensor(dynamic,device='cuda');misc=torch.empty((len(dynamic),p.root_misc.shape[1]),device='cuda')
-     self.modules.launch('deck_context_misc',[p.arena,chosen[dynamic_rows],source[dynamic_rows],p.root_misc,misc],
-       [len(dynamic),misc.shape[1]],triton.cdiv(len(dynamic),32))
-     changed={key:value[root_rows[dynamic]].copy() for key,value in context_data.items()}
-     changed['outer_deck_misc']=misc.cpu().numpy()
-     projected[dynamic]=inference.search_context(changed).anchor.cpu().numpy()
-    inputs=dict(player_scalars=raw[:,:2],potions=raw[:,2:7].astype(np.int64),gold=raw[:,7:8],
-      combat_exit_anchor=raw[:,8:10],relic_counters=raw[:,10:],
-      relics=np.asarray(context_data['relics'],np.int32)[root_rows],
-      run_keys=np.stack([p.bank[s]['observation']['run_keys'] for s in slots])[root_rows])
+    root_rows=np.array([roots[int(s)] for s in host_roots[anchors]])
+    if grouped:
+     from rl.search.rollout_inference import anchor_relic_width
+     raw=packed[:,:10+anchor_relic_width(relics)].contiguous().cpu().numpy()
+    else:
+     raw=packed.cpu().numpy()
+     projected=root_context[root_rows].copy()
+     dynamic=np.flatnonzero(np.isin(host_roots[anchors],list(p.dynamic_context_roots)))
+     if len(dynamic):
+      dynamic_rows=torch.as_tensor(dynamic,device='cuda');misc=torch.empty((len(dynamic),p.root_misc.shape[1]),device='cuda')
+      self.modules.launch('deck_context_misc',[p.arena,chosen[dynamic_rows],source[dynamic_rows],p.root_misc,misc],
+        [len(dynamic),misc.shape[1]],triton.cdiv(len(dynamic),32))
+      changed={key:value[root_rows[dynamic]].copy() for key,value in context_data.items()}
+      changed['outer_deck_misc']=misc.cpu().numpy()
+      projected[dynamic]=inference.search_context(changed).anchor.cpu().numpy()
+     inputs=dict(player_scalars=raw[:,:2],potions=raw[:,2:7].astype(np.int64),gold=raw[:,7:8],
+       combat_exit_anchor=raw[:,8:10],relic_counters=raw[:,10:],
+       relics=relics[root_rows],
+       run_keys=run_keys[root_rows])
     # The completed pages stay leased. Advance only the other live chains
     # while the existing exact cache packs/looks up this completion batch.
     finish_step=self.tick(deferred=True,steps=p.step_batch) if p.active_count else None
     try:
      with torch.cuda.stream(self.inference_stream if finish_step is not None else torch.cuda.current_stream()):
-      values=inference.anchor_values(inputs,projected).reshape(-1)
+      if grouped:values=inference.deck.grouped_anchor_values(raw,root_rows,root_context,relics,run_keys)
+      else:values=inference.anchor_values(inputs,projected).reshape(-1)
     finally:
      if finish_step is not None:finish_step()
     p.values[chosen.long()]=torch.as_tensor(values,device='cuda',dtype=p.values.dtype)

@@ -1,4 +1,5 @@
 """Original full480 execution mechanisms, with explicit frozen artifacts."""
+from contextlib import ExitStack
 from types import SimpleNamespace
 
 import numpy as np
@@ -466,7 +467,7 @@ def test_full480_pending_block_roundtrip(combat_factory, scenario):
     ('prefix', 'growth', 'escape', 'gamble', 'toolbox', 'armaments', 'burning_pact', 'burning_pact_up',
      'codex_block', 'headbutt_block', 'headbutt_curl', 'headbutt_reactive',
      'warcry_hex', 'headbutt_plated', 'headbutt_plated_last')] +
-    [(s, True) for s in ('prefix', 'growth', 'escape', 'anchor_duplicates',
+    [(s, True) for s in ('prefix', 'growth', 'escape', 'anchor_duplicates', 'worker:growth', 'worker:anchor_duplicates',
                        'pile:draw:168', 'pile:discard:168', 'pile:exhaust:168', 'pile:exhaust:128')] +
     [('audit:' + s, False) for s in TRIGGER_CASES] +
     [('punishment:' + s, True) for s in ('cards', 'turns', 'mitigation', 'draw_hooks', 'autoplay', 'fatal', 'revive', 'fairy')] +
@@ -479,6 +480,8 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
     from rl.search.full480.finite_plan import PAIRED_TERMINAL, paired_worlds
     from rl.search.full480.run_device import cpu_bridge
     from rl.policies.deck_latent import DeckLatentPolicy
+    frozen_worker = scenario.startswith('worker:')
+    scenario = scenario.removeprefix('worker:')
     turn_horizon = (2 if scenario == 'turn:two' else 1) if scenario.startswith('turn:') else 0
     if turn_horizon:
         scenario = scenario[len('turn:'):]
@@ -555,7 +558,7 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
     cpu = cpu_bridge()
     core = policy.core
     branches = []
-    with torch.no_grad():
+    with torch.no_grad(), ExitStack() as resources:
         obs = latent_env._obs()
         data = {k: torch.as_tensor(v[None], device='cuda') for k, v in obs.items()}
         context = core.prepare_search_context(data)
@@ -585,6 +588,10 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 data['run_keys'], data['ascension']), 1)[0].cpu().numpy(),
             relics=obs['relics'], relic_counters=obs['relic_counters'],
             anchor_context=context.anchor[0].cpu().numpy(),observation={k:v.copy() for k,v in obs.items()})
+        if frozen_worker:
+            from rl.search.rollout_inference import UpperPolicyInference
+            flat.inference = resources.enter_context(UpperPolicyInference(core, 'cuda', worker_snapshot=True))
+            del row['context_inputs']
         if anchored:row['value_target'] = 'pre-reward-anchor'
         if turn_horizon:row['stop_turn'] = latent_env.thick.bc.turn + turn_horizon
         arena = BattleArena(1, deck=True)
@@ -702,7 +709,13 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
             expected=np.bincount(owners,weights=gold,minlength=len(mapping))/np.bincount(owners,minlength=len(mapping))
             np.testing.assert_allclose(result['values'],expected,atol=3e-5,rtol=1e-5)
             assert result['simulations'] == budget
-            np.testing.assert_allclose(result['combat_context'],context.combat[0].cpu().numpy(),atol=0,rtol=0)
+            expected_context = context.combat[0].cpu().numpy()
+            if frozen_worker:
+                observations = {k: v[None] for k, v in obs.items()}
+                worker_context = flat.inference.search_context(observations).combat[0].cpu().numpy()
+                np.testing.assert_allclose(worker_context, expected_context, rtol=3e-5, atol=3e-6)
+                expected_context = worker_context
+            np.testing.assert_array_equal(result['combat_context'], expected_context)
             if scenario in ('prefix','growth') and not anchored:
                 # Repeat the independent per-action oracle above using grouped
                 # graph replays. An undersized frame must stop all later
@@ -772,6 +785,8 @@ def test_full480_current_paired_states_prefixes_and_graph_retry(latent_env, scen
                 np.testing.assert_allclose(scored[0][1],expected_root[0,[a for a,_ in mapping]].cpu().numpy(),atol=3e-5,rtol=1e-5)
                 np.testing.assert_allclose(result['root_logits'],scored[0][1],atol=3e-5,rtol=1e-5)
                 assert result['root_value'] == pytest.approx(float(expected_value.flatten()[0]),abs=3e-5)
+            if frozen_worker:
+                assert bool(flat.inference.deck.anchor_groups) == (scenario == 'anchor_duplicates')
             assert pool.frame_pipeline.counts['root_policy_rows'] == 1 + int(
                 scenario == 'anchor_duplicates' or (scenario in ('prefix','growth') and not anchored))
             batch.inference.__exit__(None,None,None)

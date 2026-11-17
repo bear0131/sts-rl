@@ -100,12 +100,16 @@ class UpperPolicyInference:
         values = self.graphs.statistics() if self.graphs is not None else dict.fromkeys(GRAPH_METRICS, 0)
         return {f'upper_graph_{key}': values[key] for key in GRAPH_METRICS}
 
-    def search_context(self, observations):
-        """The current consumer's frozen context, shared by its branch rows."""
+    def search_context_arrays(self, observations):
         if self.closed or self.deck is None:
             raise RuntimeError('search context requires an open deck consumer')
-        from rl.policies.deck_latent import SearchContext
         _, combat, anchor = self.deck.context(observations)
+        return combat, anchor
+
+    def search_context(self, observations):
+        """The current consumer's frozen context, shared by its branch rows."""
+        from rl.policies.deck_latent import SearchContext
+        combat, anchor = self.search_context_arrays(observations)
         return SearchContext(torch.as_tensor(combat, device=self.device),
                              torch.as_tensor(anchor, device=self.device))
 
@@ -249,6 +253,11 @@ def _observed_width(values):
     return max(1, int(np.flatnonzero(present)[-1]) + 1 if present.any() else 1)
 
 
+def anchor_relic_width(ids):
+    """Keep interior empty slots and use the same graph width for adjacent inventory sizes."""
+    return min(ids.shape[1], max(16, 1 << (_observed_width(ids) - 1).bit_length()))
+
+
 class _DeckConsumers:
     """Current model heads on the original exact cache and graph transport.
 
@@ -275,6 +284,8 @@ class _DeckConsumers:
         self.enc_graphs = self.head_graphs = self.anchor_graphs = None
         self.versions = self.addresses = None
         self.registrations, self.tensors = (), ()
+        self.anchor_groups = OrderedDict()
+        self.next_anchor_group = 0
         self.worker_snapshot = False
         if torch.device(device).type == 'cuda':
             self.enc_graphs = CombatLeafGraphs(self.encoder, device, amp='off',
@@ -412,34 +423,70 @@ class _DeckConsumers:
             return logits, values[:, None], (combat, anchor)
         return logits, values[:, None]
 
-    def anchor_values(self, data):
+    def _score_anchor_misses(self, missing):
         from env.core import vocab as V
+        width = anchor_relic_width(missing['relics'])
+        missing = dict(missing, relics=missing['relics'][:, :width],
+                       relic_counters=missing['relic_counters'][:, :width])
+        values = np.empty(len(missing['relics']), dtype=np.float32)
+        for start in range(0, len(values), 256):
+            window = slice(start, start + 256)
+            batch = {key: rows[window] for key, rows in missing.items()}
+            _, value = self._forward(self.head, self.anchor_graphs, batch,
+                                     (V.PHASE_VOCAB_INDEX['combat'], True, 0, 0, 0))
+            if isinstance(value, torch.Tensor):
+                value = value.cpu().numpy()
+            values[window] = value.reshape(-1)
+        return values
+
+    def grouped_anchor_values(self, packed, owners, contexts, relics, run_keys):
+        """Pack shared root inputs once and expand them only for uncached leaves."""
+        assert self.worker_snapshot and self.native_anchor_cache
+        group_ids = []
+        for fields in zip(contexts, relics, run_keys, strict=True):
+            key = tuple((field.dtype.str, field.shape, field.tobytes()) for field in fields)
+            if key in self.anchor_groups:
+                self.anchor_groups.move_to_end(key)
+            else:
+                if len(self.anchor_groups) == 4096:
+                    self.anchor_groups.popitem(last=False)
+                # Cached leaves can outlive this table entry. Never recycle its ID.
+                self.anchor_groups[key] = self.next_anchor_group
+                self.next_anchor_group += 1
+            group_ids.append(self.anchor_groups[key])
+        group_ids = np.asarray(group_ids, dtype=np.int64)
+        order = np.argsort(group_ids)
+        sorted_ids = group_ids[order]
+
+        def score(missing):
+            rows = order[np.searchsorted(sorted_ids, missing.pop('context_id'))]
+            return self._score_anchor_misses(dict(missing, _anchor_context=contexts[rows],
+                                                  relics=relics[rows], run_keys=run_keys[rows]))
+
+        values = np.empty(len(packed), dtype=np.float32)
+        for start in range(0, len(packed), 4096):
+            window = slice(start, start + 4096)
+            raw = packed[window]
+            inputs = dict(player_scalars=raw[:, :2], potions=raw[:, 2:7].astype(np.int64),
+                          gold=raw[:, 7:8], combat_exit_anchor=raw[:, 8:10],
+                          relic_counters=raw[:, 10:], context_id=group_ids[owners[window]])
+            values[window] = self.anchor_cache.forward_arrays(inputs, score)
+        return values
+
+    def anchor_values(self, data):
         keys = ('player_scalars', 'potions', 'relics', 'relic_counters',
                 '_anchor_context', *self.core.anchor.dynamic_keys)
         inputs = {k: np.asarray(data[k]) for k in keys}
         inputs['player_scalars'] = inputs['player_scalars'][:, :2]
-        def score_anchor(missing):
-            # Relic ID zero masks the entire term. Keep interior slots and
-            # share power-of-two widths across nearby inventory sizes.
-            ids = missing['relics']
-            width = min(ids.shape[1], max(16, 1 << (_observed_width(ids) - 1).bit_length()))
-            missing = dict(missing, relics=ids[:, :width],
-                           relic_counters=missing['relic_counters'][:, :width])
-            values = np.empty(len(ids), dtype=np.float32)
-            for start in range(0, len(values), 256):
-                window = slice(start, start + 256)
-                batch = {key: rows[window] for key, rows in missing.items()}
-                _, value = self._forward(self.head, self.anchor_graphs, batch,
-                                         (V.PHASE_VOCAB_INDEX['combat'], True, 0, 0, 0))
-                if isinstance(value, torch.Tensor):
-                    value = value.cpu().numpy()
-                values[window] = value.reshape(-1)
-            return np.empty((len(values), 0), np.float32), values
         if self.native_anchor_cache:
-            value = self.anchor_cache.forward_arrays(inputs, lambda missing: score_anchor(missing)[1])
-        else:
-            _, value = self.anchor_cache.forward(inputs, score_anchor)
-        return value
+            return self.anchor_cache.forward_arrays(inputs, self._score_anchor_misses)
+
+        def score(missing):
+            values = self._score_anchor_misses(missing)
+            return np.empty((len(values), 0), np.float32), values
+
+        _, values = self.anchor_cache.forward(inputs, score)
+        return values
 
     def statistics(self):
         stats = {f'context_cache_{key}': value for key, value in self.cache.stats.items()}
@@ -455,6 +502,7 @@ class _DeckConsumers:
                 graphs.clear()
         self.cache.clear()
         self.anchor_cache.clear()
+        self.anchor_groups.clear()
 
 
 class _UpperPhaseCore:

@@ -252,6 +252,58 @@ def test_full_budget_anchor_batches_keep_values_cache_and_graph_lifetime(latent_
     assert inference.deck.anchor_graphs._scratch_pool is None
 
 
+@pytest.mark.cuda
+def test_frozen_anchor_groups_share_only_identical_root_inputs(latent_env):
+    from rl.search.rollout_inference import UpperPolicyInference, anchor_relic_width
+
+    assert torch.cuda.is_available()
+    policy = policy_for(latent_env, 'transformer64x2').cuda().eval()
+    enter_combat(latent_env)
+    one = {k: v[None].copy() for k, v in latent_env._obs().items()}
+    with torch.no_grad(), UpperPolicyInference(policy.core, 'cuda', worker_snapshot=True) as inference:
+        deck = inference.deck
+        assert deck.native_anchor_cache
+        _, projected = inference.search_context_arrays(one)
+        contexts = np.repeat(projected, 5, axis=0)
+        contexts[1, 0] += .75
+        relics = np.repeat(one['relics'], 5, axis=0).astype(np.int32)
+        relics[:] = 0
+        relics[2, 21] = 1
+        keys = np.repeat(one['run_keys'], 5, axis=0)
+        keys[3, 0] = 1 - keys[3, 0]
+        owners = np.arange(4101) % 5
+        packed = np.zeros((len(owners), 10 + anchor_relic_width(relics)), dtype=np.float32)
+        packed[:, 0] = .5
+        packed[:, 10 + 21] = .3
+
+        def evaluate(owners, packed):
+            counters = np.zeros((len(owners), relics.shape[1]), dtype=np.float32)
+            counters[:, :packed.shape[1] - 10] = packed[:, 10:]
+            data = dict(player_scalars=packed[:, :2], potions=packed[:, 2:7].astype(np.int64),
+                        gold=packed[:, 7:8], combat_exit_anchor=packed[:, 8:10],
+                        run_keys=keys[owners], relics=relics[owners],
+                        relic_counters=counters)
+            expected = policy.core.anchor_with_context(obs_as_tensor(data, 'cuda'),
+                torch.as_tensor(contexts[owners], device='cuda')).flatten().cpu().numpy()
+            actual = deck.grouped_anchor_values(packed, owners, contexts, relics, keys)
+            np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-5)
+            return actual
+
+        actual = evaluate(owners, packed)
+        assert deck.anchor_cache.stats['misses'] == 4
+        reordered = np.arange(len(owners) - 1, -1, -1)
+        np.testing.assert_array_equal(evaluate(owners[reordered], packed[reordered]), actual[reordered])
+        assert deck.anchor_cache.stats['misses'] == 4
+        keys = np.repeat(keys[:1], 4097, axis=0)
+        contexts = np.repeat(contexts[:1], len(keys), axis=0)
+        contexts[:, 0] += np.arange(len(keys), dtype=np.float32) * .001
+        relics = np.repeat(relics[:1], len(keys), axis=0)
+        evaluate(np.array([0, 4096]), packed[:2])
+        assert len(deck.anchor_groups) == 4096
+        evaluate(np.array([0]), packed[:1])
+    assert not deck.anchor_groups
+
+
 def test_full480_anchor_cache_keys_only_consumed_continuation_fields(latent_env):
     from rl.search.rollout_inference import UpperPolicyInference
     policy = policy_for(latent_env, 'transformer64x2')

@@ -106,6 +106,7 @@ class BattlePool(CollectionPool):
   super().__init__(mirror.m,budget_cap,modules=mirror.modules,**kw)
   self.mirror=mirror;self.ordered_semantic=self.arr((self.m,self.action_width),torch.int64);self.root_executed=self.arr((self.n,))
   if self.deck_consumer:
+   self.anchor_projections=[None]*self.m
    stride=self.roots.numel()*self.roots.element_size()//self.m
    self.root_addresses=torch.arange(self.m,device='cuda',dtype=torch.int64)*stride+self.roots.data_ptr()
  def submit(self,rows):
@@ -147,13 +148,16 @@ class BattlePool(CollectionPool):
    from env.core import encode
    values=list(rows.values())
    self.root_stop_turn.index_copy_(0,indices,self.upload([r.get('stop_turn',0) for r in values],np.int32))
+   anchors=None
    if 'context_inputs' in values[0]:
     context=self.upload([r['context_inputs'] for r in values],np.float32)
    else:
     data={key:np.stack([r['observation'][key] for r in values]) for key in self.flat.core.context.keys}
-    projected=self.flat.inference.search_context(data)
+    combat,anchors=self.flat.inference.search_context_arrays(data)
     extra=self.upload([np.concatenate((r['observation']['run_keys'],r['observation']['ascension'])) for r in values],np.float32)
-    context=torch.cat((projected.combat,extra),1)
+    context=torch.cat((torch.as_tensor(combat,device=extra.device),extra),1)
+   for i,h in enumerate(handles):
+    self.anchor_projections[h.slot]=anchors[i].copy() if anchors is not None and self.flat.inference.deck.worker_snapshot else None
    self.root_inputs.index_copy_(0,indices,context)
    self.chain_inputs.view(self.m,self.budget_cap,68).index_copy_(0,indices,context[:,None,:].expand(-1,self.budget_cap,-1))
    width=max(len(r['worlds']) for r in values);worlds=np.zeros((count,width,5),np.uint64)
