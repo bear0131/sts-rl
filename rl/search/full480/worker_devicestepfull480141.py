@@ -53,7 +53,7 @@ def run_worker(commands,responses,settings):
   policy=policy.cuda().eval()
   with torch.inference_mode():
    deck=getattr(policy.core,'model_contract',None)=='deck-latent-combat-v1'
-   upper=UpperPolicyInference(policy.core,'cuda');upper.__enter__()
+   upper=UpperPolicyInference(policy.core,'cuda',worker_snapshot=True);upper.__enter__()
    flat=None
    if deck:
     flat=DeckWeights(policy.core);flat.input_tables=DeckInputTables(policy.core,settings['prototypes']);flat.inference=upper
@@ -135,20 +135,22 @@ def run_worker(commands,responses,settings):
        finish_step=engine.frame_pipeline.tick(deferred=True,steps=engine.step_batch);advanced=True
        counts['upper_overlap_ticks']+=1
       try:
-       obs,masks=payload
-       if kind=='upper' and deck:logits,values,context=upper(obs,with_search_context=True)
-       elif kind=='upper':logits,values=upper(obs)
-       else:
-        from rl.search.native import observation_as_tensor
-        logits,values=policy.core.actor_critic(observation_as_tensor(obs,'cuda'))
-       dist=policy.action_dist.proba_distribution(action_logits=logits.float());dist.apply_masking(masks)
-       answer=dict(probabilities=dist.distribution.probs.cpu().numpy(),logprobs=dist.distribution.logits.cpu().numpy(),
-        values=values.float().flatten().cpu().numpy(),reward=ind.reward_monitor.policy_probabilities(dist,obs),
-        campfire=ind.campfire_monitor.policy_probabilities(dist,obs))
-       if deck:
-        if kind=='upper_reference':
-         projected=upper.search_context(obs);context=(projected.combat.cpu().numpy(),projected.anchor.cpu().numpy())
-        answer.update(logits=logits.float().cpu().numpy(),context=context)
+       inference_stream=engine.frame_pipeline.inference_stream if finish_step is not None else torch.cuda.current_stream()
+       with torch.cuda.stream(inference_stream):
+        obs,masks=payload
+        if kind=='upper' and deck:logits,values,context=upper(obs,with_search_context=True)
+        elif kind=='upper':logits,values=upper(obs)
+        else:
+         from rl.search.native import observation_as_tensor
+         logits,values=policy.core.actor_critic(observation_as_tensor(obs,'cuda'))
+        dist=policy.action_dist.proba_distribution(action_logits=logits.float());dist.apply_masking(masks)
+        answer=dict(probabilities=dist.distribution.probs.cpu().numpy(),logprobs=dist.distribution.logits.cpu().numpy(),
+         values=values.float().flatten().cpu().numpy(),reward=ind.reward_monitor.policy_probabilities(dist,obs),
+         campfire=ind.campfire_monitor.policy_probabilities(dist,obs))
+        if deck:
+         if kind=='upper_reference':
+          projected=upper.search_context(obs);context=(projected.combat.cpu().numpy(),projected.anchor.cpu().numpy())
+         answer.update(logits=logits.float().cpu().numpy(),context=context)
       finally:
        if finish_step is not None:finish_step()
      elif kind=='fallback':

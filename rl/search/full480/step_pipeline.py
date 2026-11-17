@@ -28,6 +28,7 @@ def refresh(pool):
 class StepPipeline(FramePipeline):
  def __init__(self,*a,**kw):
   self.step_graph=None;self.step_closed=False
+  self.inference_stream=torch.cuda.Stream()
   super().__init__(*a,**kw)
  def release(self):
   if self.step_graph is not None:
@@ -99,11 +100,15 @@ class StepPipeline(FramePipeline):
    frames+=triton.cdiv(s[0],self.F)*(target_ticks-s[5]-1)
    for _ in range(frames):
     self.step_graph.replay();self.counts['step_replays']+=1
+  # The side stream may read frozen policy inputs after every earlier producer.
+  # Queue this dependency before the independent search graphs start.
+  if deferred:self.inference_stream.wait_stream(torch.cuda.current_stream())
   launch();launched=time.perf_counter();finished=False
   @torch.inference_mode()
   def finish():
    nonlocal s,finished
    assert not finished,'step result already consumed'
+   if deferred:torch.cuda.current_stream().wait_stream(self.inference_stream)
    waiting=time.perf_counter()
    for attempt in range(8):
     s=list(map(int,p.step_status.cpu().tolist()));p.step_counts['host_reads']+=1

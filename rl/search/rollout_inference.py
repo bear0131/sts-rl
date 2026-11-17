@@ -46,13 +46,17 @@ class UpperPolicyInference:
     Other devices and older policies retain their existing prediction path.
     The caller owns phase scheduling and categorical sampling, as before.
     """
-    def __init__(self, core, device, *, context_bytes=128*1024**2):
+    def __init__(self, core, device, *, context_bytes=128*1024**2, worker_snapshot=False):
         self.core, self.device = core, device
         self.graphs = None
         self.closed = False
         self.deck = None
         if getattr(core, 'model_contract', None) == 'deck-latent-combat-v1':
             self.deck = _DeckConsumers(core, device, context_bytes)
+            if worker_snapshot:
+                # The full480 child exclusively owns this verified policy until shutdown.
+                self.deck._check_weights()
+                self.deck.worker_snapshot = True
         if (torch.device(device).type == 'cuda'
                 and getattr(getattr(core, 'upper_config', None), 'architecture', None)
                     == 'upper-latent-actions-v1'):
@@ -111,9 +115,8 @@ class UpperPolicyInference:
             raise RuntimeError('anchor values require an open deck consumer')
         self.deck._check_weights()
         inputs = dict(observations, _anchor_context=projected_context)
-        # A completion wave can contain thousands of leaves. Bound the
-        # relic-counter workspace for each graph while preserving row order.
-        batch_rows = 256
+        # Limit temporary host keys while deduplicating leaves across GPU batches.
+        batch_rows = 4096
         count = len(projected_context)
         if count <= batch_rows:
             return self.deck.anchor_values(inputs)
@@ -272,6 +275,7 @@ class _DeckConsumers:
         self.enc_graphs = self.head_graphs = self.anchor_graphs = None
         self.versions = self.addresses = None
         self.registrations, self.tensors = (), ()
+        self.worker_snapshot = False
         if torch.device(device).type == 'cuda':
             self.enc_graphs = CombatLeafGraphs(self.encoder, device, amp='off',
                 capacity=32, batch_multiple=8, compile_forward=False)
@@ -286,6 +290,8 @@ class _DeckConsumers:
     def _check_weights(self):
         if self.core.training or torch.is_grad_enabled():
             raise RuntimeError('deck collection requires frozen inference without gradients')
+        if self.worker_snapshot:
+            return
         # Keep checking replacements, additions and mutable tensor versions,
         # without recursively rebuilding every qualified parameter name for
         # every root and completion batch. Registration dictionaries are the
@@ -331,13 +337,14 @@ class _DeckConsumers:
             widths = (_observed_width(missing['deck_ids']), _observed_width(missing['relics']))
             missing, widths = _upper_graph_inputs(missing, widths,
                 (missing['deck_ids'].shape[1], missing['relics'].shape[1]))
-            keep = (1 + (missing['deck_ids'] != 0).sum(1) + (missing['relics'] != 0).sum(1)
-                + ((missing['map_full_rooms'] != 0) | missing['map_full_features'].any(-1)).sum(1))
-            # Stable compaction keeps every visible token and its original role.
-            # Power-of-two widths bound graph variants without a device readback.
-            packed_width = min(1 + sum(widths) + missing['map_full_rooms'].shape[1],
-                1 << (int(keep.max()) - 1).bit_length())
-            widths = (*widths, packed_width)
+            if not self.worker_snapshot:
+                keep = (1 + (missing['deck_ids'] != 0).sum(1) + (missing['relics'] != 0).sum(1)
+                    + ((missing['map_full_rooms'] != 0) | missing['map_full_features'].any(-1)).sum(1))
+                # Stable compaction keeps every visible token and its original role.
+                # Power-of-two widths bound graph variants without a device readback.
+                packed_width = min(1 + sum(widths) + missing['map_full_rooms'].shape[1],
+                    1 << (int(keep.max()) - 1).bit_length())
+                widths = (*widths, packed_width)
             return self._forward(self.encoder, self.enc_graphs, missing, widths)
 
         encoded, _ = self.cache.forward(static, encode)
@@ -412,11 +419,22 @@ class _DeckConsumers:
         inputs = {k: np.asarray(data[k]) for k in keys}
         inputs['player_scalars'] = inputs['player_scalars'][:, :2]
         def score_anchor(missing):
-            out, value = self._forward(self.head, self.anchor_graphs, missing,
-                                      (V.PHASE_VOCAB_INDEX['combat'], True, 0, 0, 0))
-            if isinstance(value, torch.Tensor):
-                out, value = out.cpu().numpy(), value.cpu().numpy()
-            return out, value
+            # Relic ID zero masks the entire term. Keep interior slots and
+            # share power-of-two widths across nearby inventory sizes.
+            ids = missing['relics']
+            width = min(ids.shape[1], max(16, 1 << (_observed_width(ids) - 1).bit_length()))
+            missing = dict(missing, relics=ids[:, :width],
+                           relic_counters=missing['relic_counters'][:, :width])
+            values = np.empty(len(ids), dtype=np.float32)
+            for start in range(0, len(values), 256):
+                window = slice(start, start + 256)
+                batch = {key: rows[window] for key, rows in missing.items()}
+                _, value = self._forward(self.head, self.anchor_graphs, batch,
+                                         (V.PHASE_VOCAB_INDEX['combat'], True, 0, 0, 0))
+                if isinstance(value, torch.Tensor):
+                    value = value.cpu().numpy()
+                values[window] = value.reshape(-1)
+            return np.empty((len(values), 0), np.float32), values
         if self.native_anchor_cache:
             value = self.anchor_cache.forward_arrays(inputs, lambda missing: score_anchor(missing)[1])
         else:

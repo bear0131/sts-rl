@@ -470,10 +470,12 @@ extern "C" __global__ void normal_features(unsigned char*arena,int*worlds,int*li
   if(meta[i*4]==1&&!*value_mode)continue;
   device_state::require(meta[i*4+3]);
   int root=worlds[base+i]%root_count;
-  for(int row=0;row<meta[i*4+1];++row){
+  // Each 64-thread group owns one token. Its channels keep their original arithmetic order.
+  constexpr int channels=64;
+  const int dim=threadIdx.x%channels;
+  for(int row=threadIdx.x/channels;row<meta[i*4+1];row+=blockDim.x/channels){
    int at=deck_input::physical(chunks,i,row),slot=ids[at];
-   for(int dim=threadIdx.x;dim<64;dim+=blockDim.x)
-    numbers[at*64+dim]=deck_input::token(b,weights,raw+i*deck_input::RAW,cat+i*deck_input::CAT,chain_inputs+live[base+i]*68,root_relics+root*deck_input::RELIC_WIDTH,root_counters+root*deck_input::RELIC_WIDTH,prefixes[live[base+i]],slot,dim);
+   numbers[at*channels+dim]=deck_input::token(b,weights,raw+i*deck_input::RAW,cat+i*deck_input::CAT,chain_inputs+live[base+i]*68,root_relics+root*deck_input::RELIC_WIDTH,root_counters+root*deck_input::RELIC_WIDTH,prefixes[live[base+i]],slot,dim);
   }
   continue;
 #endif

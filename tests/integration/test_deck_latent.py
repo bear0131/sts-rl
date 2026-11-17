@@ -114,7 +114,8 @@ def test_full480_existing_inference_consumes_cached_deck_heads(latent_env, devic
 
 
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
-def test_full480_compact_context_preserves_sparse_visible_tokens(latent_env, device):
+@pytest.mark.parametrize('worker_snapshot', [False, True])
+def test_full480_context_preserves_sparse_visible_tokens(latent_env, device, worker_snapshot):
     from rl.search.rollout_inference import UpperPolicyInference
     if device == 'cuda':
         assert torch.cuda.is_available(), 'compact context qualification requires CUDA'
@@ -137,7 +138,7 @@ def test_full480_compact_context_preserves_sparse_visible_tokens(latent_env, dev
     batch['deck_ids'][2, :20] = card
     batch['map_full_features'][2, :, 0] = np.linspace(.1, .9, batch['map_full_rooms'].shape[1])
     core = policy.core
-    with torch.no_grad(), UpperPolicyInference(core, device) as inference:
+    with torch.no_grad(), UpperPolicyInference(core, device, worker_snapshot=worker_snapshot) as inference:
         expected = core.prepare_search_context(obs_as_tensor(batch, device))
         actual = inference.search_context(batch)
         torch.testing.assert_close(actual.combat, expected.combat, atol=2e-5, rtol=2e-5)
@@ -218,7 +219,11 @@ def test_full_budget_anchor_batches_keep_values_cache_and_graph_lifetime(latent_
         for count in (2057, 1127, 3279, 2057):
             data = {k: np.repeat(one[k], count, axis=0) for k in keys}
             data['player_scalars'][:, 0] = np.linspace(.05, .95, count)
-            data['relics'][:] = 1
+            data['relics'][:] = 0
+            if count == 1127:
+                data['relics'][:, [0, 13]] = 1  # Interior padding and a masked suffix.
+            elif count != 3279:
+                data['relics'][:] = 1
             data['relic_counters'][:] = .123
             context = np.repeat(projected, count, axis=0)
             expected = core.anchor_with_context(obs_as_tensor(data, 'cuda'),

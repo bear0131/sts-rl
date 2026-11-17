@@ -74,7 +74,7 @@ class FramePipeline:
   shape=[0,p.m,p.action_cap,p.entity_cap]
   self.modules.launch('frame_observe_special',observer_args,shape,triton.cdiv(F,32))
   self.modules.launch('normal_prepare',observer_args+[w['normal_rows']],shape,triton.cdiv(F,32))
-  self.modules.launch('normal_features',observer_args+[w['normal_rows']],shape,min(F,self.model.sms*16),threads=64)
+  self.modules.launch('normal_features',observer_args+[w['normal_rows']],shape,min(F,self.model.sms*16),threads=128 if p.deck_consumer else 64)
   tensors=[w['worlds'],p.ids,p.zones,p.monsters,p.numbers,p.meta,p.chunks]+p.inv+[p.inv_slots,
    p.source_rows,p.targets,p.canonical_sources,p.canonical_targets,p.query_map,
    w['features'],w['symbols'],w['slots'],w['present'],w['queries'],w['blocks1'],w['blocks2'],w['owners'],
@@ -191,7 +191,9 @@ class FramePipeline:
     # The completed pages stay leased. Advance only the other live chains
     # while the existing exact cache packs/looks up this completion batch.
     finish_step=self.tick(deferred=True,steps=p.step_batch) if p.active_count else None
-    try:values=inference.anchor_values(inputs,projected).reshape(-1)
+    try:
+     with torch.cuda.stream(self.inference_stream if finish_step is not None else torch.cuda.current_stream()):
+      values=inference.anchor_values(inputs,projected).reshape(-1)
     finally:
      if finish_step is not None:finish_step()
     p.values[chosen.long()]=torch.as_tensor(values,device='cuda',dtype=p.values.dtype)

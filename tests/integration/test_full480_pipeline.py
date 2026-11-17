@@ -236,7 +236,7 @@ def test_full480_current_native_observer_and_packed_model(latent_env):
         flat = DeckWeights(policy.core)
         flat.input_tables = DeckInputTables(policy.core, latent_env._obs())
         assert flat.input_tables.header() == (artifact_directory()/'deck/deck_schema.h').read_text()
-        arena = BattleArena(1)
+        arena = BattleArena(1, deck=True)
         pool = None
         checked = selections = prefixes = 0
         try:
