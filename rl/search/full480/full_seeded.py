@@ -1,4 +1,5 @@
 """Original full480 asynchronous stream and natural-game root consumers."""
+from copy import copy
 from pathlib import Path
 import sys,os,time,json,hashlib,collections,inspect
 from .service_devicestepfull480141 import GpuService,np,torch
@@ -39,7 +40,10 @@ class Stream:
   current_stream=self;model_owner=model;t0=last=time.monotonic();count.clear();terminals.clear();fallback_reports.clear()
   self.batch=batch;self.meta={};self.inline={};self.queue=[];self.fallback=None;self.threads=min(8,threads);self.fallback_rows={};self.cancelled=False
   P.mkdir(parents=True,exist_ok=True);path=P/(RUN+'-policy.pt')
-  digest=state_digest(model.policy.state_dict());torch.save(model.policy,path)
+  digest=state_digest(model.policy.state_dict())
+  worker_policy=copy(model.policy)
+  worker_policy.optimizer=None
+  torch.save(worker_policy,path)
   self.service=GpuService(len(batch.envs),path,expected_digest=digest,
    prototypes=batch.observer.prototypes,frozen_policy=model.policy,
    frame=batch.pair.get('cuda_wave_capacity',65536),

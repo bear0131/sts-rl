@@ -96,7 +96,13 @@ def test_full480_natural_rows_cached_dome_and_cancel(
         monkeypatch.setattr(full480, 'upper_begin', begin_checked)
         monkeypatch.setattr(full480, 'upper_take', take_checked)
         before = state_digest(model.policy.state_dict())
+        learner_optimizer = model.policy.optimizer
         assert model.collect_rollouts(env, callback, model.rollout_buffer, 2)
+        worker_path = full_seeded.P / (full_seeded.RUN + '-policy.pt')
+        worker_policy = torch.load(worker_path, map_location='cpu', weights_only=False)
+        assert worker_policy.optimizer is None
+        assert state_digest(worker_policy.state_dict()) == before
+        assert model.policy.optimizer is learner_optimizer
         assert model.episode_rollout_stats['completed_games'] == 2
         assert model.episode_rollout_stats['censored_games'] == 0
         assert not full_seeded.current_stream.service.process.is_alive()
