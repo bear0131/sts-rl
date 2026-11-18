@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import gzip
+import importlib.util
 import concurrent.futures
 import json
 import ipaddress
@@ -133,6 +135,16 @@ class Monitor:
                 branch_round=reference.get('branch_round', saved.get('branch_round',
                     reference.get('branch_step', 0) / (saved['iteration_steps'] or 1)))))
 
+        self.lineage = None
+        self.chart_cache = {}
+        self.chart_response = None
+        if config.get('sts2_lineage'):
+            path = Path(config['sts2_lineage_provider'])
+            provider = importlib.util.spec_from_file_location('sts2_monitor_lineage', path)
+            self.lineage = importlib.util.module_from_spec(provider)
+            provider.loader.exec_module(self.lineage)
+            self.lineage.initialise(self.state, config)
+
     def read_rank(self, rank):
         with self.lock:
             previous = next((s for s in self.state['ranks'] if s['rank'] == rank), {})
@@ -140,7 +152,9 @@ class Monitor:
         header = '\n'.join(f'{key}={value!r}' for key, value in dict(
             ROOT=c['root'], RUN=c['run_id'], RANK=rank, CURSOR=previous.get('cursor', {})).items())
         script = f"cd {shlex.quote(c['root'])}\n.venv/bin/python - <<'PY_MONITOR'\n{header}\n{REMOTE}\nPY_MONITOR\n"
-        if c.get('format') == 'sts2':
+        if self.lineage and c.get('format') != 'original_ppo':
+            script = self.lineage.rank_command(c, rank, previous.get('cursor', {}))
+        elif c.get('format') == 'sts2':
             script = training_sts2.rank_command(c, rank, previous.get('cursor', {}))
         args = ['ssh', '-i', c['ssh_key'], '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
                 '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=10',
@@ -166,7 +180,13 @@ class Monitor:
             ranks = list(pool.map(self.read_rank, range(len(self.config['ports']))))
         with self.lock:
             rows = [row for rank in ranks for row in rank.pop('rows', [])]
-            if self.config.get('format') == 'sts2':
+            if self.config.get('format') == 'original_ppo':
+                rows = self.lineage.original_continuation(self.state, rows, self.config)
+                for machine in ranks:
+                    machine['saved_round'] = max(self.state['history_through'], machine.get('step', 0) // self.config['iteration_steps'])
+            elif self.lineage:
+                rows = self.lineage.completed_rows(self.state, ranks)
+            elif self.config.get('format') == 'sts2':
                 rows = training_sts2.completed_rows(self.state, ranks, len(self.config['ports']))
             self.state['rows'] = merge_rows(self.state['rows'], rows)
             records = [row for rank in ranks for row in rank.pop('budget_records', [])]
@@ -204,6 +224,20 @@ class Monitor:
             return json.dumps(clean(self.state), ensure_ascii=False, allow_nan=False).encode()
 
 
+    def curve_snapshot(self, compressed):
+        if self.lineage is None:
+            raw = self.snapshot()
+            return gzip.compress(raw, compresslevel=1) if compressed else raw
+        with self.lock:
+            key = (self.state.get('updated_at'), self.state.get('poll_failed_at'), self.state.get('polling_ended'))
+            if self.chart_response is None or self.chart_response[0] != key:
+                page = Path(__file__).with_name('dashboard_static') / 'training.html'
+                projected = self.lineage.chart_snapshot(self.state, page, self.chart_cache)
+                raw = json.dumps(clean(projected), ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode()
+                self.chart_response = key, raw, gzip.compress(raw, compresslevel=1)
+            return self.chart_response[2 if compressed else 1]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
@@ -238,7 +272,10 @@ def main():
             if not allowed_client(self.client_address[0], networks):
                 self.send_error(403)
                 return
-            if self.path == '/api/state':
+            compressed = self.path == '/api/curves' and 'gzip' in self.headers.get('Accept-Encoding', '')
+            if self.path == '/api/curves':
+                body, content = monitor.curve_snapshot(compressed), 'application/json; charset=utf-8'
+            elif self.path == '/api/state':
                 body, content = monitor.snapshot(), 'application/json; charset=utf-8'
             elif self.path == '/api/trajectories':
                 body, content = trajectories.snapshot(monitor.config['run_id']), 'application/json; charset=utf-8'
@@ -256,6 +293,10 @@ def main():
                 return
             self.send_response(200)
             self.send_header('Content-Type', content)
+            if compressed:
+                self.send_header('Content-Encoding', 'gzip')
+            if self.path == '/api/curves':
+                self.send_header('Vary', 'Accept-Encoding')
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'public, max-age=86400' if content == 'image/png' else 'no-store')
             self.end_headers()

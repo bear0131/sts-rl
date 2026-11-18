@@ -6,6 +6,20 @@ from apps.training_monitor import Monitor, clean, merge_rows, allowed_client
 from apps.training_sts2 import completed_rows
 
 
+def test_original_dashboard_keeps_reward_curves_and_bounds_explained_variance():
+    from pathlib import Path
+    from apps import training_monitor
+
+    page = (Path(training_monitor.__file__).with_name('dashboard_static') / 'training.html').read_text(encoding='utf-8')
+    variance = next(line for line in page.splitlines() if "['pure_rl/value_pre/all/explained_variance'" in line)
+    assert "false,[0,1]" in variance
+    assert all('pure_rl/value_pre/' + s + '/explained_variance' in variance for s in ('all','combat','upper','anchor'))
+    for reward in ('gold','potion','relic'):
+        assert 'upper/reward_' + reward + '_pickup_rate' in page
+        assert 'upper/reward_' + reward + '_policy_probability' in page
+    assert 'id="reward-summary"' not in page
+
+
 def test_sts2_waits_for_four_ranks_and_keeps_snapshot_wins_separate():
     def rank(index, *, outcomes=False):
         report = dict(round=505, global_step=1208, rows=256, adam_steps=2,
