@@ -43,7 +43,7 @@ const specs=[
  ['训练游戏楼层 · 统计口径见图例',['display/game_floor_mean'],['平均楼层'],false],
  ['存档中各环境最近一局胜率',['sts2/slot_win_rate'],['每个有自然胜负记录的环境取一局'],true],
  ['存档中各环境最近一局平均楼层',['sts2/slot_floor_mean'],['每个有自然胜负记录的环境取一局'],false],
- ['四机阶段耗时（秒） · 第二慢机器',['sts2/collection_seconds','sts2/update_seconds','sts2/save_seconds','sts2/round_seconds'],['采样','PPO 更新','保存','整轮'],false],
+ ['四机阶段耗时（秒） · 第二慢机器',['display/second_rollout_sec','display/second_update_sec','display/second_checkpoint_sec','display/second_iteration_wall_sec'],['采样','PPO 更新','保存','整轮'],false],
  ['PPO 联合训练损失',['sts2/total_loss','loss_mean'],['原高温分支 · 四机 Adam 分组平均','原整局 PPO · 训练日志平均损失'],false],
  ['本轮搜索根数',['sts2/search_roots'],['四机合计'],false],
  ['各幕通关率',['game/act_1_won_mean','game/act_2_won_mean','game/act_3_won_mean'],['第一幕','第二幕','第三幕'],true],
@@ -116,6 +116,10 @@ function lastEpochMetric(row,metric){
 function displayRow(row,run={}){
  const cohort=completeCohort(row),rolling=run.rollout_mode!=='complete_games'&&finite(run.iteration_steps)&&run.iteration_steps>0&&!Object.keys(row).some(k=>k.startsWith('episode_rollout/'));
  return {...row,'display/game_win_rate':row.training_win_scope?row.training_win_rate:(cohort?.win??(rolling?row['game/win_rate']:undefined)),'display/game_floor_mean':row.training_win_scope?(row['game/floor_mean']??row['sts2/slot_floor_mean']):(cohort?.floor??(rolling?row['game/floor_mean']:undefined)),'episode_rollout/win_rate':cohort?.win,'episode_rollout/floor_mean':cohort?.floor,
+  'display/second_rollout_sec':row['monitor/second_slowest/rollout_sec']??row['sts2/collection_seconds'],
+  'display/second_update_sec':row['monitor/second_slowest/update_sec']??row['sts2/update_seconds'],
+  'display/second_checkpoint_sec':row['monitor/second_slowest/checkpoint_sec']??row['sts2/save_seconds'],
+  'display/second_iteration_wall_sec':row['monitor/second_slowest/iteration_wall_sec']??row['sts2/round_seconds'],
   ...Object.fromEntries(['policy_loss','value_loss','kl'].map(k=>['display/upper_'+k,lastEpochMetric(row,k)]))};
 }
 for(const [i,s] of specs.entries()){let el=document.createElement('article');el.className='chart';if(s[1][0]==='deck_search/teacher_top1')el.style.gridColumn='1';el.innerHTML=`<h2>${s[0]}</h2><div class="legend">${s[2].map((v,j)=>`<span style="color:${colors[j]}">● ${v}</span>`).join('')}</div><svg role="img" aria-label="${s[0]}" id="chart${i}"></svg>`;$('charts').append(el)}

@@ -50,7 +50,9 @@ if RANK==0:
         if 'global_timesteps' in row and 'rollout_sec' in row: rows.append(row)
     offset+=complete
 budget_offset=cursor.get('budget_offset',0) if cursor.get('inode')==st.st_ino else 0
-if budget_offset>st.st_size: budget_offset=0
+original_ppo=globals().get('ORIGINAL_PPO',False)
+if budget_offset>st.st_size or (original_ppo and not cursor.get('rank_times')): budget_offset=0
+original_times=[]
 budget_records=[]
 with log.open('rb') as f:
     f.seek(budget_offset); budget_data=f.read(16*1024*1024)
@@ -60,6 +62,9 @@ for line in budget_data[:budget_complete].splitlines():
     try: row=json.loads(line)
     except (ValueError,UnicodeDecodeError): continue
     if 'global_timesteps' not in row or 'rollout_sec' not in row: continue
+    timing_fields=('global_timesteps','rollout_sec','update_sec','checkpoint_sec','iteration_wall_sec')
+    if original_ppo and all(isinstance(row.get(k),(float,int)) for k in timing_fields):
+        original_times.append({k:row[k] for k in timing_fields})
     stats={k:v for k,v in row.get('small_playout_stats_rank',{}).items() if '/budget_' in k}
     if stats or 'small_playout_train/budget_round' in row:
         budget_records.append(dict(rank=RANK,global_timesteps=row['global_timesteps'],
@@ -79,7 +84,7 @@ for p in (run/'recovery'/f'rank{RANK}').glob('step-*'):
     if (p/'manifest.json').exists(): steps.append(int(p.name[5:]))
 print(json.dumps(dict(rank=RANK,pid=pid,alive=alive,step=max(steps,default=0),
     progress=progress,log_mtime=st.st_mtime,errors=errors[-3:],rows=rows,budget_records=budget_records,
-    cursor=dict(inode=st.st_ino,offset=offset,budget_offset=budget_offset),checked_at=time.time())))
+    original_times=original_times,cursor=dict(inode=st.st_ino,offset=offset,budget_offset=budget_offset,rank_times=original_ppo),checked_at=time.time())))
 '''
 
 
@@ -150,7 +155,8 @@ class Monitor:
             previous = next((s for s in self.state['ranks'] if s['rank'] == rank), {})
         c = self.config
         header = '\n'.join(f'{key}={value!r}' for key, value in dict(
-            ROOT=c['root'], RUN=c['run_id'], RANK=rank, CURSOR=previous.get('cursor', {})).items())
+            ROOT=c['root'], RUN=c['run_id'], RANK=rank, CURSOR=previous.get('cursor', {}),
+            ORIGINAL_PPO=c.get('format') == 'original_ppo').items())
         script = f"cd {shlex.quote(c['root'])}\n.venv/bin/python - <<'PY_MONITOR'\n{header}\n{REMOTE}\nPY_MONITOR\n"
         if self.lineage and c.get('format') != 'original_ppo':
             script = self.lineage.rank_command(c, rank, previous.get('cursor', {}))
@@ -189,6 +195,11 @@ class Monitor:
             elif self.config.get('format') == 'sts2':
                 rows = training_sts2.completed_rows(self.state, ranks, len(self.config['ports']))
             self.state['rows'] = merge_rows(self.state['rows'], rows)
+            if self.config.get('format') == 'original_ppo':
+                self.lineage.add_original_rank_times(self.state, ranks)
+            else:
+                for machine in ranks:
+                    machine.pop('original_times', None)
             records = [row for rank in ranks for row in rank.pop('budget_records', [])]
             self.state['search_budget_records'] = merge_budget_records(
                 self.state.get('search_budget_records', []), records)
