@@ -827,3 +827,5 @@
 - **COMBAT49-REMOTE-DISK-MAINTENANCE** — 已完成。四台 136 个旧实验文件已归档并逐文件验证，系统盘和数据盘分别至少有 5.74、5.25 GiB 可用，原 501 和最佳 502/503 校验通过。见 worklog/2026-11-18.md#combat49-disk-maintenance。
 
 - **FULL480-TERMINAL-GAME-ID** — 已用固定步数模式的记录函数复现，待修。rl/search/full480/full_seeded.py 的 record_end 从采样开始时的环境种子表读 game_id，同一环境自动重置后的第二局会被标为首局。修复以终局 run_stats.seed 为准，验收覆盖一个槽两次不同种子的终局、跨轮未结束游戏及自然整局模式，区分实际游戏种子与用于创建环境的种子。范围是诊断报告，证据见 worklog/2026-11-18.md#whole-project-refactor-review。
+
+- **MONITOR-STS2-8773** — 8773 已接入四机 sts-rl-2 原生日志与存档，原方案历史按父链合并第 1–501 轮。已核真实浏览器、两轮自动同步及断续到达的数据汇总。运行期未记录的逐局胜负、上下层熵和 teacher top1 仍需训练器上报；如获授权恢复训练，应从第一轮核四机原始分子和分母。范围为 `apps/training_monitor.py`、`apps/training_sts2.py`、`apps/dashboard_static/training.html`。见[接入与口径](worklog/2026-11-18.md#monitor-sts2-8773-连接四机训练并拼接原方案曲线)。

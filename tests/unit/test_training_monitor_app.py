@@ -3,6 +3,33 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from apps.training_monitor import Monitor, clean, merge_rows, allowed_client
+from apps.training_sts2 import completed_rows
+
+
+def test_sts2_waits_for_four_ranks_and_keeps_snapshot_wins_separate():
+    def rank(index, *, outcomes=False):
+        report = dict(round=505, global_step=1208, rows=256, adam_steps=2,
+                      round_seconds=[9, 25, 11, 12][index], collection_seconds=4,
+                      update_seconds=2, save_seconds=1, search_rows=index+1,
+                      episodes=8, losses=[1., 2.])
+        cursor = {}
+        if outcomes:
+            cursor['snapshot'] = dict(step=1208, games=index+1, wins=1, floors=10)
+        return dict(rank=index, cursor=cursor, sts2_reports=[report])
+
+    state = {}
+    assert completed_rows(state, [rank(3), rank(0)], 4) == []
+    # Pollers can restart after writing half of a round to disk.
+    state = json.loads(json.dumps(state))
+    row, = completed_rows(state, [rank(1), rank(2)], 4)
+    assert row['rollout_round'] == 505 and row['transitions_global'] == 256
+    assert row['sts2/round_seconds'] == 12 and row['iteration_wall_sec'] == 9
+    assert row['sts2/search_roots'] == 10 and row['sts2/episodes'] == 32
+    assert row['optimizer_steps'] == 2 and row['sts2/total_loss'] == 1.5
+    assert 'sts2/slot_win_rate' not in row and 'game/win_rate' not in row
+    row, = completed_rows(state, [rank(i, outcomes=True) for i in range(4)], 4)
+    assert row['sts2/slot_win_rate'] == .4 and row['sts2/slot_floor_mean'] == 4
+    assert row['sts2/slot_games'] == 10 and 'game/win_rate' not in row
 
 
 def test_lan_access_is_explicit_and_loopback_stays_available():
@@ -233,7 +260,7 @@ const document = {
  createElement:element,createElementNS:element
 };
 document.getElementById('axis').value='absolute';
-const context = vm.createContext({document,assert,Option:class{constructor(text,value){this.text=text;this.value=value}},ResizeObserver:class{observe(){}},
+const context = vm.createContext({document,assert,location:new URL('http://127.0.0.1:8773/'),URL,Option:class{constructor(text,value){this.text=text;this.value=value}},ResizeObserver:class{observe(){}},
  fetch:()=>new Promise(()=>{}),setInterval(){}});
 vm.runInContext(SCRIPT,context);
 vm.runInContext(`
@@ -310,6 +337,17 @@ const grown={rollout_mode:'fixed_steps',iteration_steps:786432,branch_step:0,bra
 assert.equal(roundAt(grown,1048576),4);
 assert.equal(roundAt(grown,1835008),5);
 assert.equal(roundAt(grown,0),0);
+state={run_id:'native',rollout_mode:'fixed_steps',iteration_steps:393216,branch_round:504,branch_step:100,
+ updated_at:Date.now()/1000,comparisons:[],ranks:[{rank:0,alive:true,step:393316,saved_round:505,
+ progress:{vector_steps:56143,target_steps:98304}}],rows:[{rollout_round:505,global_timesteps:393316,
+ 'sts2/round_seconds':220,'sts2/episodes':812,'sts2/slot_games':512,'sts2/slot_win_rate':.25,'sts2/slot_floor_mean':36}]};
+render();
+assert.ok($('ranks').children[0].textContent.includes('本轮采样 57%'));
+assert.ok(!$('ranks').children[0].textContent.includes('56143/98304'));
+assert.equal($('win-label').textContent,'各环境最近一局胜率');
+assert.equal($('win').textContent,'25.00%');
+assert.equal(displayRow(state.rows[0],state)['display/game_win_rate'],undefined);
+state.ranks[0].alive=false;render();assert.equal($('ongoing').textContent,'四机训练已停止');
 `,context);
 '''.replace('SCRIPT', json.dumps(script))
     path = tmp_path / 'dashboard.cjs'

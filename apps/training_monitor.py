@@ -18,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from apps.training_budget import budget_rows, merge_budget_records
 from apps.training_trajectories import TrajectoryFeed
+from apps import training_sts2
 
 
 REMOTE = r'''
@@ -139,6 +140,8 @@ class Monitor:
         header = '\n'.join(f'{key}={value!r}' for key, value in dict(
             ROOT=c['root'], RUN=c['run_id'], RANK=rank, CURSOR=previous.get('cursor', {})).items())
         script = f"cd {shlex.quote(c['root'])}\n.venv/bin/python - <<'PY_MONITOR'\n{header}\n{REMOTE}\nPY_MONITOR\n"
+        if c.get('format') == 'sts2':
+            script = training_sts2.rank_command(c, rank, previous.get('cursor', {}))
         args = ['ssh', '-i', c['ssh_key'], '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
                 '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=10',
                 *(['-o', 'UserKnownHostsFile=' + c['ssh_known_hosts']] if c.get('ssh_known_hosts') else []),
@@ -163,6 +166,8 @@ class Monitor:
             ranks = list(pool.map(self.read_rank, range(len(self.config['ports']))))
         with self.lock:
             rows = [row for rank in ranks for row in rank.pop('rows', [])]
+            if self.config.get('format') == 'sts2':
+                rows = training_sts2.completed_rows(self.state, ranks, len(self.config['ports']))
             self.state['rows'] = merge_rows(self.state['rows'], rows)
             records = [row for rank in ranks for row in rank.pop('budget_records', [])]
             self.state['search_budget_records'] = merge_budget_records(
