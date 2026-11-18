@@ -45,3 +45,50 @@ test('lists, links, quotes, and inline code render without active raw HTML',()=>
   assert.doesNotMatch(result,/<script|<img|href="javascript:/);
   assert.match(result,/&lt;script&gt;/);
 });
+
+test('a LAN draft keeps its message ID across a failed send and reload',async()=>{
+  const controls=page.match(/<script id="worklog-controls">([\s\S]*?)<\/script>/)[1];
+  const {webcrypto}=require('node:crypto');
+  const storage=new Map(),requests=[];
+  let snapshot={enabled:true,can_send:true,entries:[]};
+  function openPage(){
+    const fields=new Map();
+    function getElementById(id){
+      if(!fields.has(id))fields.set(id,{value:'',replaceChildren(){}});
+      return fields.get(id);
+    }
+    const browser=vm.createContext({
+      document:{getElementById},setInterval(){},
+      crypto:{getRandomValues:bytes=>webcrypto.getRandomValues(bytes)},
+      sessionStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)},
+      async fetch(url,options){
+        if(url==='/api/worklog')return {ok:true,json:async()=>snapshot};
+        assert.equal(url,'/api/messages');
+        const payload=JSON.parse(options.body);
+        requests.push(payload);
+        if(requests.length===1)throw Error('lost response');
+        return {ok:true,json:async()=>({id:'USER-'+payload.id,path:'worklog/2026-11-18.md'})};
+      }
+    });
+    vm.runInContext(controls,browser);
+    return {field:getElementById,refresh:()=>vm.runInContext('refresh()',browser),
+      submit:()=>getElementById('message-form').onsubmit({preventDefault(){}})};
+  }
+  let ui=openPage();
+  await ui.refresh();
+  assert.equal(ui.field('send').disabled,true);
+  snapshot={...snapshot,branch:'main',commit:'abc',send_token:'test',updated_at:Date.now()/1000};
+  await ui.refresh();
+  assert.equal(ui.field('send').textContent,'发送到 main');
+  ui.field('message').value='同步后的留言';
+  ui.field('message').oninput();
+  await ui.submit();
+  assert.equal(ui.field('message').value,'同步后的留言');
+  assert.match(requests[0].id,/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  ui=openPage();
+  await ui.refresh();
+  await ui.submit();
+  assert.deepEqual(requests[1],requests[0]);
+  assert.equal(ui.field('message').value,'');
+  assert.ok(ui.field('send-result').textContent.includes('USER-'+requests[0].id));
+});

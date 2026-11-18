@@ -38,25 +38,57 @@ function renderWorklogSection(tokens){
   article.append(body);return article;
 }
 </script>
-<script>
+<script id="worklog-controls">
 'use strict';
-const $=id=>document.getElementById(id);let state=null,sending=false,draftId=null;
+const $=id=>document.getElementById(id);let state=null,sending=false,draftId=null,sentPath=null;
+function newMessageId(){
+  if(typeof crypto.randomUUID==='function')return crypto.randomUUID();
+  // HTTP LAN origins have getRandomValues, but may not have randomUUID.
+  const bytes=crypto.getRandomValues(new Uint8Array(16));
+  bytes[6]=(bytes[6]&0x0f)|0x40;
+  bytes[8]=(bytes[8]&0x3f)|0x80;
+  const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+  return [hex.slice(0,8),hex.slice(8,12),hex.slice(12,16),hex.slice(16,20),hex.slice(20)].join('-');
+}
+function updateSendButton(){
+  const ready=Boolean(state?.can_send&&state.branch&&state.commit);
+  $('send').disabled=sending||!ready;
+  $('send').textContent=ready?'发送到 '+state.branch:'发送给远端会话';
+}
 try{const saved=JSON.parse(sessionStorage.getItem('worklog-draft')||'null');if(saved){$('message').value=saved.text;draftId=saved.id}}catch(e){}
 function saveDraft(){try{sessionStorage.setItem('worklog-draft',JSON.stringify({id:draftId,text:$('message').value}))}catch(e){}}
 $('message').oninput=()=>{draftId=null;saveDraft()};
-$('message-form').onsubmit=async event=>{event.preventDefault();if(sending||!state?.can_send)return;const text=$('message').value;if(!text.trim())return;
-draftId=draftId||crypto.randomUUID();saveDraft();sending=true;$('send').disabled=true;$('message').readOnly=true;$('send-result').className='';$('send-result').textContent='正在发送…';
-try{const r=await fetch('/api/messages',{method:'POST',headers:{'Content-Type':'application/json','X-Monitor-Token':state.send_token},body:JSON.stringify({id:draftId,text})});const receipt=await r.json();if(!r.ok)throw Error(receipt.error||'发送失败');$('send-result').textContent='已推送 · 等待对方读取 / 回复\n'+receipt.id;$('message').value='';draftId=null;saveDraft();$('search').value='';refresh()}
-catch(e){$('send-result').className='bad';$('send-result').textContent='发送未确认成功，草稿已保留，可重试。'}
-finally{sending=false;$('send').disabled=!state?.can_send;$('message').readOnly=false}};
-function render(){if(!state)return;$('send').disabled=sending||!state.can_send;if(!state.can_send&&!sending)$('send-result').textContent='此监控尚未启用用户发言';const age=state.updated_at?Date.now()/1000-state.updated_at:Infinity;const stale=age>180;
+$('message-form').onsubmit=async event=>{
+  event.preventDefault();
+  const text=$('message').value;
+  if(sending||$('send').disabled||!text.trim())return;
+  sending=true;updateSendButton();$('message').readOnly=true;
+  $('send-result').className='';$('send-result').textContent='正在发送…';
+  try{
+    draftId=draftId||newMessageId();saveDraft();
+    const response=await fetch('/api/messages',{
+      method:'POST',headers:{'Content-Type':'application/json','X-Monitor-Token':state.send_token},
+      body:JSON.stringify({id:draftId,text})
+    });
+    const receipt=await response.json();
+    if(!response.ok)throw Error(receipt.error||'发送失败');
+    $('send-result').textContent='已推送 · 等待对方读取 / 回复\n'+receipt.id;
+    sentPath=receipt.path;$('message').value='';draftId=null;saveDraft();
+    $('search').value='';refresh();
+  }catch(e){
+    $('send-result').className='bad';$('send-result').textContent='发送未确认成功，草稿已保留，可重试。';
+  }finally{
+    sending=false;updateSendButton();$('message').readOnly=false;
+  }
+};
+function render(){if(!state)return;updateSendButton();if(!state.can_send&&!sending)$('send-result').textContent='此监控尚未启用用户发言';const age=state.updated_at?Date.now()/1000-state.updated_at:Infinity;const stale=age>180;
 $('status').className=state.error||stale?'bad':'';$('status').textContent=!state.enabled?'尚未配置工作日志来源':(state.error||(!state.updated_at?'等待首次同步':stale?'内容已过期':'同步正常'))+(state.updated_at?' · 最近成功 '+new Date(state.updated_at*1000).toLocaleString('zh-CN'): '');
 $('source').textContent=state.branch?state.branch+' · 提交 '+(state.commit||'').slice(0,12):'';
-const selected=$('date').value,entries=state.entries||[];$('date').replaceChildren();for(const entry of entries){const o=document.createElement('option');o.value=entry.path;o.textContent=entry.path;$('date').append(o)}if(entries.some(e=>e.path===selected))$('date').value=selected;
+const selected=sentPath||$('date').value,entries=state.entries||[];$('date').replaceChildren();for(const entry of entries){const o=document.createElement('option');o.value=entry.path;o.textContent=entry.path;$('date').append(o)}if(entries.some(e=>e.path===selected)){$('date').value=selected;sentPath=null}
 const entry=entries.find(e=>e.path===$('date').value);$('entries').replaceChildren();if(!entry){$('count').textContent='暂无已同步日志';return}
 const sections=worklogSections(entry.text),query=$('search').value.trim().toLowerCase();let count=0;
 for(const tokens of sections){if(!sectionMatches(tokens,query))continue;$('entries').append(renderWorklogSection(tokens));count++}
 $('count').textContent=count+' 条记录 · 新记录在前'+(entry.truncated?' · 仅展示文件末尾部分':'');}
 async function refresh(){try{const r=await fetch('/api/worklog',{cache:'no-store'});if(!r.ok)throw Error(r.status);state=await r.json();render()}catch(e){$('status').className='bad';$('status').textContent='本地服务连接失败，保留页面内容'}}
-$('date').onchange=render;$('search').oninput=render;$('refresh').onclick=refresh;refresh();setInterval(refresh,10000);
+$('date').onchange=()=>{sentPath=null;render()};$('search').oninput=render;$('refresh').onclick=refresh;refresh();setInterval(refresh,10000);
 </script></body></html>
