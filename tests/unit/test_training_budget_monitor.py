@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import zipfile
 from copy import deepcopy
 from unittest.mock import patch
 
@@ -80,3 +81,24 @@ def test_remote_backfills_budget_cursor_and_keeps_partial_line(tmp_path):
     assert read(result['cursor'])['budget_records']==[]
     path.write_text(json.dumps(measured)+'\n')
     assert len(read(result['cursor'])['budget_records'])==1
+
+
+def test_original_checkpoint_reads_only_present_card_limit_counts(tmp_path):
+    run = tmp_path/'runs'/'example'
+    bundles = run/'recovery'/'rank0'
+    bundles.mkdir(parents=True)
+    (run/'rank0.log').write_text('')
+    for step, tiers in ((10, ['common', 'boss']), (20, ['common','elite','boss'])):
+        bundle = bundles/f'step-{step:012d}'
+        bundle.mkdir()
+        (bundle/'manifest.json').write_text(json.dumps(dict(global_step=step,rank=0,run_id='example')))
+        with zipfile.ZipFile(bundle/'model.zip','w') as z:
+            z.writestr('data',json.dumps({'_small_playout_stats':{t+'/turn_card_limit_decisions':i for i,t in enumerate(tiers)}}))
+    def read(cursor):
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            exec(REMOTE,dict(ROOT=str(tmp_path),RUN='example',RANK=0,CURSOR=cursor,ORIGINAL_PPO=True))
+        return json.loads(stream.getvalue())
+    first = read({})
+    assert first['original_card_limits'] == [dict(step=20,count=3)]
+    assert read(first['cursor'])['original_card_limits'] == []

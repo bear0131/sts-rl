@@ -80,11 +80,31 @@ for line in tail:
         except ValueError: pass
     if any(x in line for x in ('Traceback','stack smashing detected','CUDA out of memory','Fatal Python error:')): errors.append(line[-300:])
 steps=[]
+original_card_limits=[]
+seen_caps=set(cursor.get('card_limit_steps', []))
 for p in (run/'recovery'/f'rank{RANK}').glob('step-*'):
-    if (p/'manifest.json').exists(): steps.append(int(p.name[5:]))
+    manifest=p/'manifest.json'
+    if not manifest.is_file(): continue
+    step=int(p.name[5:])
+    steps.append(step)
+    if not original_ppo or step in seen_caps: continue
+    import zipfile
+    try:
+        meta=json.loads(manifest.read_bytes())
+        if (meta['global_step'],meta['rank'],meta['run_id']) != (step,RANK,RUN): continue
+        with zipfile.ZipFile(p/'model.zip') as z:
+            stats=json.loads(z.read('data')).get('_small_playout_stats', {})
+        values=[stats.get(t+'/turn_card_limit_decisions') for t in ('common','elite','boss')]
+        if all(type(v) in (int,float) and v>=0 and float(v).is_integer() for v in values):
+            original_card_limits.append(dict(step=step,count=int(sum(values))))
+        seen_caps.add(step)
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile):
+        continue
 print(json.dumps(dict(rank=RANK,pid=pid,alive=alive,step=max(steps,default=0),
     progress=progress,log_mtime=st.st_mtime,errors=errors[-3:],rows=rows,budget_records=budget_records,
-    original_times=original_times,cursor=dict(inode=st.st_ino,offset=offset,budget_offset=budget_offset,rank_times=original_ppo),checked_at=time.time())))
+    original_times=original_times,original_card_limits=original_card_limits,
+    cursor=dict(inode=st.st_ino,offset=offset,budget_offset=budget_offset,rank_times=original_ppo,
+                card_limit_steps=sorted(seen_caps.intersection(steps))),checked_at=time.time())))
 '''
 
 
@@ -197,9 +217,11 @@ class Monitor:
             self.state['rows'] = merge_rows(self.state['rows'], rows)
             if self.config.get('format') == 'original_ppo':
                 self.lineage.add_original_rank_times(self.state, ranks)
+                self.lineage.add_original_card_limits(self.state, ranks)
             else:
                 for machine in ranks:
                     machine.pop('original_times', None)
+                    machine.pop('original_card_limits', None)
             records = [row for rank in ranks for row in rank.pop('budget_records', [])]
             self.state['search_budget_records'] = merge_budget_records(
                 self.state.get('search_budget_records', []), records)
