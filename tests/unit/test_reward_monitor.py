@@ -30,6 +30,16 @@ def step(model, state, action, info=None):
                   (np.array([0]), np.array([[.3, .2, .4]])), [info or {}])
 
 
+@pytest.mark.parametrize('action', ['REWARD_GOLD', 'REWARD_POTION', 'REWARD_RELIC', 'REWARD_KEY', 'PROCEED'])
+def test_fixed_rollout_reward_fields_match_full_observation(action):
+    obs, mask = scene(relics=(3,), sapphire=True)
+    full, fixed = SimpleNamespace(), SimpleNamespace()
+    reduced = {key: obs[key].copy() for key in ('reward_gold', 'reward_potion_ids', 'reward_relic_ids', 'reward_keys')}
+    for model, record in ((full, obs), (fixed, reduced)):
+        step(model, (record, mask), A.seg_base(action))
+    assert M.counts(fixed) == M.counts(full)
+
+
 def test_repeated_reward_decisions_count_each_resolved_item_once():
     model = SimpleNamespace()
     M.begin_collection(model)

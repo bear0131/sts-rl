@@ -69,6 +69,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                  upper_batches=0, upper_rows=0, transition_batches=0, simulator_transitions=0,
                  selection_prefix_decisions=0, forced_end_turn_roots=0)
     model._independent_rollout_progress = stats
+    reward_keys = {'reward_keys', *(key for key, _, _ in reward_monitor.KINDS.values())}
     upper_pending = None
     stats.update(upper_pending_wall_seconds=0., upper_submit_cpu_seconds=0., upper_accept_cpu_seconds=0.,
                  transitions_with_upper_pending=0, transitions_with_fallback_pending=0)
@@ -133,7 +134,7 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                     elif mask[end_action] and mask.sum() == 1:
                         actions[i] = end_action
                         stats['forced_end_turn_roots'] += 1
-                    elif ('Runic Dome' in (r['id'] for r in vec.native_search_batch.envs[i].thick.gc.relic_state())):
+                    elif ('Runic Dome' in vec.native_search_batch.envs[i].thick.gc.relic_ids()):
                         # This original no-search exception uses the same GPU
                         # policy queue as upper decisions, including its cache.
                         upper_waiting[i] = time.monotonic()
@@ -191,10 +192,12 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
             # Strategic records never consume the combat policy's encoded
             # inputs. Within a fight only phase/act/floor accrue its reward;
             # upper decisions retain every field used by the existing record.
-            old_phase = model._last_obs['phase'][indices]
-            old_keys = UPPER_KEYS if np.any(old_phase != combat) else {'phase', 'act', 'floor'}
-            old = {k: old_phase if k == 'phase' else v[indices]
-                   for k, v in model._last_obs.items() if k in old_keys}
+            old = {}
+            if not fixed:
+                old_phase = model._last_obs['phase'][indices]
+                old_keys = UPPER_KEYS if np.any(old_phase != combat) else {'phase', 'act', 'floor'}
+                old = {k: old_phase if k == 'phase' else v[indices]
+                       for k, v in model._last_obs.items() if k in old_keys}
             action_rows = np.array([actions.pop(i) for i in indices], dtype=np.int64)
             mask_rows = np.stack([masks.pop(i) for i in indices])
             value_rows, logp_rows = np.array([estimates.pop(i) for i in indices]).T
@@ -204,7 +207,10 @@ def collect(model, env, callback, rollout_buffer, n_rollout_steps, use_masking=T
                 # The original ready rows write their existing (time, env)
                 # destinations directly; no second collector or staging buffer.
                 for key, destination in rollout_buffer.observations.items():
-                    destination[positions, indices] = model._last_obs[key][indices]
+                    source_rows = model._last_obs[key][indices]
+                    destination[positions, indices] = source_rows
+                    if key in reward_keys:
+                        old[key] = source_rows
                 rollout_buffer.actions[positions, indices, 0] = action_rows
                 rollout_buffer.action_masks[positions, indices] = mask_rows
                 rollout_buffer.episode_starts[positions, indices] = model._last_episode_starts[indices]
