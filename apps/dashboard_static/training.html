@@ -277,12 +277,16 @@ function render(){if(!state)return;$('source-note').hidden=true;$('games-label')
   $('games-label').textContent='本轮结束或截断局数';$('games').textContent=fmt(latest['sts2/episodes']);
   $('seconds').textContent=`整轮 ${fmt(latest['sts2/round_seconds'])} 秒 · 第二慢机器`;
  }
- if(state.mainline&&latest&&!state.original_mainline){
+ if(state.mainline&&latest){
   $('search-budget').hidden=true;
   const windows=state.training_win_windows||[];const trend=$('window-trend');
   trend.hidden=!windows.length;
-  trend.textContent='连续 12 轮训练胜率 · '+windows.map(v=>`第 ${v.first}–${v.last} 轮 ${fmt(v.rate,true)}（${v.wins}/${v.games}）`).join('　');
+  const rolling=state.original_mainline;
+  trend.textContent=(rolling?'逐轮胜率均值（每轮最近 400 局） · ':'连续 12 轮训练胜率 · ')+windows.map(v=>
+   `第 ${v.first}–${v.last} 轮 ${fmt(v.rate,true)}`+(rolling?'':`（${v.wins}/${v.games}）`)).join('　');
   if(windows.length>=2){const diff=100*(windows.at(-1).rate-windows.at(-2).rate);trend.textContent+='　最近两段相差 '+(diff>0?'+':'')+diff.toFixed(2)+' 个百分点';}
+ }
+ if(state.mainline&&latest&&!state.original_mainline){
   $('run').textContent=state.label; $('source-note').hidden=false;
   $('source-note').textContent='第 1–501 轮取原训练最近 400 个完成局，第 502–504 轮取四个存档共 512 个环境各自最近的自然终局，第 505 轮起取该轮四台全部自然终局。第 70 轮未记录胜率。';
   $('win-label').textContent='本轮训练通关率';$('win').textContent=fmt(latest.training_win_rate,true);
@@ -291,7 +295,6 @@ function render(){if(!state)return;$('source-note').hidden=true;$('games-label')
   $('floor-label').textContent='本轮平均楼层';$('floor').textContent=fmt(latest['game/floor_mean']??latest['sts2/slot_floor_mean']);
  }
  if(state.original_mainline&&latest){
-  $('search-budget').hidden=true;$('window-trend').hidden=true;
   $('run').textContent=state.label;
   $('win-label').textContent='最近 400 个完成局胜率';
   $('win').textContent=fmt(latest.training_win_rate,true);
