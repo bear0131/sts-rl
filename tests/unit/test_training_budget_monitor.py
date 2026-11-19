@@ -83,6 +83,31 @@ def test_remote_backfills_budget_cursor_and_keeps_partial_line(tmp_path):
     assert len(read(result['cursor'])['budget_records'])==1
 
 
+def test_shared_source_must_match_the_run_and_rank_on_the_controller(tmp_path):
+    root = tmp_path/'controller'
+    run = root/'runs'/'example'
+    run.mkdir(parents=True)
+    (run/'rank1.log').touch()
+    (run/'rank1.pid').write_text('1234567')
+    proc = tmp_path/'proc'
+    cwd = proc/'cwd'
+    cwd.mkdir(parents=True)
+    (proc/'cmdline').write_bytes(b'python\0-m\0rl.training.distributed_sb3\0--run-id\0example\0')
+    def read(plan):
+        (root/'train-plan.json').write_text(json.dumps(plan))
+        def path_for(value):
+            return proc if value=='/proc/1234567' else type(tmp_path)(value)
+        out = io.StringIO()
+        with patch('pathlib.Path', side_effect=path_for), contextlib.redirect_stdout(out):
+            exec(REMOTE, dict(ROOT=str(root),RUN='example',RANK=1,CURSOR={}))
+        return json.loads(out.getvalue())['alive']
+    plan = dict(rank=1,run=str(run),cwd=str(cwd))
+    assert read(plan)
+    assert not read(dict(plan,rank=0))
+    assert not read(dict(plan,run=str(root/'runs'/'old')))
+    assert not read(dict(plan,cwd=str(tmp_path/'elsewhere')))
+
+
 def test_original_checkpoint_reads_only_present_card_limit_counts(tmp_path):
     run = tmp_path/'runs'/'example'
     bundles = run/'recovery'/'rank0'

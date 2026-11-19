@@ -32,8 +32,14 @@ proc=pathlib.Path(f'/proc/{pid}')
 alive=False
 if pid and (proc/'cmdline').exists():
     cmd=(proc/'cmdline').read_bytes().split(b'\0')
-    alive=(b'rl.training.distributed_sb3' in cmd and RUN.encode() in cmd
-           and (proc/'cwd').resolve().is_relative_to(root.resolve()))
+    if b'rl.training.distributed_sb3' in cmd and RUN.encode() in cmd:
+        cwd=(proc/'cwd').resolve()
+        alive=cwd.is_relative_to(root.resolve())
+        planfile=root/'train-plan.json'
+        if not alive and planfile.is_file():
+            plan=json.loads(planfile.read_bytes())
+            alive=(plan.get('rank')==RANK and plan.get('run')==str(run) and
+                   bool(plan.get('cwd')) and pathlib.Path(plan['cwd']).resolve()==cwd)
 log=run/f'rank{RANK}.log'; st=log.stat()
 cursor=CURSOR
 offset=cursor.get('offset',0) if cursor.get('inode')==st.st_ino else 0
