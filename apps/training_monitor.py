@@ -100,11 +100,14 @@ for p in (run/'recovery'/f'rank{RANK}').glob('step-*'):
         seen_caps.add(step)
     except (OSError, ValueError, KeyError, zipfile.BadZipFile):
         continue
+episode_prefixes, episode_seen = [], []
+if original_ppo and 'read_original_episode_prefixes' in globals():
+    episode_prefixes, episode_seen = read_original_episode_prefixes(root/'observed-episodes', RANK, cursor.get('episode_return_rounds', []))
 print(json.dumps(dict(rank=RANK,pid=pid,alive=alive,step=max(steps,default=0),
     progress=progress,log_mtime=st.st_mtime,errors=errors[-3:],rows=rows,budget_records=budget_records,
-    original_times=original_times,original_card_limits=original_card_limits,
+    original_times=original_times,original_card_limits=original_card_limits,original_episode_prefixes=episode_prefixes,
     cursor=dict(inode=st.st_ino,offset=offset,budget_offset=budget_offset,rank_times=original_ppo,
-                card_limit_steps=sorted(seen_caps.intersection(steps))),checked_at=time.time())))
+                episode_return_rounds=episode_seen,card_limit_steps=sorted(seen_caps.intersection(steps))),checked_at=time.time())))
 '''
 
 
@@ -177,6 +180,8 @@ class Monitor:
         header = '\n'.join(f'{key}={value!r}' for key, value in dict(
             ROOT=c['root'], RUN=c['run_id'], RANK=rank, CURSOR=previous.get('cursor', {}),
             ORIGINAL_PPO=c.get('format') == 'original_ppo').items())
+        if self.lineage and c.get('format') == 'original_ppo':
+            header += '\n' + self.lineage.ORIGINAL_EPISODE_PREFIX_READER
         script = f"cd {shlex.quote(c['root'])}\n.venv/bin/python - <<'PY_MONITOR'\n{header}\n{REMOTE}\nPY_MONITOR\n"
         if self.lineage and c.get('format') != 'original_ppo':
             script = self.lineage.rank_command(c, rank, previous.get('cursor', {}))
@@ -218,10 +223,12 @@ class Monitor:
             if self.config.get('format') == 'original_ppo':
                 self.lineage.add_original_rank_times(self.state, ranks)
                 self.lineage.add_original_card_limits(self.state, ranks)
+                self.lineage.add_original_episode_returns(self.state, ranks)
             else:
                 for machine in ranks:
                     machine.pop('original_times', None)
                     machine.pop('original_card_limits', None)
+                    machine.pop('original_episode_prefixes', None)
             records = [row for rank in ranks for row in rank.pop('budget_records', [])]
             self.state['search_budget_records'] = merge_budget_records(
                 self.state.get('search_budget_records', []), records)

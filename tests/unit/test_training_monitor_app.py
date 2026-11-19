@@ -18,6 +18,24 @@ def test_original_dashboard_keeps_reward_curves_and_bounds_explained_variance():
         assert 'upper/reward_' + reward + '_pickup_rate' in page
         assert 'upper/reward_' + reward + '_policy_probability' in page
     assert 'id="reward-summary"' not in page
+    assert "['每局平均奖励',['game/episode_return_mean','display/episode_return_sample']" in page
+    assert "finite(row['game/episode_return_mean'])?undefined:row['game/episode_return_window_mean']" in page
+    assert "row['game/episode_return_games']" in page
+    assert "row['game/episode_return_window_games']" in page
+
+
+def test_running_monitor_embeds_worker_source_from_its_loaded_version(tmp_path):
+    config = dict(run_id='example', iteration_steps=10, ports=[2200], ssh_key='key',
+                  root='/repo', host='root@example.com', format='original_ppo')
+    monitor = Monitor(config, tmp_path / 'data.json', 30)
+    worker = "def read_original_episode_prefixes(directory, rank, seen):\n    return [], seen\n"
+    monitor.lineage = SimpleNamespace(ORIGINAL_EPISODE_PREFIX_READER=worker)
+    with patch('apps.training_monitor.subprocess.run', return_value=SimpleNamespace(
+            returncode=0, stdout=b'{"rank": 0, "alive": true}', stderr=b'')) as run:
+        assert monitor.read_rank(0)['alive']
+    script = run.call_args.kwargs['input'].decode().split("<<'PY_MONITOR'\n",1)[1].rsplit('\nPY_MONITOR',1)[0]
+    assert worker in script
+    compile(script, '<ssh rank reader>', 'exec')
 
 
 def test_sts2_waits_for_four_ranks_and_keeps_snapshot_wins_separate():
