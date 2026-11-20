@@ -13,7 +13,7 @@
 <header><div><h1>训练实时曲线</h1><a href="/trajectories" style="color:#8bcbf5;font-size:14px">训练轨迹 · 卡组与遗物 →</a> <a id="worklog-link" href="/worklog" style="color:#8bcbf5;font-size:14px;margin-left:18px">工作日志 →</a><p id="run">正在连接远端日志…</p><p id="connection">等待首次同步</p></div><div><label class="label">横轴 <select id="axis"><option value="absolute">累计训练轮次</option><option value="relative">分支后轮次</option></select></label> <label class="label">查看范围 <select id="range"><option value="0">全部轮次</option><option value="30">最近30轮</option><option value="60">最近60轮</option></select></label></div></header>
 <section id="cards"><div class="card"><div class="label">已完成轮次</div><div class="value" id="round">—</div><div class="sub" id="ongoing">—</div></div><div class="card"><div class="label" id="win-label">本轮完整游戏胜率</div><div class="value" id="win">—</div><div class="sub" id="winavg">—</div></div><div class="card"><div class="label" id="games-label">累计自然完整游戏</div><div class="value" id="games">—</div><div class="sub">训练轨迹统计</div></div><div class="card"><div class="label" id="floor-label">本轮完整游戏平均楼层</div><div class="value" id="floor">—</div><div class="sub" id="seconds">—</div></div></section>
 <p id="window-trend" hidden></p><p id="source-note" hidden></p><div id="ranks"></div><details id="search-budget" class="budget-panel" open>
-<summary>搜索预算分配 <span class="label">当前训练 · 四机日志汇总</span></summary>
+<summary>搜索预算分配 <span class="label">当前训练 · 所有机器日志汇总</span></summary>
 <div class="budget-controls"><p id="budget-status">等待预算记录…</p><div><label>左图与概览 <select id="budget-tier" aria-label="搜索预算场景"><option value="all">全部战斗</option><option value="common">普通战斗</option><option value="elite">精英战斗</option><option value="boss">Boss 战斗</option></select></label> <label>明细 <select id="budget-round" aria-label="搜索预算明细轮次"><option value="latest">最新完整轮次</option></select></label></div></div>
 <div id="budget-empty" class="sub" hidden>当前训练尚无预算分配记录；旧日志不补造数据。</div>
 <div id="budget-content" hidden>
@@ -42,9 +42,10 @@ const specs=[
  ['训练游戏胜率 · 统计口径见图例',['display/game_win_rate'],['胜率'],true],
  ['训练游戏楼层 · 统计口径见图例',['display/game_floor_mean'],['平均楼层'],false],
  ['每局平均奖励',['game/episode_return_mean','display/episode_return_sample'],['本轮全部自然结束局','可恢复的历史样本'],false],
+ ['相邻两轮权重更新方向余弦',['ppo/update_cosine/all','ppo/update_cosine/combat','ppo/update_cosine/anchor','ppo/update_cosine/overworld'],['全网','战斗网络','战斗锚点','上层决策网络'],false,[-1,1]],
  ['存档中各环境最近一局胜率',['sts2/slot_win_rate'],['每个有自然胜负记录的环境取一局'],true],
  ['存档中各环境最近一局平均楼层',['sts2/slot_floor_mean'],['每个有自然胜负记录的环境取一局'],false],
- ['四机阶段耗时（秒） · 第二慢机器',['display/second_rollout_sec','display/second_update_sec','display/second_checkpoint_sec','display/second_iteration_wall_sec'],['采样','PPO 更新','保存','整轮'],false],
+ ['各机阶段耗时（秒） · 第二慢机器',['display/second_rollout_sec','display/second_update_sec','display/second_checkpoint_sec','display/second_iteration_wall_sec'],['采样','PPO 更新','保存','整轮'],false],
  ['PPO 联合训练损失',['sts2/total_loss','loss_mean'],['原高温分支 · 四机 Adam 分组平均','原整局 PPO · 训练日志平均损失'],false],
  ['本轮搜索根数',['sts2/search_roots'],['四机合计'],false],
  ['各幕通关率',['game/act_1_won_mean','game/act_2_won_mean','game/act_3_won_mean'],['第一幕','第二幕','第三幕'],true],
@@ -72,9 +73,9 @@ const specs=[
  ['整轮耗时（秒，含保存）',['iteration_wall_sec'],['机器1整轮耗时'],false],
  ['上层实际更新次数',['upper/updates','upper/critic_updates'],['actor Adam','独立 critic Adam'],false],
  ['搜索改选率 · 实际执行',['deck_search/action_override_rate'],['实际出牌偏离原策略最高分动作的比例'],true,[0,1]],
- ['搜索改选 · 次数与样本',['deck_search/action_override_count_global','deck_search/action_override_roots_global'],['四机实际改选次数','四机有效搜索根数'],false],
+ ['搜索改选 · 次数与样本',['deck_search/action_override_count_global','deck_search/action_override_roots_global'],['实际改选次数','有效搜索根数'],false],
  ['下层 teacher top1 · 当前搜索监督',['deck_search/teacher_top1'],['采样时策略与监督目标的首选动作匹配率'],true],
- ['下层 teacher · 有效样本数',['deck_search/teacher_top1_samples_global'],['四机实际搜索监督根数'],false],
+ ['下层 teacher · 有效样本数',['deck_search/teacher_top1_samples_global'],['有效搜索监督根数'],false],
  ['下层监督 loss · 当轮真实 teacher',['deck_search/supervision/loss','deck_search/supervision/mass_loss','deck_search/supervision/relative_logit_mse'],['总损失（未乘系数）','排除动作的概率惩罚','保留动作的相对 logit 误差'],false],
  ['下层监督 · 同批更新前后',['deck_search/probe_pre/loss','deck_search/probe_post/loss'],['本轮更新前','本轮更新后（同一批场景和 teacher）'],false],
  ['下层监督 · 实测样本数',['deck_search/supervision/samples_global','deck_search/probe_post/samples_global'],['成功反传的监督样本','更新前后对照样本'],false],
@@ -86,10 +87,10 @@ const specs=[
   ['火堆 · '+label,['upper/campfire_'+key+'_choice_rate','upper/campfire_'+key+'_policy_probability'],['可选时实际选择率','可选时模型概率'],true])
 ];
 let state=null;
-document.getElementById('notice').append(' 搜索改选率直接比较真实执行动作与同一决策点采样时冻结策略的最高分合法动作集合；并列最高分不算改选。按四机实际有效搜索根数加权，强制动作、无搜索行及战斗退出锚点不计入；旧轮次没有记录则留空。它衡量搜索接管后实际出牌的变化，不等于不同预算在同一局面上的动作差异率，也不代表改选一定更好。');
-document.getElementById('notice').append(' 上下层策略熵复用更新时模型的合法动作分布，单位为nats；上层统计战斗外决策，下层统计战斗内决策（包括搜索接管的行），按四机各层实际更新样本数加权。强制动作熵为0；战斗退出价值锚点没有策略，不计入。它不是搜索目标熵，也不是乘过熵系数的损失项；旧日志没有分层记录时留空。');
+document.getElementById('notice').append(' 搜索改选率直接比较真实执行动作与同一决策点采样时冻结策略的最高分合法动作集合；并列最高分不算改选。按各机实际有效搜索根数加权，强制动作、无搜索行及战斗退出锚点不计入；旧轮次没有记录则留空。它衡量搜索接管后实际出牌的变化，不等于不同预算在同一局面上的动作差异率，也不代表改选一定更好。');
+document.getElementById('notice').append(' 上下层策略熵复用更新时模型的合法动作分布，单位为nats；上层统计战斗外决策，下层统计战斗内决策（包括搜索接管的行），按各机各层实际更新样本数加权。强制动作熵为0；战斗退出价值锚点没有策略，不计入。它不是搜索目标熵，也不是乘过熵系数的损失项；旧日志没有分层记录时留空。');
 document.getElementById('notice').append(' 纯 PPO 的更新前 value loss 使用本轮采样旧 V 与冻结的房间 λ-return，整体/战斗内/战斗外分别按样本数汇总；不是旧训练的 MC 标签。更新中损失、KL、熵、裁剪比例汇总实际成功反向的样本，不包含 OOM 失败尝试，也不代表全部更新完成后的重测。解释方差可能为负；纵轴固定为 0–1。目标无方差时不显示；历史缺失轮次不补零。');
-document.getElementById('notice').append(' 当前搜索监督的 teacher top1 比较采样时冻结策略与本轮实际 KL 监督目标的首选合法动作；并列时取编码顺序首个动作，按四机实际有监督的搜索根数加权。强制动作、无搜索行和战斗退出锚点不计入。它不是搜索实际执行动作的匹配率，也不是更新后准确率；新增记录前的历史和无有效样本轮次留空。');
+document.getElementById('notice').append(' 当前搜索监督的 teacher top1 比较采样时冻结策略与本轮实际 KL 监督目标的首选合法动作；并列时取编码顺序首个动作，按各机实际有监督的搜索根数加权。强制动作、无搜索行和战斗退出锚点不计入。它不是搜索实际执行动作的匹配率，也不是更新后准确率；新增记录前的历史和无有效样本轮次留空。');
 
 document.getElementById('notice').append(' 冻结前后MSE图使用同一批完整训练样本，分别在全部上层更新前、全部critic更新后固定权重重算；实际目标MSE在冻结λ模式下与MC不同。这些是训练集误差，不是留出集评测，下降不直接证明泛化改善或过拟合；未启用测量的旧轮次不补零。测量耗时取机器1，已包含在完整轮时间内。');
 document.getElementById('notice').append(' COMBAT31使用全新独立actor/critic，下层继承旧203轮权重；每轮960起始局，actor两遍GAE优势、critic四遍实际完整回报监督，无上层分支续玩。value loss取critic最后一遍；与旧λ-return监督不是同一标签，不能直接比较数值判断模型优劣。整轮耗时图取机器1的iteration_wall_sec（含保存，未含随后W&B客户端排队），不是四机最慢值；阶段耗时不能替代整轮耗时。');
@@ -138,6 +139,7 @@ for(const [i,spec] of specs.entries()){
  if(i===0)article.style.order=-6;
  if(i===1)article.style.order=-5;
  if(key==='game/episode_return_mean'){article.style.order=-5;article.id='episode-return'}
+ if(key==='ppo/update_cosine/all'){article.style.order=-2;article.id='update-direction'}
  if(key.startsWith('upper/reward_'))article.style.order=-4;if(key==='upper/reward_gold_pickup_rate')article.id='rewards';
  if(key.endsWith('/explained_variance')){article.style.order=-3;article.id='variance';}
 }
@@ -171,7 +173,7 @@ let selection=loadSelection(), optionSignature='', checkboxes=new Map();
 function saveSelection(){
  try{localStorage.setItem(selectionKey,JSON.stringify(Object.fromEntries(selection)))}catch{}
 }
-function isSelected(run){return selection.get(run.curveKey)??run.active}
+function isSelected(run){return selection.get(run.curveKey)??(run.active||run.default_visible)}
 function renderSelector(runs){
  const signature=JSON.stringify(runs.map(r=>[r.curveKey,r.label,r.active,r.color]));
  if(signature!==optionSignature){
@@ -272,7 +274,7 @@ function render(){if(!state)return;$('source-note').hidden=true;$('games-label')
  if(latest){let round=roundAt(state,latest.global_timesteps);$('round').textContent=round;$('ongoing').textContent=ranks.length&&ranks.every(r=>!r.connection_error&&r.alive)?`正在进行第 ${round+1} 轮`:'以机器状态为准';const complete=state.rollout_mode==='complete_games',cohort=completeCohort(latest),summary=cohortSummary(rows.slice(-5));$('win-label').textContent=complete?'本轮完整游戏胜率':'最近400个完成局胜率';$('floor-label').textContent=complete?'本轮完整游戏平均楼层':'最近400个完成局平均楼层';$('win').textContent=fmt(complete?cohort?.win:latest['game/win_rate'],true);$('winavg').textContent=complete?(summary?`最近${summary.rounds}个完整轮次 · ${fmt(summary.games)}局 · ${fmt(summary.win,true)}`:'暂无完整轮次统计'):'连续补局滚动窗口 · 不是本轮固定批次';$('games').textContent=fmt(latest.completed_full_games_global);$('floor').textContent=fmt(complete?cohort?.floor:latest['game/floor_mean']);$('seconds').textContent=`上一轮 ${fmt(latest.iteration_wall_sec)} 秒`+(complete?` · 自然结束 ${fmt(latest['episode_rollout/completed_games_global'])} · 剔除 ${fmt(latest['episode_rollout/censored_games_global']??0)}`:'')}
  if(latest&&finite(latest['sts2/round_seconds'])){
   const observed=rows.findLast(r=>finite(r['sts2/slot_win_rate']));
-  if(ranks.length&&ranks.every(r=>!r.connection_error&&!r.alive))$('ongoing').textContent='四机训练已停止';
+  if(ranks.length&&ranks.every(r=>!r.connection_error&&!r.alive))$('ongoing').textContent='全部训练进程已停止';
   $('source-note').hidden=false;
   const first=rows.find(r=>finite(r['sts2/slot_win_rate']));
   $('source-note').textContent=first?`旧版逐轮日志仅记录结束局数，胜负取自实际读到的存档，从第 ${first.rollout_round} 轮开始。每个环境取最近一次自然胜负，与历史滚动 400 局分图展示。`:'该训练的逐轮日志只记录结束局数，正在等待首份有胜负记录的存档。';
@@ -306,9 +308,10 @@ function render(){if(!state)return;$('source-note').hidden=true;$('games-label')
   $('winavg').textContent=finite(latest.training_wins)?latest.training_wins+' 胜 / '+latest.training_games+' 局':'';
   $('floor-label').textContent='最近 400 个完成局平均楼层';$('floor').textContent=fmt(latest['game/floor_mean']);
   $('games-label').textContent='累计完成局数';$('games').textContent=fmt(latest.completed_full_games_global);
-  if(ranks.length&&ranks.every(r=>!r.connection_error&&!r.alive))$('ongoing').textContent='四机训练已停止';
+  if(ranks.length&&ranks.every(r=>!r.connection_error&&!r.alive))$('ongoing').textContent='全部训练进程已停止';
   $('source-note').hidden=false;
-  $('source-note').textContent='第 502 轮起从原 501 存档按满预算训练。胜率和楼层取四台机器各自最近 100 个完成局，按局数合并。';
+  const machines=state.original_rank_count||4;
+  $('source-note').textContent=`第 502 轮起从原 501 存档按满预算训练。当前训练的胜率和楼层取 ${machines} 台机器各自最近 ${400/machines} 个完成局，按局数合并。`;
  }
  renderCurves();renderBudget();}
 

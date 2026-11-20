@@ -109,11 +109,14 @@ for p in (run/'recovery'/f'rank{RANK}').glob('step-*'):
 episode_prefixes, episode_seen = [], []
 if original_ppo and 'read_original_episode_prefixes' in globals():
     episode_prefixes, episode_seen = read_original_episode_prefixes(root/'observed-episodes', RANK, cursor.get('episode_return_rounds', []))
+directions, direction_seen = [], []
+if original_ppo and 'read_original_directions' in globals():
+    directions, direction_seen = read_original_directions(run/'update-directions', RUN, cursor.get('direction_rounds', []))
 print(json.dumps(dict(rank=RANK,pid=pid,alive=alive,step=max(steps,default=0),
     progress=progress,log_mtime=st.st_mtime,errors=errors[-3:],rows=rows,budget_records=budget_records,
-    original_times=original_times,original_card_limits=original_card_limits,original_episode_prefixes=episode_prefixes,
+    original_times=original_times,original_card_limits=original_card_limits,original_episode_prefixes=episode_prefixes,original_directions=directions,
     cursor=dict(inode=st.st_ino,offset=offset,budget_offset=budget_offset,rank_times=original_ppo,
-                episode_return_rounds=episode_seen,card_limit_steps=sorted(seen_caps.intersection(steps))),checked_at=time.time())))
+                episode_return_rounds=episode_seen,direction_rounds=direction_seen,card_limit_steps=sorted(seen_caps.intersection(steps))),checked_at=time.time())))
 '''
 
 
@@ -165,6 +168,7 @@ class Monitor:
                 raise ValueError('comparison history belongs to a different run')
             self.state['comparisons'].append(dict(run_id=saved['run_id'],
                 label=reference.get('label', saved['run_id']), rows=saved['rows'],
+                default_visible=reference.get('default_visible', False),
                 iteration_steps=saved['iteration_steps'], rollout_mode=saved.get('rollout_mode', 'fixed_steps'), branch_step=reference.get('branch_step', 0),
                 branch_round=reference.get('branch_round', saved.get('branch_round',
                     reference.get('branch_step', 0) / (saved['iteration_steps'] or 1)))))
@@ -220,7 +224,8 @@ class Monitor:
             if self.config.get('format') == 'original_ppo':
                 rows = self.lineage.original_continuation(self.state, rows, self.config)
                 for machine in ranks:
-                    machine['saved_round'] = max(self.state['history_through'], machine.get('step', 0) // self.config['iteration_steps'])
+                    machine['saved_round'] = self.lineage.original_saved_round(
+                        self.state, machine.get('step', 0), self.config['iteration_steps'])
             elif self.lineage:
                 rows = self.lineage.completed_rows(self.state, ranks)
             elif self.config.get('format') == 'sts2':
@@ -230,6 +235,7 @@ class Monitor:
                 self.lineage.add_original_rank_times(self.state, ranks)
                 self.lineage.add_original_card_limits(self.state, ranks)
                 self.lineage.add_original_episode_returns(self.state, ranks)
+                self.lineage.add_original_directions(self.state, ranks)
             else:
                 for machine in ranks:
                     machine.pop('original_times', None)
