@@ -57,7 +57,7 @@ if RANK==0:
     offset+=complete
 budget_offset=cursor.get('budget_offset',0) if cursor.get('inode')==st.st_ino else 0
 original_ppo=globals().get('ORIGINAL_PPO',False)
-if budget_offset>st.st_size or (original_ppo and not cursor.get('rank_times')): budget_offset=0
+if budget_offset>st.st_size or (original_ppo and cursor.get('rank_times_version') != 2): budget_offset=0
 original_times=[]
 budget_records=[]
 with log.open('rb') as f:
@@ -115,7 +115,7 @@ if original_ppo and 'read_original_directions' in globals():
 print(json.dumps(dict(rank=RANK,pid=pid,alive=alive,step=max(steps,default=0),
     progress=progress,log_mtime=st.st_mtime,errors=errors[-3:],rows=rows,budget_records=budget_records,
     original_times=original_times,original_card_limits=original_card_limits,original_episode_prefixes=episode_prefixes,original_directions=directions,
-    cursor=dict(inode=st.st_ino,offset=offset,budget_offset=budget_offset,rank_times=original_ppo,
+    cursor=dict(inode=st.st_ino,offset=offset,budget_offset=budget_offset,rank_times_version=2 if original_ppo else 0,
                 episode_return_rounds=episode_seen,direction_rounds=direction_seen,card_limit_steps=sorted(seen_caps.intersection(steps))),checked_at=time.time())))
 '''
 
