@@ -58,6 +58,7 @@ const specs=[
  ['纯 PPO · 更新前 value 解释方差',['pure_rl/value_pre/all/explained_variance','pure_rl/value_pre/combat/explained_variance','pure_rl/value_pre/upper/explained_variance','pure_rl/value_pre/anchor/explained_variance'],['整体','战斗内','战斗外','战斗退出锚点'],false,[0,1]],
  ['纯 PPO · 更新配置',['optimizer_steps','pure_rl/epochs'],['实际 Adam 次数','更新遍数'],false],
  ['纯 PPO · 学习率',['pure_rl/learning_rate'],['Adam 学习率'],false],
+ ['完整采样批次胜率',['episode_rollout/win_rate','display/recent_win_in_cohort'],['本轮全部自然结束局','同轮最近 400 个完成局'],true],
  ['纯 PPO · 阶段耗时（秒）',['rollout_sec','backward_sec','sync_sec','checkpoint_sec'],['采样','反向计算','梯度同步','保存'],false],
  ['上层 policy loss · 末遍汇总',['display/upper_policy_loss'],['按样本加权'],false],
  ['上层 value loss · 末遍汇总',['display/upper_value_loss'],['按样本加权'],false],
@@ -118,6 +119,7 @@ function lastEpochMetric(row,metric){
 function displayRow(row,run={}){
  const cohort=completeCohort(row),rolling=run.rollout_mode!=='complete_games'&&finite(run.iteration_steps)&&run.iteration_steps>0&&!Object.keys(row).some(k=>k.startsWith('episode_rollout/'));
  return {...row,'display/game_win_rate':row.training_win_scope?row.training_win_rate:(cohort?.win??(rolling?row['game/win_rate']:undefined)),'display/game_floor_mean':row.training_win_scope?(row['game/floor_mean']??row['sts2/slot_floor_mean']):(cohort?.floor??(rolling?row['game/floor_mean']:undefined)),'episode_rollout/win_rate':cohort?.win,'episode_rollout/floor_mean':cohort?.floor,
+  'display/recent_win_in_cohort':cohort&&row.training_win_scope==='legacy_last_400'&&row.training_games===400?row.training_win_rate:undefined,
   'display/episode_return_sample':finite(row['game/episode_return_mean'])?undefined:row['game/episode_return_window_mean'],
   'display/second_rollout_sec':row['monitor/second_slowest/rollout_sec']??row['sts2/collection_seconds'],
   'display/second_update_sec':row['monitor/second_slowest/update_sec']??row['sts2/update_seconds'],
@@ -136,7 +138,7 @@ function rewardDetail(key,row){
 }
 for(const [i,spec] of specs.entries()){
  const article=$('chart'+i).parentElement, key=spec[1][0];
- if(i===0)article.style.order=-6;
+ if(i===0||key==='episode_rollout/win_rate')article.style.order=-6;
  if(i===1)article.style.order=-5;
  if(key==='game/episode_return_mean'){article.style.order=-5;article.id='episode-return'}
  if(key==='ppo/update_cosine/all'){article.style.order=-2;article.id='update-direction'}
@@ -200,7 +202,7 @@ function datasets(runs=displayRuns()){
  const relative=$('axis').value==='relative', n=Number($('range').value);
  return runs.filter(isSelected).map(run=>{let rows=(run.rows||[]).map(r=>displayRow(r,run));if(relative)rows=rows.filter(r=>r.global_timesteps>=run.branch_step);if(n)rows=rows.slice(-n);return {label:run.label||run.run_id,mainline:run.mainline,gameScope:run.original_mainline?'最近 400 个完成局':run.rows.at(-1)?.training_win_scope==='round_natural_games'?'按轮取自然终局，早期取存档':run.mainline?'训练主线 · 逐点统计口径见悬浮提示':finite(run.rows.at(-1)?.['sts2/round_seconds'])?'各环境最近一局自然胜负':run.rollout_mode==='complete_games'?'本批自然结束局':'最近400个完成局 · 连续补局',rolling:!run.mainline&&run.rollout_mode!=='complete_games',rows,color:run.color,x:r=>(finite(r.rollout_round)?r.rollout_round:roundAt(run,r.global_timesteps))-(relative?(run.branch_round||0):0),branch:(relative?0:roundAt(run,run.branch_step||0))}});
 }
-function plot(i,sets,spec=specs[i]){const [title,keys,names,pct,fixedY]=spec,svg=$('chart'+i);const nativeOnly=sets.length>0&&sets.every(set=>finite(set.rows.at(-1)?.['sts2/round_seconds']));svg.parentElement.hidden=(state?.original_mainline||nativeOnly||keys[0]==='small_playout_train/teacher_top1'||keys[0].startsWith('sts2/'))&&!sets.some(set=>set.rows.some(row=>keys.some(key=>finite(row[key]))));if(state?.mainline && keys[0]==='sts2/search_roots')svg.parentElement.hidden=true;if(svg.parentElement.hidden)return;const w=svg.clientWidth,h=230,left=64,right=18,top=12,bottom=33;svg.setAttribute('viewBox',`0 0 ${w} ${h}`);svg.replaceChildren();
+function plot(i,sets,spec=specs[i]){const [title,keys,names,pct,fixedY]=spec,svg=$('chart'+i);const nativeOnly=sets.length>0&&sets.every(set=>finite(set.rows.at(-1)?.['sts2/round_seconds']));svg.parentElement.hidden=(state?.original_mainline||nativeOnly||keys[0]==='episode_rollout/win_rate'||keys[0]==='small_playout_train/teacher_top1'||keys[0].startsWith('sts2/'))&&!sets.some(set=>set.rows.some(row=>keys.some(key=>finite(row[key]))));if(state?.mainline && keys[0]==='sts2/search_roots')svg.parentElement.hidden=true;if(svg.parentElement.hidden)return;const w=svg.clientWidth,h=230,left=64,right=18,top=12,bottom=33;svg.setAttribute('viewBox',`0 0 ${w} ${h}`);svg.replaceChildren();
  const visible=sets.filter(run=>run.rows.some(row=>keys.some(k=>finite(row[k]))));
  const entries=visible.flatMap(run=>run.rows.map(row=>({run,row,x:run.x(row)}))),xs=entries.map(e=>e.x),vals=entries.flatMap(e=>keys.map(k=>e.row[k])).filter(finite);
  const seriesColor=(run,j)=>visible.length===1&&keys[0].endsWith('/explained_variance')?colors[j%colors.length]:run.color;
@@ -306,6 +308,7 @@ function render(){if(!state)return;$('source-note').hidden=true;$('games-label')
   $('win-label').textContent='最近 400 个完成局胜率';
   $('win').textContent=fmt(latest.training_win_rate,true);
   $('winavg').textContent=finite(latest.training_wins)?latest.training_wins+' 胜 / '+latest.training_games+' 局':'';
+  const cohort=completeCohort(latest);if(cohort)$('winavg').textContent+=` · 整批 ${Math.round(cohort.wins)}/${cohort.games}（${fmt(cohort.win,true)}）`;
   $('floor-label').textContent='最近 400 个完成局平均楼层';$('floor').textContent=fmt(latest['game/floor_mean']);
   $('games-label').textContent='累计完成局数';$('games').textContent=fmt(latest.completed_full_games_global);
   if(ranks.length&&ranks.every(r=>!r.connection_error&&!r.alive))$('ongoing').textContent='全部训练进程已停止';
