@@ -337,11 +337,15 @@ const shared={...last,training_win_scope:'legacy_last_400',training_games:400,tr
 assert.equal(displayRow(shared,state)['display/recent_win_in_cohort'],.49);
 assert.equal(displayRow(shared,state)['episode_rollout/win_rate'],197/512);
 assert.equal(displayRow({...shared,'episode_rollout/completed_games_global':0},state)['display/recent_win_in_cohort'],undefined);
-assert.ok(specs.some(s=>s[1].includes('episode_rollout/win_rate')&&s[1].includes('display/recent_win_in_cohort')));
+assert.ok(specs.some(s=>s[1].includes('display/all_completed_win')&&s[1].includes('display/recent_win_in_cohort')));
 const timing=specs.find(s=>s[1].includes('display/second_rollout_sec'));
 assert.ok(timing[1].includes('monitor/slowest/rollout_sec')&&timing[1].includes('monitor/slowest/iteration_wall_sec'));
 assert.equal(displayRow({'monitor/slowest/rollout_sec':302,'monitor/second_slowest/rollout_sec':287})['display/second_rollout_sec'],287);
 
+const fixedEnds={training_win_scope:'legacy_last_400',training_games:400,training_win_rate:.49,'game/round_completed_wins':285,'game/round_completed_games':735};
+assert.equal(displayRow(fixedEnds,{rollout_mode:'fixed_steps'})['display/all_completed_win'],285/735);
+assert.equal(displayRow(fixedEnds,{rollout_mode:'fixed_steps'})['display/recent_win_in_cohort'],.49);
+assert.equal(displayRow({...fixedEnds,'game/round_completed_games':0},{})['display/all_completed_win'],undefined);
 assert.equal(displayRow(old,state.comparisons[0])['display/game_win_rate'],1);
 assert.equal(displayRow({...last,'episode_rollout/completed_games_global':900},state)['display/game_win_rate'],undefined);
 assert.ok($('chart0').previousElementSibling.children[0].textContent.includes('最近400个完成局'));
@@ -391,8 +395,24 @@ assert.equal($('win').textContent,'25.00%');
 assert.equal(displayRow(state.rows[0],state)['display/game_win_rate'],undefined);
 state.ranks[0].alive=false;render();assert.equal($('ongoing').textContent,'全部训练进程已停止');
 state={...state,rollout_mode:'complete_games',original_mainline:true,rows:[shared]};render();
+assert.equal($('win-label').textContent,'本轮整批胜率');
+assert.equal($('win').textContent,'38.48%');
+assert.equal($('winavg').textContent,'197 胜 / 512 个自然终局');
+assert.equal($('games').textContent,'512');
+assert.equal($('floor').textContent,'40');
+assert.equal(displayRow(shared,state)['display/game_win_rate'],197/512);
+assert.equal(displayRow(shared,state)['display/game_floor_mean'],40);
+assert.equal(winCounts({complete:true},0,shared),'（197/512）');
+const historical={...old,rollout_round:501,training_win_scope:'legacy_last_400',training_win_rate:.4,training_games:400,training_wins:160};
+const fullRun={...state,branch_round:501};
+assert.equal(displayRow(historical,fullRun)['display/history_win'],.4);
+assert.equal(displayRow(historical,fullRun)['display/game_win_rate'],undefined);
+assert.equal(displayRow({...historical,rollout_round:503},fullRun)['display/history_win'],undefined);
+assert.equal(displayRow({...shared,rollout_round:502},fullRun)['display/history_win'],undefined);
+assert.equal(displayRow({...shared,'episode_rollout/completed_games_global':0},state)['display/game_win_rate'],undefined);
+state.rollout_mode='fixed_steps';render();
 assert.equal($('win').textContent,'49.00%');
-assert.ok($('winavg').textContent.includes('整批 197/512（38.48%）'));
+assert.equal($('floor').textContent,'99');
 `,context);
 '''.replace('SCRIPT', json.dumps(script))
     path = tmp_path / 'dashboard.cjs'
