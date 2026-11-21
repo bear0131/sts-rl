@@ -338,6 +338,9 @@ assert.equal(displayRow(shared,state)['display/recent_win_in_cohort'],.49);
 assert.equal(displayRow(shared,state)['episode_rollout/win_rate'],197/512);
 assert.equal(displayRow({...shared,'episode_rollout/completed_games_global':0},state)['display/recent_win_in_cohort'],undefined);
 assert.ok(specs.some(s=>s[1].includes('episode_rollout/win_rate')&&s[1].includes('display/recent_win_in_cohort')));
+const timing=specs.find(s=>s[1].includes('display/second_rollout_sec'));
+assert.ok(timing[1].includes('monitor/slowest/rollout_sec')&&timing[1].includes('monitor/slowest/iteration_wall_sec'));
+assert.equal(displayRow({'monitor/slowest/rollout_sec':302,'monitor/second_slowest/rollout_sec':287})['display/second_rollout_sec'],287);
 
 assert.equal(displayRow(old,state.comparisons[0])['display/game_win_rate'],1);
 assert.equal(displayRow({...last,'episode_rollout/completed_games_global':900},state)['display/game_win_rate'],undefined);

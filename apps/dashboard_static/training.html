@@ -45,7 +45,7 @@ const specs=[
  ['相邻两轮权重更新方向余弦',['ppo/update_cosine/all','ppo/update_cosine/combat','ppo/update_cosine/anchor','ppo/update_cosine/overworld'],['全网','战斗网络','战斗锚点','上层决策网络'],false,[-1,1]],
  ['存档中各环境最近一局胜率',['sts2/slot_win_rate'],['每个有自然胜负记录的环境取一局'],true],
  ['存档中各环境最近一局平均楼层',['sts2/slot_floor_mean'],['每个有自然胜负记录的环境取一局'],false],
- ['各机阶段耗时（秒） · 第二慢机器',['display/second_rollout_sec','display/second_update_sec','display/second_checkpoint_sec','display/second_iteration_wall_sec'],['采样','PPO 更新','保存','整轮'],false],
+ ['各机阶段耗时（秒）',['monitor/slowest/rollout_sec','monitor/slowest/iteration_wall_sec','display/second_rollout_sec','display/second_update_sec','display/second_checkpoint_sec','display/second_iteration_wall_sec'],['最慢卡采样','最慢卡整轮','第二慢卡采样','第二慢卡 PPO 更新','第二慢卡保存','第二慢卡整轮'],false],
  ['PPO 联合训练损失',['sts2/total_loss','loss_mean'],['原高温分支 · 四机 Adam 分组平均','原整局 PPO · 训练日志平均损失'],false],
  ['本轮搜索根数',['sts2/search_roots'],['四机合计'],false],
  ['各幕通关率',['game/act_1_won_mean','game/act_2_won_mean','game/act_3_won_mean'],['第一幕','第二幕','第三幕'],true],
